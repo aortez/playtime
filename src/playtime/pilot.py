@@ -71,13 +71,15 @@ def execute_pilot(root, directory):
     expected_order = [(r["seed"], r["condition"]) for r in plan["runs"]]
     if expected_order != ORDER:
         raise PlaytimeError("Pilot order differs from the six-run protocol")
+    if len({entry["id"] for entry in plan["runs"]}) != len(plan["runs"]):
+        raise PlaytimeError("Pilot run IDs must be unique")
     progress_path = directory / "progress.json"
     progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
     with RunLock(root):
         ensure_idle(root)
         # Validate every frozen input before spending any inference budget.
         manifests = []
-        for entry in plan["runs"]:
+        for index, entry in enumerate(plan["runs"]):
             run_directory = root / "runs" / entry["id"]
             manifest = json.loads((run_directory / "manifest.json").read_text())
             validate_archive(run_directory, manifest)
@@ -86,6 +88,22 @@ def execute_pilot(root, directory):
                 or identity(manifest) != plan["identity"]
             ):
                 raise PlaytimeError("Frozen pilot identities changed")
+            seed, condition = ORDER[index]
+            pairing = {
+                "pilot": plan["id"], "pair": index // 2 + 1, "order": index + 1,
+                "seed": seed, "condition": condition,
+            }
+            pairing_path = run_directory / "inputs/pairing.json"
+            if (
+                {key: entry.get(key) for key in pairing} != pairing
+                or manifest["id"] != entry["id"]
+                or manifest.get("pairing") != pairing
+                or manifest["recipe"]["sampling_seed"] != seed
+                or manifest["recipe"].get("memory_condition", "self") != condition
+                or not pairing_path.is_file()
+                or json.loads(pairing_path.read_text()) != pairing
+            ):
+                raise PlaytimeError("Frozen pilot membership differs from its archived inputs")
             manifests.append((run_directory, manifest))
         for entry, (run_directory, manifest) in zip(plan["runs"], manifests):
             key = entry["id"]

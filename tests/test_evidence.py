@@ -60,6 +60,42 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual([len(r["messages"]) for r in self.runner.model.requests], [2, 2])
         self.assertEqual(list(self.directory.glob("sessions/*/evidence*")), [])
         self.assertIn("A · Self-written memory", report(self.directory).read_text())
+        validate_evidence(self.directory)
+
+    def test_missing_last_session_or_all_sessions_is_rejected(self):
+        self.execute([completed(finish=False), completed()])
+        validate_evidence(self.directory)
+        for relative in ["sessions/002", "sessions"]:
+            with self.subTest(missing=relative):
+                path = self.directory / relative
+                moved = self.directory / "removed"
+                path.rename(moved)
+                try:
+                    with self.assertRaisesRegex(PlaytimeError, "Archived session .* is missing"):
+                        validate_evidence(self.directory)
+                finally:
+                    moved.rename(path)
+
+    def test_started_session_without_checkpoint_remains_valid(self):
+        original = self.runner.sandbox.stop_session
+        def stop():
+            original()
+            if self.runner.session == 2:
+                raise PlaytimeError("checkpoint unavailable")
+        self.runner.sandbox.stop_session = stop
+        result = self.execute([completed(finish=False), completed()])
+        self.assertEqual(result["stop_reason"], "error")
+        self.assertTrue((self.directory / "sessions/002/evidence-received.txt").is_file())
+        self.assertFalse((self.directory / "sessions/002/summary.json").exists())
+        validate_evidence(self.directory)
+
+    def test_checkpoint_event_requires_evidence_even_if_summary_is_missing(self):
+        self.execute([completed()])
+        folder = self.directory / "sessions/001"
+        for name in ["summary.json", "evidence.json", "evidence.txt"]:
+            (folder / name).unlink()
+        with self.assertRaisesRegex(PlaytimeError, "Archived evidence is missing"):
+            validate_evidence(self.directory)
 
     def test_dispatched_missing_failed_and_rejected_results_are_distinct(self):
         self.recipe["memory_condition"] = "self_plus_evidence"

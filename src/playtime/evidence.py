@@ -28,14 +28,14 @@ def clipped(value, maximum):
     return text, len(data) - len(text.encode("utf-8"))
 
 
-def events(directory, session):
+def events(directory, session=None):
     with (directory / "events.jsonl").open(encoding="utf-8") as source:
         for raw in source:
             try:
                 event = json.loads(raw)
             except ValueError:
                 break
-            if event.get("session") == session:
+            if session is None or event.get("session") == session:
                 yield event
 
 
@@ -187,35 +187,52 @@ def received_evidence(directory, session):
 
 def validate_evidence(directory):
     """Reconstruct recorded appendices and verify their exact received copies."""
+    directory = Path(directory)
     manifest = json.loads((directory / "manifest.json").read_text())
     enabled = condition(manifest["recipe"]) == "self_plus_evidence"
-    for folder in sorted((directory / "sessions").glob("[0-9][0-9][0-9]")):
+    folders = set((directory / "sessions").glob("[0-9][0-9][0-9]"))
+    starts, checkpoints = {}, set()
+    # Prepared runs have no events yet. Started sessions must remain present,
+    # including sessions that failed before a checkpoint could be saved.
+    if folders or (directory / "events.jsonl").exists():
+        for event in events(directory):
+            if event["kind"] not in {"session_start", "model_request", "checkpoint"}:
+                continue
+            number = event["session"]
+            folders.add(directory / "sessions" / f"{number:03d}")
+            if event["kind"] == "session_start":
+                starts.setdefault(number, event)
+            elif event["kind"] == "checkpoint":
+                checkpoints.add(number)
+    for folder in sorted(folders):
+        if not folder.is_dir():
+            raise PlaytimeError(f"Archived session {folder.name} is missing")
+        number = int(folder.name)
         path = folder / "evidence.json"
-        if enabled and (folder / "summary.json").exists() and not path.exists():
+        checkpointed = number in checkpoints or (folder / "summary.json").exists()
+        if enabled and checkpointed and not path.exists():
             raise PlaytimeError("Archived evidence is missing")
         if path.exists():
-            expected = build_evidence(directory, int(folder.name))
+            expected = build_evidence(directory, number)
             if (
                 json.loads(path.read_text()) != expected
                 or (folder / "evidence.txt").read_text() != expected["content"]
             ):
                 raise PlaytimeError("Archived evidence or its source records have changed")
-        received = received_evidence(directory, int(folder.name))
-        starts = [
-            e for e in events(directory, int(folder.name)) if e["kind"] == "session_start"
-        ]
-        if starts and starts[0].get("evidence") != received:
+        received = received_evidence(directory, number)
+        start = starts.get(number)
+        if start is not None and start.get("evidence") != received:
             raise PlaytimeError("Archived received evidence differs from session start")
-        if enabled and int(folder.name) > 1 and starts and received is None:
+        if enabled and number > 1 and start is not None and received is None:
             raise PlaytimeError("Archived received evidence is missing")
         if received is not None:
-            previous = folder.parent / f"{int(folder.name) - 1:03d}" / "evidence.json"
+            previous = folder.parent / f"{number - 1:03d}" / "evidence.json"
             if (
                 received != json.loads(previous.read_text())
                 or (folder / "evidence-received.txt").read_text() != received["content"]
             ):
                 raise PlaytimeError("Archived received evidence has changed")
-            for event in events(directory, int(folder.name)):
+            for event in events(directory, number):
                 if event["kind"] == "model_request":
                     messages = event["payload"]["messages"]
                     if len(messages) < 3 or messages[2] != {

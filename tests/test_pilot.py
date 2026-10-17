@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import test_dashboard as fixtures
-from playtime.common import PlaytimeError, tree_manifest, write_json
+from playtime.common import PlaytimeError, digest_json, tree_manifest, write_json
 from playtime.pilot import ORDER, execute_pilot, identity, prepare_pilot
 from playtime.runner import prepare_run, validate_archive
 
@@ -75,3 +75,65 @@ class PilotTests(unittest.TestCase):
             with self.assertRaisesRegex(PlaytimeError, "identities changed"):
                 execute_pilot(self.root, directory)
             execute.assert_not_called()
+
+    def assert_pilot_rejected(self, directory, message):
+        with patch("playtime.pilot.check") as check, patch("playtime.pilot.execute_prepared") as execute:
+            with self.assertRaisesRegex(PlaytimeError, message):
+                execute_pilot(self.root, directory)
+            check.assert_not_called()
+            execute.assert_not_called()
+        self.assertFalse((directory / "progress.json").exists())
+
+    def test_frozen_plan_rejects_swapped_archives_with_unchanged_slot_labels(self):
+        directory = prepare_pilot(self.root, self.recipe)
+        plan = json.loads((directory / "pilot.json").read_text())
+        for key in ["id", "manifest_sha256"]:
+            plan["runs"][0][key], plan["runs"][1][key] = plan["runs"][1][key], plan["runs"][0][key]
+        write_json(directory / "pilot.json", plan)
+        self.assert_pilot_rejected(directory, "membership")
+
+    def test_frozen_plan_rejects_duplicate_run_ids(self):
+        directory = prepare_pilot(self.root, self.recipe)
+        plan = json.loads((directory / "pilot.json").read_text())
+        for key in ["id", "manifest_sha256"]:
+            plan["runs"][-1][key] = plan["runs"][0][key]
+        write_json(directory / "pilot.json", plan)
+        self.assert_pilot_rejected(directory, "unique")
+
+    def test_frozen_plan_checks_recipe_seed_and_condition_against_slot(self):
+        directory = prepare_pilot(self.root, self.recipe)
+        plan = json.loads((directory / "pilot.json").read_text())
+        entry = plan["runs"][-1]
+        archive = self.root / "runs" / entry["id"]
+        original = json.loads((archive / "manifest.json").read_text())
+        for key, value in [("sampling_seed", 1042), ("memory_condition", "self")]:
+            with self.subTest(field=key):
+                manifest = copy.deepcopy(original)
+                manifest["recipe"][key] = value
+                manifest["memory_condition"] = manifest["recipe"]["memory_condition"]
+                write_json(archive / "inputs/recipe.json", manifest["recipe"])
+                manifest["inputs"] = tree_manifest(archive / "inputs")
+                write_json(archive / "manifest.json", manifest)
+                entry["manifest_sha256"] = digest_json(manifest)
+                write_json(directory / "pilot.json", plan)
+                self.assert_pilot_rejected(directory, "membership")
+
+    def test_frozen_plan_checks_pairing_in_plan_manifest_and_inputs(self):
+        directory = prepare_pilot(self.root, self.recipe)
+        original_plan = json.loads((directory / "pilot.json").read_text())
+        archive = self.root / "runs" / original_plan["runs"][-1]["id"]
+        original_manifest = json.loads((archive / "manifest.json").read_text())
+        for source in ["plan", "manifest", "inputs"]:
+            for key, value in [("pilot", "another-pilot"), ("pair", 1), ("order", 1)]:
+                with self.subTest(source=source, field=key):
+                    plan = copy.deepcopy(original_plan)
+                    manifest = copy.deepcopy(original_manifest)
+                    pairing = copy.deepcopy(manifest["pairing"])
+                    targets = {"plan": plan["runs"][-1], "manifest": manifest["pairing"], "inputs": pairing}
+                    targets[source][key] = value
+                    write_json(archive / "inputs/pairing.json", pairing)
+                    manifest["inputs"] = tree_manifest(archive / "inputs")
+                    write_json(archive / "manifest.json", manifest)
+                    plan["runs"][-1]["manifest_sha256"] = digest_json(manifest)
+                    write_json(directory / "pilot.json", plan)
+                    self.assert_pilot_rejected(directory, "membership")

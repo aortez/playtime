@@ -34,8 +34,10 @@ result is used even when context fitting shortened what the prior session saw.
 Each checkpoint archives `evidence.json` and `evidence.txt`; the next session
 archives `evidence-received.json` and `evidence-received.txt`. These hold the exact
 supplied text, byte count, SHA-256, checkpoint paths/hashes, and source event
-sequence numbers/hashes. `MEMENTO.md` is unchanged. Repeat validation reconstructs
-the appendix and checks its received copy against the recorded session start.
+sequence numbers/hashes. `MEMENTO.md` is unchanged. Repeat validation requires the
+recorded session directories, reconstructs the appendix and checks its received
+copy against the recorded session start. Sessions interrupted before a checkpoint
+remain valid without a generated appendix.
 Older archives without this feature remain condition A.
 
 ## Frozen paired workflow
@@ -51,7 +53,8 @@ python3 runs/<first-run-id>/inputs/controller/playtime --root "$PWD" \
 
 Preparation freezes all six archives before inference and prints their IDs. The
 pilot plan records pair membership, order, manifest hashes and shared identities.
-Execution checks all archives before launch and rechecks model/image identity for
+Execution checks all archives, their recipes and pair membership against the plan
+before launch, rejects duplicate run IDs, and rechecks model/image identity for
 each run. A project lock serializes the entire batch. Order is 1042 A/B, 2042 B/A,
 3042 A/B. Only condition, seed and bookkeeping differ. `progress.json` retains
 every started slot, even failures; invoking the same plan again skips them.
