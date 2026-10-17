@@ -59,6 +59,8 @@ each run. A project lock serializes the entire batch. Order is 1042 A/B, 2042 B/
 3042 A/B. Only condition, seed and bookkeeping differ. `progress.json` retains
 every started slot, even failures; invoking the same plan again skips them.
 An infrastructure exception stops the batch; resuming retains that failed slot.
+An interrupted run stops the batch with exit status 130 after saving progress;
+resuming runs only the remaining slots.
 Use the archived controller command above to isolate execution from later edits.
 
 The issue's curiosity limits bound the batch to six runs, 600,000 charged generated

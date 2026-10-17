@@ -1,13 +1,17 @@
 import copy
+import io
 import json
 import sys
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import test_dashboard as fixtures
+from playtime.cli import main
 from playtime.common import PlaytimeError, digest_json, tree_manifest, write_json
+from playtime.jobs import lock_held
 from playtime.pilot import ORDER, execute_pilot, identity, prepare_pilot
 from playtime.runner import prepare_run, validate_archive
 
@@ -42,6 +46,51 @@ class PilotTests(unittest.TestCase):
             execute_pilot(self.root, directory)
             execute_pilot(self.root, directory)
         self.assertEqual(seen, ORDER)
+
+    def test_interrupted_pilot_exits_130_and_resume_only_runs_remaining_slots(self):
+        directory = prepare_pilot(self.root, self.recipe)
+        plan = json.loads((directory / "pilot.json").read_text())
+        first_id = plan["runs"][0]["id"]
+        first_run = self.root / "runs" / first_id
+        seen = []
+        def execute(path, manifest):
+            seen.append((manifest["recipe"]["sampling_seed"], manifest["memory_condition"]))
+            result = {
+                "stop_reason": "interrupted" if len(seen) == 1 else "agent_finished",
+                "error": None,
+            }
+            write_json(path / "result.json", result)
+            return path, result
+        argv = ["--root", str(self.root), "pilot-run", str(directory)]
+        errors = io.StringIO()
+        with (
+            patch("playtime.pilot.check"),
+            patch("playtime.pilot.execute_prepared", side_effect=execute),
+            patch("playtime.cli.signal.signal"),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(errors),
+        ):
+            self.assertEqual(main(argv), 130)
+            self.assertEqual(seen, ORDER[:1])
+            progress = json.loads((directory / "progress.json").read_text())
+            self.assertEqual(set(progress), {first_id})
+            interrupted = progress[first_id]
+            self.assertEqual(interrupted["state"], "finished")
+            self.assertEqual(interrupted["result"]["stop_reason"], "interrupted")
+            self.assertIn("finished", interrupted)
+            self.assertEqual(json.loads((first_run / "job.json").read_text())["state"], "finished")
+            self.assertFalse(lock_held(self.root))
+            result_bytes = (first_run / "result.json").read_bytes()
+
+            self.assertEqual(main(argv), 0)
+            self.assertEqual(seen, ORDER)
+            resumed = json.loads((directory / "progress.json").read_text())
+            self.assertEqual(len(resumed), len(ORDER))
+            self.assertEqual(resumed[first_id], interrupted)
+            self.assertEqual((first_run / "result.json").read_bytes(), result_bytes)
+            self.assertEqual(main(argv), 0)
+            self.assertEqual(seen, ORDER)
+        self.assertIn("playtime: interrupted", errors.getvalue())
 
     def test_manifest_recipe_tampering_and_input_tampering_fail_before_execution(self):
         directory, manifest = prepare_run(self.root, self.recipe)

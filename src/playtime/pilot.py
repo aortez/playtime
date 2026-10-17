@@ -130,5 +130,6 @@ def execute_pilot(root, directory):
                 write_json(progress_path, progress)
                 finish_job(run_directory, progress[key].get("error"))
             if result["stop_reason"] == "interrupted":
-                break
+                # Progress and cleanup are complete; preserve the CLI's exit 130.
+                raise KeyboardInterrupt
     return directory
