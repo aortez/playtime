@@ -322,6 +322,18 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(result["token_budget_charged"], 150)
         self.assertFalse(result["token_usage_complete"])
 
+    def test_transport_failure_preserves_cause_and_unknown_usage(self):
+        failure = StopRun("model_connection_error")
+        failure.__cause__ = ConnectionResetError("Connection reset by peer")
+        result = self.execute([failure])
+        self.assertEqual(result["stop_reason"], "model_connection_error")
+        self.assertEqual(result["error"], "ConnectionResetError: Connection reset by peer")
+        self.assertEqual(result["generated_tokens"], 0)
+        self.assertEqual(result["token_budget_charged"], 100)
+        self.assertFalse(result["token_usage_complete"])
+        self.assertEqual(self.runner.sandbox.calls, [])
+        self.assertIn("Connection reset by peer", report(self.directory).read_text())
+
     def test_old_recipes_default_to_no_recovery_and_retry_settings_are_validated(self):
         del self.recipe["limits"]["tool_parse_retries"]
         validate(self.recipe)

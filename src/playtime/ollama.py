@@ -117,6 +117,10 @@ class Ollama:
             active_socket = connection.sock
             if expired.is_set():
                 raise StopRun("model_timeout")
+            # The 30-second timeout bounds connection setup only. Tool-call
+            # arguments may be buffered by Ollama while generation continues,
+            # so a quiet stream must use the absolute request deadline above.
+            active_socket.settimeout(None)
             connection.request(
                 "POST",
                 self.url.path.rstrip("/") + "/api/chat",

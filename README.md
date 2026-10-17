@@ -142,6 +142,11 @@ unaccounted request, even if the run later finishes successfully. Error chunks
 and `model_error` records preserve the failures and recovery decisions.
 HTTP error responses are recorded as `http_error` metadata in the event log,
 including their status, bounded body, and whether the body was truncated.
+Transport failures also preserve their underlying exception in the result's
+`error` field. Connection setup is limited to 30 seconds (or the remaining
+request deadline). Once connected, the absolute `model_seconds` / wall deadline
+bounds the response, including silent periods while Ollama buffers tool-call
+arguments; there is no separate 30-second stream-idle timeout.
 
 At each boundary the controller:
 

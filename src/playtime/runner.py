@@ -467,6 +467,9 @@ class Supervisor:
                     break
         except StopRun as error:
             reason = str(error)
+            if reason in {"model_connection_error", "model_timeout"} and error.__cause__:
+                cause = error.__cause__
+                error_text = f"{type(cause).__name__}: {cause}"
         except KeyboardInterrupt:
             reason = "interrupted"
         except Exception as error:

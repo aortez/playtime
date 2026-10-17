@@ -73,6 +73,29 @@ class StreamingTests(unittest.TestCase):
         with self.assertRaisesRegex(StopRun, "incomplete_model_response"):
             self.serve(respond).chat({}, 2, lambda chunk: None)
 
+    def test_quiet_tool_generation_can_outlast_connection_setup_timeout(self):
+        def respond(output):
+            output.write(b'{"message":{"thinking":"Writing a tool call"}}\n')
+            output.flush()
+            # Ollama can buffer tool arguments without streaming a heartbeat.
+            time.sleep(0.3)
+            output.write(
+                b'{"message":{"tool_calls":[{"function":{"name":"exec",'
+                b'"arguments":{"command":"pwd"}}}]},"done":true,"eval_count":20}\n'
+            )
+            output.flush()
+
+        client = self.serve(respond)
+        connect = client.connection
+        # Scale the connection-only timeout down to keep this regression fast.
+        client.connection = lambda timeout: connect(0.1)
+        captured = []
+        result = client.chat({}, 2, captured.append)
+        self.assertEqual(result["eval_count"], 20)
+        self.assertEqual(result["message"]["thinking"], "Writing a tool call")
+        self.assertEqual(result["message"]["tool_calls"][0]["function"]["name"], "exec")
+        self.assertEqual(len(captured), 2)
+
     def test_only_explicit_tool_parse_errors_are_recoverable_and_chunks_are_preserved(self):
         for error in [
             "error parsing tool call: invalid character ']'",
