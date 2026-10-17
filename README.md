@@ -37,7 +37,7 @@ The bundled creative prompt is a placeholder. Replace
 
 For the short exploratory pilot, run `./playtime run experiments/curiosity.toml`.
 It uses the same prompt, seeds, model, and workshop with up to four sessions,
-10 work turns per session, 20,000 generated tokens, and a 15-minute wall limit.
+10 work turns per session, 40,000 generated tokens, and a 15-minute wall limit.
 The model may finish early. This recipe permits recovery from up to two
 tool-call parsing failures within the existing turn and token limits.
 Observe its artifact, behavior across the first
