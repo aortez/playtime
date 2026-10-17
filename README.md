@@ -39,6 +39,8 @@ For the short exploratory pilot, run `./playtime run experiments/curiosity.toml`
 It uses the same prompt, seeds, model, and workshop with high reasoning,
 up to four sessions, 10 work turns per session, 100,000 generated tokens, and a
 15-minute wall limit.
+Both work and handoff responses allow up to 4,096 generated tokens, including
+reasoning.
 Its context window is 65,536 tokens per request. Context limits the current
 conversation, tool output, and response; the generation budget limits total
 model output across all sessions. These limits can be adjusted independently.
