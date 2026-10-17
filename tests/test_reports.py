@@ -1,15 +1,21 @@
+import base64
 import http.client
+import io
 import json
+import struct
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
+import zlib
 from contextlib import closing
 from html.parser import HTMLParser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from playtime.report import CSP, load_timeline, publish, report
+from playtime.report_previews import IMAGE_BYTES, PreviewBudget, image_preview, text_preview
 from playtime.server import ReportServer
 
 
@@ -36,6 +42,30 @@ def events(directory, records):
     (directory / "events.jsonl").write_text("\n".join(lines) + "\n")
 
 
+def png(rgb):
+    def chunk(kind, data):
+        return (
+            struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\0" + bytes(rgb)))
+        + chunk(b"IEND", b"")
+    )
+
+
+def snapshot(directory, number, files):
+    folder = directory / "sessions" / f"{number:03d}"
+    folder.mkdir(parents=True)
+    with tarfile.open(folder / "workspace.tar", "w") as archive:
+        for name, data in files.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            archive.addfile(member, io.BytesIO(data))
+
+
 class Elements(HTMLParser):
     def __init__(self, document):
         super().__init__()
@@ -47,6 +77,122 @@ class Elements(HTMLParser):
 
 
 class ReportTests(unittest.TestCase):
+    def test_images_show_the_actual_checkpoint_versions_even_after_overwrite_or_removal(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = fixture(Path(folder))
+            red, blue, green = png((255, 0, 0)), png((0, 0, 255)), png((0, 255, 0))
+            snapshot(directory, 1, {"./plot.png": red, "./removed.png": green})
+            snapshot(directory, 2, {"./plot.png": blue})
+            workspace = directory / "final-workspace"
+            workspace.mkdir()
+            (workspace / "plot.png").write_bytes(blue)
+            events(
+                directory,
+                [
+                    {
+                        "kind": "checkpoint",
+                        "session": 1,
+                        "changes": {"added": ["plot.png", "removed.png"]},
+                    },
+                    {
+                        "kind": "checkpoint",
+                        "session": 2,
+                        "changes": {"modified": ["plot.png"], "removed": ["removed.png"]},
+                    },
+                ],
+            )
+            document = report(directory).read_text()
+            sources = [attrs["src"] for tag, attrs in Elements(document).tags if tag == "img"]
+            for data, count in [(red, 1), (green, 1), (blue, 2)]:
+                source = "data:image/png;base64," + base64.b64encode(data).decode()
+                self.assertEqual(sources.count(source), count)
+            self.assertLess(document.index('id="visual-outputs"'), document.index('id="session-1"'))
+            self.assertIn("Session 1 checkpoint", document)
+            self.assertIn("Last changed in session 2", document)
+            self.assertIn("img-src data:", CSP)
+
+    def test_file_previews_escape_markup_bound_text_and_skip_binary_and_links(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = fixture(Path(folder))
+            workspace = directory / "final-workspace"
+            workspace.mkdir()
+            markup = '<script>window.injected = true</script><svg onload="bad()"></svg>'
+            (workspace / "page.html").write_text(markup)
+            (workspace / "fake.png").write_text(markup)
+            (workspace / "drawing.svg").write_text(markup)
+            (workspace / "binary.dat").write_bytes(b"\x00\xff\x01")
+            (workspace / "long.py").write_text("print('example')\n" * 120)
+            name = "<img src=x onerror=alert(1)>.png"
+            (workspace / name).write_bytes(png((0, 0, 0)))
+            (workspace / "outside.png").symlink_to(workspace / name)
+            (workspace / "outside-dir").symlink_to(directory / "inputs", target_is_directory=True)
+            document = report(directory).read_text()
+            elements = Elements(document)
+            self.assertEqual(sum(tag == "script" for tag, _ in elements.tags), 1)
+            self.assertEqual(sum(tag == "img" for tag, _ in elements.tags), 1)
+            self.assertFalse(any(tag == "svg" for tag, _ in elements.tags))
+            self.assertFalse(
+                any(key.startswith("on") for _, attrs in elements.tags for key in attrs)
+            )
+            self.assertIn("&lt;script&gt;window.injected", document)
+            self.assertIn("Excerpt shown. Download the file", document)
+            self.assertIn("does not have a recognized image header", document)
+            self.assertIn("binary.dat", document)
+            self.assertNotIn("outside.png", document)
+            self.assertNotIn("outside-dir", document)
+
+    def test_snapshot_previews_ignore_unsafe_members_and_survive_damaged_archives(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = fixture(Path(folder))
+            snapshot(directory, 1, {"../escape.png": png((0, 0, 0))})
+            archive_path = directory / "sessions/001/workspace.tar"
+            with tarfile.open(archive_path, "a") as archive:
+                for name, kind in [
+                    ("symlink.png", tarfile.SYMTYPE),
+                    ("hardlink.png", tarfile.LNKTYPE),
+                ]:
+                    member = tarfile.TarInfo(name)
+                    member.type = kind
+                    member.linkname = "../escape.png"
+                    archive.addfile(member)
+            events(
+                directory,
+                [
+                    {
+                        "kind": "checkpoint",
+                        "session": 1,
+                        "changes": {"added": ["../escape.png", "symlink.png", "hardlink.png"]},
+                    }
+                ],
+            )
+            document = report(directory).read_text()
+            self.assertFalse(any(tag == "img" for tag, _ in Elements(document).tags))
+            archive_path.write_bytes(b"broken archive")
+            self.assertIn("saved snapshot could not be read", report(directory).read_text())
+
+    def test_preview_limits_preserve_download_fallback_and_utf8_boundaries(self):
+        data = png((1, 2, 3))
+        budget = PreviewBudget()
+        budget.images = len(data) - 1
+        self.assertIn("notice", image_preview(io.BytesIO(data), "small.png", len(data), budget))
+        self.assertIn(
+            "notice", image_preview(io.BytesIO(data), "large.png", IMAGE_BYTES + 1, PreviewBudget())
+        )
+        text = "é".encode() * 10
+        budget.text = 3
+        preview = text_preview(io.BytesIO(text), len(text), budget)
+        self.assertEqual(preview, {"text": "é", "truncated": True})
+        with tempfile.TemporaryDirectory() as folder:
+            directory = fixture(Path(folder))
+            workspace = directory / "final-workspace"
+            workspace.mkdir()
+            with (workspace / "large.png").open("wb") as source:
+                source.write(data)
+                source.truncate(IMAGE_BYTES + 1)
+            document = report(directory).read_text()
+            self.assertIn("4 MiB inline preview limit", document)
+            self.assertIn('href="./final-workspace/large.png" download', document)
+
     def test_turns_join_actions_to_results_and_preserve_reset_memories(self):
         with tempfile.TemporaryDirectory() as folder:
             directory = fixture(Path(folder))

@@ -7,10 +7,11 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .report_assets import SCRIPT, STYLE
+from .report_previews import PreviewBudget, checkpoint_images, final_artifacts
 
 SCRIPT_HASH = base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
 CSP = (
-    "default-src 'none'; style-src 'unsafe-inline'; "
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; "
     f"script-src 'sha256-{SCRIPT_HASH}'; base-uri 'none'; form-action 'none'"
 )
 
@@ -79,6 +80,77 @@ def raw_details(records):
 
 def badge(text, style=""):
     return f'<span class="badge {style}">{escaped(text)}</span>'
+
+
+def render_images(artifacts, context):
+    body = '<div class="image-grid">'
+    for artifact in artifacts:
+        name = artifact["name"]
+        preview = artifact["image"]
+        caption = context
+        if name.startswith("seeds/"):
+            caption += " · Starting seed"
+        elif artifact.get("change"):
+            caption += " · " + artifact["change"]
+        body += '<figure class="image-card">'
+        if preview.get("src"):
+            body += (
+                f'<button type="button" class="image-open" data-image-preview '
+                f'data-name="{escaped(name)}" data-caption="{escaped(caption)}" '
+                f'data-download="{escaped(artifact.get("url", ""))}" '
+                f'aria-label="Enlarge {escaped(name)} · {escaped(caption)}">'
+                f'<img src="{preview["src"]}" alt="{escaped(name)}" loading="lazy" decoding="async">'
+                '<span class="image-zoom" aria-hidden="true">Enlarge ↗</span></button>'
+            )
+        else:
+            body += f'<div class="image-unavailable">{escaped(preview["notice"])}</div>'
+        body += f'<figcaption><strong>{escaped(name)}</strong><div class="image-meta">'
+        if preview.get("mime"):
+            body += badge(preview["mime"].split("/")[1].upper())
+        body += f"<span>{artifact['size'] / 1024:,.1f} KiB · {escaped(caption)}</span></div>"
+        body += '<div class="links">'
+        if artifact.get("session"):
+            number = artifact["session"]
+            body += f'<a href="#session-{number}">Last changed in session {number}</a>'
+        if artifact.get("url"):
+            body += f'<a href="{escaped(artifact["url"])}" download>Download</a>'
+        body += "</div></figcaption></figure>"
+    return body + "</div>"
+
+
+def render_artifacts(artifacts):
+    body = '<section class="panel" id="artifacts"><h2>Saved files</h2>'
+    body += '<p class="muted">Final workspace files. Expand a text preview or download the original.</p><ul class="artifact-list">'
+    for artifact in artifacts:
+        body += (
+            '<li><div class="row">'
+            f'<a href="{escaped(artifact["url"])}" download>{escaped(artifact["name"])}</a>'
+            f'<span class="meta">{artifact["size"]:,} bytes</span></div>'
+        )
+        preview = artifact.get("text")
+        if preview is not None:
+            body += '<details class="artifact-source"><summary>Preview text / source</summary>'
+            body += f"<pre>{escaped(preview['text'])}</pre>"
+            if preview["truncated"]:
+                body += '<p class="muted">Excerpt shown. Download the file for its complete contents.</p>'
+            body += "</details>"
+        if artifact.get("notice"):
+            body += f'<p class="muted">{escaped(artifact["notice"])}</p>'
+        body += "</li>"
+    if not artifacts:
+        body += '<li class="muted">No final artifacts recorded.</li>'
+    return body + "</ul></section>"
+
+
+def image_viewer():
+    return (
+        '<dialog id="image-viewer" aria-labelledby="image-title">'
+        '<div class="row"><h2 id="image-title">Image preview</h2>'
+        '<button type="button" data-close-preview autofocus>Close ✕</button></div>'
+        '<p id="image-caption" class="muted"></p><div id="image-stage"></div>'
+        '<div class="row image-actions"><button type="button" data-image-size aria-pressed="false">Actual size</button>'
+        "<a data-image-download download>Download image</a></div></dialog>"
+    )
 
 
 def load_timeline(directory):
@@ -306,7 +378,7 @@ def render_turn(turn):
     return body + "</div></article>"
 
 
-def render_session(directory, number, session, previous_tokens):
+def render_session(directory, number, session, previous_tokens, previews):
     checkpoint = session["checkpoint"]
     total = checkpoint.get("generated_tokens_total")
     count = (
@@ -337,12 +409,22 @@ def render_session(directory, number, session, previous_tokens):
         body += f'<a href="{folder}/memento.txt" class="meta">Open memento</a>'
     else:
         body += text_block("Memory saved at checkpoint", "No checkpoint memento recorded.")
-    body += '</div></div><div class="steps">'
+    body += "</div></div>"
+    changes = checkpoint.get("changes", {})
+    images, preview_notice = checkpoint_images(directory, number, changes, previews)
+    if images or preview_notice:
+        body += '<div class="session-images"><h3>Images at checkpoint</h3>'
+        body += '<p class="muted">New or changed images from this session’s saved snapshot.</p>'
+        if images:
+            body += render_images(images, f"Session {number} checkpoint")
+        if preview_notice:
+            body += f'<p class="notice">{escaped(preview_notice)}</p>'
+        body += "</div>"
+    body += '<div class="steps">'
     body += "".join(render_turn(turn) for turn in session["turns"])
     for notice in session["notices"]:
         body += f'<div class="notice">{escaped(notice.get("kind", "Notice"))}{raw_details(notice)}</div>'
     body += '</div><div class="session-footer">'
-    changes = checkpoint.get("changes", {})
     files = [
         f"{symbol} {name}"
         for key, symbol in [("added", "+"), ("modified", "Δ"), ("removed", "−")]
@@ -392,6 +474,16 @@ def report(directory):
         if not session["checkpoint"]:
             session["checkpoint"] = summary
     recipe = manifest["recipe"]
+    previews = PreviewBudget()
+    artifacts = final_artifacts(directory, previews)
+    changed_in = {
+        name: number
+        for number, session in sessions.items()
+        for key in ["added", "modified"]
+        for name in session["checkpoint"].get("changes", {}).get(key, [])
+    }
+    for artifact in artifacts:
+        artifact["session"] = changed_in.get(artifact["name"])
     body = (
         '<div class="topline"><a href="../index.html">← All runs</a>'
         + badge(manifest["kind"])
@@ -436,7 +528,16 @@ def report(directory):
     body += '<nav class="links"><a href="manifest.json">Manifest</a><a href="events.jsonl">Complete event log</a>'
     if (directory / "result.json").exists():
         body += '<a href="result.json">Result</a>'
-    body += '</nav><section class="panel"><h2>Starting direction</h2>'
+    body += '<a href="#artifacts">Saved files ↓</a></nav>'
+    images = [artifact for artifact in artifacts if artifact.get("image")]
+    if images:
+        body += (
+            '<section class="panel" id="visual-outputs"><div class="row"><h2>Visual outputs</h2>'
+        )
+        body += badge(f"{len(images)} " + ("image" if len(images) == 1 else "images")) + "</div>"
+        body += '<p class="muted">Final saved images. Select an image to enlarge it; GIFs animate inline.</p>'
+        body += render_images(images, "Final workspace") + "</section>"
+    body += '<section class="panel"><h2>Starting direction</h2>'
     body += (
         text_block(
             "Prompt supplied to this run",
@@ -457,28 +558,12 @@ def report(directory):
         body += f'<p class="notice error">{escaped(notice)}</p>'
     previous_tokens = 0
     for number, session in sessions.items():
-        body += render_session(directory, number, session, previous_tokens)
+        body += render_session(directory, number, session, previous_tokens, previews)
         previous_tokens = session["checkpoint"].get("generated_tokens_total", previous_tokens)
     if not sessions:
         body += '<p class="empty">No session records yet.</p>'
-    artifacts = []
-    workspace = directory / "final-workspace"
-    if workspace.exists():
-        for path in sorted(workspace.rglob("*")):
-            if path.is_file() and not path.is_symlink():
-                relative = path.relative_to(directory).as_posix()
-                label = path.relative_to(workspace).as_posix()
-                artifacts.append(
-                    f'<li><a href="./{quote(relative, safe="/")}" download>{escaped(label)}</a><span>{path.stat().st_size:,} bytes</span></li>'
-                )
-    body += (
-        '<section class="panel"><h2>Final artifacts</h2><ul class="artifact-list">'
-        + "".join(artifacts)
-        + "</ul>"
-    )
-    if not artifacts:
-        body += '<p class="muted">No final artifacts recorded.</p>'
-    body += "</section><footer>Playtime · Report generated from saved records. View controls do not change the experiment.</footer>"
+    body += render_artifacts(artifacts) + image_viewer()
+    body += "<footer>Playtime · Report generated from saved records. View controls do not change the experiment.</footer>"
     return write_page(
         directory / "report.html", page(f"Playtime · {recipe['name']}", body, controls=True)
     )

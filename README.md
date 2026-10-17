@@ -228,11 +228,22 @@ also be expanded. Partial model streams, unknown token usage, tool failures,
 and tool output truncation stay visible. The complete requests and stream
 chunks remain in `events.jsonl`.
 
+The **Visual outputs** gallery shows final PNG, JPEG, GIF, and WebP files inline;
+GIFs animate, and selecting an image opens an enlarged view with an actual-size
+option and download. Each session also shows new or changed images from its
+own saved snapshot, preserving earlier versions when later sessions overwrite
+or remove them. These previews remain visible in Compact view. **Saved files**
+offers expandable, escaped text/source excerpts and original-file downloads.
+
 Reports work directly from disk and contain no external assets. Their small
-view-control script is permitted by an exact content hash. The local server
-serves artifacts as downloads, blocks symlinks and path traversal, and exposes
-only the run archive. Regenerating a report updates its presentation and the
-gallery; it does not change recorded prompts, events, or snapshots.
+view-control script is permitted by an exact content hash. Raster previews are
+embedded data URLs, with a 4 MiB limit per image and 16 MiB per report; larger
+images remain downloadable. Text previews show at most 12,000 bytes / 100 lines
+per file, within a 2 MiB report allowance. HTML and SVG are shown only as escaped
+source. The local server still serves original artifacts as downloads, blocks
+symlinks and path traversal, and exposes only the run archive. Regenerating a
+report updates its presentation and the gallery; it does not change recorded
+prompts, events, or snapshots.
 
 Logs and snapshots are outside the model's environment. Workspace snapshots
 preserve links in their tar archives; automatic artifact extraction creates
