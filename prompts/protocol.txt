@@ -7,6 +7,10 @@ session needs, using end_session when you are ready. Other files are available
 to inspect. Processes stop at each reset. The controller supplies your remaining
 budget and the tool inventory. It does not summarize your work for you.
 
+Your next session will not see this conversation. Preserve useful earlier
+knowledge, artifact paths, checked results, unresolved problems, and a concrete
+next step in your memento.
+
 Work inside /work. Tool output may be truncated; save longer results in files.
 The external run log is for the human reviewer and is not available to you.
 Use finish_run=true in end_session if you decide your exploration is complete.
