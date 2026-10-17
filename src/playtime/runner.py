@@ -21,7 +21,7 @@ from .common import (
 )
 from .config import repo_path
 from .environment import check_image
-from .ollama import Ollama
+from .ollama import Ollama, ToolCallParseError
 from .sandbox import Sandbox, extract_regular_files, initial_archive
 from .tools import TOOLS, validate_call
 
@@ -167,7 +167,27 @@ class Supervisor:
         self.last_snapshot = None
         self.index = {}
         self.sessions = []
-        self.usage_complete = True
+        self.unaccounted_calls = 0
+        self.unaccounted_token_reserve = 0
+        self.tool_parse_errors = 0
+
+    @property
+    def usage_complete(self):
+        return self.unaccounted_calls == 0
+
+    @property
+    def tokens_charged(self):
+        return self.generated + self.unaccounted_token_reserve
+
+    def accounting(self):
+        return {
+            "generated_tokens": self.generated,
+            "token_usage_complete": self.usage_complete,
+            "unaccounted_model_calls": self.unaccounted_calls,
+            "unaccounted_token_reserve": self.unaccounted_token_reserve,
+            "token_budget_charged": self.tokens_charged,
+            "tool_parse_errors": self.tool_parse_errors,
+        }
 
     def remaining(self):
         remaining = self.deadline - time.monotonic()
@@ -178,7 +198,7 @@ class Supervisor:
     def budget(self):
         return {
             "generated_tokens_remaining": self.recipe["limits"]["generated_tokens"]
-            - self.generated,
+            - self.tokens_charged,
             "wall_seconds_limit": self.recipe["limits"]["wall_seconds"],
             "session": self.session,
             "sessions_total": self.recipe["sessions"],
@@ -186,7 +206,7 @@ class Supervisor:
 
     def request(self, messages, *, handoff=False):
         limits = self.recipe["limits"]
-        remaining_tokens = limits["generated_tokens"] - self.generated
+        remaining_tokens = limits["generated_tokens"] - self.tokens_charged
         reserve = 0 if handoff else limits["handoff_tokens"]
         maximum = min(
             limits["handoff_tokens"] if handoff else limits["tokens_per_call"],
@@ -217,32 +237,68 @@ class Supervisor:
                 "seed": (self.recipe["sampling_seed"] + self.calls - 1) % (2**31),
             },
         }
+        seconds_remaining = self.remaining()
         self.log.emit(
             "model_request",
             session=self.session,
             call=self.calls,
             handoff=handoff,
             payload=payload,
-            seconds_remaining=round(self.remaining(), 3),
+            seconds_remaining=round(seconds_remaining, 3),
         )
-        self.usage_complete = False
-        response = self.model.chat(
-            payload,
-            min(limits["model_seconds"], self.remaining()),
-            lambda chunk: self.log.emit(
-                "model_chunk", session=self.session, call=self.calls, chunk=chunk
-            ),
-        )
+        # Reserve the full generation allowance before dispatch. Only a complete
+        # response with server-reported usage can replace it with an exact count.
+        # A later successful call never erases an earlier unknown count.
+        timeout = min(limits["model_seconds"], self.remaining())
+        self.unaccounted_calls += 1
+        self.unaccounted_token_reserve += maximum
+        try:
+            response = self.model.chat(
+                payload,
+                timeout,
+                lambda chunk: self.log.emit(
+                    "model_chunk", session=self.session, call=self.calls, chunk=chunk
+                ),
+            )
+        except ToolCallParseError as error:
+            self.tool_parse_errors += 1
+            recovery_allowed = self.tool_parse_errors <= limits.get("tool_parse_retries", 0)
+            self.log.emit(
+                "model_error",
+                session=self.session,
+                call=self.calls,
+                reason="tool_call_parse_error",
+                error=str(error),
+                recovery_allowed=recovery_allowed,
+                token_budget_charge=maximum,
+                **self.accounting(),
+            )
+            if not recovery_allowed:
+                raise StopRun("tool_parse_retry_limit") from error
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "The server rejected your last response because a tool call could "
+                    "not be parsed. None of that response's tools ran. Try again with valid JSON "
+                    "object arguments. The failed request's full generation allowance was "
+                    f"charged to the budget; its actual usage is unknown. Budget: {canonical(self.budget())}",
+                }
+            )
+            # The caller consumes this work/handoff turn. There is no inner
+            # retry loop that can bypass turn, context, wall, or log limits.
+            return None
         self.generated += response["eval_count"]
-        self.usage_complete = True
+        self.unaccounted_calls -= 1
+        self.unaccounted_token_reserve -= maximum
         self.log.emit(
             "model_response",
             session=self.session,
             call=self.calls,
             response=response,
             generated_tokens_total=self.generated,
+            token_budget_charged_total=self.tokens_charged,
         )
-        if self.generated > limits["generated_tokens"]:
+        if self.tokens_charged > limits["generated_tokens"]:
             raise StopRun("token_limit_exceeded_by_server")
         return response["message"]
 
@@ -295,6 +351,8 @@ class Supervisor:
         summary = {
             "session": self.session,
             "generated_tokens_total": self.generated,
+            "token_budget_charged_total": self.tokens_charged,
+            "unaccounted_model_calls_total": self.unaccounted_calls,
             "changes": changes,
             "memento_status": memory["status"],
             "interrupted": interrupted,
@@ -341,17 +399,18 @@ class Supervisor:
                     ):
                         self.log.emit("early_handoff", session=self.session, reason="context_guard")
                         break
-                    if limits["generated_tokens"] - self.generated <= limits["handoff_tokens"]:
+                    if limits["generated_tokens"] - self.tokens_charged <= limits["handoff_tokens"]:
                         break
                     try:
                         message = self.request(messages)
                     except SessionFull:
                         self.log.emit("early_handoff", session=self.session, reason="context_guard")
                         break
-                    messages.append(message)
-                    ended, finished = self.apply_calls(message, messages)
-                    if ended:
-                        break
+                    if message is not None:
+                        messages.append(message)
+                        ended, finished = self.apply_calls(message, messages)
+                        if ended:
+                            break
                     messages.append(
                         {
                             "role": "user",
@@ -369,7 +428,7 @@ class Supervisor:
                         }
                     )
                     for _ in range(2):
-                        if self.generated >= limits["generated_tokens"]:
+                        if self.tokens_charged >= limits["generated_tokens"]:
                             break
                         try:
                             message = self.request(messages, handoff=True)
@@ -378,17 +437,18 @@ class Supervisor:
                                 "handoff_skipped", session=self.session, reason="context_guard"
                             )
                             break
-                        messages.append(message)
-                        ended, finished = self.apply_calls(message, messages, handoff=True)
-                        if ended:
-                            break
+                        if message is not None:
+                            messages.append(message)
+                            ended, finished = self.apply_calls(message, messages, handoff=True)
+                            if ended:
+                                break
                     if not ended:
                         self.log.emit("handoff_missing", session=self.session)
                 self.checkpoint()
                 if finished:
                     reason = "agent_finished"
                     break
-                if self.generated >= limits["generated_tokens"]:
+                if self.tokens_charged >= limits["generated_tokens"]:
                     reason = "token_limit"
                     break
         except StopRun as error:
@@ -414,8 +474,7 @@ class Supervisor:
                 "stop_reason": reason,
                 "error": error_text,
                 "cleanup_errors": cleanup_errors,
-                "generated_tokens": self.generated,
-                "token_usage_complete": self.usage_complete,
+                **self.accounting(),
                 "model_calls": self.calls,
                 "sessions": self.sessions,
                 "elapsed_seconds": round(time.monotonic() - self.started, 3),
@@ -427,15 +486,16 @@ class Supervisor:
                     "run_end",
                     final=True,
                     stop_reason=reason,
-                    generated_tokens=self.generated,
-                    token_usage_complete=self.usage_complete,
+                    **self.accounting(),
                     error=error_text,
                     cleanup_errors=cleanup_errors,
                 )
             finally:
                 self.log.close()
+        usage = str(self.generated) + (" + unknown" if not self.usage_complete else "")
         print(
-            f"Stopped: {reason}; generated tokens: {self.generated}; sessions: {len(self.sessions)}",
+            f"Stopped: {reason}; generated tokens: {usage}; "
+            f"budget charged: {self.tokens_charged}; sessions: {len(self.sessions)}",
             flush=True,
         )
         return result

@@ -49,7 +49,8 @@ def validate(recipe):
     if set(recipe) != ROOT_KEYS:
         raise PlaytimeError(f"Recipe keys differ from schema: {set(recipe) ^ ROOT_KEYS}")
     for group, expected in GROUP_KEYS.items():
-        if not isinstance(recipe[group], dict) or set(recipe[group]) != expected:
+        optional = {"tool_parse_retries"} if group == "limits" else set()
+        if not isinstance(recipe[group], dict) or set(recipe[group]) - optional != expected:
             raise PlaytimeError(f"Invalid keys in [{group}]; expected {sorted(expected)}")
     if recipe["reset_mode"] != "files_only":
         raise PlaytimeError("Only reset_mode='files_only' is currently implemented")
@@ -84,6 +85,10 @@ def validate(recipe):
     if workshop["workspace_mb"] + workshop["tmp_mb"] >= workshop["memory_mb"]:
         raise PlaytimeError("Leave process memory beyond workspace_mb + tmp_mb")
     for key, value in recipe["limits"].items():
+        if key == "tool_parse_retries":
+            if type(value) is not int or not 0 <= value <= 10:
+                raise PlaytimeError("limits.tool_parse_retries must be an integer from 0 to 10")
+            continue
         if type(value) is not int or value < 1:
             raise PlaytimeError(f"limits.{key} must be a positive integer")
     limits = recipe["limits"]

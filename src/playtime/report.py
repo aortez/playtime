@@ -117,7 +117,7 @@ def load_timeline(directory):
             if kind == "session_start":
                 session["start"] = event
                 current = None
-            elif kind in {"model_request", "model_chunk", "model_response"}:
+            elif kind in {"model_request", "model_chunk", "model_response", "model_error"}:
                 key = (number, event.get("call", event.get("sequence", 0)))
                 if key not in turns:
                     turns[key] = {
@@ -125,6 +125,7 @@ def load_timeline(directory):
                         "time": event.get("time", ""),
                         "request": {},
                         "response": None,
+                        "error": None,
                         "stream": {"content": "", "thinking": ""},
                         "tools": [],
                     }
@@ -141,6 +142,8 @@ def load_timeline(directory):
                     message = event.get("chunk", {}).get("message", {})
                     for field in ["thinking", "content"]:
                         current["stream"][field] += message.get(field, "")
+                elif kind == "model_error":
+                    current["error"] = event
                 else:
                     current["response"] = event
                     current["stream"] = {}
@@ -245,6 +248,7 @@ def render_tool(tool):
 
 def render_turn(turn):
     response = turn["response"]
+    failure = turn.get("error")
     payload = (response or {}).get("response", {})
     message = payload.get("message", {}) if response else turn["stream"]
     if response and not message:
@@ -261,6 +265,9 @@ def render_turn(turn):
         if "bad" in statuses
         else ("Incomplete" if not response or "warn" in statuses else "")
     )
+    if failure:
+        title = "Malformed tool call"
+        status = "Correction requested" if failure["recovery_allowed"] else "Retry limit reached"
     tokens = payload.get("eval_count")
     count = f"{tokens:,} tokens" if tokens is not None else "Token usage unknown"
     timing = str(turn["time"])[11:19] if "T" in str(turn["time"]) else str(turn["time"])
@@ -274,9 +281,27 @@ def render_turn(turn):
             body += text_block(label, message[key])
     if not response:
         body += '<p class="notice">Incomplete response. Any text shown is the recorded stream; final token usage is unknown.</p>'
+    if failure:
+        charge = failure["token_budget_charge"]
+        body += (
+            f'<p class="notice">No tools from this response ran. Its full allowance of '
+            f"{charge:,} tokens was charged to the budget; this is not measured usage. "
+            + (
+                "A correction was requested within the remaining turn limits."
+                if failure["recovery_allowed"]
+                else "The configured recovery allowance was exhausted."
+            )
+            + "</p>"
+            + text_block("Server error", failure["error"])
+        )
     body += "".join(render_tool(tool) for tool in turn["tools"])
     body += raw_details(
-        {"request_metadata": turn["request"], "response": response, "tools": turn["tools"]}
+        {
+            "request_metadata": turn["request"],
+            "response": response,
+            "error": failure,
+            "tools": turn["tools"],
+        }
     )
     return body + "</div></article>"
 
@@ -391,7 +416,17 @@ def report(directory):
         + "</div>"
     )
     if not result.get("token_usage_complete", True):
-        body += '<p class="notice">Generated tokens include only accounted requests. The final request has unknown usage.</p>'
+        body += '<p class="notice">Generated tokens include only accounted requests. One or more requests have unknown usage.</p>'
+        if "token_budget_charged" in result:
+            body += (
+                f'<p class="notice"><strong>Budget charged: {result["token_budget_charged"]:,}'
+                f" / {recipe['limits']['generated_tokens']:,} tokens.</strong> "
+                f"This includes {result['unaccounted_token_reserve']:,} reserved for "
+                f"{result['unaccounted_model_calls']} unaccounted request(s). "
+                "These reservations are conservative budget charges, not measured token counts.</p>"
+            )
+    if result.get("tool_parse_errors"):
+        body += f'<p class="notice">Tool-call parsing failures: {result["tool_parse_errors"]}. Failed attempts and correction decisions are shown in the trace.</p>'
     if result.get("error") or result.get("cleanup_errors"):
         body += (
             '<div class="notice error">'
@@ -478,11 +513,18 @@ def gallery(directory):
         body += f'<a class="run-card" href="./{quote(path.name, safe="")}/report.html"><div class="row">'
         body += (
             badge(manifest.get("kind", "unknown"))
-            + badge(result["stop_reason"], "bad" if result.get("error") else "")
+            + badge(
+                result["stop_reason"],
+                "bad"
+                if result.get("error") or result["stop_reason"] == "tool_parse_retry_limit"
+                else "",
+            )
             + "</div>"
         )
         body += f'<h2>{escaped(manifest["recipe"]["name"])}</h2><div class="meta">{escaped(manifest.get("id", path.name))}</div>'
         body += f'<div class="meta">{escaped(token_label(result))} generated tokens · {len(result.get("sessions", []))} sessions · {escaped(str(result.get("elapsed_seconds", "—")))} seconds</div>'
+        if result.get("tool_parse_errors"):
+            body += f'<div class="meta">{result["tool_parse_errors"]} tool-call parsing failure(s) · {result["token_budget_charged"]:,} tokens charged to the budget</div>'
         body += "</a>"
     if not records:
         body += '<div class="panel empty">No reports yet. Completed runs will appear here.</div>'

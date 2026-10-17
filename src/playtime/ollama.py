@@ -7,6 +7,10 @@ from urllib.parse import urlsplit
 from .common import PlaytimeError, StopRun, canonical, digest_json
 
 
+class ToolCallParseError(PlaytimeError):
+    """Ollama explicitly rejected a tool call before returning a complete response."""
+
+
 class Ollama:
     def __init__(self, endpoint):
         self.url = urlsplit(endpoint)
@@ -128,6 +132,10 @@ class Ollama:
                 chunk = json.loads(raw)
                 on_chunk(chunk)
                 if "error" in chunk:
+                    if isinstance(chunk["error"], str) and chunk["error"].startswith(
+                        "error parsing tool call:"
+                    ):
+                        raise ToolCallParseError(chunk["error"])
                     raise PlaytimeError(f"Ollama stream error: {chunk['error']}")
                 part = chunk.get("message", {})
                 message["content"] += part.get("content", "")

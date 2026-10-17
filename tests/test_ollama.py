@@ -7,8 +7,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from playtime.common import StopRun
-from playtime.ollama import Ollama
+from playtime.common import PlaytimeError, StopRun
+from playtime.ollama import Ollama, ToolCallParseError
 
 
 class StreamingTests(unittest.TestCase):
@@ -70,6 +70,28 @@ class StreamingTests(unittest.TestCase):
 
         with self.assertRaisesRegex(StopRun, "incomplete_model_response"):
             self.serve(respond).chat({}, 2, lambda chunk: None)
+
+    def test_only_explicit_tool_parse_errors_are_recoverable_and_chunks_are_preserved(self):
+        for error in [
+            "error parsing tool call: invalid character ']'",
+            "model runner out of memory",
+        ]:
+            with self.subTest(error=error):
+                chunks = [{"message": {"thinking": "partial"}}, {"error": error}]
+
+                def respond(output, chunks=chunks):
+                    for chunk in chunks:
+                        output.write((json.dumps(chunk) + "\n").encode())
+                        output.flush()
+
+                captured = []
+                with self.assertRaises(PlaytimeError) as raised:
+                    self.serve(respond).chat({}, 2, captured.append)
+                self.assertEqual(
+                    isinstance(raised.exception, ToolCallParseError),
+                    error.startswith("error parsing tool call:"),
+                )
+                self.assertEqual(captured, chunks)
 
     def test_wall_deadline_interrupts_a_stalled_stream(self):
         def respond(output):

@@ -39,3 +39,5 @@ command_seconds = 60
 output_bytes = 16384
 memento_bytes = 8192
 log_mb = 64
+# Allow two parser failures to receive correction feedback within normal turns.
+tool_parse_retries = 2

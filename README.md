@@ -38,7 +38,9 @@ The bundled creative prompt is a placeholder. Replace
 For the short exploratory pilot, run `./playtime run experiments/curiosity.toml`.
 It uses the same prompt, seeds, model, and workshop with up to four sessions,
 10 work turns per session, 20,000 generated tokens, and a 15-minute wall limit.
-The model may finish early. Observe its artifact, behavior across the first
+The model may finish early. This recipe permits recovery from up to two
+tool-call parsing failures within the existing turn and token limits.
+Observe its artifact, behavior across the first
 reset, and response to failures without coaching it during the run.
 
 The command prints the new run directory and report path. Every completed run
@@ -108,8 +110,26 @@ limit and a two-hour wall deadline. A turn is one model request followed by up
 to eight tool executions. Two additional requests may be used for handoff,
 within the same global budgets. The controller reserves generation capacity
 for handoff. Thinking and ordinary output are counted using Ollama's reported
-`eval_count`; an interrupted request is explicitly marked as incompletely
-accounted and terminates the run.
+`eval_count`. Requests without final usage are explicitly marked as incompletely
+accounted. Their full requested generation allowance is charged to the budget;
+that reservation is not reported as measured usage. Later successful requests
+do not erase the unknown counts.
+
+Optional `limits.tool_parse_retries` (default `0`) permits a bounded number of
+Ollama `error parsing tool call:` failures to receive correction feedback. The
+curiosity recipe sets it to `2`: the third parser failure stops the run. Each
+failed call uses an ordinary work or handoff turn. The model is told that none
+of the failed response's tools ran and asked to emit valid JSON arguments. The
+controller does not repair JSON, execute partial tool calls, or add extra turns.
+Only this specific server error is recoverable; timeouts, broken streams, and
+other server errors still stop the run. Wall, context, log, and token limits
+continue to apply to every request, including corrections.
+
+Results distinguish `generated_tokens` (server-reported usage),
+`unaccounted_token_reserve` (full allowances for requests without usage), and
+`token_budget_charged` (their sum). `token_usage_complete` stays false after any
+unaccounted request, even if the run later finishes successfully. Error chunks
+and `model_error` records preserve the failures and recovery decisions.
 
 At each boundary the controller:
 
