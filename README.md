@@ -36,7 +36,7 @@ The bundled creative prompt is a placeholder. Replace
 ```
 
 For the short exploratory pilot, run `./playtime run experiments/curiosity.toml`.
-It uses the same prompt, seeds, model, and workshop with medium reasoning,
+It uses the same prompt, seeds, model, and workshop with high reasoning,
 up to four sessions, 10 work turns per session, 100,000 generated tokens, and a
 15-minute wall limit.
 Its context window is 65,536 tokens per request. Context limits the current
