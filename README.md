@@ -101,6 +101,9 @@ must redirect output to files and stop at the session boundary. The browser
 can reach a server on the container's loopback interface. External networking
 is disabled. Screenshots and audio are artifacts; this initial model interface
 does not give the model image or audio perception.
+`read_file` checks the file header and requested slice for UTF-8 text. Binary or
+non-UTF-8 data returns a short error and file size, without including the bytes
+in the conversation. The model can use `exec` for metadata or numerical checks.
 
 `seeds` selects a directory, or `""` for no seeds. Its contents are copied into
 `/work/seeds/` at the start of each run. The included assortment contains a

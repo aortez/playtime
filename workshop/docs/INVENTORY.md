@@ -21,6 +21,9 @@ Offline package installation is limited to materials already in the image.
 Images and audio you save become artifacts for the human reviewer. The initial
 model interface returns text; it does not provide image or audio perception.
 Use numerical checks, DOM inspection, and other text observations as needed.
+`read_file` accepts UTF-8 text and rejects binary data. For image metadata, use
+`exec` with Pillow; for example, `Image.open(path).size` and `.mode`. Verify image
+contents with numerical checks; reading the file is not visual inspection.
 
 Shell commands have a timeout and an output limit. Save longer output in files
 and read relevant portions. Background processes may run until the end of this

@@ -8,10 +8,12 @@ import time
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from playtime.common import command
+from playtime.common import canonical, command
 from playtime.config import load_recipe
+from playtime.runner import Supervisor
 from playtime.sandbox import Sandbox, initial_archive
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +88,56 @@ cc --version | head -1
         )
         self.assertNotEqual(result["exit_code"], 0)
         self.assertIn("No space left on device", result["stderr"])
+
+    def test_binary_read_leaves_room_for_handoff_and_persistent_memory(self):
+        self.recipe["limits"]["output_bytes"] = 16384
+        self.recipe["model"]["context_tokens"] = 65536
+        created = self.sandbox.tool(
+            "exec",
+            {
+                "command": """python - <<'PY'
+import random
+from PIL import Image
+Image.frombytes('RGB', (200, 200), random.Random(1042).randbytes(120000)).save('/work/art.png')
+PY"""
+            },
+        )
+        self.assertEqual(created["exit_code"], 0, created)
+        result = self.sandbox.tool("read_file", {"path": "/work/art.png"})
+        self.assertIn("error", result)
+        self.assertNotIn("content", result)
+        self.assertGreater(result["size_bytes"], 16384)
+        self.assertLess(len(canonical(result).encode()), 512)
+
+        runner = Supervisor(self.root, self.recipe, {"image_id": "unused"})
+        self.addCleanup(runner.log.close)
+        runner.sandbox = self.sandbox
+        runner.model = Mock()
+        memento = "art.png exists; its contents have not been verified. Next: inspect with Pillow."
+        runner.model.chat.return_value = {
+            "done": True,
+            "eval_count": 20,
+            "message": {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "end_session",
+                            "arguments": {"memento": memento, "finish_run": False},
+                        }
+                    }
+                ],
+            },
+        }
+        messages = [
+            {"role": "user", "content": "Inspect art.png and save a checkpoint."},
+            {"role": "tool", "tool_name": "read_file", "content": canonical(result)},
+        ]
+        message = runner.request(messages, handoff=True)
+        self.assertEqual(runner.apply_calls(message, messages, handoff=True), (True, False))
+        self.sandbox.stop_session()
+        self.sandbox.start_session(2)
+        self.assertEqual(self.sandbox.memory(), {"content": memento, "status": "loaded"})
 
     def test_reset_stops_background_writers_and_preserves_files(self):
         result = self.sandbox.tool(

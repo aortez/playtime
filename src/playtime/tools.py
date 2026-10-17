@@ -20,7 +20,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a bounded slice of a UTF-8 text file in the workshop.",
+            "description": "Read a bounded slice of a UTF-8 text file in the workshop. Binary files are rejected; use exec to inspect their metadata or compute a text summary.",
             "parameters": {
                 "type": "object",
                 "properties": {"path": {"type": "string"}, "offset_bytes": {"type": "integer"}},

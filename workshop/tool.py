@@ -1,4 +1,5 @@
 """The fixed tool bridge, executed as an unprivileged user inside the workshop."""
+import codecs
 import json
 import os
 import selectors
@@ -10,6 +11,54 @@ import time
 from pathlib import Path
 
 WORK = Path("/work")
+
+
+def text_sample(data, *, starts_mid_file=False, final=False):
+    # A byte-offset read may begin in the middle of a UTF-8 character.
+    if starts_mid_file:
+        skipped = 0
+        while skipped < min(3, len(data)) and 0x80 <= data[skipped] <= 0xBF:
+            skipped += 1
+        data = data[skipped:]
+    if any((byte < 32 and byte not in b"\t\n\r\f") or byte == 127 for byte in data):
+        return False
+    try:
+        # A bounded sample may also end in the middle of a character. At EOF,
+        # however, an incomplete character is invalid UTF-8.
+        codecs.getincrementaldecoder("utf-8")().decode(data, final=final)
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def read_file(args, limits):
+    path = Path(args["path"])
+    if not path.is_absolute():
+        path = WORK / path
+    info = path.stat()
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("read_file requires a regular file")
+    offset = int(args.get("offset_bytes", 0))
+    if offset < 0:
+        raise ValueError("offset_bytes cannot be negative")
+    with path.open("rb") as source:
+        # Inspect the header even for offset reads, including reads past EOF.
+        prefix = source.read(4096)
+        start = max(0, offset - 3)
+        source.seek(start)
+        sample = source.read(offset - start + limits["output_bytes"] + 1)
+    if not text_sample(prefix, final=len(prefix) >= info.st_size) or not text_sample(
+        sample, starts_mid_file=start > 0, final=start + len(sample) >= info.st_size
+    ):
+        return {
+            "error": "read_file only supports UTF-8 text; this file appears binary or is not "
+                     "UTF-8. Use exec to inspect metadata or compute a text summary "
+                     "(for images, use Pillow). This interface cannot view images.",
+            "size_bytes": info.st_size,
+        }
+    data = sample[offset - start:]
+    return {"content": data[:limits["output_bytes"]].decode("utf-8", errors="replace"),
+            "offset_bytes": offset, "truncated": len(data) > limits["output_bytes"]}
 
 
 def work_path(value):
@@ -91,19 +140,7 @@ def dispatch(request):
     if operation == "exec":
         return execute(args, limits)
     if operation == "read_file":
-        path = Path(args["path"])
-        if not path.is_absolute():
-            path = WORK / path
-        if not stat.S_ISREG(path.stat().st_mode):
-            raise ValueError("read_file requires a regular file")
-        offset = int(args.get("offset_bytes", 0))
-        if offset < 0:
-            raise ValueError("offset_bytes cannot be negative")
-        with path.open("rb") as source:
-            source.seek(offset)
-            data = source.read(limits["output_bytes"] + 1)
-        return {"content": data[:limits["output_bytes"]].decode("utf-8", errors="replace"),
-                "offset_bytes": offset, "truncated": len(data) > limits["output_bytes"]}
+        return read_file(args, limits)
     if operation == "write_file":
         path = work_path(args["path"])
         content = args["content"].encode("utf-8")
