@@ -20,6 +20,7 @@ from .common import (
     write_json,
 )
 from .config import repo_path
+from .context import CONTROL_RESERVE, TEMPLATE_RESERVE, ContextWindow, fit_tool_result
 from .environment import check_image
 from .ollama import Ollama, ToolCallParseError
 from .sandbox import Sandbox, extract_regular_files, initial_archive
@@ -200,6 +201,9 @@ class Supervisor:
         self.unaccounted_calls = 0
         self.unaccounted_token_reserve = 0
         self.tool_parse_errors = 0
+        self.parse_error_streak = 0
+        self.context = ContextWindow()
+        self.handoff_saved = False
 
     @property
     def usage_complete(self):
@@ -246,8 +250,15 @@ class Supervisor:
             raise StopRun("token_limit")
         model = self.recipe["model"]
         tools = [TOOLS[-1]] if handoff else TOOLS
-        input_bytes = len(canonical({"messages": messages, "tools": tools}).encode())
-        if input_bytes + maximum + 4096 >= model["context_tokens"]:
+        context_input, context_basis = self.context.estimate(messages, tools)
+        context_reserve = TEMPLATE_RESERVE
+        if not handoff:
+            context_reserve += (
+                limits["handoff_tokens"]
+                + CONTROL_RESERVE
+                + min(limits["output_bytes"], model["context_tokens"] // 4)
+            )
+        if context_input + maximum + context_reserve >= model["context_tokens"]:
             raise SessionFull("context_guard")
         self.calls += 1
         payload = {
@@ -275,6 +286,9 @@ class Supervisor:
             handoff=handoff,
             payload=payload,
             seconds_remaining=round(seconds_remaining, 3),
+            context_input_bound=context_input,
+            context_basis=context_basis,
+            context_reserve=context_reserve,
         )
         # Reserve the full generation allowance before dispatch. Only a complete
         # response with server-reported usage can replace it with an exact count.
@@ -292,7 +306,17 @@ class Supervisor:
             )
         except ToolCallParseError as error:
             self.tool_parse_errors += 1
-            recovery_allowed = self.tool_parse_errors <= limits.get("tool_parse_retries", 0)
+            self.parse_error_streak += 1
+            retries = limits.get("tool_parse_retries", 0)
+            error_limit = limits.get("tool_parse_error_limit", retries + 1)
+            recovery_limit = (
+                "consecutive"
+                if self.parse_error_streak > retries
+                else "run"
+                if self.tool_parse_errors >= error_limit
+                else None
+            )
+            recovery_allowed = recovery_limit is None
             self.log.emit(
                 "model_error",
                 session=self.session,
@@ -300,11 +324,17 @@ class Supervisor:
                 reason="tool_call_parse_error",
                 error=str(error),
                 recovery_allowed=recovery_allowed,
+                recovery_limit=recovery_limit,
+                consecutive_errors=self.parse_error_streak,
                 token_budget_charge=maximum,
                 **self.accounting(),
             )
             if not recovery_allowed:
-                raise StopRun("tool_parse_retry_limit") from error
+                raise StopRun(
+                    "tool_parse_error_limit"
+                    if recovery_limit == "run" and "tool_parse_error_limit" in limits
+                    else "tool_parse_retry_limit"
+                ) from error
             messages.append(
                 {
                     "role": "user",
@@ -318,6 +348,8 @@ class Supervisor:
             # retry loop that can bypass turn, context, wall, or log limits.
             return None
         self.generated += response["eval_count"]
+        self.parse_error_streak = 0
+        self.context.observe(messages, tools, response)
         self.unaccounted_calls -= 1
         self.unaccounted_token_reserve -= maximum
         self.log.emit(
@@ -339,7 +371,7 @@ class Supervisor:
             raise StopRun("too_many_tools_in_one_response")
         ended = False
         finished = False
-        for call in calls:
+        for index, call in enumerate(calls):
             self.remaining()
             function = call.get("function", {})
             name, arguments = function.get("name"), function.get("arguments")
@@ -360,10 +392,29 @@ class Supervisor:
                     )
                     if "error" not in result:
                         ended = True
+                        self.handoff_saved = True
                         finished = arguments.get("finish_run", False)
             else:
                 result = self.sandbox.tool(name, arguments)
-            self.log.emit("tool_result", session=self.session, name=name, result=result)
+            original = result
+            if not ended and not handoff:
+                context_input, _ = self.context.estimate(messages, [TOOLS[-1]])
+                available = (
+                    self.recipe["model"]["context_tokens"]
+                    - context_input
+                    - self.recipe["limits"]["handoff_tokens"]
+                    - TEMPLATE_RESERVE
+                    - CONTROL_RESERVE
+                    - (len(calls) - index - 1) * 512
+                )
+                result = fit_tool_result(name, result, max(512, available))
+            self.log.emit(
+                "tool_result",
+                session=self.session,
+                name=name,
+                result=result,
+                **({"unabridged_result": original} if result is not original else {}),
+            )
             messages.append(
                 {"role": "tool", "tool_name": name or "unknown", "content": canonical(result)}
             )
@@ -385,6 +436,7 @@ class Supervisor:
             "unaccounted_model_calls_total": self.unaccounted_calls,
             "changes": changes,
             "memento_status": memory["status"],
+            "handoff_saved": self.handoff_saved,
             "interrupted": interrupted,
         }
         write_json(folder / "summary.json", summary)
@@ -405,6 +457,11 @@ class Supervisor:
                 self.session = session_number
                 self.remaining()
                 memory = self.sandbox.memory()
+                self.context = ContextWindow()
+                self.handoff_saved = False
+                folder = self.directory / "sessions" / f"{self.session:03d}"
+                folder.mkdir(parents=True, exist_ok=True)
+                write_json(folder / "memory-received.json", memory)
                 self.log.emit(
                     "session_start", session=self.session, memory=memory, budget=self.budget()
                 )
@@ -420,15 +477,6 @@ class Supervisor:
                 ]
                 ended = finished = False
                 for turn in range(self.recipe["work_turns_per_session"]):
-                    # UTF-8/JSON bytes conservatively upper-bound ordinary text tokens.
-                    # Reserve room for model templates, output, and the final handoff.
-                    input_bytes = len(canonical({"messages": messages, "tools": TOOLS}).encode())
-                    if (
-                        input_bytes + limits["tokens_per_call"] + 4096
-                        >= self.recipe["model"]["context_tokens"]
-                    ):
-                        self.log.emit("early_handoff", session=self.session, reason="context_guard")
-                        break
                     if limits["generated_tokens"] - self.tokens_charged <= limits["handoff_tokens"]:
                         break
                     try:

@@ -184,6 +184,7 @@
         if (failed) { tool.element.classList.add('failed'); turn.card.classList.add('failed'); }
         const output = result.error || [result.stdout, result.stderr].filter(Boolean).join('\n') || result.content || pretty(result);
         tool.element.append(node('pre', short(output, 16000)));
+        if (result.context_truncated) tool.element.append(node('p', result.notice, 'notice'));
         turn.brief.textContent = short(tool.action, 130) + '\n' + short(output, 160);
       }
       phase = 'Between calls';
@@ -224,7 +225,18 @@
       } else figure.append(node('p', artifact.image.notice, 'muted'));
       figure.append(node('figcaption', `${artifact.change} · ${artifact.name}`)); images.append(figure);
     }
-    card.append(images, details('Memento at checkpoint', data.memento || 'No memento saved.'), details('File changes', data.summary.changes));
+    const memory = data.memory;
+    card.append(node('span', memory.label, 'badge ' + (memory.state === 'saved' ? 'good' : 'warn')),
+      node('p', memory.detail, 'meta'), images,
+      details('Memory received', memory.received.content || 'No memento was available.'),
+      details('Memento at checkpoint', data.memento || 'No memory text available.'));
+    if (memory.diff) {
+      const change = details('What changed in memory', '');
+      const diff = change.lastChild; diff.className = 'diff';
+      for (const line of memory.diff.split('\n')) diff.append(node('span', line + '\n', line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : ''));
+      card.append(change);
+    }
+    card.append(details('File changes', data.summary.changes));
     if (data.summary.memento_status !== 'loaded') card.append(node('p', 'Memento unavailable: ' + data.summary.memento_status, 'error'));
     if (data.notice) card.append(node('p', data.notice, 'muted'));
     const download = node('a', 'Download checkpoint'); download.href = `/${runId}/sessions/${String(data.session).padStart(3, '0')}/workspace.tar`;

@@ -120,6 +120,7 @@ class RecoveryTests(unittest.TestCase):
         self.recipe["sessions"] = 3
         self.recipe["work_turns_per_session"] = 1
         self.recipe["limits"].update(generated_tokens=1000, tokens_per_call=100, handoff_tokens=50)
+        self.recipe["limits"].pop("tool_parse_error_limit", None)
         self.runner = Supervisor(self.directory, self.recipe, {"image_id": "unused"})
         self.runner.sandbox = RecordingSandbox()
         self.addCleanup(self.runner.log.close)
@@ -208,6 +209,82 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(
                 [tool["function"]["name"] for tool in request["tools"]], ["end_session"]
             )
+
+    def test_separate_retry_limits_allow_recovered_errors_but_bound_the_run(self):
+        self.recipe["sessions"] = 4
+        self.recipe["limits"]["tool_parse_error_limit"] = 4
+        result = self.execute(
+            [
+                parse_error(),
+                completed(finish=False),
+                parse_error(),
+                completed(finish=False),
+                parse_error(),
+                completed(finish=False),
+                parse_error(),
+            ]
+        )
+        self.assertEqual(result["stop_reason"], "tool_parse_error_limit")
+        self.assertEqual(result["model_calls"], 7)
+        self.assertEqual(result["tool_parse_errors"], 4)
+        self.assertEqual(result["token_budget_charged"], 415)
+        self.assertEqual(len(self.runner.sandbox.calls), 3)
+
+    def test_consecutive_failures_stop_before_the_larger_run_limit(self):
+        self.recipe["limits"]["tool_parse_error_limit"] = 8
+        self.recipe["work_turns_per_session"] = 5
+        result = self.execute([parse_error(), parse_error(), parse_error()])
+        self.assertEqual(result["stop_reason"], "tool_parse_retry_limit")
+        self.assertEqual(result["model_calls"], 3)
+        self.assertEqual(result["token_budget_charged"], 300)
+        self.assertEqual(self.runner.sandbox.calls, [])
+
+    def test_large_tool_results_leave_room_for_handoff_and_next_session(self):
+        self.recipe["model"]["context_tokens"] = 32768
+        self.recipe["limits"].update(
+            generated_tokens=20000, tokens_per_call=4096, handoff_tokens=2048
+        )
+        self.recipe["work_turns_per_session"] = 2
+        original_tool = self.runner.sandbox.tool
+
+        def tool(name, arguments):
+            if name == "read_file":
+                return {"content": '"\n\\\x00' * 4096, "offset_bytes": 0}
+            return original_tool(name, arguments)
+
+        self.runner.sandbox.tool = tool
+        work = {
+            "done": True,
+            "eval_count": 3000,
+            "prompt_eval_count": 1000,
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "thinking": "thinking " * 1500,
+                "tool_calls": [
+                    {"function": {"name": "read_file", "arguments": {"path": "/work/large.txt"}}}
+                ]
+                * 8,
+            },
+        }
+        result = self.execute([work, completed(finish=False), completed()])
+        self.assertEqual(result["stop_reason"], "agent_finished")
+        self.assertEqual(result["model_calls"], 3)
+        self.assertEqual(len(result["sessions"]), 2)
+        self.assertTrue(all(session["handoff_saved"] for session in result["sessions"]))
+        requests = self.runner.model.requests
+        self.assertEqual([t["function"]["name"] for t in requests[1]["tools"]], ["end_session"])
+        results = [json.loads(m["content"]) for m in requests[1]["messages"] if m["role"] == "tool"]
+        self.assertEqual(len(results), 8)
+        self.assertTrue(any(r.get("context_truncated") for r in results))
+        log = [
+            json.loads(line) for line in (self.directory / "events.jsonl").read_text().splitlines()
+        ]
+        self.assertFalse(any(e["kind"] == "handoff_skipped" for e in log))
+        self.assertTrue(any(e.get("unabridged_result") for e in log))
+        self.assertEqual(len(requests[2]["messages"]), 2)
+        self.assertNotIn("thinking thinking", json.dumps(requests[2]["messages"]))
+        self.assertIn("The project is in progress", requests[2]["messages"][1]["content"])
 
     def test_text_handoff_gets_feedback_then_saves_memory_for_next_session(self):
         text_handoff = completed(handoff=False)
@@ -342,6 +419,11 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(result["model_calls"], 1)
         for value in [-1, True, 11, 1.5]:
             self.recipe["limits"]["tool_parse_retries"] = value
+            with self.subTest(value=value), self.assertRaises(PlaytimeError):
+                validate(self.recipe)
+        self.recipe["limits"]["tool_parse_retries"] = 2
+        for value in [0, True, 101, 1.5]:
+            self.recipe["limits"]["tool_parse_error_limit"] = value
             with self.subTest(value=value), self.assertRaises(PlaytimeError):
                 validate(self.recipe)
 

@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
+from .memory import checkpoint_memory
 from .report_assets import SCRIPT, STYLE
 from .report_previews import PreviewBudget, checkpoint_images, final_artifacts
 
@@ -313,6 +314,8 @@ def render_tool(tool):
         body += (
             '<p class="notice">The tool truncated its output before delivering it to the model.</p>'
         )
+    if result.get("context_truncated"):
+        body += f'<p class="notice">{escaped(result["notice"])} The full bounded result is in Raw records.</p>'
     if tool["result"] is None:
         body += '<p class="notice">The log contains this request but no corresponding result.</p>'
     return body + "</div>"
@@ -391,7 +394,16 @@ def render_session(directory, number, session, previous_tokens, previews):
     folder = f"sessions/{number:03d}"
     body = f'<section class="session" id="session-{number}"><header class="session-head row">'
     body += f'<h2>Session {number}</h2><span class="meta">{len(session["turns"])} calls · {escaped(count)}</span></header>'
-    memory = session["start"].get("memory", {})
+    continuity = session["memory"]
+    memory = continuity["received"]
+    body += '<div class="memory-status">' + badge(
+        continuity["label"], "good" if continuity["state"] == "saved" else "warn"
+    )
+    body += f'<p class="muted">{escaped(continuity["detail"])}</p>'
+    if continuity["diff"]:
+        body += '<details class="memory-diff"><summary>What changed in memory</summary>'
+        body += render_memory_diff(continuity["diff"]) + "</details>"
+    body += "</div>"
     body += '<div class="memory-grid"><div>' + text_block(
         "Memory received", memory.get("content") or "No memento supplied."
     )
@@ -402,13 +414,14 @@ def render_session(directory, number, session, previous_tokens, previews):
     memento = directory / folder / "memento.txt"
     if memento.is_file():
         body += text_block(
-            "Memory saved at checkpoint", memento.read_text(encoding="utf-8") or "Empty memento."
+            "Memory at checkpoint",
+            memento.read_text(encoding="utf-8") or "No memory text available.",
         )
         if checkpoint.get("memento_status", "loaded") != "loaded":
             body += f'<p class="notice">{escaped(checkpoint["memento_status"])}</p>'
         body += f'<a href="{folder}/memento.txt" class="meta">Open memento</a>'
     else:
-        body += text_block("Memory saved at checkpoint", "No checkpoint memento recorded.")
+        body += text_block("Memory at checkpoint", "No checkpoint memento recorded.")
     body += "</div></div>"
     changes = checkpoint.get("changes", {})
     images, preview_notice = checkpoint_images(directory, number, changes, previews)
@@ -461,6 +474,31 @@ def token_label(result):
     return label if result.get("token_usage_complete", True) else label + " + unknown"
 
 
+def render_memory_diff(diff):
+    body = '<pre class="diff">'
+    for line in diff.splitlines():
+        style = "added" if line.startswith("+") else "removed" if line.startswith("-") else ""
+        body += f'<span class="{style}">{escaped(line)}</span>\n'
+    return body + "</pre>"
+
+
+def render_memory_overview(sessions):
+    body = '<section class="panel" id="memory-continuity"><h2>Memory continuity</h2>'
+    body += '<p class="muted">A fresh handoff confirms that memory was saved; it does not verify its claims. Select a session to compare its incoming and outgoing memory.</p>'
+    for number, session in sessions.items():
+        memory = session["memory"]
+        body += f'<div class="memory-row"><a href="#session-{number}">Session {number}</a>'
+        body += badge(memory["label"], "good" if memory["state"] == "saved" else "warn")
+        changes = session["checkpoint"].get("changes", {})
+        count = sum(
+            name != "MEMENTO.md" and not name.startswith("seeds/")
+            for key in ("added", "modified", "removed")
+            for name in changes.get(key, [])
+        )
+        body += f'<span class="meta">{count} other file changes</span></div>'
+    return body + "</section>"
+
+
 def report(directory):
     directory = Path(directory)
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
@@ -473,6 +511,21 @@ def report(directory):
         )
         if not session["checkpoint"]:
             session["checkpoint"] = summary
+    for number, session in sessions.items():
+        saved = any(
+            tool["request"].get("name") == "end_session"
+            and "bytes_written" in (tool["result"] or {}).get("result", {})
+            and "error" not in (tool["result"] or {}).get("result", {})
+            for turn in session["turns"]
+            for tool in turn["tools"]
+        )
+        session["memory"] = checkpoint_memory(
+            directory,
+            number,
+            session["checkpoint"],
+            received=session["start"].get("memory"),
+            handoff_saved=session["checkpoint"].get("handoff_saved", saved),
+        )
     recipe = manifest["recipe"]
     previews = PreviewBudget()
     artifacts = final_artifacts(directory, previews)
@@ -528,7 +581,7 @@ def report(directory):
     body += '<nav class="links"><a href="manifest.json">Manifest</a><a href="events.jsonl">Complete event log</a>'
     if (directory / "result.json").exists():
         body += '<a href="result.json">Result</a>'
-    body += '<a href="#artifacts">Saved files ↓</a></nav>'
+    body += '<a href="#memory-continuity">Memory continuity ↓</a><a href="#artifacts">Saved files ↓</a></nav>'
     images = [artifact for artifact in artifacts if artifact.get("image")]
     if images:
         body += (
@@ -545,6 +598,8 @@ def report(directory):
         )
         + "</section>"
     )
+    if sessions:
+        body += render_memory_overview(sessions)
     body += '<div class="toolbar"><div class="row"><strong>Session trace</strong><div class="controls" role="group" aria-label="Trace detail level">'
     for view in ["compact", "readable", "full"]:
         body += f'<button type="button" data-set-view="{view}" aria-pressed="{str(view == "readable").lower()}">{view.title()}</button>'
@@ -601,7 +656,8 @@ def gallery(directory):
             + badge(
                 result["stop_reason"],
                 "bad"
-                if result.get("error") or result["stop_reason"] == "tool_parse_retry_limit"
+                if result.get("error")
+                or result["stop_reason"] in {"tool_parse_retry_limit", "tool_parse_error_limit"}
                 else "",
             )
             + "</div>"

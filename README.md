@@ -37,15 +37,16 @@ The bundled creative prompt is a placeholder. Replace
 
 For the short exploratory pilot, run `./playtime run experiments/curiosity.toml`.
 It uses the same prompt, seeds, model, and workshop with high reasoning,
-up to four sessions, 10 work turns per session, 100,000 generated tokens, and a
+up to ten sessions, 10 work turns per session, 100,000 generated tokens, and a
 15-minute wall limit.
-Both work and handoff responses allow up to 4,096 generated tokens, including
+Both work and handoff responses allow up to 8,192 generated tokens, including
 reasoning.
 Its context window is 65,536 tokens per request. Context limits the current
 conversation, tool output, and response; the generation budget limits total
 model output across all sessions. These limits can be adjusted independently.
-The model may finish early. This recipe permits recovery from up to two
-tool-call parsing failures within the existing turn and token limits.
+The model may finish early. This recipe permits two consecutive tool-call
+parsing failures to receive correction feedback and stops on the eighth parser
+failure across the run, within the existing turn and token limits.
 Observe its artifact, behavior across the first
 reset, and response to failures without coaching it during the run.
 
@@ -72,6 +73,15 @@ at session checkpoints. Confirmed generated tokens are shown separately from
 in-flight allowances and charges for requests whose actual usage is unknown.
 The device indicator describes the model's current Ollama allocation, not its
 historical allocation during an older run.
+
+Each checkpoint also shows the memory received, the memory left on disk, and
+a line diff. Labels distinguish a successful `end_session`, unchanged memory
+carried forward without a handoff, changes made outside handoff, and missing or
+unreadable memory. Saving identical text again is labeled explicitly. The saved
+report includes a memory-continuity overview across all sessions, visible even
+in Compact mode. These labels describe recorded actions, not the truth or
+completeness of the model's claims. Older archives can use the view after
+`./playtime report runs/<run-id>`; their input and event records stay unchanged.
 
 Dashboard launches require a working systemd user manager. Each worker runs in
 its own temporary user service, independently of the browser and dashboard.
@@ -156,8 +166,15 @@ that reservation is not reported as measured usage. Later successful requests
 do not erase the unknown counts.
 
 Optional `limits.tool_parse_retries` (default `0`) permits a bounded number of
-Ollama `error parsing tool call:` failures to receive correction feedback. The
-curiosity recipe sets it to `2`: the third parser failure stops the run. Each
+consecutive Ollama `error parsing tool call:` failures to receive correction
+feedback. A complete, successfully parsed response resets the consecutive
+counter. `limits.tool_parse_error_limit` stops on that many failures across the
+entire run, including recovered failures; session resets never clear it.
+Curiosity uses `2` retries and an overall limit of `8`. Without the overall
+setting, it defaults to `tool_parse_retries + 1`, preserving the previous total
+allowance for existing recipes. A consecutive failure stops with
+`tool_parse_retry_limit`; an explicit overall ceiling stops with
+`tool_parse_error_limit`. Each
 failed call uses an ordinary work or handoff turn. The model is told that none
 of the failed response's tools ran and asked to emit valid JSON arguments. The
 controller does not repair JSON, execute partial tool calls, or add extra turns.
@@ -207,12 +224,22 @@ its memory.
 The wall deadline bounds agent work. Final snapshotting and cleanup can take
 additional time after that deadline.
 
-The controller uses a conservative input-byte guard with output/template
-reserves to avoid overflowing the model context. It can end a session early.
-If a large response or tool result leaves too little room even for handoff, it
-records a skipped handoff and resets with the files already saved. It never
-silently trims the conversation. This guard is deliberately conservative; it
-is not an exact tokenizer implementation.
+The controller reserves context for the next response, tool output, handoff
+generation, and control/template overhead before starting another work turn.
+It uses Ollama's reported prompt and generation counts for an unchanged
+conversation prefix and conservatively counts new messages as UTF-8/JSON bytes.
+If counts are unavailable or the prefix changes, it falls back to counting the
+whole input as bytes. A fresh session always starts fresh accounting. These are
+conservative estimates, not a local tokenizer.
+
+New tool results are explicitly shortened when needed to preserve the handoff
+reserve, accounting for JSON escaping and multiple tools in one response.
+`tool_result.result` is exactly what the model receives; `unabridged_result`, when
+present, preserves the original bounded tool result for the reviewer. Reports
+show the truncation notice and retain the original in Raw records. No previous
+messages are removed or summarized. If even a handoff cannot fit (for example,
+an oversized response without server prompt counts), the controller still
+records `handoff_skipped` rather than silently trimming history.
 
 The workshop runs commands as uid 1000, with a read-only image, no capabilities,
 no external network, and no host-directory or Docker-socket mounts. The pilot
@@ -246,7 +273,7 @@ runs/<run-id>/
   stop-requested.json       # Present when Stop run was requested
   inputs/                   # Exact prompts, tools, initial workspace, controller
   events.jsonl              # Requests, streaming responses, tools, timing
-  sessions/001/             # Snapshot tar, file manifest/diff, memento, summary
+  sessions/001/             # Snapshot, file diff, received/saved memory, summary
   final-workspace/          # Regular files extracted from the last snapshot
   result.json               # Stop reason, counts, errors, cleanup status
   report.html               # Readable timeline and links to the records

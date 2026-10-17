@@ -4,6 +4,7 @@ import json
 
 from .common import PlaytimeError
 from .jobs import read_json
+from .memory import checkpoint_memory
 from .ollama import Ollama
 from .report_previews import PreviewBudget, checkpoint_images
 
@@ -83,6 +84,7 @@ def checkpoint(directory, number):
         "session": number,
         "summary": summary,
         "memento": (folder / "memento.txt").read_text(),
+        "memory": checkpoint_memory(directory, number, summary),
         "images": images,
         "notice": notice,
     }

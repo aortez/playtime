@@ -31,6 +31,11 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid var
 .session{padding:0;scroll-margin-top:150px;overflow:hidden}.session-head{padding:20px 22px;background:var(--soft);border-bottom:1px solid var(--line)}
 .session-head h2{margin:0}.memory-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:4px 22px 14px;border-bottom:1px solid var(--line)}
 .memory-grid>div{min-width:0}.memory-grid pre{font-family:inherit;font-size:.86rem}
+.memory-status{padding:16px 22px 4px}.memory-status>p{font-size:.82rem;margin:6px 0}
+.memory-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 0;border-top:1px solid var(--line)}
+.memory-row>a{min-width:85px}.memory-row .meta{font-size:.8rem;margin-left:auto}
+.memory-diff{margin:10px 0}.diff{background:var(--bg);padding:12px;border-radius:6px;max-height:450px;overflow:auto}
+.diff .added{color:var(--accent)}.diff .removed{color:var(--danger)}#memory-continuity{scroll-margin-top:140px}
 .steps{padding:0 22px}.step{padding:20px 0;border-bottom:1px solid var(--line)}.step:last-child{border:0}
 .step-heading{justify-content:flex-start}.step-heading .meta{margin-left:auto;font-size:.76rem}
 .step-number{font-size:.7rem;letter-spacing:.04em;color:var(--muted);min-width:44px}

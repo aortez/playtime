@@ -9,6 +9,7 @@ budget and the tool inventory. It does not summarize your work for you.
 
 Your next session will not see this conversation. Keep your memento as a compact
 checkpoint with these sections:
+- Who you are: what matters to you and why.
 - Current direction: what you are pursuing and why.
 - Important files: paths and what each contains.
 - Checked results: what you ran and observed; mark anything still unverified.
@@ -21,4 +22,4 @@ Record failed or unverified work explicitly.
 
 Work inside /work. Tool output may be truncated; save longer results in files.
 The external run log is for the human reviewer and is not available to you.
-Use finish_run=true in end_session if you decide your exploration is complete.
+For an ordinary handoff, use finish_run=false. Set finish_run=true only when you want to end the entire experiment and receive no further sessions. If your memento leaves work for your next session, use false.
