@@ -5,6 +5,7 @@ from pathlib import Path
 from .common import PlaytimeError
 
 TOOLSETS = {"core", "computation", "browser", "systems"}
+MEMORY_CONDITIONS = {"self", "self_plus_evidence"}
 ROOT_KEYS = {
     "name",
     "prompt",
@@ -46,8 +47,11 @@ GROUP_KEYS = {
 
 
 def validate(recipe):
-    if set(recipe) != ROOT_KEYS:
+    if set(recipe) - {"memory_condition"} != ROOT_KEYS:
         raise PlaytimeError(f"Recipe keys differ from schema: {set(recipe) ^ ROOT_KEYS}")
+    memory_condition = recipe.get("memory_condition", "self")
+    if not isinstance(memory_condition, str) or memory_condition not in MEMORY_CONDITIONS:
+        raise PlaytimeError("memory_condition must be self or self_plus_evidence")
     for group, expected in GROUP_KEYS.items():
         optional = {"tool_parse_retries", "tool_parse_error_limit"} if group == "limits" else set()
         if not isinstance(recipe[group], dict) or set(recipe[group]) - optional != expected:

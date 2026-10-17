@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
+from .evidence import CONDITION_LABELS, condition, received_evidence
 from .memory import checkpoint_memory
 from .report_assets import SCRIPT, STYLE
 from .report_previews import PreviewBudget, checkpoint_images, final_artifacts
@@ -248,7 +249,7 @@ def load_timeline(directory):
                     session["notices"].append(event)
             elif kind == "checkpoint":
                 session["checkpoint"] = event
-            else:
+            elif kind != "tool_dispatch":
                 session["notices"].append(event)
     return sessions, notices
 
@@ -423,6 +424,12 @@ def render_session(directory, number, session, previous_tokens, previews):
     else:
         body += text_block("Memory at checkpoint", "No checkpoint memento recorded.")
     body += "</div></div>"
+    evidence = session["start"].get("evidence") or received_evidence(directory, number)
+    if evidence is not None:
+        body += text_block(
+            f"Controller appendix received · {evidence['bytes']} UTF-8 bytes", evidence["content"]
+        )
+        body += f'<a href="{folder}/evidence-received.json">Appendix source references</a>'
     changes = checkpoint.get("changes", {})
     images, preview_notice = checkpoint_images(directory, number, changes, previews)
     if images or preview_notice:
@@ -543,6 +550,7 @@ def report(directory):
         + "</div>"
     )
     body += f'<h1>{escaped(recipe["name"])}</h1><p class="meta">{escaped(manifest["id"])}</p>'
+    body += f'<p class="meta">{escaped(CONDITION_LABELS[condition(recipe)])}</p>'
     model = recipe.get("model", {}).get("name", "Unknown model")
     body += f'<p class="meta">{escaped(model)} · {escaped(", ".join(recipe.get("workshop", {}).get("toolsets", [])))}</p>'
     stats = [

@@ -22,6 +22,7 @@ from .common import (
 from .config import repo_path
 from .context import CONTROL_RESERVE, TEMPLATE_RESERVE, ContextWindow, fit_tool_result
 from .environment import check_image
+from .evidence import build_evidence, condition, save_evidence, validate_evidence
 from .ollama import Ollama, ToolCallParseError
 from .sandbox import Sandbox, extract_regular_files, initial_archive
 from .tools import TOOLS, validate_call
@@ -83,18 +84,25 @@ SMOKE_PROMPT = (
 
 
 def prepare_run(
-    root, recipe, *, scripted=False, smoke=False, previous=None, runs_dir=None, live=True
+    root,
+    recipe,
+    *,
+    scripted=False,
+    smoke=False,
+    previous=None,
+    runs_dir=None,
+    live=True,
+    pairing=None,
 ):
     root = Path(root).resolve()
     source_root = Path(__file__).resolve().parents[2]
     recipe = copy.deepcopy(recipe)
+    recipe["memory_condition"] = condition(recipe)
     if previous:
         previous = Path(previous).resolve()
         old = json.loads((previous / "manifest.json").read_text())
-        if old["inputs"] != tree_manifest(previous / "inputs"):
-            raise PlaytimeError(
-                "Archived inputs have changed; refusing to repeat altered starting conditions"
-            )
+        validate_archive(previous, old)
+        validate_evidence(previous)
         if old["controller_sha256"] != digest_json(controller_manifest(source_root)):
             raise PlaytimeError(
                 "Controller has changed. Use the archived controller with --root pointing to this project to repeat this run"
@@ -133,6 +141,8 @@ def prepare_run(
         (inputs / "prompt.txt").write_text(SMOKE_PROMPT)
     write_json(inputs / "recipe.json", recipe)
     write_json(inputs / "tools.json", TOOLS)
+    if pairing is not None:
+        write_json(inputs / "pairing.json", pairing)
     controller = controller_manifest(source_root)
     manifest = {
         "schema": 1,
@@ -140,7 +150,9 @@ def prepare_run(
         "created": timestamp(),
         "kind": "scripted-smoke" if scripted else ("live-smoke" if smoke else "experiment"),
         "repeat_of": previous.name if previous else None,
+        "pairing": pairing,
         "recipe": recipe,
+        "memory_condition": condition(recipe),
         "image": image,
         "model": model,
         "controller_sha256": digest_json(controller),
@@ -158,7 +170,19 @@ def prepare_run(
     return directory, manifest
 
 
+def validate_archive(directory, manifest):
+    if manifest["inputs"] != tree_manifest(directory / "inputs"):
+        raise PlaytimeError("Archived inputs have changed; refusing altered starting conditions")
+    archived_recipe = json.loads((directory / "inputs/recipe.json").read_text())
+    if (
+        archived_recipe != manifest["recipe"]
+        or manifest.get("memory_condition", "self") != condition(archived_recipe)
+    ):
+        raise PlaytimeError("Archived recipe or memory condition differs from manifest")
+
+
 def execute_prepared(directory, manifest):
+    validate_archive(Path(directory), manifest)
     recipe, image = manifest["recipe"], manifest["image"]
     scripted = manifest["kind"] == "scripted-smoke"
     supervisor = Supervisor(directory, recipe, image, scripted=scripted)
@@ -204,6 +228,8 @@ class Supervisor:
         self.parse_error_streak = 0
         self.context = ContextWindow()
         self.handoff_saved = False
+        self.evidence = None
+        self.evidence_bytes_received = 0
 
     @property
     def usage_complete(self):
@@ -375,6 +401,7 @@ class Supervisor:
             self.remaining()
             function = call.get("function", {})
             name, arguments = function.get("name"), function.get("arguments")
+            request_sequence = self.log.sequence
             self.log.emit("tool_request", session=self.session, name=name, arguments=arguments)
             error = validate_call(name, arguments)
             if ended:
@@ -395,6 +422,12 @@ class Supervisor:
                         self.handoff_saved = True
                         finished = arguments.get("finish_run", False)
             else:
+                self.log.emit(
+                    "tool_dispatch",
+                    session=self.session,
+                    name=name,
+                    request_sequence=request_sequence,
+                )
                 result = self.sandbox.tool(name, arguments)
             original = result
             if not ended and not handoff:
@@ -412,6 +445,7 @@ class Supervisor:
                 "tool_result",
                 session=self.session,
                 name=name,
+                request_sequence=request_sequence,
                 result=result,
                 **({"unabridged_result": original} if result is not original else {}),
             )
@@ -440,6 +474,9 @@ class Supervisor:
             "interrupted": interrupted,
         }
         write_json(folder / "summary.json", summary)
+        if condition(self.recipe) == "self_plus_evidence":
+            self.evidence = build_evidence(self.directory, self.session)
+            save_evidence(folder, "evidence", self.evidence)
         self.sessions.append(summary)
         self.log.emit("checkpoint", final=interrupted, **summary)
 
@@ -462,8 +499,16 @@ class Supervisor:
                 folder = self.directory / "sessions" / f"{self.session:03d}"
                 folder.mkdir(parents=True, exist_ok=True)
                 write_json(folder / "memory-received.json", memory)
+                if self.evidence is not None:
+                    save_evidence(folder, "evidence-received", self.evidence)
+                    self.evidence_bytes_received += self.evidence["bytes"]
                 self.log.emit(
-                    "session_start", session=self.session, memory=memory, budget=self.budget()
+                    "session_start",
+                    session=self.session,
+                    memory=memory,
+                    budget=self.budget(),
+                    memory_condition=condition(self.recipe),
+                    evidence=self.evidence,
                 )
                 self.sandbox.start_session(self.session)
                 messages = [
@@ -475,6 +520,8 @@ class Supervisor:
                         f"\n{inventory}\n\nMemento status: {memory['status']}\n{memory['content']}",
                     },
                 ]
+                if self.evidence is not None:
+                    messages.append({"role": "user", "content": self.evidence["content"]})
                 ended = finished = False
                 for turn in range(self.recipe["work_turns_per_session"]):
                     if limits["generated_tokens"] - self.tokens_charged <= limits["handoff_tokens"]:
@@ -571,6 +618,8 @@ class Supervisor:
                 "cleanup_errors": cleanup_errors,
                 **self.accounting(),
                 "model_calls": self.calls,
+                "memory_condition": condition(self.recipe),
+                "evidence_bytes_received": self.evidence_bytes_received,
                 "sessions": self.sessions,
                 "elapsed_seconds": round(time.monotonic() - self.started, 3),
                 "finished": timestamp(),
@@ -636,7 +685,7 @@ class ScriptedModel:
         ]
         if self.calls == 4:
             if (
-                len(payload["messages"]) != 2
+                len(payload["messages"]) not in (2, 3)
                 or "playtime-persistent"
                 in payload["messages"][1]["content"].split("Memento status:")[-1]
             ):

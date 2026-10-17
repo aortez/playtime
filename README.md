@@ -130,6 +130,11 @@ bundled recipes). Oversized memory is reported rather than silently truncated.
 `finish_run=true` ends the whole experiment. The controller does not summarize
 or correct memory. See [`prompts/protocol.txt`](prompts/protocol.txt).
 
+Opt into `memory_condition = "self_plus_evidence"` to also supply a separate,
+at most 4,096-byte appendix of the preceding session's observed file changes and
+command results. The default is `"self"`. See the [paired memory experiment](experiments/memory-evidence.md)
+for deterministic selection, frozen six-run commands, and the review protocol.
+
 The controller reserves context for handoff and may shorten new tool results,
 recording the truncation and original bounded result. Unknown generation usage
 is shown separately and charged at the request's full allowance. Wall limits

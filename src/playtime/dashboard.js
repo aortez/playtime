@@ -141,6 +141,7 @@
       const marker = node('div', undefined, 'session-marker');
       marker.append(node('h3', `Session ${session} · Fresh conversation`),
         details('Memory received', event.memory?.content || 'No memento was available.'));
+      if (event.evidence) marker.append(details(`Controller appendix received · ${event.evidence.bytes} UTF-8 bytes`, event.evidence.content));
       $('timeline').append(marker);
     }
     if (kind === 'model_request') {
@@ -239,6 +240,7 @@
     card.append(details('File changes', data.summary.changes));
     if (data.summary.memento_status !== 'loaded') card.append(node('p', 'Memento unavailable: ' + data.summary.memento_status, 'error'));
     if (data.notice) card.append(node('p', data.notice, 'muted'));
+    if (data.evidence) card.append(details(`Controller appendix received · ${data.evidence.bytes} UTF-8 bytes`, data.evidence.content));
     const download = node('a', 'Download checkpoint'); download.href = `/${runId}/sessions/${String(data.session).padStart(3, '0')}/workspace.tar`;
     card.append(download); $('checkpoints').append(card); checkpoints.set(data.session, true);
   }
@@ -252,7 +254,7 @@
     if (!status) return;
     const r = status.recipe, result = status.result;
     $('run-title').textContent = status.name;
-    $('run-id').textContent = `${status.kind} · ${status.id} · ${r.model.think} thinking · ${number(r.model.context_tokens)} context`;
+    $('run-id').textContent = `${status.kind} · ${status.id} · ${r.memory_condition === 'self_plus_evidence' ? 'B · Memory + observations' : 'A · Self-written memory'} · ${r.model.think} thinking · ${number(r.model.context_tokens)} context`;
     $('phase').textContent = status.active ? (['starting', 'stopping', 'finalizing'].includes(status.state) ? status.state : phase) : result?.stop_reason || status.state;
     $('session').textContent = `${session || '—'} / ${r.sessions}`;
     const elapsed = result?.elapsed_seconds ?? (Date.now() - (started || Date.parse(status.created))) / 1000;
