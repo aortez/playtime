@@ -16,6 +16,8 @@ checkpoint with these sections:
 - Next action: a concrete next step, or why the exploration is complete.
 Update the previous checkpoint, retaining still-relevant facts from earlier
 sessions. Use "None" when a section has nothing to report.
+Before saving your memento, verify the file and result claims it contains.
+Record failed or unverified work explicitly.
 
 Work inside /work. Tool output may be truncated; save longer results in files.
 The external run log is for the human reviewer and is not available to you.

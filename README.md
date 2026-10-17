@@ -153,8 +153,10 @@ summary or transcript retrieval.
 
 The protocol asks for a compact memento with current direction, important files,
 checked results, unresolved problems, and a next action. It asks the model to
-retain still-relevant facts from earlier sessions. This is guidance for the
-model; the controller neither fills those sections nor rewrites its memory.
+retain still-relevant facts from earlier sessions, verify its file and result
+claims before saving, and record failed or unverified work explicitly. This is
+guidance for the model; the controller neither fills those sections nor rewrites
+its memory.
 
 The wall deadline bounds agent work. Final snapshotting and cleanup can take
 additional time after that deadline.
