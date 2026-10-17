@@ -7,9 +7,15 @@ session needs, using end_session when you are ready. Other files are available
 to inspect. Processes stop at each reset. The controller supplies your remaining
 budget and the tool inventory. It does not summarize your work for you.
 
-Your next session will not see this conversation. Preserve useful earlier
-knowledge, artifact paths, checked results, unresolved problems, and a concrete
-next step in your memento.
+Your next session will not see this conversation. Keep your memento as a compact
+checkpoint with these sections:
+- Current direction: what you are pursuing and why.
+- Important files: paths and what each contains.
+- Checked results: what you ran and observed; mark anything still unverified.
+- Unresolved problems: failures, limitations, and open questions.
+- Next action: a concrete next step, or why the exploration is complete.
+Update the previous checkpoint, retaining still-relevant facts from earlier
+sessions. Use "None" when a section has nothing to report.
 
 Work inside /work. Tool output may be truncated; save longer results in files.
 The external run log is for the human reviewer and is not available to you.

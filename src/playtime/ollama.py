@@ -6,9 +6,15 @@ from urllib.parse import urlsplit
 
 from .common import PlaytimeError, StopRun, canonical, digest_json
 
+MAX_CHUNK_BYTES = 512 * 1024
+
 
 class ToolCallParseError(PlaytimeError):
     """Ollama explicitly rejected a tool call before returning a complete response."""
+
+
+def is_tool_parse_error(error):
+    return isinstance(error, str) and error.startswith("error parsing tool call:")
 
 
 class Ollama:
@@ -119,22 +125,43 @@ class Ollama:
             )
             response = connection.getresponse()
             if response.status != 200:
-                raise PlaytimeError(f"Ollama chat HTTP {response.status}: {response.read(4096)!r}")
+                # Ollama can reject a tool call before starting the stream.
+                # Preserve the HTTP response separately from native stream chunks.
+                raw = response.read(MAX_CHUNK_BYTES + 1)
+                if expired.is_set():
+                    raise StopRun("model_timeout")
+                truncated = len(raw) > MAX_CHUNK_BYTES
+                on_chunk(
+                    {
+                        "http_error": {
+                            "status": response.status,
+                            "body": raw[:MAX_CHUNK_BYTES].decode("utf-8", errors="replace"),
+                            "truncated": truncated,
+                        }
+                    }
+                )
+                if truncated:
+                    raise StopRun("model_response_byte_limit")
+                try:
+                    detail = json.loads(raw)
+                except ValueError:
+                    detail = None
+                if isinstance(detail, dict) and is_tool_parse_error(detail.get("error")):
+                    raise ToolCallParseError(detail["error"])
+                raise PlaytimeError(f"Ollama chat HTTP {response.status}: {raw[:4096]!r}")
             while True:
-                raw = response.readline(524289)
+                raw = response.readline(MAX_CHUNK_BYTES + 1)
                 consumed += len(raw)
                 if expired.is_set():
                     raise StopRun("model_timeout")
                 if not raw:
                     raise StopRun("incomplete_model_response")
-                if len(raw) > 524288 or consumed > 4 * 1024 * 1024:
+                if len(raw) > MAX_CHUNK_BYTES or consumed > 4 * 1024 * 1024:
                     raise StopRun("model_response_byte_limit")
                 chunk = json.loads(raw)
                 on_chunk(chunk)
                 if "error" in chunk:
-                    if isinstance(chunk["error"], str) and chunk["error"].startswith(
-                        "error parsing tool call:"
-                    ):
+                    if is_tool_parse_error(chunk["error"]):
                         raise ToolCallParseError(chunk["error"])
                     raise PlaytimeError(f"Ollama stream error: {chunk['error']}")
                 part = chunk.get("message", {})

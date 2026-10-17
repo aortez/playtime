@@ -31,7 +31,7 @@ repeat_penalty = 1.0
 
 [limits]
 wall_seconds = 900
-generated_tokens = 40000
+generated_tokens = 100000
 tokens_per_call = 4096
 handoff_tokens = 2048
 model_seconds = 180

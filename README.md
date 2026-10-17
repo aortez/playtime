@@ -37,7 +37,7 @@ The bundled creative prompt is a placeholder. Replace
 
 For the short exploratory pilot, run `./playtime run experiments/curiosity.toml`.
 It uses the same prompt, seeds, model, and workshop with up to four sessions,
-10 work turns per session, 40,000 generated tokens, and a 15-minute wall limit.
+10 work turns per session, 100,000 generated tokens, and a 15-minute wall limit.
 Its context window is 65,536 tokens per request. Context limits the current
 conversation, tool output, and response; the generation budget limits total
 model output across all sessions. These limits can be adjusted independently.
@@ -124,15 +124,18 @@ curiosity recipe sets it to `2`: the third parser failure stops the run. Each
 failed call uses an ordinary work or handoff turn. The model is told that none
 of the failed response's tools ran and asked to emit valid JSON arguments. The
 controller does not repair JSON, execute partial tool calls, or add extra turns.
-Only this specific server error is recoverable; timeouts, broken streams, and
-other server errors still stop the run. Wall, context, log, and token limits
-continue to apply to every request, including corrections.
+This specific error is recognized in both stream chunks and JSON HTTP error
+responses, including HTTP 500. Other HTTP errors, malformed response envelopes,
+timeouts, and broken streams still stop the run. Wall, context, log, and token
+limits continue to apply to every request, including corrections.
 
 Results distinguish `generated_tokens` (server-reported usage),
 `unaccounted_token_reserve` (full allowances for requests without usage), and
 `token_budget_charged` (their sum). `token_usage_complete` stays false after any
 unaccounted request, even if the run later finishes successfully. Error chunks
 and `model_error` records preserve the failures and recovery decisions.
+HTTP error responses are recorded as `http_error` metadata in the event log,
+including their status, bounded body, and whether the body was truncated.
 
 At each boundary the controller:
 
@@ -146,6 +149,11 @@ limit is 8,192 UTF-8 bytes. Oversized files are not silently truncated: the next
 session receives an explanation and can inspect and shorten the file. If the
 model does not save a handoff, its existing file remains. There is no automatic
 summary or transcript retrieval.
+
+The protocol asks for a compact memento with current direction, important files,
+checked results, unresolved problems, and a next action. It asks the model to
+retain still-relevant facts from earlier sessions. This is guidance for the
+model; the controller neither fills those sections nor rewrites its memory.
 
 The wall deadline bounds agent work. Final snapshotting and cleanup can take
 additional time after that deadline.

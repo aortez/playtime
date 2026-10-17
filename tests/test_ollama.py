@@ -12,14 +12,16 @@ from playtime.ollama import Ollama, ToolCallParseError
 
 
 class StreamingTests(unittest.TestCase):
-    def serve(self, responder):
+    def serve(self, responder, *, status=200):
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
 
             def do_POST(self):
                 self.rfile.read(int(self.headers["Content-Length"]))
-                self.send_response(200)
-                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_response(status)
+                self.send_header(
+                    "Content-Type", "application/x-ndjson" if status == 200 else "application/json"
+                )
                 self.send_header("Connection", "close")
                 self.end_headers()
                 try:
@@ -92,6 +94,59 @@ class StreamingTests(unittest.TestCase):
                     error.startswith("error parsing tool call:"),
                 )
                 self.assertEqual(captured, chunks)
+
+    def test_http_tool_parse_error_preserves_status_and_complete_body(self):
+        error = "error parsing tool call: raw='" + "x" * 5000 + "', invalid character '+'"
+        body = json.dumps({"error": error}).encode()
+        captured = []
+        client = self.serve(lambda output: output.write(body), status=500)
+        with self.assertRaises(ToolCallParseError) as raised:
+            client.chat({}, 2, captured.append)
+        self.assertEqual(str(raised.exception), error)
+        self.assertEqual(
+            captured,
+            [{"http_error": {"status": 500, "body": body.decode(), "truncated": False}}],
+        )
+
+    def test_other_http_errors_and_invalid_envelopes_remain_fatal(self):
+        for body in [
+            b'{"error":"model runner out of memory"}',
+            b"error parsing tool call: invalid arguments",
+            b'{"error":"error parsing tool call:',
+            b'["error parsing tool call: invalid arguments"]',
+            b'{"error":42}',
+            b"null",
+        ]:
+            with self.subTest(body=body):
+                captured = []
+                client = self.serve(lambda output, body=body: output.write(body), status=500)
+                with self.assertRaisesRegex(PlaytimeError, "Ollama chat HTTP 500") as raised:
+                    client.chat({}, 2, captured.append)
+                self.assertNotIsInstance(raised.exception, ToolCallParseError)
+                self.assertEqual(captured[0]["http_error"]["body"], body.decode())
+
+    def test_http_error_body_is_bounded_and_cannot_trigger_recovery_when_truncated(self):
+        body = json.dumps({"error": "error parsing tool call: " + "x" * (512 * 1024)}).encode()
+        captured = []
+        client = self.serve(lambda output: output.write(body), status=500)
+        with self.assertRaisesRegex(StopRun, "model_response_byte_limit"):
+            client.chat({}, 2, captured.append)
+        record = captured[0]["http_error"]
+        self.assertTrue(record["truncated"])
+        self.assertEqual(len(record["body"]), 512 * 1024)
+
+    def test_deadline_interrupts_a_dribbling_http_error_body(self):
+        def respond(output):
+            for _ in range(50):
+                output.write(b" ")
+                output.flush()
+                time.sleep(0.04)
+
+        client = self.serve(respond, status=500)
+        started = time.monotonic()
+        with self.assertRaisesRegex(StopRun, "model_timeout"):
+            client.chat({}, 0.2, lambda chunk: None)
+        self.assertLess(time.monotonic() - started, 1)
 
     def test_wall_deadline_interrupts_a_stalled_stream(self):
         def respond(output):
