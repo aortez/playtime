@@ -1,0 +1,29 @@
+{
+  "architecture": "amd64",
+  "archive": ".playtime/images/c9b75cdfdc56ff15662ec7fe5cc2c16804554f642fca9b6056c160c06032781b.tar",
+  "archive_sha256": "622ebab20cd236c9cadade25302610181e32a3d6d9b1779d3f7ba5c88f501e3a",
+  "base_image": "python@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258",
+  "build_context_sha256": "8e6e4023b6421e9a7a57066f93910345c31b1af552ce2d1666935a3e5c6697f1",
+  "build_sources": {
+    "Dockerfile": "54c58b758a606f7c3867051f275be949dea6f76d72956699856233b72ef9e96c",
+    "base-image.txt": "06f832a60d851deadf764e4eae7e4d469b6ca7082aa3d2f077fcc5c03f271215",
+    "docs/INVENTORY.md": "2210a403db46a412bd28fed264e77535179447c10865123b72cae53e1af585ed",
+    "docs/browser.md": "135e60d2a1d34f5ed686b6adc7f8cfd72f32985119f54746cf0f3ae7a92a352c",
+    "docs/computation.md": "3e298d53adc4f13b36bda1446ac2225c1d691e6ad195b56a00475a18804f88ce",
+    "install.sh": "19436e8a35bad507cfacec80181a983dcab8995ee382bc7785d9411d4f432a28",
+    "requirements-browser.in": "138ad111e5e3dd2172b9ec90096935f1db369c673e09ba89ab20fa557fbc2db1",
+    "requirements-browser.lock": "e5a24580076baecaee2744c586331b64884607243fa51838dc6784a45e18cd01",
+    "requirements-computation.in": "f712ef07524911194ff19103763cc08c7463d8c659d8b25039eb7546434899d4",
+    "requirements-computation.lock": "e3c36e49a713867146069d8c3e2e25c2d54481d65107d7ee8e0406001a632093",
+    "tool.py": "d46591bdaedf3ae4acba771624f5cc705715472f4bbe56fbf43ffbdb93e2789c"
+  },
+  "image_id": "sha256:c9b75cdfdc56ff15662ec7fe5cc2c16804554f642fca9b6056c160c06032781b",
+  "os": "linux",
+  "schema": 1,
+  "toolsets": [
+    "core",
+    "computation",
+    "browser",
+    "systems"
+  ]
+}

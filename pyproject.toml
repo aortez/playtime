@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "playtime-workshop"
+version = "0.1.0"
+description = "Bounded, inspectable experiments with local models and persistent file memory"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+playtime = "playtime.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"]
+"playtime" = ["E402"]

@@ -1,0 +1,39 @@
+name = "empty-workshop"
+prompt = "prompts/inspiration.txt"
+protocol = "prompts/protocol.txt"
+seeds = ""
+reset_mode = "files_only"
+sampling_seed = 1042
+sessions = 12
+work_turns_per_session = 20
+
+[workshop]
+toolsets = ["core", "computation", "browser", "systems"]
+lock = "environments/general.lock.json"
+cpus = 4
+memory_mb = 4096
+workspace_mb = 256
+tmp_mb = 256
+pids = 256
+
+[model]
+endpoint = "http://oldman-bird.local:11434"
+name = "gpt-oss:20b"
+lock = "models/gpt-oss-20b.lock.json"
+think = "low"
+context_tokens = 32768
+temperature = 0.8
+top_p = 0.95
+top_k = 40
+repeat_penalty = 1.0
+
+[limits]
+wall_seconds = 7200
+generated_tokens = 60000
+tokens_per_call = 4096
+handoff_tokens = 2048
+model_seconds = 180
+command_seconds = 60
+output_bytes = 16384
+memento_bytes = 8192
+log_mb = 64

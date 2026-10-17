@@ -1,0 +1,10 @@
+An optional collection of small starting materials. You may use, change, or
+ignore any of them. These are synthetic examples created for this workshop.
+
+pulses.json: A small deterministic sequence produced by a mixture of periodic
+signals. Units are arbitrary; these are not measurements of a physical system.
+
+palette.json: A handful of colors that can be used as raw material.
+
+machine.py: A runnable one-dimensional cellular automaton with a configurable
+rule. Run `python machine.py --help` to see its controls.
