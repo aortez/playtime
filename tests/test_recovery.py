@@ -209,6 +209,73 @@ class RecoveryTests(unittest.TestCase):
                 [tool["function"]["name"] for tool in request["tools"]], ["end_session"]
             )
 
+    def test_text_handoff_gets_feedback_then_saves_memory_for_next_session(self):
+        text_handoff = completed(handoff=False)
+        text_handoff["message"]["content"] = json.dumps(
+            {"memento": "This text must not be saved automatically.", "finish_run": True}
+        )
+        result = self.execute(
+            [completed(handoff=False), text_handoff, completed(finish=False), completed()]
+        )
+        requests = self.runner.model.requests
+        self.assertEqual(result["stop_reason"], "agent_finished")
+        self.assertEqual(result["model_calls"], 4)
+        self.assertEqual(result["generated_tokens"], 20)
+        self.assertTrue(result["token_usage_complete"])
+        self.assertEqual(result["tool_parse_errors"], 0)
+        feedback = requests[2]["messages"][-1]
+        self.assertEqual(feedback["role"], "user")
+        self.assertIn("did not save a memento", feedback["content"])
+        self.assertIn("Call the end_session tool", feedback["content"])
+        self.assertEqual(requests[2]["messages"][-2], text_handoff["message"])
+        for request in requests[1:3]:
+            self.assertEqual(
+                [tool["function"]["name"] for tool in request["tools"]], ["end_session"]
+            )
+        self.assertEqual(len(requests[3]["messages"]), 2)
+        self.assertIn("The project is in progress.", requests[3]["messages"][1]["content"])
+        self.assertNotIn("did not call a tool", json.dumps(requests[3]["messages"]))
+        self.assertEqual(
+            self.runner.sandbox.calls,
+            [("write_file", {"path": "/work/MEMENTO.md", "content": "The project is in progress."})]
+            * 2,
+        )
+        sessions, _ = load_timeline(self.directory)
+        notices = sessions[1]["notices"]
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(notices[0]["kind"], "handoff_feedback")
+        self.assertEqual(notices[0]["call"], 2)
+        self.assertEqual(notices[0]["content"], feedback["content"])
+        self.assertIn("did not save a memento", report(self.directory).read_text())
+
+    def test_empty_handoffs_get_one_reminder_and_preserve_existing_memory(self):
+        self.recipe["sessions"] = 1
+        self.runner.sandbox.memento = "Existing checkpoint."
+        empty = completed(handoff=False)
+        empty["message"].update(content="", tool_calls=[])
+        result = self.execute([completed(handoff=False), empty, empty])
+        self.assertEqual(result["stop_reason"], "session_limit")
+        self.assertEqual(result["model_calls"], 3)
+        self.assertEqual(self.runner.sandbox.calls, [])
+        self.assertEqual(self.runner.sandbox.memento, "Existing checkpoint.")
+        self.assertIn(
+            "did not save a memento", self.runner.model.requests[2]["messages"][-1]["content"]
+        )
+        sessions, _ = load_timeline(self.directory)
+        self.assertEqual(
+            [notice["kind"] for notice in sessions[1]["notices"]],
+            ["handoff_feedback", "handoff_missing"],
+        )
+
+    def test_handoff_feedback_does_not_bypass_generation_budget(self):
+        self.recipe["sessions"] = 1
+        self.recipe["limits"]["generated_tokens"] = 55
+        result = self.execute([completed(handoff=False), completed(handoff=False, tokens=50)])
+        self.assertEqual(result["stop_reason"], "token_limit")
+        self.assertEqual(result["model_calls"], 2)
+        self.assertEqual(result["generated_tokens"], 55)
+        self.assertEqual(self.runner.sandbox.calls, [])
+
     def test_unknown_usage_consumes_work_budget_and_preserves_only_handoff_reserve(self):
         self.recipe["limits"].update(generated_tokens=150)
         self.runner.model = SequenceModel([parse_error(), completed(tokens=50)])

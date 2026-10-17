@@ -153,6 +153,11 @@ limit is 8,192 UTF-8 bytes. Oversized files are not silently truncated: the next
 session receives an explanation and can inspect and shorten the file. If the
 model does not save a handoff, its existing file remains. There is no automatic
 summary or transcript retrieval.
+If the first handoff response contains no tool call (including ordinary text
+or an empty reply), the controller explicitly says that response did not save
+a memento and asks for `end_session` before the existing second attempt. This
+feedback is recorded in the report and event log. It adds no requests beyond
+the two handoff attempts; all existing budgets still apply.
 
 The protocol asks for a compact memento with current direction, important files,
 checked results, unresolved problems, and a next action. It asks the model to

@@ -427,7 +427,7 @@ class Supervisor:
                             f"Maximum {limits['memento_bytes']} UTF-8 bytes. Budget: {canonical(self.budget())}",
                         }
                     )
-                    for _ in range(2):
+                    for attempt in range(2):
                         if self.tokens_charged >= limits["generated_tokens"]:
                             break
                         try:
@@ -442,6 +442,20 @@ class Supervisor:
                             ended, finished = self.apply_calls(message, messages, handoff=True)
                             if ended:
                                 break
+                            if attempt == 0 and not message.get("tool_calls"):
+                                feedback = (
+                                    "Your last response did not call a tool, so it did not save "
+                                    "a memento. Call the end_session tool with your memento now. "
+                                    "Returning JSON as ordinary text does not invoke the tool."
+                                )
+                                messages.append({"role": "user", "content": feedback})
+                                self.log.emit(
+                                    "handoff_feedback",
+                                    session=self.session,
+                                    call=self.calls,
+                                    reason="missing_tool_call",
+                                    content=feedback,
+                                )
                     if not ended:
                         self.log.emit("handoff_missing", session=self.session)
                 self.checkpoint()
