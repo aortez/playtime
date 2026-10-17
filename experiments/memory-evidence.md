@@ -76,3 +76,6 @@ Report per-run usage (known and unknown reservations), elapsed time, calls, stop
 reason, handoffs, received appendix bytes, claim audit and artifact checks. Show
 all three paired comparisons with local report links. This pilot cannot estimate
 a reliable effect size or separate factual content from added-context effects.
+
+The completed six-run pilot and local audit links are in
+[memory-evidence-results.md](memory-evidence-results.md).
