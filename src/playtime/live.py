@@ -3,6 +3,7 @@
 import json
 
 from .common import PlaytimeError
+from .evidence import received_evidence
 from .jobs import read_json
 from .memory import checkpoint_memory
 from .ollama import Ollama
@@ -85,6 +86,7 @@ def checkpoint(directory, number):
         "summary": summary,
         "memento": (folder / "memento.txt").read_text(),
         "memory": checkpoint_memory(directory, number, summary),
+        "evidence": received_evidence(directory, number),
         "images": images,
         "notice": notice,
     }

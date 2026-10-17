@@ -98,6 +98,7 @@ def main(argv=None):
     )
     repeat.add_argument("run_directory", type=Path)
     repeat.add_argument("--sampling-seed", type=int)
+    repeat.add_argument("--memory-condition", choices=["self", "self_plus_evidence"])
     repeat.add_argument(
         "--endpoint", help="alternate Ollama URL; model identity and version must still match"
     )
@@ -109,6 +110,10 @@ def main(argv=None):
     serving.add_argument("--port", type=int, default=8765)
     working = commands.add_parser("worker", help="run a prepared archive (internal)")
     working.add_argument("run_id")
+    paired = commands.add_parser("pilot-prepare", help="freeze six paired runs in the issue #1 order")
+    paired.add_argument("recipe", type=Path)
+    paired_run = commands.add_parser("pilot-run", help="execute a frozen pilot sequentially; never retry a started slot")
+    paired_run.add_argument("pilot_directory", type=Path)
     args = parser.parse_args(argv)
 
     def terminate(signum, frame):
@@ -129,6 +134,16 @@ def main(argv=None):
             from .jobs import worker
 
             return result_exit_code(worker(root, args.run_id))
+        if args.command == "pilot-prepare":
+            from .pilot import prepare_pilot
+
+            prepare_pilot(root, load_recipe(root / args.recipe))
+            return 0
+        if args.command == "pilot-run":
+            from .pilot import execute_pilot
+
+            print(execute_pilot(root, args.pilot_directory))
+            return 0
         if args.command == "repeat":
             previous = args.run_directory.resolve()
             old = json.loads((previous / "manifest.json").read_text())
@@ -137,6 +152,8 @@ def main(argv=None):
                 recipe["sampling_seed"] = args.sampling_seed
             if args.endpoint:
                 recipe["model"]["endpoint"] = args.endpoint
+            if args.memory_condition:
+                recipe["memory_condition"] = args.memory_condition
             validate(recipe)
             directory, result = run(
                 root,
