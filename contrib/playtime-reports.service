@@ -1,0 +1,14 @@
+# Adjust both paths if the checkout moves.
+[Unit]
+Description=Playtime local report gallery
+
+[Service]
+Type=simple
+WorkingDirectory=/home/data2/workspace/playtime
+ExecStart=/usr/bin/python3 /home/data2/workspace/playtime/playtime serve
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target

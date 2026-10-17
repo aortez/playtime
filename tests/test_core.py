@@ -110,7 +110,8 @@ class CoreTests(unittest.TestCase):
             }
             (root / "events.jsonl").write_text(json.dumps(event) + '\n{"partial":')
             text = report(root).read_text()
-            self.assertNotIn("<script>", text)
+            self.assertNotIn("<script>bad()", text)
+            self.assertNotIn("<script>alert", text)
             self.assertIn("&lt;script&gt;", text)
             self.assertIn("incomplete", text)
 

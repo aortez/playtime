@@ -35,8 +35,40 @@ The bundled creative prompt is a placeholder. Replace
 ./playtime run experiments/pilot.toml
 ```
 
-The command prints the new run directory and report path. Open its `report.html`
-locally. For an empty starting workspace, use `experiments/empty.toml` instead.
+For the short exploratory pilot, run `./playtime run experiments/curiosity.toml`.
+It uses the same prompt, seeds, model, and workshop with up to four sessions,
+10 work turns per session, 20,000 generated tokens, and a 15-minute wall limit.
+The model may finish early. Observe its artifact, behavior across the first
+reset, and response to failures without coaching it during the run.
+
+The command prints the new run directory and report path. Every completed run
+also updates the local gallery at `runs/index.html`. Open either HTML file
+directly, or keep a local report server running:
+
+```sh
+./playtime serve
+```
+
+Visit <http://127.0.0.1:8765/> for all runs, or bookmark
+<http://127.0.0.1:8765/latest/> for the newest report. The gallery refreshes every
+15 seconds and discovers new reports without restarting the server. It binds
+only to this machine's loopback interface. Use `--port` to choose another port.
+Ctrl-C stops it; experiment runs are independent of the server.
+
+For automatic startup at login, install the example user service (adjust its
+two checkout paths if necessary):
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp contrib/playtime-reports.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now playtime-reports.service
+```
+
+Use `systemctl --user restart playtime-reports` after updating the viewer code,
+or `systemctl --user disable --now playtime-reports` to stop automatic hosting.
+
+For an empty starting workspace, use `experiments/empty.toml` instead.
 The two smoke commands are infrastructure checks; they replace the creative
 prompt with a two-session file-persistence task and use smaller budgets. The
 default smoke uses a deterministic scripted model and still exercises Docker,
@@ -142,6 +174,21 @@ The event log includes the exact request JSON and streamed model output,
 including thinking when emitted. Tool results are the bounded results actually
 delivered to the model. A report shows claims alongside observable tool results;
 it does not assign a subjective creativity score.
+
+Reports open in **Readable** view: each model turn is grouped with its tool
+calls and results, with short passages visible and longer passages explicitly
+excerpted. Incoming and saved mementos appear together for each session, along
+with checkpoint file changes. **Compact** shows the action timeline;
+**Full** opens the complete passages and raw records. Individual passages can
+also be expanded. Partial model streams, unknown token usage, tool failures,
+and tool output truncation stay visible. The complete requests and stream
+chunks remain in `events.jsonl`.
+
+Reports work directly from disk and contain no external assets. Their small
+view-control script is permitted by an exact content hash. The local server
+serves artifacts as downloads, blocks symlinks and path traversal, and exposes
+only the run archive. Regenerating a report updates its presentation and the
+gallery; it does not change recorded prompts, events, or snapshots.
 
 Logs and snapshots are outside the model's environment. Workspace snapshots
 preserve links in their tar archives; automatic artifact extraction creates

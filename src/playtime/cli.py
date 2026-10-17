@@ -10,8 +10,9 @@ from .common import PlaytimeError, digest_file, write_json
 from .config import load_recipe, repo_path, smoke_recipe, validate
 from .environment import prepare_image
 from .ollama import Ollama
-from .report import report
+from .report import publish
 from .runner import check, run
+from .server import serve
 
 
 def prepare(root, recipe, *, refresh=False, image=None):
@@ -104,6 +105,8 @@ def main(argv=None):
         "report", help="regenerate an HTML report without running the agent"
     )
     reporting.add_argument("run_directory", type=Path)
+    serving = commands.add_parser("serve", help="serve the local report gallery on loopback")
+    serving.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
 
     def terminate(signum, frame):
@@ -113,7 +116,12 @@ def main(argv=None):
     root = args.root.resolve()
     try:
         if args.command == "report":
-            print(report(args.run_directory.resolve()))
+            print(publish(args.run_directory.resolve()))
+            return 0
+        if args.command == "serve":
+            if not 0 <= args.port <= 65535:
+                raise PlaytimeError("Port must be between 0 and 65535")
+            serve(root / "runs", port=args.port)
             return 0
         if args.command == "repeat":
             previous = args.run_directory.resolve()

@@ -146,9 +146,9 @@ def run(root, recipe, *, scripted=False, smoke=False, previous=None, runs_dir=No
     print(f"Run archive: {directory}", flush=True)
     supervisor = Supervisor(directory, recipe, image, scripted=scripted)
     result = supervisor.execute()
-    from .report import report
+    from .report import publish
 
-    report(directory)
+    publish(directory)
     return directory, result
 
 
