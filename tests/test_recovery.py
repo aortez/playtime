@@ -231,7 +231,10 @@ class RecoveryTests(unittest.TestCase):
         messages = [{"role": "user", "content": "Explore"}]
         self.runner.request(messages)
         with self.assertRaises(SessionFull):
-            self.runner.request(messages + [{"role": "user", "content": "x" * 40000}])
+            self.runner.request(
+                messages
+                + [{"role": "user", "content": "x" * self.recipe["model"]["context_tokens"]}]
+            )
         deadline = self.runner.deadline
         self.runner.deadline = time.monotonic() - 1
         with self.assertRaisesRegex(StopRun, "wall_limit"):
