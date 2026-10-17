@@ -62,7 +62,7 @@ document.querySelectorAll('[data-set-view]').forEach(button => {
     document.querySelectorAll('[data-set-view]').forEach(item => {
       item.setAttribute('aria-pressed', String(item === button));
     });
-    document.querySelectorAll('.session details').forEach(item => {
+    document.querySelectorAll('main details').forEach(item => {
       item.open = view === 'full';
     });
   });

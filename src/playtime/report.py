@@ -289,6 +289,8 @@ def render_session(directory, number, session, previous_tokens):
         if total is not None
         else "Token total unavailable"
     )
+    if total is not None and any(turn["response"] is None for turn in session["turns"]):
+        count = f"{total - previous_tokens:,} + unknown tokens this session"
     folder = f"sessions/{number:03d}"
     body = f'<section class="session" id="session-{number}"><header class="session-head row">'
     body += f'<h2>Session {number}</h2><span class="meta">{len(session["turns"])} calls · {escaped(count)}</span></header>'
@@ -329,6 +331,8 @@ def render_session(directory, number, session, previous_tokens):
     body += "</div></div>"
     if files:
         body += text_block("Files at checkpoint", "\n".join(files))
+        if number == 1:
+            body += '<p class="muted">The first checkpoint includes any starting seed files.</p>'
     if checkpoint.get("interrupted"):
         body += '<p class="notice">This checkpoint was taken during interruption or shutdown.</p>'
     body += raw_details({"session_start": session["start"], "checkpoint": checkpoint})
