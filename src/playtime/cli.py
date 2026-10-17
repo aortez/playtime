@@ -105,8 +105,10 @@ def main(argv=None):
         "report", help="regenerate an HTML report without running the agent"
     )
     reporting.add_argument("run_directory", type=Path)
-    serving = commands.add_parser("serve", help="serve the local report gallery on loopback")
+    serving = commands.add_parser("serve", help="serve the local experiment dashboard on loopback")
     serving.add_argument("--port", type=int, default=8765)
+    working = commands.add_parser("worker", help="run a prepared archive (internal)")
+    working.add_argument("run_id")
     args = parser.parse_args(argv)
 
     def terminate(signum, frame):
@@ -121,8 +123,12 @@ def main(argv=None):
         if args.command == "serve":
             if not 0 <= args.port <= 65535:
                 raise PlaytimeError("Port must be between 0 and 65535")
-            serve(root / "runs", port=args.port)
+            serve(root / "runs", port=args.port, root=root)
             return 0
+        if args.command == "worker":
+            from .jobs import worker
+
+            return result_exit_code(worker(root, args.run_id))
         if args.command == "repeat":
             previous = args.run_directory.resolve()
             old = json.loads((previous / "manifest.json").read_text())

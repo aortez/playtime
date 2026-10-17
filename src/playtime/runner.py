@@ -73,7 +73,17 @@ def archive_controller(root, destination):
         shutil.copy2(Path(root) / name, destination / name)
 
 
-def run(root, recipe, *, scripted=False, smoke=False, previous=None, runs_dir=None):
+SMOKE_PROMPT = (
+    "This is a two-session infrastructure test. In session 1, write /work/probe.txt with exactly "
+    "playtime-persistent, verify the file, and call end_session with a useful memento and finish_run=false. "
+    "In session 2, read that file, verify its exact contents, and call end_session with finish_run=true. "
+    "Do not create other projects.\n"
+)
+
+
+def prepare_run(
+    root, recipe, *, scripted=False, smoke=False, previous=None, runs_dir=None, live=True
+):
     root = Path(root).resolve()
     source_root = Path(__file__).resolve().parents[2]
     recipe = copy.deepcopy(recipe)
@@ -89,10 +99,15 @@ def run(root, recipe, *, scripted=False, smoke=False, previous=None, runs_dir=No
                 "Controller has changed. Use the archived controller with --root pointing to this project to repeat this run"
             )
         image, model = check(
-            root, recipe, live=not scripted, image=old["image"], model=old["model"], sources=False
+            root,
+            recipe,
+            live=live and not scripted,
+            image=old["image"],
+            model=old["model"],
+            sources=False,
         )
     else:
-        image, model = check(root, recipe, live=not scripted)
+        image, model = check(root, recipe, live=live and not scripted)
     run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
     directory = Path(runs_dir or root / "runs") / run_id
     directory.mkdir(parents=True, mode=0o700)
@@ -114,12 +129,7 @@ def run(root, recipe, *, scripted=False, smoke=False, previous=None, runs_dir=No
             inputs / "initial-workspace.tar",
         )
     if smoke and not previous:
-        (inputs / "prompt.txt").write_text(
-            "This is a two-session infrastructure test. In session 1, write /work/probe.txt with exactly "
-            "playtime-persistent, verify the file, and call end_session with a useful memento and finish_run=false. "
-            "In session 2, read that file, verify its exact contents, and call end_session with finish_run=true. "
-            "Do not create other projects.\n"
-        )
+        (inputs / "prompt.txt").write_text(SMOKE_PROMPT)
     write_json(inputs / "recipe.json", recipe)
     write_json(inputs / "tools.json", TOOLS)
     controller = controller_manifest(source_root)
@@ -144,12 +154,32 @@ def run(root, recipe, *, scripted=False, smoke=False, previous=None, runs_dir=No
     }
     write_json(directory / "manifest.json", manifest)
     print(f"Run archive: {directory}", flush=True)
+    return directory, manifest
+
+
+def execute_prepared(directory, manifest):
+    recipe, image = manifest["recipe"], manifest["image"]
+    scripted = manifest["kind"] == "scripted-smoke"
     supervisor = Supervisor(directory, recipe, image, scripted=scripted)
     result = supervisor.execute()
     from .report import publish
 
     publish(directory)
     return directory, result
+
+
+def run(root, recipe, **options):
+    # CLI and dashboard launches share the same exclusion lock.
+    from .jobs import RunLock, ensure_idle, finish_job, mark_active
+
+    with RunLock(root):
+        ensure_idle(root)
+        directory, manifest = prepare_run(root, recipe, **options)
+        mark_active(root, directory, mode="cli")
+        try:
+            return execute_prepared(directory, manifest)
+        finally:
+            finish_job(directory)
 
 
 class Supervisor:

@@ -1,6 +1,6 @@
 # Adjust both paths if the checkout moves.
 [Unit]
-Description=Playtime local report gallery
+Description=Playtime local experiment dashboard
 
 [Service]
 Type=simple

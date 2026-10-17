@@ -51,17 +51,48 @@ reset, and response to failures without coaching it during the run.
 
 The command prints the new run directory and report path. Every completed run
 also updates the local gallery at `runs/index.html`. Open either HTML file
-directly, or keep a local report server running:
+directly, or keep the local dashboard running:
 
 ```sh
 ./playtime serve
 ```
 
-Visit <http://127.0.0.1:8765/> for all runs, or bookmark
-<http://127.0.0.1:8765/latest/> for the newest report. The gallery refreshes every
-15 seconds and discovers new reports without restarting the server. It binds
-only to this machine's loopback interface. Use `--port` to choose another port.
-Ctrl-C stops it; experiment runs are independent of the server.
+Visit <http://127.0.0.1:8765/> to choose a recipe, preview its prompt and limits,
+and launch an experiment. The run-type selector also offers the bounded live
+and scripted infrastructure checks. Launch freezes the prompts, seed files,
+recipe, identities, and controller into a new archive; later edits do not
+change that run. If inputs changed since the preview, refresh it before starting.
+
+The live page follows model output and tool activity with incremental log reads.
+The current turn opens automatically; completed turns retain a short action and
+result preview. Expand a turn to inspect thinking, arguments, and output.
+Scrolling upward pauses auto-follow; **Follow live** resumes it. Tool output
+appears when the tool returns. Images, file changes, and saved mementos appear
+at session checkpoints. Confirmed generated tokens are shown separately from
+in-flight allowances and charges for requests whose actual usage is unknown.
+The device indicator describes the model's current Ollama allocation, not its
+historical allocation during an older run.
+
+Dashboard launches require a working systemd user manager. Each worker runs in
+its own temporary user service, independently of the browser and dashboard.
+Closing a tab or restarting the dashboard leaves it running; reopening the run
+reconstructs the view from its log. **Stop run** sends the worker through the
+existing interruption, snapshot, report, and cleanup path. Shutdown is allowed
+up to three minutes before systemd forcibly stops a stuck worker. Failed workers
+are never automatically restarted. A missing worker without a final result is
+shown as interrupted, preserving the partial record.
+
+Browser and current CLI launches share a project-wide run lock. Only one run
+may execute at a time; additional starts fail rather than queue. New CLI runs
+can also be watched in the dashboard; stop those from their terminal. Older
+archived controllers predate this lock, so run those separately.
+
+Completed reports remain at <http://127.0.0.1:8765/archive>, with
+<http://127.0.0.1:8765/latest/> linking to the newest report. Offline HTML reports
+continue to work. The server binds only to loopback, validates its Host header,
+and requires a same-origin request and per-server token for launch and stop.
+It accepts saved recipes from `experiments/`, not arbitrary host commands.
+Use `--port` to choose another port. Ctrl-C stops the dashboard.
 
 For automatic startup at login, install the example user service (adjust its
 two checkout paths if necessary):
@@ -211,6 +242,8 @@ the store expires two minutes after the run deadline.
 ```text
 runs/<run-id>/
   manifest.json             # Configuration, identities, input hashes, runtime
+  job.json                  # Worker ownership, lifecycle, and startup errors (new runs)
+  stop-requested.json       # Present when Stop run was requested
   inputs/                   # Exact prompts, tools, initial workspace, controller
   events.jsonl              # Requests, streaming responses, tools, timing
   sessions/001/             # Snapshot tar, file manifest/diff, memento, summary
@@ -223,6 +256,12 @@ The event log includes the exact request JSON and streamed model output,
 including thinking when emitted. Tool results are the bounded results actually
 delivered to the model. A report shows claims alongside observable tool results;
 it does not assign a subjective creativity score.
+
+The dashboard's active-run pointer and exclusion lock live under `.playtime/`.
+To inspect a detached worker directly, use
+`systemctl --user status playtime-<run-id>.service` or
+`journalctl --user -u playtime-<run-id>.service`. Completed temporary services
+are collected; the run directory remains the durable experiment record.
 
 Reports open in **Readable** view: each model turn is grouped with its tool
 calls and results, with short passages visible and longer passages explicitly
