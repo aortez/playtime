@@ -199,11 +199,13 @@ The second command includes Docker integration checks. Use `smoke --live` with
 a recipe when checking the real model's tool use and handoff behavior.
 
 The Rust workspace contains `playtime-core`, `playtime-protocol`,
-`playtime-engine`, `playtime-storage`, `playtime-server`, `playtime-client`, and
-`playtime-local`: typed contracts, a bounded controller, deterministic simulation,
-portable archive I/O, and an authenticated HTTP/client fixture. The Python command remains
-the operational runner. See the [architecture decision](docs/rust-foundation.md),
+`playtime-engine`, `playtime-storage`, `playtime-runner`, `playtime-server`,
+`playtime-client`, and `playtime-local`: typed contracts, a bounded controller,
+deterministic simulation, durable portable archives, and an authenticated
+HTTP/client fixture. The Python command remains the operational runner. See the
+[architecture decision](docs/rust-foundation.md),
 [controller contract](docs/rust-controller.md), [storage contract](docs/rust-storage.md),
+[durable simulation driver](docs/rust-archive-driver.md),
 [HTTP/client contract](docs/rust-http-api.md), and
 [compatibility matrix](docs/rust-compatibility.md) for scope and remaining work.
 With rustup installed, Cargo selects the pinned toolchain:
@@ -223,7 +225,7 @@ cargo run --locked -p playtime-engine --example simulate -- crates/playtime-engi
 This prints a simulation-labeled result and event trace. Scripted commands only
 mutate an in-memory workshop; their command text is never executed on the host.
 The example spends 26 measured tokens over 400 virtual milliseconds. Real Rust
-adapters and production controller/archive/service integration remain later work.
+model/workshop adapters and production service integration remain later work.
 
 To publish and verify the synthetic two-session archive in a **new** directory:
 
@@ -233,7 +235,19 @@ cargo run --locked -p playtime-storage --example archive_fixture -- --output /tm
 
 This is a fixture replay; it executes no controller, worker, model, or workshop.
 The resulting folder contains all inputs and evidence and can be copied and
-inspected without a service database. Controller integration follows in #19.
+inspected without a service database.
+
+To execute the real controller while committing its events and checkpoints:
+
+```sh
+cargo run --locked --release -p playtime-runner --example archive_simulation -- --scenario crates/playtime-engine/tests/fixtures/two-session.json --output /tmp/playtime-simulation
+cargo run --locked --release -p playtime-runner --example inspect_archive -- --run /tmp/playtime-simulation
+```
+
+The output directory must be new. After closing the writer, the complete folder
+can be copied and inspected independently of this checkout. This CPU-only driver
+freezes its actual executable and gates each scripted effect on a durable intent.
+See the [driver contract](docs/rust-archive-driver.md) for queries and failure bounds.
 
 To exercise the HTTP API and shared client on CPU, start the bounded fixture in
 one terminal and its walkthrough in another:

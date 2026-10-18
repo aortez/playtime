@@ -393,53 +393,224 @@ impl Workshop {
     }
 }
 
+/// Owns all simulated work, with an explicit cancellation boundary. Dispatch
+/// mutates only in-memory files; command strings are never executed on the host.
+/// A durable driver can commit intents before calling `dispatch`, then advance
+/// the same controller incrementally using these scheduled inputs.
+pub struct ScriptedAdapters {
+    config: ControllerConfig,
+    workshop: Workshop,
+    models: VecDeque<ModelScript>,
+    starts: VecDeque<LifecycleStep>,
+    snapshots: VecDeque<LifecycleStep>,
+    publications: VecDeque<LifecycleStep>,
+    cleanup: LifecycleStep,
+    active: Option<u64>,
+    schedule: Scheduled,
+}
+
+impl ScriptedAdapters {
+    pub fn new(scenario: &Scenario) -> Result<Self, InvalidValue> {
+        if scenario.schema_version != 1 {
+            return Err(InvalidValue("unsupported scenario version"));
+        }
+        if scenario.mode != RunMode::Simulation {
+            return Err(InvalidValue(
+                "scripted scenarios must be labeled simulation",
+            ));
+        }
+        scenario.parameters.validate()?;
+        validate_files(
+            &scenario.initial_files,
+            scenario.parameters.workshop.workspace_bytes.get(),
+        )?;
+        let mut workshop = Workshop {
+            files: scenario.initial_files.clone(),
+            temporary: BTreeMap::new(),
+            processes: Vec::new(),
+            sessions: Vec::new(),
+            artifacts: BTreeMap::new(),
+            execs: scenario.execs.clone().into(),
+        };
+        let initial = snapshot(
+            "inputs/simulation-workspace.json",
+            &workshop.files,
+            &mut workshop.artifacts,
+            scenario.parameters.limits.memento_bytes.get(),
+        );
+        let config = ControllerConfig {
+            parameters: scenario.parameters.clone(),
+            protocol: scenario.protocol.clone(),
+            prompt: scenario.prompt.clone(),
+            inventory: scenario.inventory.clone(),
+            initial_workspace: initial.workspace,
+            initial_files: initial.files,
+        };
+
+        Ok(Self {
+            config,
+            workshop,
+            models: scenario.models.clone().into(),
+            starts: scenario.lifecycle.start.clone().into(),
+            snapshots: scenario.lifecycle.snapshot.clone().into(),
+            publications: scenario.lifecycle.publish.clone().into(),
+            cleanup: scenario.lifecycle.cleanup.clone(),
+            active: None,
+            schedule: Scheduled::new(),
+        })
+    }
+
+    pub fn config(&self) -> &ControllerConfig {
+        &self.config
+    }
+    pub fn artifacts(&self) -> &BTreeMap<String, Vec<u8>> {
+        &self.workshop.artifacts
+    }
+    pub fn files(&self) -> &BTreeMap<String, String> {
+        &self.workshop.files
+    }
+    pub fn session_states(&self) -> &[SessionState] {
+        &self.workshop.sessions
+    }
+    pub fn active(&self) -> Option<u64> {
+        self.active
+    }
+    pub fn next_input_ms(&self) -> Option<u64> {
+        self.schedule.front().map(|(time, _)| *time)
+    }
+
+    pub fn pop_input(&mut self) -> Option<(u64, Input)> {
+        let input = self.schedule.pop_front()?;
+        if matches!(input.1, Input::Complete { .. }) {
+            self.active = None;
+        }
+        Some(input)
+    }
+
+    /// Cancellation is synchronous: there are no worker threads or remote calls
+    /// behind a scripted effect. Workspace mutations already made remain visible.
+    pub fn cancel(&mut self) {
+        self.schedule.clear();
+        self.active = None;
+    }
+
+    pub fn dispatch(&mut self, now: u64, effect: &Effect) -> Result<(), InvalidValue> {
+        if self.active.is_some() {
+            return Err(InvalidValue(
+                "cancel or complete the previous scripted effect first",
+            ));
+        }
+        self.schedule = match &effect.kind {
+            EffectKind::Model(_) => {
+                let script = self.models.pop_front().unwrap_or(ModelScript {
+                    chunks: Vec::new(),
+                    completion: Some(TimedCompletion {
+                        after_ms: 0,
+                        outcome: ModelEnding::Error(ModelFailure::Infrastructure(
+                            "model script exhausted".into(),
+                        )),
+                    }),
+                });
+                let mut scheduled = Scheduled::new();
+                let mut time = now;
+                for chunk in script.chunks {
+                    time = at(time, chunk.after_ms)?;
+                    scheduled.push_back((
+                        time,
+                        Input::Chunk {
+                            effect_id: effect.id,
+                            chunk: chunk.chunk,
+                        },
+                    ));
+                }
+                if let Some(completion) = script.completion {
+                    time = at(time, completion.after_ms)?;
+                    let outcome = match completion.outcome {
+                        ModelEnding::Response(response) => Outcome::Model(response),
+                        ModelEnding::Error(error) => Outcome::ModelError(error),
+                    };
+                    scheduled.push_back((
+                        time,
+                        Input::Complete {
+                            effect_id: effect.id,
+                            outcome,
+                        },
+                    ));
+                }
+                scheduled
+            }
+            EffectKind::StartSession { ordinal, .. } => {
+                self.workshop.temporary.clear();
+                self.workshop.processes.clear();
+                self.workshop.sessions.push(SessionState {
+                    ordinal: *ordinal,
+                    workspace: self.workshop.files.clone(),
+                    temporary_files: self.workshop.temporary.clone(),
+                    processes: self.workshop.processes.clone(),
+                });
+                scheduled(
+                    effect,
+                    now,
+                    self.starts.pop_front().unwrap_or_default(),
+                    Outcome::Started(memory(
+                        &self.workshop.files,
+                        self.config.parameters.limits.memento_bytes.get(),
+                    )),
+                )?
+            }
+            EffectKind::Tool(request) => match self.workshop.tool(request, &self.config.parameters)
+            {
+                Ok((step, result)) => scheduled(effect, now, step, Outcome::Tool(result))?,
+                Err(error) => scheduled(
+                    effect,
+                    now,
+                    LifecycleStep::default(),
+                    Outcome::Failed(error.to_string()),
+                )?,
+            },
+            EffectKind::Snapshot { session_id } => {
+                self.workshop.temporary.clear();
+                self.workshop.processes.clear();
+                let snapshot = snapshot(
+                    &format!("sessions/{session_id}/simulation-workspace.json"),
+                    &self.workshop.files,
+                    &mut self.workshop.artifacts,
+                    self.config.parameters.limits.memento_bytes.get(),
+                );
+                scheduled(
+                    effect,
+                    now,
+                    self.snapshots.pop_front().unwrap_or_default(),
+                    Outcome::Snapshot(snapshot),
+                )?
+            }
+            EffectKind::PublishCheckpoint(_) => scheduled(
+                effect,
+                now,
+                self.publications.pop_front().unwrap_or_default(),
+                Outcome::Published,
+            )?,
+            EffectKind::Cleanup => scheduled(
+                effect,
+                now,
+                self.cleanup.clone(),
+                Outcome::Cleaned(Vec::new()),
+            )?,
+        };
+        self.active = Some(effect.id);
+        Ok(())
+    }
+}
+
 pub fn run(scenario: Scenario) -> Result<Simulation, InvalidValue> {
-    if scenario.schema_version != 1 {
-        return Err(InvalidValue("unsupported scenario version"));
-    }
-    if scenario.mode != RunMode::Simulation {
-        return Err(InvalidValue(
-            "scripted scenarios must be labeled simulation",
-        ));
-    }
-    scenario.parameters.validate()?;
-    validate_files(
-        &scenario.initial_files,
-        scenario.parameters.workshop.workspace_bytes.get(),
-    )?;
-    let mut workshop = Workshop {
-        files: scenario.initial_files,
-        temporary: BTreeMap::new(),
-        processes: Vec::new(),
-        sessions: Vec::new(),
-        artifacts: BTreeMap::new(),
-        execs: scenario.execs.into(),
-    };
-    let initial = snapshot(
-        "inputs/simulation-workspace.json",
-        &workshop.files,
-        &mut workshop.artifacts,
-        scenario.parameters.limits.memento_bytes.get(),
-    );
-    let config = ControllerConfig {
-        parameters: scenario.parameters.clone(),
-        protocol: scenario.protocol,
-        prompt: scenario.prompt,
-        inventory: scenario.inventory,
-        initial_workspace: initial.workspace,
-        initial_files: initial.files,
-    };
+    let mut adapters = ScriptedAdapters::new(&scenario)?;
     let mut controller = Controller::new(
-        config,
+        adapters.config().clone(),
         RunId::new("simulation").unwrap(),
         RunMode::Simulation,
         SequentialIds,
         0,
     )?;
-    let mut models: VecDeque<_> = scenario.models.into();
-    let mut starts: VecDeque<_> = scenario.lifecycle.start.into();
-    let mut snapshots: VecDeque<_> = scenario.lifecycle.snapshot.into();
-    let mut publications: VecDeque<_> = scenario.lifecycle.publish.into();
     let mut cancel = scenario.cancel_at_ms;
     let mut fail_record = scenario.fail_record_sequence;
     let mut records = Vec::new();
@@ -447,8 +618,8 @@ pub fn run(scenario: Scenario) -> Result<Simulation, InvalidValue> {
     let mut checkpoints = Vec::new();
     let mut now = 0;
     let mut dispatched = None;
-    let mut schedule = Scheduled::new();
     loop {
+        controller.take_control_updates();
         let new_records = controller.take_records();
         if let Some(index) = new_records
             .iter()
@@ -470,10 +641,10 @@ pub fn run(scenario: Scenario) -> Result<Simulation, InvalidValue> {
                 result: result.clone(),
                 records,
                 dispatches,
-                session_states: workshop.sessions,
-                workspace: workshop.files,
+                session_states: adapters.workshop.sessions,
+                workspace: adapters.workshop.files,
                 checkpoints,
-                artifacts: workshop.artifacts,
+                artifacts: adapters.workshop.artifacts,
             });
         }
         if cancel.is_some_and(|time| time <= now) {
@@ -505,110 +676,13 @@ pub fn run(scenario: Scenario) -> Result<Simulation, InvalidValue> {
             });
             // Abandon the previous schedule when the controller replaces an
             // effect. A real driver must also cancel/join its external work.
-            schedule = match &effect.kind {
-                EffectKind::Model(_) => {
-                    let script = models.pop_front().unwrap_or(ModelScript {
-                        chunks: Vec::new(),
-                        completion: Some(TimedCompletion {
-                            after_ms: 0,
-                            outcome: ModelEnding::Error(ModelFailure::Infrastructure(
-                                "model script exhausted".into(),
-                            )),
-                        }),
-                    });
-                    let mut scheduled = Scheduled::new();
-                    let mut time = now;
-                    for chunk in script.chunks {
-                        time = at(time, chunk.after_ms)?;
-                        scheduled.push_back((
-                            time,
-                            Input::Chunk {
-                                effect_id: effect.id,
-                                chunk: chunk.chunk,
-                            },
-                        ));
-                    }
-                    if let Some(completion) = script.completion {
-                        time = at(time, completion.after_ms)?;
-                        let outcome = match completion.outcome {
-                            ModelEnding::Response(response) => Outcome::Model(response),
-                            ModelEnding::Error(error) => Outcome::ModelError(error),
-                        };
-                        scheduled.push_back((
-                            time,
-                            Input::Complete {
-                                effect_id: effect.id,
-                                outcome,
-                            },
-                        ));
-                    }
-                    scheduled
-                }
-                EffectKind::StartSession { ordinal, .. } => {
-                    workshop.temporary.clear();
-                    workshop.processes.clear();
-                    workshop.sessions.push(SessionState {
-                        ordinal: *ordinal,
-                        workspace: workshop.files.clone(),
-                        temporary_files: workshop.temporary.clone(),
-                        processes: workshop.processes.clone(),
-                    });
-                    scheduled(
-                        &effect,
-                        now,
-                        starts.pop_front().unwrap_or_default(),
-                        Outcome::Started(memory(
-                            &workshop.files,
-                            scenario.parameters.limits.memento_bytes.get(),
-                        )),
-                    )?
-                }
-                EffectKind::Tool(request) => match workshop.tool(request, &scenario.parameters) {
-                    Ok((step, result)) => scheduled(&effect, now, step, Outcome::Tool(result))?,
-                    Err(error) => scheduled(
-                        &effect,
-                        now,
-                        LifecycleStep::default(),
-                        Outcome::Failed(error.to_string()),
-                    )?,
-                },
-                EffectKind::Snapshot { session_id } => {
-                    workshop.temporary.clear();
-                    workshop.processes.clear();
-                    let snapshot = snapshot(
-                        &format!("sessions/{session_id}/simulation-workspace.json"),
-                        &workshop.files,
-                        &mut workshop.artifacts,
-                        scenario.parameters.limits.memento_bytes.get(),
-                    );
-                    scheduled(
-                        &effect,
-                        now,
-                        snapshots.pop_front().unwrap_or_default(),
-                        Outcome::Snapshot(snapshot),
-                    )?
-                }
-                EffectKind::PublishCheckpoint(_) => scheduled(
-                    &effect,
-                    now,
-                    publications.pop_front().unwrap_or_default(),
-                    Outcome::Published,
-                )?,
-                EffectKind::Cleanup => scheduled(
-                    &effect,
-                    now,
-                    scenario.lifecycle.cleanup.clone(),
-                    Outcome::Cleaned(Vec::new()),
-                )?,
-            };
+            adapters.cancel();
+            adapters.dispatch(now, &effect)?;
         }
         let wakeup = controller
             .next_wakeup_ms()
             .expect("pending effect has a timer");
-        let next = schedule
-            .front()
-            .map_or(wakeup, |(time, _)| *time)
-            .min(wakeup);
+        let next = adapters.next_input_ms().unwrap_or(wakeup).min(wakeup);
         if cancel.is_some_and(|time| time <= next) {
             now = cancel.take().unwrap();
             controller.advance(now, Input::Cancel)?;
@@ -616,7 +690,7 @@ pub fn run(scenario: Scenario) -> Result<Simulation, InvalidValue> {
             now = wakeup;
             controller.advance(now, Input::Tick)?;
         } else {
-            let (time, input) = schedule.pop_front().unwrap();
+            let (time, input) = adapters.pop_input().unwrap();
             now = time;
             let published = matches!(
                 input,

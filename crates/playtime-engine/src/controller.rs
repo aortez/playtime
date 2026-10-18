@@ -4,10 +4,12 @@ use std::{
 };
 
 use playtime_core::{
-    GenerationUsage, InvalidValue, MemoryCondition, RunId, RunMode, RunPhase, SessionId,
-    StopReason, UsageTotals,
+    CommandOutcome, GenerationUsage, InvalidValue, MemoryCondition, RunId, RunMode, RunPhase,
+    SessionId, StopReason, UsageTotals,
 };
-use playtime_protocol::{events::CleanupOutcome, v1::UsageSummary};
+use playtime_protocol::{
+    events::CleanupOutcome, observations::ObservationIdentity, v1::UsageSummary,
+};
 use serde_json::{Value, json};
 
 use crate::{
@@ -43,6 +45,7 @@ struct ActiveTool {
     command: Option<usize>,
     save_memory: bool,
     finish_run: bool,
+    effect_id: Option<u64>,
 }
 
 /// The only owner of execution policy. External adapters supply observations,
@@ -62,7 +65,10 @@ pub struct Controller<I: IdSource> {
     pending: Option<Effect>,
     pending_started: bool,
     next_effect: u64,
-    outbox: Vec<Record>,
+    outbox: Vec<BoundRecord>,
+    controls: Vec<ControlUpdate>,
+    request_context: Option<RequestContext>,
+    publication: Option<(u64, Box<Checkpoint>, bool)>,
     sequence: u64,
     log_used: u64,
     log_exhausted: bool,
@@ -131,6 +137,9 @@ impl<I: IdSource> Controller<I> {
             pending_started: false,
             next_effect: 1,
             outbox: Vec::new(),
+            controls: Vec::new(),
+            request_context: None,
+            publication: None,
             sequence: 1,
             log_used: 0,
             log_exhausted: false,
@@ -193,7 +202,19 @@ impl<I: IdSource> Controller<I> {
         self.reservation.map_or(0, NonZeroU64::get)
     }
     pub fn take_records(&mut self) -> Vec<Record> {
+        self.take_observations()
+            .into_iter()
+            .map(|entry| entry.record)
+            .collect()
+    }
+    pub fn take_observations(&mut self) -> Vec<BoundRecord> {
         std::mem::take(&mut self.outbox)
+    }
+    pub fn take_control_updates(&mut self) -> Vec<ControlUpdate> {
+        std::mem::take(&mut self.controls)
+    }
+    pub fn pending_info(&self) -> Option<EffectInfo> {
+        self.pending.as_ref().map(|effect| self.effect_info(effect))
     }
 
     /// A mismatched/stale completion is rejected without changing state. The
@@ -202,7 +223,23 @@ impl<I: IdSource> Controller<I> {
         if now_ms < self.now_ms {
             return Err(InvalidValue("monotonic clock moved backwards"));
         }
+        if self.controls.len() > CONTROL_QUEUE_CAPACITY - CONTROL_TRANSITION_RESERVE {
+            return Err(InvalidValue(
+                "drain bounded control updates before advancing",
+            ));
+        }
         match &input {
+            Input::PublicationCommitted { effect_id } => {
+                if self
+                    .publication
+                    .as_ref()
+                    .is_none_or(|(id, _, started)| id != effect_id || !started)
+                {
+                    return Err(InvalidValue(
+                        "checkpoint receipt is unstarted, wrong, or already acknowledged",
+                    ));
+                }
+            }
             Input::Dispatched { effect_id } => {
                 if self.pending_started
                     || self
@@ -235,6 +272,10 @@ impl<I: IdSource> Controller<I> {
         }
         self.now_ms = now_ms;
         if self.stage == Stage::Done {
+            if let Input::PublicationCommitted { effect_id } = input {
+                self.publication_committed(effect_id);
+                return Ok(());
+            }
             if let Input::PersistenceFailed(error) = input {
                 self.diagnostic(&format!("terminal event persistence: {error}"));
                 self.result.as_mut().unwrap().diagnostics = self.diagnostics.clone();
@@ -262,6 +303,11 @@ impl<I: IdSource> Controller<I> {
                     .is_some_and(|effect| effect.id == effect_id) =>
             {
                 self.pending_started = true;
+                if let Some((id, _, started)) = &mut self.publication
+                    && *id == effect_id
+                {
+                    *started = true;
+                }
                 if matches!(
                     self.pending.as_ref().unwrap().kind,
                     EffectKind::StartSession { .. }
@@ -305,6 +351,8 @@ impl<I: IdSource> Controller<I> {
                 self.diagnostic(&format!("event persistence: {error}"));
                 self.stop(StopReason::InfrastructureFailure);
             }
+            Input::ExternalLogBudgetExhausted => self.stop(StopReason::LogLimit),
+            Input::PublicationCommitted { effect_id } => self.publication_committed(effect_id),
             _ => {}
         }
         self.pump();
@@ -328,6 +376,37 @@ impl<I: IdSource> Controller<I> {
     }
 
     fn emit(&mut self, kind: &str, data: Value) -> Option<u64> {
+        let identity = if kind == "model_request" {
+            ObservationIdentity::default()
+        } else if kind.starts_with("model_") || kind.starts_with("request_") {
+            self.request_identity()
+        } else if kind.starts_with("tool_") || kind == "memento_write" {
+            let mut identity = self.request_identity();
+            identity.effect_id = self
+                .tool
+                .as_ref()
+                .and_then(|tool| tool.effect_id)
+                .and_then(NonZeroU64::new);
+            identity.tool_request_sequence = if kind == "tool_request" {
+                NonZeroU64::new(self.sequence)
+            } else {
+                self.tool
+                    .as_ref()
+                    .and_then(|tool| NonZeroU64::new(tool.request_sequence))
+            };
+            identity
+        } else {
+            ObservationIdentity::default()
+        };
+        self.emit_bound(kind, data, identity)
+    }
+
+    fn emit_bound(
+        &mut self,
+        kind: &str,
+        data: Value,
+        identity: ObservationIdentity,
+    ) -> Option<u64> {
         let record = Record {
             sequence: self.sequence,
             elapsed_ms: self.now_ms - self.started_ms,
@@ -352,17 +431,23 @@ impl<I: IdSource> Controller<I> {
         };
         if size > ceiling.saturating_sub(self.log_used) {
             self.log_exhausted = true;
+            self.control(ControlFact::ObservationOmitted {
+                kind: kind.into(),
+                size_bytes: size,
+                identity,
+            });
             return None;
         }
         self.log_used += size;
         self.sequence += 1;
-        self.outbox.push(record);
+        self.outbox.push(BoundRecord { record, identity });
         Some(self.sequence - 1)
     }
 
     fn phase_to(&mut self, phase: RunPhase) {
         if self.phase != phase {
             self.phase = phase;
+            self.control(ControlFact::PhaseChanged(phase));
             self.emit(
                 "phase_changed",
                 json!({"phase": phase, "session_id": self.session_id}),
@@ -388,12 +473,24 @@ impl<I: IdSource> Controller<I> {
         });
         self.pending_started = false;
         self.next_effect += 1;
+        self.control(ControlFact::EffectPending(self.pending_info().unwrap()));
+        if let Some(Effect {
+            id,
+            kind: EffectKind::PublishCheckpoint(checkpoint),
+            ..
+        }) = &self.pending
+        {
+            self.publication = Some((*id, checkpoint.clone(), false));
+        }
     }
 
     fn stop(&mut self, reason: StopReason) {
         if self.reason.is_some() {
             return;
         }
+        let undispatched = (!self.pending_started)
+            .then(|| self.pending_info())
+            .flatten();
         self.reason = Some(reason);
         self.settle_unknown();
         self.undispatched_tool();
@@ -401,6 +498,7 @@ impl<I: IdSource> Controller<I> {
             "controller_stop",
             json!({"reason": reason, "usage": UsageSummary::from(self.totals)}),
         );
+        self.control(ControlFact::StopDecided(reason));
         self.calls.clear();
         self.tool = None;
         if matches!(
@@ -413,6 +511,9 @@ impl<I: IdSource> Controller<I> {
         ) {
             return;
         }
+        if let Some(effect) = undispatched {
+            self.control(ControlFact::EffectNotDispatched(effect));
+        }
         self.pending = None;
         self.stage = if self.active && !self.checkpoint_attempted {
             Stage::Checkpoint
@@ -423,7 +524,15 @@ impl<I: IdSource> Controller<I> {
 
     fn settle_unknown(&mut self) {
         if let Some(reserved_tokens) = self.reservation.take() {
+            let request = self
+                .request_context
+                .clone()
+                .expect("reservation has request identity");
             if !self.pending_started {
+                self.control(ControlFact::RequestNotDispatched {
+                    request,
+                    released_tokens: reserved_tokens.get(),
+                });
                 self.emit(
                     "request_not_dispatched",
                     json!({"call": self.model_calls, "released_tokens": reserved_tokens}),
@@ -434,6 +543,11 @@ impl<I: IdSource> Controller<I> {
             self.totals
                 .record(GenerationUsage::Unknown { reserved_tokens })
                 .expect("admitted reservation fits");
+            self.control(ControlFact::RequestSettled {
+                request,
+                usage: GenerationUsage::Unknown { reserved_tokens },
+                totals: self.totals.into(),
+            });
             self.emit("request_settled", json!({"call": self.model_calls,
                 "usage": GenerationUsage::Unknown { reserved_tokens }, "totals": UsageSummary::from(self.totals)}));
         }
@@ -512,6 +626,7 @@ impl<I: IdSource> Controller<I> {
             return;
         }
         self.session_id = Some(id.clone());
+        self.request_context = None;
         self.turns = 0;
         self.handoff_attempts = 0;
         self.ended = false;
@@ -555,6 +670,18 @@ impl<I: IdSource> Controller<I> {
             .last_checkpoint
             .as_ref()
             .and_then(|checkpoint| checkpoint.evidence.clone());
+        self.control(ControlFact::SessionStarted {
+            ordinal: self.session,
+            workspace: self
+                .last_checkpoint
+                .as_ref()
+                .map_or(&self.config.initial_workspace, |checkpoint| {
+                    &checkpoint.snapshot.workspace
+                })
+                .clone(),
+            memory: memory.clone(),
+            evidence: evidence.clone(),
+        });
         self.emit(
             "memory_received",
             json!({"ordinal": self.session, "context": "fresh", "memory": memory,
@@ -668,9 +795,15 @@ impl<I: IdSource> Controller<I> {
             context_basis: basis.into(),
             context_reserve,
         };
-        if self.emit("model_request", json!(request)).is_none() {
+        let Some(sequence) = self.emit("model_request", json!(request)) else {
             return;
-        }
+        };
+        self.request_context = Some(RequestContext {
+            effect_id: self.next_effect,
+            session_id: self.session_id.clone().unwrap(),
+            request_id: request.request_id.clone(),
+        });
+        self.bind_record(sequence, self.request_identity());
         self.model_calls = call;
         self.reservation = Some(reservation);
         self.response_bytes = 0;
@@ -734,6 +867,13 @@ impl<I: IdSource> Controller<I> {
             return;
         }
         self.reservation = None;
+        self.control(ControlFact::RequestSettled {
+            request: self.request_context.clone().unwrap(),
+            usage: GenerationUsage::Known {
+                generated_tokens: tokens,
+            },
+            totals: self.totals.into(),
+        });
         self.parse_streak = 0;
         self.emit("request_settled", json!({"call": self.model_calls,
             "usage": GenerationUsage::Known { generated_tokens: tokens }, "totals": UsageSummary::from(self.totals)}));
@@ -856,22 +996,29 @@ impl<I: IdSource> Controller<I> {
             command: None,
             save_memory,
             finish_run: arguments["finish_run"].as_bool().unwrap_or(false),
+            effect_id: None,
         };
         if let Some(error) = error {
             self.tool = Some(active);
             self.tool_result(json!({"error": error}));
             return;
         }
-        let Some(dispatch) = self.emit(
+        let mut identity = self.request_identity();
+        identity.effect_id = NonZeroU64::new(self.next_effect);
+        identity.tool_request_sequence = NonZeroU64::new(sequence);
+        let Some(dispatch) = self.emit_bound(
             if save_memory {
                 "memento_write"
             } else {
                 "tool_dispatch"
             },
             json!({"name": name, "request_sequence": sequence}),
+            identity.clone(),
         ) else {
             return;
         };
+        active.effect_id = Some(self.next_effect);
+        self.bind_record(sequence, identity);
         if name == "exec" {
             active.command = Some(self.commands.len());
             self.commands.push(CommandObservation {
@@ -911,6 +1058,30 @@ impl<I: IdSource> Controller<I> {
             self.stop(StopReason::InfrastructureFailure);
             return;
         }
+        if tool.request.name == "exec"
+            && self.pending_started
+            && let Some(effect_id) = tool.effect_id
+        {
+            let code = original
+                .get("exit_code")
+                .and_then(Value::as_i64)
+                .and_then(|code| i32::try_from(code).ok());
+            let outcome = if original["timed_out"] == true {
+                CommandOutcome::TimedOut { exit_code: code }
+            } else if let Some(exit_code) = code {
+                CommandOutcome::Exited { exit_code }
+            } else {
+                CommandOutcome::Unknown {
+                    reason: "workshop result did not record an exit status".into(),
+                }
+            };
+            self.control(ControlFact::ExecResult {
+                request: self.request_context.clone().unwrap(),
+                effect_id,
+                tool_request_sequence: tool.request_sequence,
+                outcome,
+            });
+        }
         if tool.save_memory && original.get("error").is_none() {
             self.ended = true;
             self.finished = tool.finish_run;
@@ -936,11 +1107,15 @@ impl<I: IdSource> Controller<I> {
         } else {
             original.clone()
         };
-        let sequence = self.emit(
+        let mut identity = self.request_identity();
+        identity.effect_id = tool.effect_id.and_then(NonZeroU64::new);
+        identity.tool_request_sequence = NonZeroU64::new(tool.request_sequence);
+        let sequence = self.emit_bound(
             "tool_result",
             json!({"name": tool.request.name,
             "request_sequence": tool.request_sequence, "result": result,
             "unabridged_result": if result != original { Some(&original) } else { None }}),
+            identity,
         );
         if let Some(index) = tool.command {
             self.commands[index].result = Some(original);
@@ -991,6 +1166,10 @@ impl<I: IdSource> Controller<I> {
             (EffectKind::Tool(_), Outcome::Tool(result)) => self.tool_result(result),
             (EffectKind::Snapshot { .. }, Outcome::Snapshot(mut snapshot)) => {
                 self.active = false;
+                self.control(ControlFact::SessionClosed {
+                    finish_run: self.finished,
+                    handoff_saved: self.ended,
+                });
                 snapshot.memory = snapshot
                     .memory
                     .bounded(self.config.parameters.limits.memento_bytes.get());
@@ -1030,6 +1209,12 @@ impl<I: IdSource> Controller<I> {
                 );
             }
             (EffectKind::PublishCheckpoint(checkpoint), Outcome::Published) => {
+                if let Some((effect_id, _, _)) = self.publication.take() {
+                    self.control(ControlFact::CheckpointCommitted {
+                        effect_id,
+                        session_id: checkpoint.session_id.clone(),
+                    });
+                }
                 self.emit("controller_checkpoint", json!({"ordinal": checkpoint.ordinal, "workspace": checkpoint.snapshot.workspace,
                     "memory": checkpoint.snapshot.memory, "evidence": checkpoint.evidence,
                     "handoff_saved": checkpoint.handoff_saved, "interrupted": checkpoint.interrupted}));
@@ -1071,6 +1256,9 @@ impl<I: IdSource> Controller<I> {
 
     fn timeout(&mut self) {
         let effect = self.pending.take().unwrap();
+        if !self.pending_started {
+            self.control(ControlFact::EffectNotDispatched(self.effect_info(&effect)));
+        }
         match effect.kind {
             EffectKind::Model(_) => {
                 self.model_error(ModelFailure::Timeout("model deadline expired".into()))
@@ -1117,5 +1305,102 @@ impl<I: IdSource> Controller<I> {
             "usage": result.usage, "cleanup": result.cleanup, "diagnostics": result.diagnostics}),
         );
         self.result = Some(result);
+        self.control(ControlFact::Finished);
+    }
+
+    fn control(&mut self, fact: ControlFact) {
+        assert!(
+            self.controls.len() < CONTROL_QUEUE_CAPACITY,
+            "one transition exceeded its reserved control capacity"
+        );
+        self.controls.push(ControlUpdate {
+            elapsed_ms: self.now_ms - self.started_ms,
+            session_id: self.session_id.clone(),
+            fact,
+        });
+    }
+
+    fn request_identity(&self) -> ObservationIdentity {
+        self.request_context
+            .as_ref()
+            .map_or_else(ObservationIdentity::default, |request| {
+                ObservationIdentity {
+                    effect_id: NonZeroU64::new(request.effect_id),
+                    request_id: Some(request.request_id.clone()),
+                    tool_request_sequence: None,
+                }
+            })
+    }
+
+    fn bind_record(&mut self, sequence: u64, identity: ObservationIdentity) {
+        if let Some(entry) = self
+            .outbox
+            .iter_mut()
+            .find(|entry| entry.record.sequence == sequence)
+        {
+            entry.identity = identity;
+        }
+    }
+
+    fn effect_info(&self, effect: &Effect) -> EffectInfo {
+        let (kind, maximum_tokens) = match &effect.kind {
+            EffectKind::StartSession { .. } => ("start_session", None),
+            EffectKind::Model(request) => ("model", Some(request.maximum_tokens)),
+            EffectKind::Tool(_) => ("tool", None),
+            EffectKind::Snapshot { .. } => ("snapshot", None),
+            EffectKind::PublishCheckpoint(_) => ("publish_checkpoint", None),
+            EffectKind::Cleanup => ("cleanup", None),
+        };
+        let mut identity = if matches!(effect.kind, EffectKind::Model(_) | EffectKind::Tool(_)) {
+            self.request_identity()
+        } else {
+            ObservationIdentity::default()
+        };
+        identity.effect_id = NonZeroU64::new(effect.id);
+        if matches!(effect.kind, EffectKind::Tool(_)) {
+            identity.tool_request_sequence = self
+                .tool
+                .as_ref()
+                .and_then(|tool| NonZeroU64::new(tool.request_sequence));
+        }
+        EffectInfo {
+            id: effect.id,
+            kind,
+            session_id: self.session_id.clone(),
+            identity,
+            maximum_tokens,
+            deadline_ms: effect.deadline_ms,
+        }
+    }
+
+    fn publication_committed(&mut self, effect_id: u64) {
+        let checkpoint = self.publication.as_ref().unwrap().1.clone();
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|effect| effect.id == effect_id)
+        {
+            self.pending = None;
+            self.complete(
+                EffectKind::PublishCheckpoint(checkpoint),
+                Outcome::Published,
+            );
+        } else {
+            self.publication = None;
+            self.control(ControlFact::CheckpointCommitted {
+                effect_id,
+                session_id: checkpoint.session_id.clone(),
+            });
+            self.emit(
+                "controller_checkpoint",
+                json!({"ordinal": checkpoint.ordinal, "workspace": checkpoint.snapshot.workspace,
+                "memory": checkpoint.snapshot.memory, "evidence": checkpoint.evidence,
+                "handoff_saved": checkpoint.handoff_saved, "interrupted": checkpoint.interrupted}),
+            );
+            self.last_checkpoint = Some(*checkpoint);
+            if let Some(result) = &mut self.result {
+                result.last_checkpoint = self.last_checkpoint.clone();
+            }
+        }
     }
 }

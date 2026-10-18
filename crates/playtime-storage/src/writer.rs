@@ -5,7 +5,7 @@ use playtime_protocol::{
     events::KnownEvent,
     storage::{
         ArchiveDescriptor, ArchiveIdentity, COMMIT_SCHEMA_VERSION, CommitMarker, EventFrontier,
-        FINALIZATION_RESERVE_BYTES, decode_archive_descriptor,
+        FINALIZATION_RESERVE_BYTES, decode_archive_descriptor, decode_commit_marker,
     },
 };
 use rustix::fs::OFlags;
@@ -73,6 +73,79 @@ pub struct ArchiveWriter {
 }
 
 impl ArchiveWriter {
+    /// Reopen an authorized worker's prepared inputs, never an interrupted run.
+    /// This only acquires storage ownership; execution authority is external.
+    pub fn open_prepared(
+        path: impl AsRef<Path>,
+        expected: &ArchiveIdentity,
+        limits: StorageLimits,
+    ) -> Result<Self> {
+        Self::open_prepared_with_observer(path, expected, limits, Box::new(NoObserver))
+    }
+
+    pub fn open_prepared_with_observer(
+        path: impl AsRef<Path>,
+        expected: &ArchiveIdentity,
+        limits: StorageLimits,
+        mut observer: Box<dyn PublicationObserver>,
+    ) -> Result<Self> {
+        validate_limits(&limits)?;
+        let directory = Directory::open(path.as_ref())?;
+        let lock = WriterLock::from_directory(&directory, false)?;
+        let (descriptor, identity, manifest) = prepared(&directory, &limits)?;
+        if &identity != expected {
+            return Err(StorageError::new(
+                ErrorCode::ContentMismatch,
+                "prepared archive identity differs from authorization",
+            ));
+        }
+        let marker_bytes = directory.read("events.commit.json", 65_536)?;
+        let marker = decode_commit_marker(utf8(&marker_bytes)?)?;
+        let events = directory.open_file("events.jsonl", OFlags::WRONLY | OFlags::APPEND)?;
+        if marker.run_id != identity.run_id
+            || marker.committed_sequence != 0
+            || marker.committed_bytes != 0
+            || marker.prefix_sha256 != crate::sha256(b"")
+            || events.metadata()?.len() != 0
+        {
+            return Err(StorageError::malformed(
+                "open_prepared requires a verified empty log and zero frontier, without a tail",
+            ));
+        }
+        let state = LogState::prepared(&descriptor, &manifest, &limits)?;
+        // A discovered marker is not a receipt. Confirm the complete frozen
+        // preparation and directory entries ourselves before returning one.
+        let confirmation = (|| {
+            for content in state.references.values() {
+                directory.sync_content(content, observer.as_mut())?;
+            }
+            directory.sync_content(&identity.descriptor, observer.as_mut())?;
+            sync(&events, observer.as_mut(), WriteStep::EventsSync)?;
+            directory.sync_content(
+                &reference("events.commit.json", &marker_bytes),
+                observer.as_mut(),
+            )?;
+            Result::Ok(())
+        })();
+        confirmation.map_err(|mut error| {
+            error.outcome_uncertain = true;
+            error
+        })?;
+        Ok(Self {
+            directory,
+            _lock: lock,
+            events,
+            descriptor,
+            limits,
+            state,
+            hash: Sha256::new(),
+            receipt: receipt(identity, &marker, &marker_bytes),
+            temporary_counter: 0,
+            stopped: false,
+            observer,
+        })
+    }
+
     pub fn create(
         path: impl AsRef<Path>,
         descriptor: ArchiveDescriptor,
@@ -358,7 +431,14 @@ impl ArchiveWriter {
                     "run_finished requires an explicitly finalization-class batch",
                 ));
             }
-            for reference in next.observe(&decoded, bytes, &self.descriptor, &self.limits)? {
+            for reference in next.observe(
+                &decoded,
+                bytes,
+                &self.descriptor,
+                &self.limits,
+                &self.directory,
+                self.state.sequence,
+            )? {
                 references.insert(reference.path.clone(), reference);
             }
         }
