@@ -265,6 +265,11 @@ pub(crate) fn error_response(error: ApiError, request_id: Option<RequestId>) -> 
         .filter(|(key, value)| valid_id(key) && safe_detail(value, 0))
         .take(16)
         .collect();
+    // Individually bounded fields can exceed the whole response budget together.
+    // Optional diagnostics must not prevent delivery of the original error.
+    if bounded_json(&safe, 16_384).is_err() {
+        safe.details.clear();
+    }
     json(&safe, status, 16384).expect("bounded safe error")
 }
 async fn body<T: DeserializeOwned>(request: Request, limits: &ApiLimits) -> Result<T> {
@@ -551,4 +556,28 @@ fn event_page(history: History, limits: &ApiLimits) -> Result<EventPage> {
         return Err(ApiError::new("archive_corrupt"));
     }
     Ok(page)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn oversized_safe_details_preserve_the_bounded_error_envelope() {
+        let mut error = ApiError::new("backend_unavailable");
+        for index in 0..16 {
+            error.0.details.insert(
+                format!("detail_{index}"),
+                serde_json::json!(vec!["a".repeat(128); 32]),
+            );
+        }
+        let request_id = RequestId::new("bounded-error-test").unwrap();
+        let response = error_response(error, Some(request_id.clone()));
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = to_bytes(response.into_body(), 16_384).await.unwrap();
+        let body: playtime_protocol::v1::ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body.code, "backend_unavailable");
+        assert_eq!(body.request_id, Some(request_id));
+        assert!(body.details.is_empty());
+    }
 }
