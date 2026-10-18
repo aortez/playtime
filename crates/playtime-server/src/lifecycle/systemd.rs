@@ -190,11 +190,27 @@ impl Supervisor for SystemdSupervisor {
     async fn observe(&self, launch: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
         bounded(async { self.observation(launch).await.map(Some) }).await
     }
-    async fn stop(&self, launch: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
+    async fn stop(
+        &self,
+        launch: &PreparedLaunch,
+        authenticated: &SupervisorObservation,
+    ) -> Result<()> {
         bounded(async {
-            let before = self.observation(launch).await?;
-            if before.stopped || before.active_state == "deactivating" {
-                return Ok(Some(before));
+            // Do not read private diagnostics/bootstrap or acquire a filesystem
+            // permit here. Those can fail or stall while the worker is alive.
+            let (unit, service) = self.properties(launch).await?.ok_or(Error::Uncertain)?;
+            let manager_id = verify_manager(launch, &unit, &service)?;
+            let cgroup = string(&service, "ControlGroup")?;
+            let state = string(&unit, "ActiveState")?;
+            if manager_id != authenticated.manager_id
+                || (cgroup != authenticated.cgroup
+                    && !(cgroup.is_empty() && matches!(state.as_str(), "inactive" | "failed")))
+            {
+                return Err(Error::Uncertain);
+            }
+            if state == "deactivating" {
+                // A lost acknowledgement must not restart the original grace.
+                return Ok(());
             }
             // Unit names contain the immutable grant/launch nonce and are never
             // reused. Verify systemd's invocation immediately before stopping it.
@@ -204,7 +220,7 @@ impl Supervisor for SystemdSupervisor {
                 .call("StopUnit", &(&launch.binding.unit, "replace"))
                 .await?;
             // Stop acceptance is sufficient even if the unit disappears now.
-            Ok(Some(before))
+            Ok(())
         })
         .await
     }
@@ -310,6 +326,42 @@ where
         .and_then(|v| T::try_from(v).ok())
         .ok_or(Error::Invalid("missing systemd numeric property"))
 }
+fn verify_manager(
+    launch: &PreparedLaunch,
+    unit: &HashMap<String, OwnedValue>,
+    service: &HashMap<String, OwnedValue>,
+) -> Result<ControlId> {
+    if string(unit, "Id")? != launch.binding.unit
+        || string(unit, "Description")?
+            != format!(
+                "Playtime {} {}",
+                launch.binding.service_id.as_str(),
+                launch.binding.invocation_id.as_str()
+            )
+    {
+        return Err(Error::Uncertain);
+    }
+    if string(service, "Type")? != "notify"
+        || string(service, "NotifyAccess")? != "main"
+        || string(service, "Restart")? != "no"
+        || string(service, "KillMode")? != "mixed"
+        || !number::<bool>(service, "SendSIGKILL")?
+        || number::<u32>(service, "UMask")? != 0o077
+        || number::<u64>(service, "TimeoutStopUSec")? != 180_000_000
+        || !(1..=60_000_000).contains(&number::<u64>(service, "TimeoutStartUSec")?)
+    {
+        return Err(Error::Invalid(
+            "systemd enforcement policy changed or unsupported",
+        ));
+    }
+    let bytes: Vec<u8> = unit
+        .get("InvocationID")
+        .ok_or(Error::Uncertain)?
+        .try_clone()?
+        .try_into()?;
+    ControlId::new(bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
+        .map_err(|_| Error::Uncertain)
+}
 fn observe_files(
     launch: &PreparedLaunch,
     properties: Option<(HashMap<String, OwnedValue>, HashMap<String, OwnedValue>)>,
@@ -337,29 +389,7 @@ fn observe_files(
         result,
     ) = match properties {
         Some((unit, service)) => {
-            if string(&unit, "Id")? != launch.binding.unit
-                || string(&unit, "Description")?
-                    != format!(
-                        "Playtime {} {}",
-                        launch.binding.service_id.as_str(),
-                        launch.binding.invocation_id.as_str()
-                    )
-            {
-                return Err(Error::Uncertain);
-            }
-            if string(&service, "Type")? != "notify"
-                || string(&service, "NotifyAccess")? != "main"
-                || string(&service, "Restart")? != "no"
-                || string(&service, "KillMode")? != "mixed"
-                || !number::<bool>(&service, "SendSIGKILL")?
-                || number::<u32>(&service, "UMask")? != 0o077
-                || number::<u64>(&service, "TimeoutStopUSec")? != 180_000_000
-                || !(1..=60_000_000).contains(&number::<u64>(&service, "TimeoutStartUSec")?)
-            {
-                return Err(Error::Invalid(
-                    "systemd enforcement policy changed or unsupported",
-                ));
-            }
+            let id = verify_manager(launch, &unit, &service)?;
             let bootstrap: Bootstrap =
                 serde_json::from_slice(&read_private(&launch.bootstrap, 65_536)?)?;
             if bootstrap.binding != launch.binding
@@ -367,13 +397,6 @@ fn observe_files(
             {
                 return Err(Error::Invalid("systemd wall allocation changed"));
             }
-            let bytes: Vec<u8> = unit
-                .get("InvocationID")
-                .ok_or(Error::Uncertain)?
-                .try_clone()?
-                .try_into()?;
-            let id = ControlId::new(bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
-                .map_err(|_| Error::Uncertain)?;
             (
                 id,
                 string(&service, "ControlGroup")?,

@@ -52,8 +52,14 @@ pub trait Supervisor: Send + Sync + 'static {
     ) -> Result<Option<super::SupervisorObservation>> {
         Ok(None)
     }
-    /// Submit or recover the same stop job; never reset an accepted grace.
-    async fn stop(&self, _launch: &PreparedLaunch) -> Result<Option<super::SupervisorObservation>> {
-        Ok(None)
+    /// Submit or recover the same stop job using previously authenticated
+    /// identity and fresh manager checks, independently of private-file I/O.
+    /// Success acknowledges enforcement only; it does not prove termination.
+    async fn stop(
+        &self,
+        _launch: &PreparedLaunch,
+        _authenticated: &super::SupervisorObservation,
+    ) -> Result<()> {
+        Err(super::Error::Invalid("supervisor stop is unsupported"))
     }
 }

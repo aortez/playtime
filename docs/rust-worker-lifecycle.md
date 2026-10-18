@@ -292,6 +292,14 @@ Cancel acknowledgment is still separate. Accepted jobs are queried on retries;
 a lost acknowledgment is recovered from the existing deactivating unit. The
 original manager stop timestamp is retained when later observations lose it.
 `stop_accepted` records when acceptance was first observed, not a new grace clock.
+Stop submission uses the ledger's previously authenticated invocation plus fresh
+manager unit, invocation, cgroup and policy checks. It does not reread private
+bootstrap/identity/exit files or acquire a supervisor filesystem permit. Without
+a saved identity, initial authentication must succeed before a stop can be sent.
+Manager acceptance is persisted before querying termination diagnostics; failed
+diagnostic reads leave reconciliation uncertain without downgrading an accepted
+stop or restarting its grace. The independent stop remains effective even if
+ExecStopPost cannot publish its diagnostic.
 Stopped means an inactive/failed/unloaded matching invocation and empty cgroup.
 It does **not** establish external-resource cleanup or grant recovery authority.
 
@@ -303,13 +311,15 @@ cargo test --locked -p playtime-server --test lifecycle systemd_live -- --ignore
 The opt-in tests use unique units and private roots; they exercise the actual
 60-second startup bound, frozen wall timer, 180-second ignored-stop grace,
 descendant cleanup, cancellation before Begin, literal arguments, wrong invocation
-rejection, and reattachment after killing the coordinator. They require no model,
+rejection, cancellation with corrupt private exit/identity/bootstrap files, and
+reattachment after killing the coordinator. They require no model,
 Docker or GPU. Tests clean only their own units. On failure they request stop and
 retain the frozen files for the independently bounded service's exit hook.
 
 Default tests cover lost stop replies, manager outages, stable acceptance/grace
-across coordinator restart, retained admission after worker termination, v1/v2
-ledger migration, and READY ordering around initial publication. They do not
+across coordinator restart and diagnostic failures, retained admission after
+worker termination, v1/v2 ledger migration, and READY ordering around initial
+publication. They do not
 substitute for the opt-in manager tests. The private wire protocol stays v1;
 HTTP DTOs and archive formats are unchanged by this slice.
 
@@ -318,12 +328,16 @@ See systemd's [D-Bus interface](https://www.freedesktop.org/software/systemd/man
 and [notification contract](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html).
 
 Validation for this slice: formatting and locked workspace Clippy passed;
-256 Rust tests passed, with 13 opt-in/helper entries ignored in the default run.
-All five opt-in systemd tests passed against user systemd 259.5, including the
+258 Rust tests passed, with 14 opt-in/helper entries ignored in the default run.
+All six opt-in systemd tests passed against user systemd 259.5, including the
 full 60/180-second bounds. The Python suite ran 94 tests: 88 passed and six Docker
 checks were skipped. Native and systemd walkthroughs completed. The inherited
 file-description regression failed before the explicit-unlock fix and passed
-afterward. PR #51's shared `Worker` status-refresh additions were reviewed as
+afterward. Corrupt private diagnostics reproduced blocked cancellation before the
+manager-only stop fix. Fixture spawning also retries explicit pre-exec `ETXTBSY`
+rejections for at most five seconds within the original startup deadline; it does
+not retry ambiguous starts. A held-writer regression verifies both retry and expiry.
+PR #51's shared `Worker` status-refresh additions were reviewed as
 additive; production integration still must install the systemd entry/notify hooks.
 
 ## Remaining #34 work

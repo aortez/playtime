@@ -125,6 +125,47 @@ async fn stopped(
     .await
     .expect("original systemd invocation must stop within its independent bound")
 }
+async fn manager_inactive(launch: &PreparedLaunch) {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        let connection = zbus::Connection::session().await.unwrap();
+        let manager = zbus::Proxy::new(
+            &connection,
+            "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+        )
+        .await
+        .unwrap();
+        loop {
+            let path: std::result::Result<zbus::zvariant::OwnedObjectPath, zbus::Error> =
+                manager.call("GetUnit", &(&launch.binding.unit,)).await;
+            let path = match path {
+                Ok(path) => path,
+                Err(zbus::Error::MethodError(name, _, _))
+                    if name.as_str() == "org.freedesktop.systemd1.NoSuchUnit" =>
+                {
+                    return;
+                }
+                Err(error) => panic!("manager query failed: {error}"),
+            };
+            let unit = zbus::Proxy::new(
+                &connection,
+                "org.freedesktop.systemd1",
+                path,
+                "org.freedesktop.systemd1.Unit",
+            )
+            .await
+            .unwrap();
+            let state: String = unit.get_property("ActiveState").await.unwrap();
+            if matches!(state.as_str(), "inactive" | "failed") {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("systemd must stop the unit while private files remain corrupt");
+}
 #[tokio::test]
 #[ignore = "real user systemd; 60-second startup deadline"]
 async fn systemd_startup_deadline_survives_coordinator_exit_without_begin() {
@@ -198,7 +239,8 @@ async fn systemd_stop_retries_do_not_reset_grace_and_kill_descendants() {
     // the coordinator's cached acknowledgment. Neither call resets the timer.
     tokio::time::sleep(Duration::from_secs(5)).await;
     for _ in 0..2 {
-        let retry = supervisor.stop(&launch).await.unwrap().unwrap();
+        supervisor.stop(&launch, &original).await.unwrap();
+        let retry = supervisor.observe(&launch).await.unwrap().unwrap();
         assert_eq!(retry.stopping_monotonic_us, original.stopping_monotonic_us);
     }
     let exit = stopped(&supervisor, &launch, Duration::from_secs(190)).await;
@@ -239,6 +281,56 @@ async fn systemd_cancellation_before_begin_preserves_zero_receipt() {
         0
     );
     cleanup.completed = true;
+}
+
+#[tokio::test]
+#[ignore = "real user systemd; cancellation with corrupt private files"]
+async fn systemd_stop_does_not_depend_on_private_diagnostics_or_bootstrap() {
+    for corrupt_bootstrap in [false, true] {
+        let (mut cleanup, c, supervisor, ready) = setup(300_000, false).await;
+        let launch = ready.prepared.clone().unwrap();
+        c.begin(ready.run_id.clone()).await.unwrap();
+        let path = if corrupt_bootstrap {
+            launch.bootstrap.clone()
+        } else {
+            launch
+                .private_dir
+                .join(playtime_worker_control::systemd::EXIT_FILE)
+        };
+        let original = fs::read(&path).ok();
+        if original.is_none() {
+            write_once(&path, b"invalid private diagnostic").unwrap();
+        } else {
+            fs::write(&path, b"invalid bootstrap").unwrap();
+        }
+        assert!(supervisor.observe(&launch).await.is_err());
+        let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
+        assert_eq!(cancelled.stop_delivery, Some(StopDelivery::Accepted));
+        assert!(cancelled.stop_accepted.is_some());
+        assert_eq!(cancelled.phase, Phase::Reconciling);
+        // Observe real termination independently, before repairing any files.
+        // ExecStopPost may also fail on these corrupt files; its diagnostic is
+        // deliberately not fabricated or required to establish stop delivery.
+        manager_inactive(&launch).await;
+        assert!(!PathBuf::from(format!("/proc/{}/exe", ready.endpoint.unwrap().pid)).exists());
+        assert!(supervisor.observe(&launch).await.is_err());
+        after_refresh_floor().await;
+        let retry = c.cancel(ready.run_id.clone()).await.unwrap();
+        assert_eq!(retry.stop_delivery, Some(StopDelivery::Accepted));
+        assert_eq!(retry.stop_accepted, cancelled.stop_accepted);
+        assert_eq!(retry.phase, Phase::Reconciling);
+        assert!(!retry.supervisor.unwrap().stopped);
+        assert!(matches!(
+            c.admit(c.ledger().service_id().clone(), "second".into(), request())
+                .await,
+            Err(Error::Busy)
+        ));
+        match original {
+            Some(bytes) => fs::write(&path, bytes).unwrap(),
+            None => fs::remove_file(&path).unwrap(),
+        }
+        cleanup.completed = true;
+    }
 }
 
 #[tokio::test]
@@ -288,8 +380,25 @@ async fn systemd_killed_coordinator_reattaches_without_resetting_worker_clock() 
     assert_eq!(live.phase, Phase::Running);
     assert_eq!(live.endpoint, saved.endpoint);
     assert_eq!(live.last_status, saved.last_status);
-    // A recycled/stale private invocation record cannot authorize observation
-    // of a live endpoint or stop a different manager invocation.
+    // A different manager invocation/cgroup cannot authorize stopping this unit.
+    let authenticated = live.supervisor.as_ref().unwrap();
+    let mut wrong = authenticated.clone();
+    wrong.manager_id = random_id().unwrap();
+    assert!(supervisor.stop(launch, &wrong).await.is_err());
+    wrong = authenticated.clone();
+    wrong.cgroup.push_str("-different");
+    assert!(supervisor.stop(launch, &wrong).await.is_err());
+    assert_eq!(
+        supervisor
+            .observe(launch)
+            .await
+            .unwrap()
+            .unwrap()
+            .active_state,
+        "active"
+    );
+    // A stale private record blocks endpoint authentication, but cannot revoke
+    // the durable identity used for a fresh manager-authenticated stop.
     let path = launch
         .private_dir
         .join(playtime_worker_control::systemd::IDENTITY_FILE);
@@ -299,9 +408,9 @@ async fn systemd_killed_coordinator_reattaches_without_resetting_worker_clock() 
     identity.manager_id = random_id().unwrap();
     fs::write(&path, serde_json::to_vec(&identity).unwrap()).unwrap();
     assert!(supervisor.locate(launch).await.is_err());
-    assert!(supervisor.stop(launch).await.is_err());
+    let cancelled = c.cancel(saved.run_id).await.unwrap();
+    assert_eq!(cancelled.stop_delivery, Some(StopDelivery::Accepted));
     fs::write(&path, original).unwrap();
-    c.cancel(saved.run_id).await.unwrap();
     stopped(&supervisor, launch, Duration::from_secs(15)).await;
     cleanup.completed = true;
 }

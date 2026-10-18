@@ -9,6 +9,7 @@ struct ManagerFixture {
     child: FixtureSupervisor,
     observation: Mutex<SupervisorObservation>,
     unavailable: AtomicBool,
+    diagnostics_failed: AtomicBool,
     lose_stop: AtomicBool,
     stops: AtomicUsize,
 }
@@ -28,6 +29,7 @@ impl ManagerFixture {
                 exit: None,
             }),
             unavailable: AtomicBool::new(false),
+            diagnostics_failed: AtomicBool::new(false),
             lose_stop: AtomicBool::new(false),
             stops: AtomicUsize::new(0),
         }
@@ -48,15 +50,23 @@ impl Supervisor for ManagerFixture {
         self.child.locate(launch).await
     }
     async fn observe(&self, _: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
-        if self.unavailable.load(Ordering::SeqCst) {
+        if self.unavailable.load(Ordering::SeqCst) || self.diagnostics_failed.load(Ordering::SeqCst)
+        {
             return Err(Error::Uncertain);
         }
         Ok(Some(self.observation.lock().unwrap().clone()))
     }
-    async fn stop(&self, launch: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
-        self.observe(launch).await?;
+    async fn stop(&self, _: &PreparedLaunch, authenticated: &SupervisorObservation) -> Result<()> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(Error::Uncertain);
+        }
         {
             let mut observation = self.observation.lock().unwrap();
+            if observation.manager_id != authenticated.manager_id
+                || observation.cgroup != authenticated.cgroup
+            {
+                return Err(Error::Uncertain);
+            }
             if observation.active_state != "deactivating" {
                 self.stops.fetch_add(1, Ordering::SeqCst);
                 observation.active_state = "deactivating".into();
@@ -66,7 +76,7 @@ impl Supervisor for ManagerFixture {
         if self.lose_stop.swap(false, Ordering::SeqCst) {
             return Err(Error::Uncertain);
         }
-        self.observe(launch).await
+        Ok(())
     }
 }
 #[tokio::test]
@@ -79,6 +89,7 @@ async fn lost_stop_ack_and_restart_recover_original_job_and_grace() {
     let ready = prepared(&c, &accepted).await;
     c.begin(ready.run_id.clone()).await.unwrap();
     supervisor.lose_stop.store(true, Ordering::SeqCst);
+    supervisor.diagnostics_failed.store(true, Ordering::SeqCst);
     let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
     assert_eq!(
         cancelled.cancel_delivery,
@@ -90,6 +101,8 @@ async fn lost_stop_ack_and_restart_recover_original_job_and_grace() {
     let recovered = c.cancel(ready.run_id.clone()).await.unwrap();
     assert_eq!(recovered.stop_delivery, Some(StopDelivery::Accepted));
     assert_eq!(recovered.cancel_requested, cancelled.cancel_requested);
+    assert_eq!(recovered.phase, Phase::Reconciling);
+    supervisor.diagnostics_failed.store(false, Ordering::SeqCst);
     let accepted_at = recovered.stop_accepted.clone();
     for _ in 0..3 {
         after_refresh_floor().await;
@@ -152,6 +165,49 @@ async fn manager_outage_does_not_upgrade_cancel_ack_to_enforced_stop() {
     assert_eq!(retried.stop_delivery, Some(StopDelivery::Accepted));
     assert_eq!(retried.cancel_requested, cancelled.cancel_requested);
 }
+
+#[tokio::test]
+async fn diagnostic_failure_preserves_stop_acceptance_across_restart() {
+    let root = Root::new();
+    let archive = archive(&root.0);
+    let supervisor = Arc::new(ManagerFixture::new());
+    let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
+    let accepted = admit(&c).await;
+    let ready = prepared(&c, &accepted).await;
+    assert!(ready.supervisor.is_some());
+    supervisor.diagnostics_failed.store(true, Ordering::SeqCst);
+    // Restart while diagnostics are unavailable: the saved authenticated
+    // invocation still authorizes a fresh manager check and stop submission.
+    drop(c);
+    let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
+    let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
+    assert_eq!(cancelled.stop_delivery, Some(StopDelivery::Accepted));
+    assert!(cancelled.stop_accepted.is_some());
+    assert_eq!(cancelled.phase, Phase::Reconciling);
+    assert_eq!(cancelled.supervisor, ready.supervisor);
+    assert_eq!(supervisor.stops.load(Ordering::SeqCst), 1);
+    // An unavailable manager after acceptance also cannot erase the accepted
+    // stop. It only prevents a new termination observation.
+    supervisor.unavailable.store(true, Ordering::SeqCst);
+    drop(c);
+    let c = coordinator(&root.0, archive, supervisor.clone()).await;
+    let retry = c.cancel(ready.run_id.clone()).await.unwrap();
+    assert_eq!(retry.stop_delivery, Some(StopDelivery::Accepted));
+    assert_eq!(retry.stop_accepted, cancelled.stop_accepted);
+    assert_eq!(retry.phase, Phase::Reconciling);
+    assert!(!retry.supervisor.unwrap().stopped);
+    assert_eq!(supervisor.stops.load(Ordering::SeqCst), 1);
+    supervisor
+        .child
+        .terminate(ready.prepared.as_ref().unwrap())
+        .unwrap();
+    assert!(matches!(
+        c.admit(c.ledger().service_id().clone(), "second".into(), request())
+            .await,
+        Err(Error::Busy)
+    ));
+}
+
 #[tokio::test]
 async fn v2_migration_preserves_history_and_adds_supervision_evidence() {
     let root = Root::new();
