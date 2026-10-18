@@ -17,6 +17,9 @@ pub struct Capabilities {
     pub controller_simulation: bool,
     pub real_model: bool,
     pub real_workshop: bool,
+    /// Absence means the older bundle did not advertise recovery semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_profile: Option<String>,
 }
 impl Default for Capabilities {
     fn default() -> Self {
@@ -27,7 +30,25 @@ impl Default for Capabilities {
             controller_simulation: true,
             real_model: false,
             real_workshop: false,
+            recovery_profile: None,
         }
+    }
+}
+impl Capabilities {
+    pub fn current() -> Self {
+        Self {
+            recovery_profile: Some(crate::recovery::RULE_SET.into()),
+            ..Self::default()
+        }
+    }
+    pub fn supported(&self) -> bool {
+        let mut ordinary = self.clone();
+        ordinary.recovery_profile = None;
+        ordinary == Self::default()
+            && self
+                .recovery_profile
+                .as_deref()
+                .is_none_or(|p| p == crate::recovery::RULE_SET)
     }
 }
 

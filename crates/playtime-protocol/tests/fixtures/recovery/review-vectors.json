@@ -1,0 +1,511 @@
+{
+  "schema_version": 1,
+  "kind": "semantic_review_vectors_not_archive_goldens",
+  "baseline": "b81db2a7aa4d38e702627ee78cceff2f171ca225",
+  "accounting": [
+    {
+      "name": "settled_plus_unresolved",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          100
+        ],
+        [
+          "known",
+          "s1",
+          "r1",
+          10
+        ],
+        [
+          "intent",
+          2,
+          "s1",
+          "r2",
+          100
+        ]
+      ],
+      "expected": {
+        "append_unknown": [
+          [
+            "s1",
+            "r2",
+            100
+          ]
+        ],
+        "known_generated_tokens": 10,
+        "unknown_reserved_tokens": 100,
+        "unknown_requests": 1,
+        "budget_charged_tokens": 110,
+        "usage_complete": false
+      }
+    },
+    {
+      "name": "request_release_before_generic_fact",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          100
+        ],
+        [
+          "request_not_dispatched",
+          1,
+          "s1",
+          "r1",
+          100
+        ]
+      ],
+      "expected": {
+        "append_unknown": [],
+        "known_generated_tokens": 0,
+        "unknown_reserved_tokens": 0,
+        "unknown_requests": 0,
+        "budget_charged_tokens": 0,
+        "usage_complete": true
+      }
+    },
+    {
+      "name": "complete_non_dispatch_no_fake_zero",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          100
+        ],
+        [
+          "request_not_dispatched",
+          1,
+          "s1",
+          "r1",
+          100
+        ],
+        [
+          "effect_not_dispatched",
+          1,
+          "s1",
+          "r1"
+        ]
+      ],
+      "expected": {
+        "append_unknown": [],
+        "known_generated_tokens": 0,
+        "unknown_reserved_tokens": 0,
+        "unknown_requests": 0,
+        "budget_charged_tokens": 0,
+        "usage_complete": true
+      }
+    },
+    {
+      "name": "generic_fact_does_not_release_cap",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          100
+        ],
+        [
+          "effect_not_dispatched",
+          1,
+          "s1",
+          "r1"
+        ]
+      ],
+      "expected": {
+        "append_unknown": [
+          [
+            "s1",
+            "r1",
+            100
+          ]
+        ],
+        "known_generated_tokens": 0,
+        "unknown_reserved_tokens": 100,
+        "unknown_requests": 1,
+        "budget_charged_tokens": 100,
+        "usage_complete": false
+      }
+    },
+    {
+      "name": "measured_overrun_preserved",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          100
+        ],
+        [
+          "known",
+          "s1",
+          "r1",
+          120
+        ]
+      ],
+      "expected": {
+        "append_unknown": [],
+        "known_generated_tokens": 120,
+        "unknown_reserved_tokens": 0,
+        "unknown_requests": 0,
+        "budget_charged_tokens": 120,
+        "usage_complete": true
+      }
+    },
+    {
+      "name": "unknown_and_known_zero_distinct",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          40
+        ],
+        [
+          "unknown",
+          "s1",
+          "r1",
+          40
+        ],
+        [
+          "intent",
+          2,
+          "s2",
+          "r2",
+          50
+        ],
+        [
+          "known",
+          "s2",
+          "r2",
+          0
+        ]
+      ],
+      "expected": {
+        "append_unknown": [],
+        "known_generated_tokens": 0,
+        "unknown_reserved_tokens": 40,
+        "unknown_requests": 1,
+        "budget_charged_tokens": 40,
+        "usage_complete": false
+      }
+    },
+    {
+      "name": "duplicate_request",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          40
+        ],
+        [
+          "intent",
+          2,
+          "s1",
+          "r1",
+          40
+        ]
+      ],
+      "blocked": "evidence_conflict"
+    },
+    {
+      "name": "duplicate_effect",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          40
+        ],
+        [
+          "intent",
+          1,
+          "s1",
+          "r2",
+          40
+        ]
+      ],
+      "blocked": "evidence_conflict"
+    },
+    {
+      "name": "settlement_before_intent",
+      "facts": [
+        [
+          "known",
+          "s1",
+          "r1",
+          1
+        ],
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          40
+        ]
+      ],
+      "blocked": "evidence_conflict"
+    },
+    {
+      "name": "wrong_session",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          40
+        ],
+        [
+          "known",
+          "s2",
+          "r1",
+          1
+        ]
+      ],
+      "blocked": "evidence_conflict"
+    },
+    {
+      "name": "duplicate_settlement",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          40
+        ],
+        [
+          "known",
+          "s1",
+          "r1",
+          1
+        ],
+        [
+          "known",
+          "s1",
+          "r1",
+          1
+        ]
+      ],
+      "blocked": "evidence_conflict"
+    },
+    {
+      "name": "unknown_retains_original_cap",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          40
+        ],
+        [
+          "unknown",
+          "s1",
+          "r1",
+          10
+        ]
+      ],
+      "blocked": "evidence_conflict"
+    },
+    {
+      "name": "mismatched_release",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          40
+        ],
+        [
+          "request_not_dispatched",
+          1,
+          "s1",
+          "r1",
+          39
+        ]
+      ],
+      "blocked": "evidence_conflict"
+    },
+    {
+      "name": "settlement_release_conflict",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          40
+        ],
+        [
+          "known",
+          "s1",
+          "r1",
+          1
+        ],
+        [
+          "request_not_dispatched",
+          1,
+          "s1",
+          "r1",
+          40
+        ]
+      ],
+      "blocked": "evidence_conflict"
+    },
+    {
+      "name": "checked_total_overflow",
+      "facts": [
+        [
+          "intent",
+          1,
+          "s1",
+          "r1",
+          "18446744073709551615"
+        ],
+        [
+          "unknown",
+          "s1",
+          "r1",
+          "18446744073709551615"
+        ],
+        [
+          "intent",
+          2,
+          "s2",
+          "r2",
+          1
+        ]
+      ],
+      "blocked": "evidence_conflict",
+      "note": "Decimal strings in this semantic vector preserve u64 precision across review tools; real DTO fields are JSON integers."
+    }
+  ],
+  "log_accounting": [
+    {
+      "name": "retained_occurrences_not_omitted_output",
+      "jsonl_bytes": 1000,
+      "retained_payload_occurrences": [
+        300000,
+        300000
+      ],
+      "omitted_declared_bytes": 9000000,
+      "checkpoint_content_bytes": 2000000,
+      "recovery_plan_bytes": 4000,
+      "patch_bytes": 2000,
+      "frozen_log_bytes": 603000,
+      "expected_base_cost": 601000,
+      "expected_final_cost": 603000,
+      "expected_fits": true
+    },
+    {
+      "name": "reserve_does_not_extend_budget",
+      "jsonl_bytes": 65000,
+      "retained_payload_occurrences": [],
+      "omitted_declared_bytes": 0,
+      "checkpoint_content_bytes": 0,
+      "recovery_plan_bytes": 4000,
+      "patch_bytes": 1000,
+      "frozen_log_bytes": 65536,
+      "expected_base_cost": 65000,
+      "expected_final_cost": 66000,
+      "expected_fits": false
+    }
+  ],
+  "decisions": [
+    {
+      "name": "empty_without_permission",
+      "empty_file": true,
+      "zero_marker": true,
+      "prepared_identity_valid": true,
+      "begin_history": "proven_never_authorized",
+      "expected": "never_started"
+    },
+    {
+      "name": "empty_after_authorization",
+      "empty_file": true,
+      "zero_marker": true,
+      "prepared_identity_valid": true,
+      "begin_history": "authorized_or_uncertain",
+      "expected": "blocked_incomplete"
+    },
+    {
+      "name": "first_stop_and_late_checkpoint",
+      "first_stop": "agent_finished",
+      "last_committed_checkpoint": "cp2",
+      "last_worker_acknowledged_checkpoint": "cp1",
+      "expected_stop": "agent_finished",
+      "expected_checkpoint": "cp2",
+      "expected_cleanup": "unknown",
+      "expected_origin": "recovery"
+    },
+    {
+      "name": "already_terminal",
+      "terminal_valid": true,
+      "suffix_present": true,
+      "expected": "terminal_preserved",
+      "expected_appended_events": 0,
+      "expected_suffix_untouched": true
+    }
+  ],
+  "reentry": [
+    {
+      "name": "selected_partial_patch",
+      "selection_valid": true,
+      "marker": "base",
+      "suffix": "exact_patch_prefix",
+      "expected": "preserve_then_rewrite_same_patch",
+      "expected_new_attempt": false
+    },
+    {
+      "name": "selected_full_patch_without_marker",
+      "selection_valid": true,
+      "marker": "base",
+      "suffix": "exact_full_patch",
+      "expected": "preserve_then_rewrite_same_patch",
+      "expected_new_attempt": false
+    },
+    {
+      "name": "committed_patch_lost_ledger_ack",
+      "selection_valid": true,
+      "marker": "target",
+      "suffix": "exact_full_patch",
+      "expected": "verify_and_adopt",
+      "expected_appended_events": 0
+    },
+    {
+      "name": "intermediate_marker",
+      "selection_valid": true,
+      "marker": "intermediate",
+      "suffix": "exact_patch_prefix",
+      "expected": "blocked_evidence_conflict"
+    },
+    {
+      "name": "unexpected_patch_bytes",
+      "selection_valid": true,
+      "marker": "base",
+      "suffix": "different_bytes",
+      "expected": "preserve_and_block"
+    },
+    {
+      "name": "missing_selection_after_possible_truncation",
+      "selection_valid": false,
+      "destructive_work_possible": true,
+      "expected": "blocked_evidence_conflict"
+    }
+  ]
+}

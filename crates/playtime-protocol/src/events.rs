@@ -113,6 +113,8 @@ pub enum KnownEvent {
         session_id: SessionId,
         request_id: RequestId,
         usage: GenerationUsage,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recovery_origin: Option<crate::recovery::RecoveryOriginV1>,
     },
     CommandFinished {
         session_id: SessionId,
@@ -134,6 +136,8 @@ pub enum KnownEvent {
         usage: UsageSummary,
         cleanup: CleanupOutcome,
         last_checkpoint: Option<CheckpointRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recovery_origin: Option<crate::recovery::RecoveryOriginV1>,
     },
 }
 

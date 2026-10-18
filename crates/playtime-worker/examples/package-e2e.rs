@@ -84,7 +84,7 @@ impl Case {
         }
         let run_id = RunId::new("simulation")?;
         let archive = root.join("runs/simulation");
-        let prepared = VerifiedBundle::open(&original)?.prepare(
+        let prepared = VerifiedBundle::open(&original)?.prepare_recoverable(
             &archive,
             run_id.clone(),
             include_bytes!("../../playtime-engine/tests/fixtures/two-session.json"),
@@ -338,6 +338,126 @@ async fn forged_embedded_identity(bundle: &Path) -> Result<()> {
     println!("PASS embedded build mismatch refuses readiness");
     Ok(())
 }
+
+async fn forged_execution_contract(bundle: &Path) -> Result<()> {
+    use playtime_protocol::{recovery::EXECUTION_CONTRACT, storage::ArchiveDescriptor};
+    use playtime_storage::FrozenInput;
+    for mutation in ["profile", "limits", "worker", "configuration", "version"] {
+        let mut case = Case::new(bundle, false)?;
+        let reader = ArchiveReader::open(&case.archive, case.prepared.limits.clone())?;
+        let snapshot = reader.offline_snapshot()?;
+        let mut manifest = reader.manifest().clone();
+        let mut inputs = manifest
+            .references()
+            .map(|r| {
+                Ok(FrozenInput {
+                    reference: r.clone(),
+                    bytes: reader.read_content(&snapshot, r)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        drop(reader);
+        let input = inputs
+            .iter_mut()
+            .find(|i| i.reference.path.as_str() == EXECUTION_CONTRACT)
+            .unwrap();
+        let mut contract: serde_json::Value = serde_json::from_slice(&input.bytes)?;
+        match mutation {
+            "profile" => contract["rule_set"] = "future_rules".into(),
+            "limits" => contract["storage_limits"]["events"] = 100_001.into(),
+            "worker" => {
+                contract["worker_executable"]["sha256"] =
+                    serde_json::to_value(playtime_storage::sha256(b"wrong image"))?
+            }
+            "configuration" => {
+                contract["configuration"]["sha256"] =
+                    serde_json::to_value(playtime_storage::sha256(b"wrong configuration"))?
+            }
+            _ => contract["schema_version"] = 2.into(),
+        }
+        input.bytes = serde_json::to_vec(&contract)?;
+        input.reference = reference(EXECUTION_CONTRACT, &input.bytes);
+        *manifest
+            .files
+            .iter_mut()
+            .find(|r| r.path.as_str() == EXECUTION_CONTRACT)
+            .unwrap() = input.reference.clone();
+        let bytes = serde_json::to_vec(&manifest)?;
+        let descriptor = ArchiveDescriptor {
+            schema_version: 1,
+            run_id: manifest.run_id.clone(),
+            mode: playtime_core::RunMode::Simulation,
+            input_manifest: reference("inputs/manifest.json", &bytes),
+        };
+        // Test-only reconstruction: all hashes and the private binding agree,
+        // so only the executing worker's independent verifier can reject it.
+        fs::remove_dir_all(&case.archive)?;
+        let writer = ArchiveWriter::create(
+            &case.archive,
+            descriptor,
+            &bytes,
+            &inputs,
+            case.prepared.limits.clone(),
+        )?;
+        case.prepared.identity = writer.confirmed_frontier().frontier().archive.clone();
+        drop(writer);
+        case.bootstrap.binding.manifest_sha256 =
+            case.prepared.identity.input_manifest.sha256.clone();
+        overwrite(
+            &case.bootstrap.private_dir.join("reservation.json"),
+            &serde_json::to_vec(&case.bootstrap.binding)?,
+        )?;
+        overwrite(
+            &case.bootstrap.private_dir.join("bootstrap.json"),
+            &serde_json::to_vec(&case.bootstrap)?,
+        )?;
+        case.start()?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = case.child.as_mut().unwrap().try_wait()? {
+                assert!(!status.success());
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("invalid execution contract did not fail before readiness".into());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        case.zero();
+        assert!(!case.bootstrap.socket.exists());
+        assert!(!case.bootstrap.private_dir.join("consumed.json").exists());
+        println!("PASS frozen execution contract {mutation} mismatch refuses readiness");
+    }
+    Ok(())
+}
+
+fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
+    let case = Case::new(bundle, false)?;
+    let path = case.root.join("older-bundle");
+    copy(bundle, &path)?;
+    let mut descriptor: BundleDescriptor =
+        serde_json::from_slice(&fs::read(path.join("bundle.json"))?)?;
+    let mut build: BuildRecord = serde_json::from_slice(&fs::read(path.join(wire::BUILD))?)?;
+    build.capabilities.recovery_profile = None;
+    descriptor.capabilities = build.capabilities.clone();
+    let bytes = serde_json::to_vec(&build)?;
+    descriptor.build_record = reference(wire::BUILD, &bytes);
+    overwrite(&path.join(wire::BUILD), &bytes)?;
+    overwrite(&path.join("bundle.json"), &serde_json::to_vec(&descriptor)?)?;
+    let archive = case.root.join("older-archive");
+    assert!(
+        VerifiedBundle::open(&path)?
+            .prepare_recoverable(
+                &archive,
+                RunId::new("older")?,
+                include_bytes!("../../playtime-engine/tests/fixtures/two-session.json")
+            )
+            .is_err()
+    );
+    assert!(!archive.exists());
+    println!("PASS unadvertised bundle cannot opt in to recovery");
+    Ok(())
+}
 fn tamper(bundle: &Path) -> Result<()> {
     for name in [EXECUTABLE, SOURCE, LOCK, wire::BUILD] {
         let case = Case::new(bundle, false)?;
@@ -382,5 +502,7 @@ async fn main() -> Result<()> {
     cancelled_or_revoked(bundle, true).await?;
     cancelled_or_revoked(bundle, false).await?;
     forged_embedded_identity(bundle).await?;
+    older_bundle_cannot_opt_in(bundle)?;
+    forged_execution_contract(bundle).await?;
     Ok(())
 }

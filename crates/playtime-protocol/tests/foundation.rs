@@ -96,7 +96,9 @@ fn two_session_trace_preserves_memory_and_unknown_usage_through_completion() {
                 usage,
                 cleanup,
                 last_checkpoint,
+                recovery_origin,
             } => {
+                assert!(recovery_origin.is_none());
                 assert_eq!(*reason, StopReason::AgentFinished);
                 assert_eq!(*usage, UsageSummary::from(totals));
                 assert!(!usage.usage_complete);

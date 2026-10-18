@@ -108,7 +108,7 @@ fn build(root: &Path, destination: &Path) -> Result<()> {
         ),
         features: vec![],
         rustflags: rustflags.clone(),
-        capabilities: Capabilities::default(),
+        capabilities: Capabilities::current(),
     };
     let record_bytes = serde_json::to_vec(&record)?;
     let record_path = build_root.join("build.json");
