@@ -18,13 +18,12 @@ worker is not advertised by this milestone.
 #46's application interface was inspected at `e2fa960f2cb9f5add6debe8fd147cbf9da527392`,
 then its integration with #45 and CI adjustment at
 `e834fadb50b1df9094456ae139a7a10f5d746381`.
-Lifecycle files, `tests/lifecycle.rs`, `tests/lifecycle/` and
-`examples/lifecycle_fixture.rs` are owned here; HTTP/auth/client files stay with
-#46. Tokio 1.53.3, async-trait 0.1.92,
-getrandom 0.4.3 and subtle 2.6.1 match that committed branch. Merge the additive
-workspace/member dependencies, both `playtime-server` manifests and both library
-exports when integrating; retain every HTTP module and add `pub mod lifecycle`.
-No changes from another checkout's working tree are imported.
+The #46 integration includes the lifecycle foundation merged by #48 at
+`22282e72bbfb0d215ab890edad7d6e0a5a608a0a`. Lifecycle files,
+`tests/lifecycle.rs`, `tests/lifecycle/` and `examples/lifecycle_fixture.rs`
+remain separate from the HTTP/auth/client implementation. The combined workspace
+retains both sets of pinned dependencies and exports every HTTP module alongside
+`pub mod lifecycle`. No changes from another checkout's working tree are imported.
 
 The later #20 adapter maps `AdmissionRequest` to the API's typed
 recipe/mode/preview request. Its durable service identifier can be represented by

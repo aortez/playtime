@@ -4,8 +4,10 @@ members = [
     "crates/playtime-protocol",
     "crates/playtime-engine",
     "crates/playtime-storage",
-    "crates/playtime-runner",
     "crates/playtime-server",
+    "crates/playtime-client",
+    "crates/playtime-local",
+    "crates/playtime-runner",
     "crates/playtime-worker-control",
 ]
 resolver = "3"
@@ -21,6 +23,7 @@ playtime-core = { path = "crates/playtime-core" }
 playtime-protocol = { path = "crates/playtime-protocol" }
 playtime-engine = { path = "crates/playtime-engine" }
 playtime-storage = { path = "crates/playtime-storage" }
+playtime-local = { path = "crates/playtime-local" }
 playtime-worker-control = { path = "crates/playtime-worker-control" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
@@ -28,10 +31,18 @@ utoipa = "=6.0.0"
 sha2 = "=0.11.1"
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 rustix = { version = "=1.1.4", features = ["fs"] }
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "query", "tokio"] }
 tokio = { version = "=1.53.3", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "fs"] }
+tokio-util = { version = "=0.7.20", features = ["io", "rt"] }
+reqwest = { version = "=0.13.5", default-features = false, features = ["json", "stream", "query"] }
 async-trait = "=0.1.92"
+async-stream = "=0.3.6"
+futures-util = "=0.3.34"
+base64 = "=0.23.1"
 getrandom = "=0.4.3"
 subtle = "=2.6.1"
+serde_urlencoded = "=0.7.1"
+http-body-util = "=0.1.5"
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 time = { version = "=0.3.47", features = ["formatting"] }
 

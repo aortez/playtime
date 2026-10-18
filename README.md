@@ -199,13 +199,15 @@ The second command includes Docker integration checks. Use `smoke --live` with
 a recipe when checking the real model's tool use and handoff behavior.
 
 The Rust workspace contains `playtime-core`, `playtime-protocol`,
-`playtime-engine`, `playtime-storage`, and `playtime-runner`: typed contracts, a
-bounded controller, deterministic simulation, and durable portable archives.
-The Python command remains the operational runner. See the
+`playtime-engine`, `playtime-storage`, `playtime-runner`, `playtime-server`,
+`playtime-client`, and `playtime-local`: typed contracts, a bounded controller,
+deterministic simulation, durable portable archives, and an authenticated
+HTTP/client fixture. The Python command remains the operational runner. See the
 [architecture decision](docs/rust-foundation.md),
 [controller contract](docs/rust-controller.md), [storage contract](docs/rust-storage.md),
 [durable simulation driver](docs/rust-archive-driver.md),
-and [compatibility matrix](docs/rust-compatibility.md) for scope and remaining work.
+[HTTP/client contract](docs/rust-http-api.md), and
+[compatibility matrix](docs/rust-compatibility.md) for scope and remaining work.
 With rustup installed, Cargo selects the pinned toolchain:
 
 ```sh
@@ -223,7 +225,7 @@ cargo run --locked -p playtime-engine --example simulate -- crates/playtime-engi
 This prints a simulation-labeled result and event trace. Scripted commands only
 mutate an in-memory workshop; their command text is never executed on the host.
 The example spends 26 measured tokens over 400 virtual milliseconds. Real Rust
-model/workshop adapters, service integration, and clients remain later work.
+model/workshop adapters and production service integration remain later work.
 
 To publish and verify the synthetic two-session archive in a **new** directory:
 
@@ -246,3 +248,16 @@ The output directory must be new. After closing the writer, the complete folder
 can be copied and inspected independently of this checkout. This CPU-only driver
 freezes its actual executable and gates each scripted effect on a durable intent.
 See the [driver contract](docs/rust-archive-driver.md) for queries and failure bounds.
+
+To exercise the HTTP API and shared client on CPU, start the bounded fixture in
+one terminal and its walkthrough in another:
+
+```sh
+cargo run --locked -p playtime-server --example api_fixture -- --root /tmp/playtime-api-demo --listen 127.0.0.1:0 --lifetime-seconds 120
+cargo run --locked -p playtime-client --example api_walkthrough -- --connection-file /tmp/playtime-api-demo/.playtime/connection.json
+```
+
+This serves labeled scripted replies through real authenticated HTTP, SSE and
+verified downloads. It does not execute an experiment or supply durable worker
+supervision. See [the HTTP/client guide](docs/rust-http-api.md) for the application
+boundary that #20 connects to the real worker and archives.
