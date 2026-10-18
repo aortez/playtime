@@ -41,8 +41,9 @@ persistence task with the real model and smaller budgets.
 
 ## Recipes
 
-Paths in recipes are relative to the project root. All bundled recipes use the
-same model, inspiration prompt, protocol, and workshop image.
+Paths in recipes are relative to the project root. The recipes below use the
+same model, inspiration prompt, protocol, and workshop image. Additional prompt
+variants are described in the [chunked prompt comparison](experiments/prompt-screening.md).
 
 | Recipe | Thinking | Sessions × work turns | Context tokens | Generation budget | Wall limit |
 | --- | --- | --- | --- | --- | --- |
