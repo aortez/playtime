@@ -1,5 +1,7 @@
 //! Shared local credential/discovery filesystem policy for server and clients.
 //! All opens are descriptor-relative and refuse links, devices and FIFOs.
+mod state;
+pub use state::{PrivateDirectory, lock_private, read_private, replace_private, resolve_path};
 
 use playtime_protocol::api::Connection;
 use rustix::fs::{AtFlags, Mode, OFlags, mkdirat, openat, renameat, unlinkat};
@@ -95,6 +97,7 @@ impl Directory {
                     Ok(()) | Err(rustix::io::Errno::EXIST) => (),
                     Err(error) => return Err(error.into()),
                 }
+                self.0.sync_all()?;
                 Ok(Self(File::from(openat(
                     &self.0,
                     name,
@@ -221,11 +224,15 @@ pub fn read_connection(path: &Path) -> io::Result<(Connection, Token)> {
     if connection.schema_version != 1 {
         return Err(invalid());
     }
-    let token_path = Path::new(&connection.token_file);
-    if !token_path.is_absolute() {
-        return Err(invalid());
-    }
+    let token_path = resolve_path(
+        path.parent().ok_or_else(invalid)?,
+        Path::new(&connection.token_file),
+    );
     let token_dir = Directory::open(token_path.parent().ok_or_else(invalid)?, false)?;
     let token = token_bytes(&token_dir.read(token_path.file_name().ok_or_else(invalid)?, 65)?)?;
     Ok((connection, token))
+}
+
+pub fn read_token(path: &Path) -> io::Result<Token> {
+    token_bytes(&read_private(path, 65)?)
 }

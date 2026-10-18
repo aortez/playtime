@@ -247,3 +247,14 @@ This serves labeled scripted replies through real authenticated HTTP, SSE and
 verified downloads. It does not execute an experiment or supply durable worker
 supervision. See [the HTTP/client guide](docs/rust-http-api.md) for the application
 boundary that #20 connects to the real worker and archives.
+
+The Rust CLI can use the same running fixture:
+
+```sh
+cargo run --locked -p playtime-cli -- --connection-file /tmp/playtime-api-demo/.playtime/connection.json recipes list --format json
+./scripts/test-rust-cli-e2e.sh --backend fixture
+```
+
+See [the native client guide](docs/rust-cli.md) for launches, saved-key retries,
+observation, downloads, and exit codes. The fixture gate is implemented; the
+production simulation gate remains #20/#42/#43. `./playtime` is still Python.

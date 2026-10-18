@@ -25,6 +25,8 @@ enum Behavior {
     LargeJson,
     Stall,
     PartialSse,
+    DelayedSse,
+    SseOutage,
     LargeSse,
     BadVersion,
     Unauthenticated,
@@ -32,6 +34,7 @@ enum Behavior {
     EmptySse,
     CutDownload,
     WrongCancel,
+    WrongArtifact,
 }
 struct StateData {
     behavior: Behavior,
@@ -123,7 +126,7 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
     }
     let call = state.calls.fetch_add(1, Ordering::SeqCst);
     match state.behavior {
-        Behavior::WrongCancel => {
+        Behavior::WrongCancel | Behavior::WrongArtifact => {
             let fixture = Fixture::new(state.caps.service_id.clone());
             let launch = fixture
                 .admit(
@@ -136,8 +139,35 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
                 )
                 .await
                 .unwrap();
+            if matches!(state.behavior, Behavior::WrongArtifact) {
+                fixture.reveal(
+                    &launch.run_id,
+                    4,
+                    Some(StreamEndStatus::CommittedCompletion),
+                );
+                let artifact = fixture
+                    .artifact(launch.run_id, ArtifactId::new("saved-image").unwrap())
+                    .await
+                    .unwrap();
+                return json_response(200, serde_json::to_vec(&artifact).unwrap());
+            }
             let reply = fixture.cancel(launch.run_id).await.unwrap();
             json_response(202, serde_json::to_vec(&reply).unwrap())
+        }
+        Behavior::SseOutage => {
+            let body = if call == 0 {
+                Body::empty()
+            } else {
+                Body::from_stream(async_stream::stream! {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    yield Ok::<_, std::io::Error>(Bytes::from_static(b": heartbeat\n\n"));
+                })
+            };
+            Response::builder()
+                .header(SERVICE_HEADER, "peer-fixture")
+                .header("content-type", "text/event-stream")
+                .body(body)
+                .unwrap()
         }
         Behavior::EmptySse => Response::builder()
             .header(SERVICE_HEADER, "peer-fixture")
@@ -215,7 +245,7 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
             serde_json::to_vec(&playtime_server::application::ApiError::new("unauthenticated").0)
                 .unwrap(),
         ),
-        Behavior::PartialSse | Behavior::LargeSse | Behavior::BadVersion => {
+        Behavior::PartialSse | Behavior::DelayedSse | Behavior::LargeSse | Behavior::BadVersion => {
             let bytes = match state.behavior {
                 Behavior::LargeSse => {
                     format!("event: record\ndata: {}", "x".repeat((1 << 20) + (8 << 10)))
@@ -239,6 +269,16 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
                     )
                 }
             };
+            if matches!(state.behavior, Behavior::DelayedSse) && call == 0 {
+                return Response::builder()
+                    .header(SERVICE_HEADER, "peer-fixture")
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from_stream(async_stream::stream! {
+                        yield Ok::<_, std::io::Error>(Bytes::from(bytes));
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }))
+                    .unwrap();
+            }
             // Small transport chunks exercise UTF-8 and frame boundaries on a
             // real socket, independently from the parser's unit checks.
             let chunks: Vec<_> = bytes
@@ -445,4 +485,65 @@ async fn interrupted_download_keeps_partial_bytes_out_of_the_final_destination()
     assert!(!path.exists());
     assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 0);
     std::fs::remove_dir(directory).unwrap();
+}
+
+#[tokio::test]
+async fn healthy_observation_does_not_spend_later_outage_budget() {
+    let peer = Peer::start(Behavior::DelayedSse).await;
+    let mut follow = peer.client().await.follow(
+        &RunId::new("run-peer").unwrap(),
+        None,
+        RetryPolicy {
+            max_elapsed: Duration::from_millis(50),
+            initial_backoff: Duration::from_millis(1),
+            ..Default::default()
+        },
+    );
+    let cancel = CancellationToken::new();
+    for sequence in 1..=2 {
+        let Observation::Record(record) = follow.next(&cancel).await.unwrap() else {
+            panic!("missing record")
+        };
+        assert_eq!(record.event.sequence.get(), sequence);
+        follow.acknowledge(&record).unwrap();
+    }
+    assert!(matches!(
+        follow.next(&cancel).await.unwrap(),
+        Observation::End(_)
+    ));
+}
+#[tokio::test]
+async fn reconnect_handshake_cannot_extend_outage_with_a_stalled_body() {
+    let peer = Peer::start(Behavior::SseOutage).await;
+    let mut follow = peer.client().await.follow(
+        &RunId::new("run-peer").unwrap(),
+        None,
+        RetryPolicy {
+            max_elapsed: Duration::from_millis(30),
+            initial_backoff: Duration::from_millis(1),
+            ..Default::default()
+        },
+    );
+    let result = tokio::time::timeout(
+        Duration::from_millis(500),
+        follow.next(&CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(result, Err(Error::RetryBudgetExhausted)));
+}
+
+#[tokio::test]
+async fn artifact_metadata_cannot_redirect_the_requested_download_identity() {
+    let peer = Peer::start(Behavior::WrongArtifact).await;
+    let result = peer
+        .client()
+        .await
+        .artifact(
+            &RunId::new("run-peer").unwrap(),
+            &ArtifactId::new("requested-image").unwrap(),
+        )
+        .await;
+    assert!(matches!(result, Err(Error::InvalidResponse)));
+    assert_eq!(peer.state.calls.load(Ordering::SeqCst), 1);
 }

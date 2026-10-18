@@ -7,6 +7,8 @@ members = [
     "crates/playtime-server",
     "crates/playtime-client",
     "crates/playtime-local",
+    "crates/playtime-cli",
+    "crates/playtime-test-support",
 ]
 resolver = "3"
 
@@ -20,6 +22,8 @@ publish = false
 playtime-core = { path = "crates/playtime-core" }
 playtime-protocol = { path = "crates/playtime-protocol" }
 playtime-local = { path = "crates/playtime-local" }
+playtime-client = { path = "crates/playtime-client" }
+playtime-test-support = { path = "crates/playtime-test-support" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 utoipa = "=6.0.0"
@@ -38,6 +42,8 @@ getrandom = "=0.4.3"
 subtle = "=2.6.1"
 serde_urlencoded = "=0.7.1"
 http-body-util = "=0.1.5"
+clap = { version = "=4.6.7", features = ["derive"] }
+toml = { version = "=1.1.8", default-features = false, features = ["parse", "serde"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

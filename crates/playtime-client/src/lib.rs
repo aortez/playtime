@@ -1,5 +1,8 @@
 //! Shared native HTTP client. Observation cancellation only detaches the client.
+pub mod config;
+mod downloads;
 mod events;
+pub mod state;
 pub use events::{EventStream, Follow, Observation, ObservedRecord, RetryPolicy};
 pub use playtime_local::{Token, read_connection};
 
@@ -51,7 +54,12 @@ impl Error {
         matches!(self, Self::Transport | Self::Timeout)
             || matches!(
                 self.api_code(),
-                Some("backend_unavailable" | "too_many_observers")
+                Some(
+                    "backend_unavailable"
+                        | "too_many_observers"
+                        | "request_timeout"
+                        | "ownership_unresolved"
+                )
             )
     }
 }
@@ -239,6 +247,9 @@ impl Client {
     }
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+    pub fn endpoint(&self) -> &str {
+        self.endpoint.as_str().trim_end_matches('/')
     }
     pub fn service_id(&self) -> &ServiceId {
         &self.service
@@ -444,8 +455,13 @@ impl Client {
         .await
     }
     pub async fn checkpoint(&self, id: &RunId, session: &SessionId) -> Result<Checkpoint> {
-        self.json(self.request(Method::GET, &format!("runs/{id}/checkpoints/{session}")))
-            .await
+        let checkpoint: Checkpoint = self
+            .json(self.request(Method::GET, &format!("runs/{id}/checkpoints/{session}")))
+            .await?;
+        if checkpoint.checkpoint.session_id != *session {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(checkpoint)
     }
     pub async fn artifacts(&self, id: &RunId, query: &PageQuery) -> Result<Page<Artifact>> {
         self.json(
@@ -455,8 +471,13 @@ impl Client {
         .await
     }
     pub async fn artifact(&self, id: &RunId, artifact: &ArtifactId) -> Result<Artifact> {
-        self.json(self.request(Method::GET, &format!("runs/{id}/artifacts/{artifact}")))
-            .await
+        let result: Artifact = self
+            .json(self.request(Method::GET, &format!("runs/{id}/artifacts/{artifact}")))
+            .await?;
+        if result.artifact_id != *artifact {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(result)
     }
 
     /// Writes verified bytes incrementally. On any error the destination is
@@ -536,44 +557,6 @@ impl Client {
             Ok(count)
         };
         tokio::select! { _ = cancel.cancelled() => Err(Error::Cancelled), result = timeout_at(deadline, task) => result.map_err(|_| Error::Timeout)? }
-    }
-    pub async fn download_to_path(
-        &self,
-        id: &RunId,
-        artifact: &Artifact,
-        path: &Path,
-        cancel: &CancellationToken,
-    ) -> Result<u64> {
-        let temporary = path.with_extension(format!(
-            "playtime-{}.part",
-            Token::generate().map_err(|_| Error::Io)?.expose()
-        ));
-        let mut file = tokio::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)
-            .await
-            .map_err(|_| Error::Io)?;
-        let result = self.download(id, artifact, &mut file, cancel).await;
-        let result = match result {
-            Ok(size) => {
-                match file.sync_all().await {
-                    Ok(()) => {
-                        // Link atomically without replacing an existing user file.
-                        tokio::fs::hard_link(&temporary, path)
-                            .await
-                            .map_err(|_| Error::Io)
-                            .map(|_| size)
-                    }
-                    Err(_) => Err(Error::Io),
-                }
-            }
-            Err(error) => Err(error),
-        };
-        drop(file);
-        let _ = tokio::fs::remove_file(&temporary).await;
-        result
     }
 }
 fn ambiguous<T>(result: Result<T>) -> Result<T> {
