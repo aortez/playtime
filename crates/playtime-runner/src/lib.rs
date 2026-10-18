@@ -11,9 +11,12 @@ mod receipt;
 mod writer;
 
 pub use clock::{Cancellation, DriverClock, VirtualClock};
-pub use driver::{DriverOptions, RunReport, run_prepared};
+pub use driver::{DriverOptions, PreparedExecution, RunReport, run_prepared};
 pub use error::{Error, Result};
-pub use prepare::{PreparedSimulation, WorkerBundle, capture_demo_worker, prepare_simulation};
+pub use prepare::{
+    PreparedSimulation, WorkerBundle, capture_demo_worker, prepare_simulation,
+    prepare_simulation_with_inputs,
+};
 pub use queries::ArchiveQueries;
 pub use receipt::LatestReceipt;
 pub use writer::{CommitContext, NoWriterHooks, PendingPublication, ReceiptDelivery, WriterHooks};

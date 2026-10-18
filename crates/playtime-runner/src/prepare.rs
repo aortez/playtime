@@ -84,6 +84,19 @@ pub fn prepare_simulation(
     scenario_bytes: &[u8],
     bundle: WorkerBundle,
 ) -> Result<PreparedSimulation> {
+    prepare_simulation_with_inputs(path, run_id, scenario_bytes, bundle, Vec::new())
+}
+
+/// Freeze additional manifest-bound inputs (for example, bundle provenance).
+/// Storage verifies their identities, unique paths and aggregate limits along
+/// with all other inputs before publishing the prepared archive.
+pub fn prepare_simulation_with_inputs(
+    path: impl AsRef<Path>,
+    run_id: RunId,
+    scenario_bytes: &[u8],
+    bundle: WorkerBundle,
+    extra: Vec<FrozenInput>,
+) -> Result<PreparedSimulation> {
     if scenario_bytes.len() as u64 > StorageLimits::default().content_bytes {
         return Err(Error::Capacity(
             "scenario exceeds frozen content bound".into(),
@@ -122,13 +135,15 @@ pub fn prepare_simulation(
         build: bundle.build,
         platform: bundle.platform,
     };
+    let files = extra.iter().map(|input| input.reference.clone()).collect();
+    inputs.extend(extra);
     let manifest = InputManifest {
         schema_version: 1,
         run_id: run_id.clone(),
         worker,
         configuration,
         initial_workspace,
-        files: Vec::new(),
+        files,
     };
     let manifest_bytes = serde_json::to_vec(&manifest)?;
     let descriptor = ArchiveDescriptor {

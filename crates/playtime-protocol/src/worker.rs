@@ -46,6 +46,8 @@ impl From<ControlId> for String {
 pub enum WorkerKind {
     /// Lifecycle fixtures only; no controller, experimental archive or real adapters.
     SupervisionFixture,
+    /// Real controller and archive writer with CPU-only scripted external effects.
+    ControllerSimulation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

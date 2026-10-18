@@ -13,6 +13,68 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+struct HandoffLock {
+    path: std::path::PathBuf,
+    prepared: PreparedSimulation,
+}
+impl WriterHooks for HandoffLock {
+    fn before(&mut self, _: &CommitContext, _: &mut ArchiveWriter) -> playtime_runner::Result<()> {
+        let error = ArchiveWriter::open_prepared(
+            &self.path,
+            &self.prepared.identity,
+            self.prepared.limits.clone(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code, playtime_storage::ErrorCode::WriterBusy);
+        Ok(())
+    }
+}
+
+#[test]
+fn prepared_owner_keeps_one_writer_through_initial_commit_without_starting_work_early() {
+    let temp = Temp::new();
+    let prepared = prepared(&temp, &scenario());
+    let owner = playtime_runner::PreparedExecution::acquire(temp.archive(), &prepared).unwrap();
+    assert_eq!(owner.confirmed().frontier().committed_sequence, 0);
+    assert_eq!(
+        fs::metadata(temp.archive().join("events.jsonl"))
+            .unwrap()
+            .len(),
+        0
+    );
+    assert!(ArchiveQueries::offline(temp.archive(), prepared.limits.clone()).is_err());
+    let error =
+        ArchiveWriter::open_prepared(temp.archive(), &prepared.identity, prepared.limits.clone())
+            .err()
+            .unwrap();
+    assert_eq!(error.code, playtime_storage::ErrorCode::WriterBusy);
+    let report = owner
+        .execute(
+            &mut clock(),
+            DriverOptions {
+                writer_hooks: Box::new(HandoffLock {
+                    path: temp.archive(),
+                    prepared,
+                }),
+                ..DriverOptions::default()
+            },
+        )
+        .unwrap();
+    assert!(report.terminal_committed);
+}
+
+#[test]
+fn dropping_unused_preparation_creates_no_experimental_events() {
+    let temp = Temp::new();
+    let prepared = prepared(&temp, &scenario());
+    let owner = playtime_runner::PreparedExecution::acquire(temp.archive(), &prepared).unwrap();
+    drop(owner);
+    let queries = ArchiveQueries::offline(temp.archive(), prepared.limits).unwrap();
+    assert_eq!(queries.snapshot().frontier().committed_sequence, 0);
+    assert!(queries.run().unwrap().outcome.is_none());
+}
+
 #[test]
 #[ignore = "subprocess helper invoked by demo_capture_reads_the_executing_image_after_unlink"]
 fn unlinked_image_child() {
