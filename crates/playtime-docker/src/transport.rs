@@ -31,8 +31,19 @@ pub enum Operation {
     Start(String),
     RemoveContainer(String),
     RemoveVolume(String),
-    Bridge { id: String, payload: Vec<u8> },
+    Bridge {
+        id: String,
+        payload: Vec<u8>,
+    },
     Probe(String),
+    Export {
+        id: String,
+        profile: crate::capture::CaptureProfile,
+    },
+    Memory {
+        id: String,
+        limit: u64,
+    },
     Mounts(String),
 }
 impl Operation {
@@ -50,6 +61,8 @@ impl Operation {
             Self::RemoveVolume(_) => "volume_remove",
             Self::Bridge { .. } => "tool",
             Self::Probe(_) => "helper_identity",
+            Self::Export { .. } => "workspace_export",
+            Self::Memory { .. } => "outgoing_memory",
             Self::Mounts(_) => "volume_mounts",
         }
     }
@@ -77,6 +90,26 @@ impl Operation {
                 "-S",
                 "-B",
                 BRIDGE,
+            ],
+            Self::Export { id, .. } | Self::Memory { id, .. } => vec![
+                "container",
+                "exec",
+                "--user",
+                "1000:1000",
+                "--workdir",
+                "/",
+                "--interactive",
+                id,
+                PYTHON,
+                "-I",
+                "-S",
+                "-B",
+                "-c",
+                if matches!(self, Self::Export { .. }) {
+                    crate::capture::EXPORTER
+                } else {
+                    crate::capture::MEMORY_READER
+                },
             ],
             Self::Probe(id) => vec![
                 "container",
@@ -123,14 +156,18 @@ impl Operation {
         };
         args.into_iter().map(str::to_owned).collect()
     }
-    fn input(&self) -> &[u8] {
+    fn input(&self) -> Vec<u8> {
         match self {
-            Self::Bridge { payload, .. } => payload,
-            _ => &[],
+            Self::Bridge { payload, .. } => payload.clone(),
+            Self::Export { profile, .. } => profile.payload(),
+            Self::Memory { limit, .. } => limit.to_string().into_bytes(),
+            _ => Vec::new(),
         }
     }
     fn stdout_limit(&self) -> usize {
-        if matches!(self, Self::Bridge { .. }) {
+        if let Self::Export { profile, .. } = self {
+            profile.limits().tar_bytes as usize
+        } else if matches!(self, Self::Bridge { .. } | Self::Memory { .. }) {
             RESPONSE_BYTES
         } else {
             QUERY_BYTES
@@ -467,7 +504,7 @@ impl Transport for Cli {
                 Ok(Ok((cmd, operation))) => {
                     run(
                         cmd,
-                        operation.input().to_vec(),
+                        operation.input(),
                         operation.stdout_limit(),
                         deadline,
                         owned_cancel,

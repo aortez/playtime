@@ -14,6 +14,11 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 
+[dev-dependencies]
+playtime-docker.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+
 [build-dependencies]
 serde_json.workspace = true
 

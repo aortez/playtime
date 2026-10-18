@@ -65,6 +65,9 @@ pub struct BuildRecord {
     pub linker_version: String,
     pub features: Vec<String>,
     pub rustflags: Vec<String>,
+    /// Embedded fixed helpers; absent on older inspectable bundles.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub capture_helpers: std::collections::BTreeMap<String, String>,
     pub capabilities: Capabilities,
 }
 

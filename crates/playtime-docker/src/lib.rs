@@ -1,6 +1,7 @@
 //! Bounded local Docker effects. This crate is not a controller or an admission
 //! authority: its caller must commit ownership and dispatch intent first.
 mod bridge;
+pub mod capture;
 mod engine;
 mod sandbox;
 pub mod transport;
@@ -16,6 +17,7 @@ pub use types::*;
 #[serde(rename_all = "snake_case")]
 pub enum Failure {
     InvalidInput,
+    Capacity,
     Unsupported,
     MissingImage,
     DaemonUnavailable,

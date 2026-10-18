@@ -28,6 +28,7 @@ pub fn demo_inputs(bundle: &WorkerBundle, capabilities: Capabilities) -> Vec<Fro
         platform: bundle.platform.clone(),
     };
     let build = BuildRecord {
+        capture_helpers: Default::default(),
         schema_version: 1,
         source_sha256: worker.source.sha256.clone(),
         lock_sha256: worker.cargo_lock.sha256.clone(),

@@ -3368,6 +3368,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
+ "playtime-protocol",
  "rustix 1.1.4",
  "serde",
  "serde_json",
@@ -3436,13 +3437,16 @@ dependencies = [
 name = "playtime-runner"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "playtime-core",
+ "playtime-docker",
  "playtime-engine",
  "playtime-protocol",
  "playtime-storage",
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
 ]
 
 [[package]]
@@ -3538,6 +3542,7 @@ name = "playtime-worker"
 version = "0.1.0"
 dependencies = [
  "playtime-core",
+ "playtime-docker",
  "playtime-engine",
  "playtime-protocol",
  "playtime-runner",

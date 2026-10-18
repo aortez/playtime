@@ -94,6 +94,8 @@ impl Engine {
             | Operation::RemoveVolume(id)
             | Operation::Probe(id)
             | Operation::Mounts(id)
+            | Operation::Export { id, .. }
+            | Operation::Memory { id, .. }
             | Operation::Bridge { id, .. } => Some(id.clone()),
             _ => None,
         };

@@ -2,8 +2,7 @@
 
 `playtime-docker` owns native subprocess transport and the lifetime of an owned
 workshop. It does not dispatch the controller, publish checkpoints, grant recovery
-permission or enable a production worker capability. #54 owns stopped-workspace
-capture. #24 D3 composes Docker with the runner, committed-intent barriers, daemon,
+permission or enable a production worker capability. #54 supplies [stopped-workspace capture](rust-workspace-capture.md). #24 D3 composes Docker with the runner, committed-intent barriers, daemon,
 and run-and-view gates. Python remains operational; this slice closes none of
 #24, #20, #21 or #22.
 
@@ -90,7 +89,7 @@ previous-agent quiescence. `quiesce` force-removes only the exact owned agent,
 checks absence on the original daemon, validates the running holder/volume and
 requires its holder to be the sole remaining volume mount. It returns a
 non-serializable `Quiescent<'_>` exclusive borrow. A new session and holder cleanup
-are impossible while that borrow is held. #54 must keep it throughout capture,
+are impossible while that borrow is held. D2 keeps it throughout capture,
 including exporter failure fencing; it is not a snapshot or writer receipt.
 
 ## Transport, tools and uncertainty
@@ -164,8 +163,7 @@ output/workspace/inode/tmp/PID limits, poisoned imports, binary/image-file reads
 valid command timeout, persistence, fresh `/tmp`, old background-writer cessation,
 cancellation during a running command, independent lifetime expiry, retained
 holder and exact absence after cleanup. It does not capture/publish a checkpoint,
-inspect a daemon run in the UI or claim the #24 production gate. #54 and D3 add
-those separate pieces. No workshop sources, image/model locks or saved archives
+inspect a daemon run in the UI or claim the #24 production gate. The D2 checkpoint gate and D3 production integration add those separate pieces. No workshop sources, image/model locks or saved archives
 are modified by this implementation.
 
 The container inspection fixture is a normalized capture from this gate's own

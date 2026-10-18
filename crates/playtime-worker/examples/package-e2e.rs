@@ -487,6 +487,34 @@ fn tamper(bundle: &Path) -> Result<()> {
     let bytes =
         PrivateDirectory::open(bundle)?.read(EXECUTABLE, StorageLimits::default().content_bytes)?;
     playtime_worker::verify_static_elf(&bytes)?;
+    let build: BuildRecord = serde_json::from_slice(&fs::read(bundle.join(wire::BUILD))?)?;
+    assert_eq!(
+        build.capture_helpers,
+        playtime_docker::capture::helper_digests()
+    );
+    for helper in [
+        playtime_docker::capture::EXPORTER,
+        playtime_docker::capture::MEMORY_READER,
+    ] {
+        assert!(
+            bytes
+                .windows(helper.len())
+                .any(|window| window == helper.as_bytes()),
+            "helper source missing from frozen executable"
+        );
+    }
+    let verified = VerifiedBundle::open(bundle)?;
+    verified.verify_embedded(&serde_json::to_vec(&build)?)?;
+    let mut wrong = build;
+    wrong
+        .capture_helpers
+        .insert("workspace-exporter-v1".into(), "0".repeat(64));
+    assert!(
+        verified
+            .verify_embedded(&serde_json::to_vec(&wrong)?)
+            .is_err()
+    );
+    println!("PASS capture helpers embedded and digest-bound to frozen worker build");
     println!("PASS bundle tamper/platform/capability/size and ELF gates");
     Ok(())
 }

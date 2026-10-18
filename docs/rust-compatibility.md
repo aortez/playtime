@@ -99,3 +99,17 @@ verified-download helper live in `playtime-client` for both #21 and #22. CLI
 parsing/presentation stay in `playtime-cli`. A CLI/client failure and an
 experimental outcome have distinct exit classifications; unknown usage is never
 converted to zero. No hidden Python fallback is installed.
+
+### Native workspace capture v1
+
+D2's PAX exporter deliberately normalizes uid/gid to 1000, owner/group names to
+empty, and mtime to zero while preserving permission bits. It captures links as
+inert metadata, reads sparse filesystem files densely under logical-byte limits,
+and rejects unsupported/unreadable entries. Its outgoing-memory helper refuses
+symlinks and reports explicit missing/unreadable/oversized/binary states. These
+bytes are snapshot candidates, never continuation/extraction authorization. See
+[rust-workspace-capture.md](rust-workspace-capture.md) for the strict subset,
+capacity preparation and independent reference fixture. Earlier archives remain
+inspectable. Worker build records add an optional `capture_helpers` digest map;
+new executing bundles verify it against embedded literals without advertising a
+real-workshop execution capability.

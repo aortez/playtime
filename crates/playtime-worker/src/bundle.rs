@@ -128,7 +128,9 @@ impl VerifiedBundle {
     }
     pub fn verify_embedded(&self, bytes: &[u8]) -> Result<()> {
         let build: Option<BuildRecord> = serde_json::from_slice(bytes)?;
-        if build.as_ref() != Some(&self.build) {
+        if build.as_ref() != Some(&self.build)
+            || self.build.capture_helpers != playtime_docker::capture::helper_digests()
+        {
             return Err(Error::Unbundled);
         }
         Ok(())

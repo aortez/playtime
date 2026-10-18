@@ -568,6 +568,33 @@ impl Encoder {
         workspace_bytes: &[u8],
         committed_sequence: u64,
     ) -> Result<Publication> {
+        let file_bytes: BTreeMap<String, String> = serde_json::from_slice(workspace_bytes)?;
+        let file_bytes: BTreeMap<_, _> = file_bytes
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_bytes()))
+            .collect();
+        self.checkpoint_contents(
+            time,
+            effect_id,
+            checkpoint,
+            workspace_bytes,
+            &file_bytes,
+            committed_sequence,
+        )
+    }
+
+    /// Format-independent publication boundary: validated bytes remain a
+    /// candidate until StorageThread returns the writer's receipt. D3 will
+    /// supply native capture here; the simulator retains its JSON format.
+    pub fn checkpoint_contents(
+        &mut self,
+        time: &UtcTime,
+        effect_id: u64,
+        checkpoint: &Checkpoint,
+        workspace_bytes: &[u8],
+        file_bytes: &BTreeMap<&str, &[u8]>,
+        committed_sequence: u64,
+    ) -> Result<Publication> {
         if self.has_queue() {
             return Err(Error::Invalid(
                 "checkpoint cannot overtake pending observations".into(),
@@ -577,10 +604,18 @@ impl Encoder {
             != checkpoint.snapshot.workspace
         {
             return Err(Error::Invalid(
-                "scripted snapshot bytes differ from controller reference".into(),
+                "snapshot bytes differ from controller reference".into(),
             ));
         }
-        let file_bytes: BTreeMap<String, String> = serde_json::from_slice(workspace_bytes)?;
+        if file_bytes.keys().any(|path| {
+            checkpoint
+                .snapshot
+                .files
+                .get(*path)
+                .is_none_or(|m| !matches!(m.entry_type.as_str(), "0" | "file") || m.link.is_some())
+        }) {
+            return Err(Error::Invalid("unaccounted checkpoint content".into()));
+        }
         let prefix = format!("sessions/{}", checkpoint.session_id);
         let mut objects = vec![FrozenInput {
             reference: checkpoint.snapshot.workspace.clone(),
@@ -592,15 +627,15 @@ impl Encoder {
             let content = if matches!(metadata.entry_type.as_str(), "0" | "file")
                 && metadata.link.is_none()
             {
-                match file_bytes.get(path) {
+                match file_bytes.get(path.as_str()) {
                     Some(text)
                         if metadata.size_bytes == text.len() as u64
-                            && metadata.sha256.as_ref() == Some(&sha256(text.as_bytes())) =>
+                            && metadata.sha256.as_ref() == Some(&sha256(text)) =>
                     {
                         FileContent::Retained {
                             content: object(
                                 &format!("{prefix}/files/{index}"),
-                                text.as_bytes().to_vec(),
+                                text.to_vec(),
                                 &mut objects,
                             ),
                         }
@@ -764,3 +799,7 @@ impl Encoder {
         diagnostic
     }
 }
+
+#[cfg(test)]
+#[path = "capture_tests.rs"]
+mod capture_tests;
