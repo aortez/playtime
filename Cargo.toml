@@ -13,6 +13,7 @@ members = [
     "crates/playtime-ui",
     "crates/playtime-worker-control",
     "crates/playtime-worker",
+    "crates/playtime-ollama",
     "xtask",
 ]
 resolver = "3"

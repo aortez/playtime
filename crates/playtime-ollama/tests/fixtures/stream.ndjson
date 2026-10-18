@@ -1,0 +1,3 @@
+{"model":"gpt-oss:20b","message":{"role":"assistant","thinking":"first é"},"done":false,"eval_count":999}
+{"message":{"thinking":"😀","content":"","tool_calls":[{"id":"fixture-call","function":{"index":0,"name":"fixture","arguments":{"text":"é😀"}},"extra":"retained"}]},"done":false}
+{"message":{"content":"final","tool_calls":[{"id":"fixture-call","function":{"index":0,"name":"fixture","arguments":{"text":"é😀"}},"extra":"retained"}]},"done":true,"eval_count":32,"prompt_eval_count":48}

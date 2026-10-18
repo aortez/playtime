@@ -1,0 +1,1 @@
+{"keep_alive":"5m","messages":[{"content":"fixture \u00e9","role":"user"}],"model":"gpt-oss:20b","options":{"num_ctx":32768,"num_predict":512,"repeat_penalty":0.0,"seed":17,"temperature":0.0,"top_k":0,"top_p":0.0,"use_mmap":false},"stream":true,"think":"low","tools":[{"function":{"name":"fixture","parameters":{"type":"object"}},"type":"function"}]}
