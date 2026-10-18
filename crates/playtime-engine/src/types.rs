@@ -186,6 +186,13 @@ pub enum Input {
     /// The driver must not dispatch an effect whose preceding events failed
     /// to persist. Only an already dispatched request retains an unknown charge.
     PersistenceFailed(String),
+    /// Actual archive accounting includes envelopes and externalized payloads.
+    ExternalLogBudgetExhausted,
+    /// A durable receipt for an exact requested checkpoint, including a receipt
+    /// arriving after its ordinary effect timed out. Never rewinds the clock.
+    PublicationCommitted {
+        effect_id: u64,
+    },
 }
 
 /// Internal observation; #19 supplies UTC timestamps and durable envelopes.

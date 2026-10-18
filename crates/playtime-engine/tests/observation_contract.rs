@@ -40,7 +40,7 @@ fn mapping_goldens_preserve_the_actual_controller_records_and_effect_identities(
             let index = actual.len();
             let original = &case.records[index];
             assert_eq!(
-                observation.source()["record"],
+                serde_json::to_value(observation.record().unwrap()).unwrap(),
                 serde_json::to_value(original).unwrap(),
                 "{name} source {}",
                 original.sequence

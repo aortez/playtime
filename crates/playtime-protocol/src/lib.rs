@@ -1,6 +1,7 @@
 //! Versioned client-facing values. Transport and persistence live elsewhere.
 
 pub mod archive;
+pub mod bridge;
 pub mod events;
 pub mod observations;
 mod read;

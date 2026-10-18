@@ -10,6 +10,7 @@ use playtime_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::{
     ReadError,
@@ -21,6 +22,7 @@ use crate::{
 
 pub const CONTROLLER_OBSERVATION_KIND: &str = "controller_observation";
 pub const CONTROLLER_OBSERVATION_VERSION: u32 = 1;
+pub const INLINE_OBSERVATION_BYTES: usize = 256 * 1024;
 
 /// The original controller record, including its independent sequence domain.
 /// The decoder also retains the source JSON, including future optional fields.
@@ -46,8 +48,47 @@ pub struct ObservationIdentity {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ControllerObservation {
     pub schema_version: u32,
-    pub record: ControllerRecord,
+    pub controller_sequence: NonZeroU64,
+    pub elapsed_ms: u64,
+    pub session_id: Option<SessionId>,
+    pub observation_kind: String,
     pub identity: ObservationIdentity,
+    pub data: ObservationData,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "storage", rename_all = "snake_case")]
+pub enum ObservationData {
+    Inline { value: Value },
+    Artifact { content: ContentRef },
+}
+
+impl ControllerObservation {
+    pub fn from_record(
+        record: ControllerRecord,
+        identity: ObservationIdentity,
+        data: ObservationData,
+    ) -> Self {
+        Self {
+            schema_version: CONTROLLER_OBSERVATION_VERSION,
+            controller_sequence: record.sequence,
+            elapsed_ms: record.elapsed_ms,
+            session_id: record.session_id,
+            observation_kind: record.kind,
+            identity,
+            data,
+        }
+    }
+
+    fn with_value(&self, data: Value) -> ControllerRecord {
+        ControllerRecord {
+            sequence: self.controller_sequence,
+            elapsed_ms: self.elapsed_ms,
+            session_id: self.session_id.clone(),
+            kind: self.observation_kind.clone(),
+            data,
+        }
+    }
 }
 
 /// A derived index entry. The digest covers the exact archive JSONL record,
@@ -236,14 +277,24 @@ pub enum KnownObservation {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ObservationPayload {
     Known(Box<KnownObservation>),
-    Unknown { kind: String, data: Value },
+    Unknown {
+        kind: String,
+        data: Value,
+    },
+    /// The original value is retained but must be fetched and verified before
+    /// interpretation. This is not omitted or unknown model output.
+    Referenced {
+        content: ContentRef,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DecodedObservation {
     source: Value,
     observation: ControllerObservation,
+    record: Option<ControllerRecord>,
     payload: ObservationPayload,
+    bound_run: Option<RunId>,
 }
 
 impl DecodedObservation {
@@ -257,6 +308,56 @@ impl DecodedObservation {
     pub fn payload(&self) -> &ObservationPayload {
         &self.payload
     }
+    pub fn record(&self) -> Option<&ControllerRecord> {
+        self.record.as_ref()
+    }
+    pub(crate) fn bind_run(mut self, run_id: &RunId) -> Result<Self, ReadError> {
+        if let ObservationPayload::Known(known) = &self.payload
+            && let KnownObservation::ControllerStarted { run_id: source, .. }
+            | KnownObservation::ControllerFinished { run_id: source, .. } = known.as_ref()
+            && source != run_id
+        {
+            return Err(ReadError::malformed(
+                "controller observation run disagrees with envelope",
+            ));
+        }
+        self.bound_run = Some(run_id.clone());
+        Ok(self)
+    }
+
+    /// The caller bounds downloads before allocation. Verify exact bytes here
+    /// as well, so an API consumer never interprets an unchecked payload.
+    pub fn resolve(&self, bytes: &[u8]) -> Result<Self, ReadError> {
+        let ObservationData::Artifact { content } = &self.observation.data else {
+            return Err(ReadError::malformed(
+                "inline observation has no external payload",
+            ));
+        };
+        let hash: String = Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if bytes.len() as u64 != content.size_bytes || hash != content.sha256.as_str() {
+            return Err(ReadError::malformed(
+                "observation payload length or SHA-256 differs",
+            ));
+        }
+        let value = serde_json::from_slice(bytes).map_err(ReadError::malformed)?;
+        let record = self.observation.with_value(value);
+        let payload = decode_record(&record, &self.observation.identity)?;
+        let resolved = Self {
+            source: self.source.clone(),
+            observation: self.observation.clone(),
+            record: Some(record),
+            payload,
+            bound_run: None,
+        };
+        if let Some(run) = &self.bound_run {
+            resolved.bind_run(run)
+        } else {
+            Ok(resolved)
+        }
+    }
 }
 
 pub fn decode_observation(json: &str) -> Result<DecodedObservation, ReadError> {
@@ -268,13 +369,54 @@ pub fn decode_observation(json: &str) -> Result<DecodedObservation, ReadError> {
     let source: Value = serde_json::from_str(json).map_err(ReadError::malformed)?;
     let observation: ControllerObservation =
         serde_json::from_value(source.clone()).map_err(ReadError::malformed)?;
-    if observation.record.kind.is_empty() {
+    if observation.observation_kind.is_empty() {
         return Err(ReadError::malformed(
             "controller record kind must not be empty",
         ));
     }
-    let record = &observation.record;
-    let payload = match record.kind.as_str() {
+    let (record, payload) = match &observation.data {
+        ObservationData::Inline { value } => {
+            if serde_json::to_vec(value)
+                .map_err(ReadError::malformed)?
+                .len()
+                > INLINE_OBSERVATION_BYTES
+            {
+                return Err(ReadError::malformed(
+                    "observation values above 256 KiB must be externalized",
+                ));
+            }
+            let record = observation.with_value(value.clone());
+            let payload = decode_record(&record, &observation.identity)?;
+            (Some(record), payload)
+        }
+        ObservationData::Artifact { content } => {
+            if content.size_bytes <= INLINE_OBSERVATION_BYTES as u64 {
+                return Err(ReadError::malformed(
+                    "small observation values must be inline",
+                ));
+            }
+            (
+                None,
+                ObservationPayload::Referenced {
+                    content: content.clone(),
+                },
+            )
+        }
+    };
+    Ok(DecodedObservation {
+        source,
+        observation,
+        record,
+        payload,
+        bound_run: None,
+    })
+}
+
+fn decode_record(
+    record: &ControllerRecord,
+    identity: &ObservationIdentity,
+) -> Result<ObservationPayload, ReadError> {
+    Ok(match record.kind.as_str() {
         "controller_started"
         | "phase_changed"
         | "memory_received"
@@ -297,28 +439,23 @@ pub fn decode_observation(json: &str) -> Result<DecodedObservation, ReadError> {
             let known: KnownObservation =
                 serde_json::from_value(json!({"kind": record.kind, "data": record.data}))
                     .map_err(ReadError::malformed)?;
-            validate(&observation, &known)?;
+            validate(record, identity, &known)?;
             ObservationPayload::Known(Box::new(known))
         }
         _ => ObservationPayload::Unknown {
             kind: record.kind.clone(),
             data: record.data.clone(),
         },
-    };
-    Ok(DecodedObservation {
-        source,
-        observation,
-        payload,
     })
 }
 
 fn validate(
-    observation: &ControllerObservation,
+    record: &ControllerRecord,
+    identity: &ObservationIdentity,
     known: &KnownObservation,
 ) -> Result<(), ReadError> {
-    let identity = &observation.identity;
     if let KnownObservation::PhaseChanged { session_id, .. } = known
-        && *session_id != observation.record.session_id
+        && *session_id != record.session_id
     {
         return Err(ReadError::malformed(
             "phase session disagrees with source record",
@@ -333,7 +470,7 @@ fn validate(
             }
         }
         KnownObservation::ToolRequest { .. } => {
-            if identity.tool_request_sequence != Some(observation.record.sequence) {
+            if identity.tool_request_sequence != Some(record.sequence) {
                 return Err(ReadError::malformed(
                     "tool identity must name its original request record",
                 ));
@@ -350,7 +487,7 @@ fn validate(
             request_sequence, ..
         } => {
             if identity.tool_request_sequence != Some(*request_sequence)
-                || *request_sequence >= observation.record.sequence
+                || *request_sequence >= record.sequence
             {
                 return Err(ReadError::malformed(
                     "tool association must name an earlier source request",
@@ -366,7 +503,7 @@ fn validate(
             | KnownObservation::MementoWriteIntent { .. }
             | KnownObservation::ToolNotDispatched { .. }
             | KnownObservation::ToolResult { .. }
-    ) && (identity.request_id.is_none() || observation.record.session_id.is_none())
+    ) && (identity.request_id.is_none() || record.session_id.is_none())
     {
         return Err(ReadError::malformed(
             "tool observations require session and originating model request identity",
@@ -392,7 +529,7 @@ fn validate(
         | KnownObservation::RequestNotDispatched { .. } => {
             if identity.request_id.is_none()
                 || identity.effect_id.is_none()
-                || observation.record.session_id.is_none()
+                || record.session_id.is_none()
             {
                 return Err(ReadError::malformed(
                     "model observations require session, request, and effect identity",

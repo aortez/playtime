@@ -19,7 +19,8 @@ The source records come from the production Rust controller:
   connection failure. The 100-token allowance stays unknown; totals are 13 known
   plus 100 unknown, charged 113. There is no final response for request `r3`.
 
-The fixtures wrap every original `Record` unchanged. Canonical `phase_changed`
+The fixtures retain every original `Record` field unchanged: header fields use
+the #42 wrapper names, and data uses the tagged inline representation. Canonical `phase_changed`
 and `request_finished` events are inserted separately, so archive sequence
 numbers differ from controller sequence numbers. `mapping.json` identifies
 every original observation by archive sequence and SHA-256 of the **exact JSONL

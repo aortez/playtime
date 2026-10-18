@@ -14,10 +14,8 @@ use utoipa::ToSchema;
 use crate::{
     ReadError,
     archive::ContentRef,
-    observations::{
-        CONTROLLER_OBSERVATION_KIND, DecodedObservation, KnownObservation, ObservationPayload,
-        decode_observation,
-    },
+    bridge::{BridgeEvent, decode_bridge_event},
+    observations::{CONTROLLER_OBSERVATION_KIND, DecodedObservation, decode_observation},
     read::require_version,
     v1::UsageSummary,
 };
@@ -77,6 +75,8 @@ pub struct CheckpointRef {
     pub workspace: ContentRef,
     pub memento: MemoryRef,
     pub evidence: Option<ContentRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<ContentRef>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -106,6 +106,8 @@ pub enum KnownEvent {
         workspace: ContentRef,
         memento: MemoryRef,
         evidence: Option<ContentRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delivery: Option<crate::bridge::SessionDelivery>,
     },
     RequestFinished {
         session_id: SessionId,
@@ -116,6 +118,8 @@ pub enum KnownEvent {
         session_id: SessionId,
         request_id: RequestId,
         outcome: CommandOutcome,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<crate::observations::ObservationIdentity>,
     },
     SessionEnded {
         session_id: SessionId,
@@ -136,6 +140,7 @@ pub enum KnownEvent {
 #[derive(Clone, Debug, PartialEq)]
 pub enum EventPayload {
     Known(Box<KnownEvent>),
+    Control(Box<BridgeEvent>),
     Observation(Box<DecodedObservation>),
     /// Unknown is visible data, never silently dropped or treated as executable.
     Unknown {
@@ -148,7 +153,7 @@ impl EventPayload {
     pub fn known(&self) -> Option<&KnownEvent> {
         match self {
             Self::Known(event) => Some(event),
-            Self::Observation(_) | Self::Unknown { .. } => None,
+            Self::Control(_) | Self::Observation(_) | Self::Unknown { .. } => None,
         }
     }
 }
@@ -193,23 +198,49 @@ pub fn decode_event(json: &str) -> Result<DecodedEvent, ReadError> {
                     return Err(ReadError::malformed("failed cleanup must include errors"));
                 }
             }
+            if let KnownEvent::SessionStarted {
+                memento,
+                evidence,
+                delivery: Some(delivery),
+                ..
+            } = &event
+                && (delivery.memento.memory_ref() != *memento
+                    || delivery.evidence.as_ref().map(|item| &item.text) != evidence.as_ref())
+            {
+                return Err(ReadError::malformed(
+                    "session delivery disagrees with its memory/evidence references",
+                ));
+            }
+            if let KnownEvent::CommandFinished {
+                request_id,
+                origin: Some(origin),
+                ..
+            } = &event
+                && (origin.request_id.as_ref() != Some(request_id)
+                    || origin.effect_id.is_none()
+                    || origin.tool_request_sequence.is_none())
+            {
+                return Err(ReadError::malformed(
+                    "command origin must bind its effect and original tool request",
+                ));
+            }
             EventPayload::Known(Box::new(event))
         }
         CONTROLLER_OBSERVATION_KIND => {
             let observation = decode_observation(
                 &serde_json::to_string(&envelope.data).map_err(ReadError::malformed)?,
-            )?;
-            if let ObservationPayload::Known(known) = observation.payload()
-                && let KnownObservation::ControllerStarted { run_id, .. }
-                | KnownObservation::ControllerFinished { run_id, .. } = known.as_ref()
-                && *run_id != envelope.run_id
-            {
-                return Err(ReadError::malformed(
-                    "controller observation run disagrees with envelope",
-                ));
-            }
+            )?
+            .bind_run(&envelope.run_id)?;
             EventPayload::Observation(Box::new(observation))
         }
+        "effect_intent"
+        | "effect_not_dispatched"
+        | "request_not_dispatched"
+        | "stop_decided"
+        | "observation_omitted" => EventPayload::Control(Box::new(decode_bridge_event(
+            &envelope.kind,
+            &serde_json::to_string(&envelope.data).map_err(ReadError::malformed)?,
+        )?)),
         _ => EventPayload::Unknown {
             kind: envelope.kind.clone(),
             data: envelope.data.clone(),

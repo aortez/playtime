@@ -34,7 +34,7 @@ fn source(kind: &str) -> Value {
     let all = events(COMPLETED);
     observations(&all)
         .into_iter()
-        .find(|o| o.observation().record.kind == kind)
+        .find(|o| o.record().unwrap().kind == kind)
         .unwrap()
         .source()
         .clone()
@@ -90,7 +90,7 @@ fn tool_intent_and_non_dispatch_share_identity_without_inventing_a_result() {
     let intent = observations.iter().find(|o| matches!(o.payload(), ObservationPayload::Known(k) if matches!(k.as_ref(), KnownObservation::ToolIntent { .. }))).unwrap();
     let cancelled = observations
         .iter()
-        .find(|o| o.observation().record.kind == "tool_not_dispatched")
+        .find(|o| o.record().unwrap().kind == "tool_not_dispatched")
         .unwrap();
     assert_eq!(
         intent.observation().identity,
@@ -100,7 +100,7 @@ fn tool_intent_and_non_dispatch_share_identity_without_inventing_a_result() {
     assert!(
         !observations
             .iter()
-            .any(|o| o.observation().record.kind == "tool_result")
+            .any(|o| o.record().unwrap().kind == "tool_result")
     );
     assert!(!all.iter().any(|event| matches!(
         event.payload().known(),
@@ -110,7 +110,7 @@ fn tool_intent_and_non_dispatch_share_identity_without_inventing_a_result() {
     assert!(
         observations
             .iter()
-            .any(|o| o.observation().record.kind == "controller_finished")
+            .any(|o| o.record().unwrap().kind == "controller_finished")
     );
     assert!(!all.iter().any(|event| matches!(
         event.payload().known(),
@@ -142,8 +142,8 @@ fn partial_failed_session_retains_output_and_full_unknown_allowance() {
         }
         assert_eq!(
             observation
-                .observation()
-                .record
+                .record()
+                .unwrap()
                 .session_id
                 .as_ref()
                 .unwrap()
@@ -190,26 +190,26 @@ fn memory_and_evidence_keep_original_text_and_resolvable_controller_references()
     let incoming = observations
         .iter()
         .find(|o| {
-            o.observation().record.kind == "memory_received"
-                && o.observation().record.data["ordinal"] == 2
+            o.record().unwrap().kind == "memory_received"
+                && o.record().unwrap().data["ordinal"] == 2
         })
         .unwrap();
     let outgoing = observations
         .iter()
         .find(|o| {
-            o.observation().record.kind == "controller_checkpoint"
-                && o.observation().record.data["ordinal"] == 1
+            o.record().unwrap().kind == "controller_checkpoint"
+                && o.record().unwrap().data["ordinal"] == 1
         })
         .unwrap();
     assert_eq!(
-        incoming.observation().record.data["memory"],
-        outgoing.observation().record.data["memory"]
+        incoming.record().unwrap().data["memory"],
+        outgoing.record().unwrap().data["memory"]
     );
     assert_eq!(
-        incoming.observation().record.data["evidence"],
-        outgoing.observation().record.data["evidence"]
+        incoming.record().unwrap().data["evidence"],
+        outgoing.record().unwrap().data["evidence"]
     );
-    let data = &incoming.observation().record.data;
+    let data = &incoming.record().unwrap().data;
     assert_eq!(
         data["memory"]["content"],
         "Read persistent.txt in the next session."
@@ -239,7 +239,7 @@ fn memory_and_evidence_keep_original_text_and_resolvable_controller_references()
         let EventPayload::Observation(observation) = event.payload() else {
             panic!()
         };
-        assert_eq!(observation.observation().record.sequence.get(), sequence);
+        assert_eq!(observation.record().unwrap().sequence.get(), sequence);
     }
 }
 
@@ -270,9 +270,9 @@ fn missing_empty_partial_and_truncated_text_are_distinct() {
 fn unknown_fields_kinds_and_raw_chunks_remain_inspectable() {
     let mut value = source("tool_result");
     value["future_wrapper"] = json!({"new": true});
-    value["record"]["future_record"] = json!(0);
-    value["record"]["data"]["result"]["context_truncated"] = json!(true);
-    value["record"]["data"]["unabridged_result"] =
+    value["future_record"] = json!(0);
+    value["data"]["value"]["result"]["context_truncated"] = json!(true);
+    value["data"]["value"]["unabridged_result"] =
         json!({"stdout": "full recorded output", "unknown_result_field": false});
     let decoded = decode_observation(&value.to_string()).unwrap();
     assert_eq!(decoded.source(), &value);
@@ -292,8 +292,8 @@ fn unknown_fields_kinds_and_raw_chunks_remain_inspectable() {
         unabridged_result.as_ref().unwrap()["unknown_result_field"],
         false
     );
-    value["record"]["kind"] = json!("future_observation");
-    value["record"]["data"] = json!([false, 0, null, {"new": "kept"}]);
+    value["observation_kind"] = json!("future_observation");
+    value["data"]["value"] = json!([false, 0, null, {"new": "kept"}]);
     let decoded = decode_observation(&value.to_string()).unwrap();
     assert_eq!(decoded.source(), &value);
     assert!(matches!(
@@ -303,7 +303,7 @@ fn unknown_fields_kinds_and_raw_chunks_remain_inspectable() {
     // The controller records raw chunks, even malformed model fields. The
     // typed record remains readable; text interpretation can fail separately.
     let mut value = source("model_chunk");
-    value["record"]["data"]["chunk"] = json!({"message": {"content": 12}});
+    value["data"]["value"]["chunk"] = json!({"message": {"content": 12}});
     assert!(decode_observation(&value.to_string()).is_ok());
 }
 
@@ -315,10 +315,10 @@ fn unsupported_versions_malformed_known_payloads_and_conflicting_identities_fail
     ));
     let base = source("model_request");
     for (pointer, replacement) in [
-        ("/record/sequence", json!(0)),
-        ("/record/session_id", Value::Null),
-        ("/record/data/maximum_tokens", json!(0)),
-        ("/record/data/messages", json!("wrong shape")),
+        ("/controller_sequence", json!(0)),
+        ("/session_id", Value::Null),
+        ("/data/value/maximum_tokens", json!(0)),
+        ("/data/value/messages", json!("wrong shape")),
         ("/identity/effect_id", Value::Null),
         ("/identity/request_id", json!("different-request")),
     ] {
@@ -330,7 +330,7 @@ fn unsupported_versions_malformed_known_payloads_and_conflicting_identities_fail
     value["identity"]["tool_request_sequence"] = json!(999);
     assert!(decode_observation(&value.to_string()).is_err());
     let mut value = source("request_settled");
-    value["record"]["data"]["totals"]["budget_charged_tokens"] = json!(999);
+    value["data"]["value"]["totals"]["budget_charged_tokens"] = json!(999);
     assert!(decode_observation(&value.to_string()).is_err());
     let event = json!({"schema_version": 1, "run_id": "simulation", "sequence": 1,
         "time": "2026-01-01T00:00:00Z", "kind": "controller_observation", "data": value});
@@ -345,12 +345,79 @@ fn source_run_session_and_cleanup_cannot_contradict_the_typed_envelope() {
         assert!(decode_event(&event.to_string()).is_err());
     }
     let mut phase = source("phase_changed");
-    phase["record"]["data"]["session_id"] = json!("another-session");
+    phase["data"]["value"]["session_id"] = json!("another-session");
     assert!(decode_observation(&phase.to_string()).is_err());
     let mut finished = source("controller_finished");
-    finished["record"]["data"]["cleanup"] = json!({"status": "failed", "errors": []});
+    finished["data"]["value"]["cleanup"] = json!({"status": "failed", "errors": []});
     assert!(decode_observation(&finished.to_string()).is_err());
     let mut intent = source("tool_dispatch");
     intent["identity"]["effect_id"] = Value::Null;
     assert!(decode_observation(&intent.to_string()).is_err());
+}
+
+#[test]
+fn large_payloads_require_verified_artifacts_and_decode_to_the_same_source_value() {
+    use playtime_protocol::observations::{INLINE_OBSERVATION_BYTES, ObservationPayload};
+    use sha2::{Digest, Sha256};
+    let mut wrapper = source("model_response");
+    let mut value = wrapper["data"]["value"].clone();
+    value["response"]["message"]["content"] = json!("é\"\n".repeat(100_000));
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert!(bytes.len() > INLINE_OBSERVATION_BYTES);
+    wrapper["data"]["value"] = value.clone();
+    assert!(decode_observation(&wrapper.to_string()).is_err());
+    let hash: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    wrapper["data"] = json!({"storage": "artifact", "content": {
+        "path": "artifacts/observations/9.json", "sha256": hash, "size_bytes": bytes.len()
+    }});
+    let unresolved = decode_observation(&wrapper.to_string()).unwrap();
+    assert!(unresolved.record().is_none());
+    assert!(matches!(
+        unresolved.payload(),
+        ObservationPayload::Referenced { .. }
+    ));
+    let resolved = unresolved.resolve(&bytes).unwrap();
+    assert_eq!(resolved.record().unwrap().data, value);
+    assert!(
+        matches!(resolved.payload(), ObservationPayload::Known(k) if matches!(k.as_ref(), KnownObservation::ModelResponse { .. }))
+    );
+    assert!(unresolved.resolve(&bytes[..bytes.len() - 1]).is_err());
+    let mut changed = bytes.clone();
+    changed[1] ^= 1;
+    assert!(unresolved.resolve(&changed).is_err());
+
+    // A wrapper cannot use a referenced value to evade its run binding.
+    let mut finished = source("controller_finished");
+    let mut data = finished["data"]["value"].clone();
+    data["future"] = json!("x".repeat(INLINE_OBSERVATION_BYTES));
+    let bytes = serde_json::to_vec(&data).unwrap();
+    let hash: String = Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    finished["data"] = json!({"storage":"artifact","content":{"path":"artifacts/observations/final.json","sha256":hash,"size_bytes":bytes.len()}});
+    let event = json!({"schema_version":1,"run_id":"different-run","sequence":1,"time":"2026-01-01T00:00:00Z","kind":"controller_observation","data":finished});
+    let decoded = decode_event(&event.to_string()).unwrap();
+    let EventPayload::Observation(observation) = decoded.payload() else {
+        panic!()
+    };
+    assert!(observation.resolve(&bytes).is_err());
+}
+
+#[test]
+fn inline_threshold_is_exact_serialized_value_bytes() {
+    use playtime_protocol::observations::INLINE_OBSERVATION_BYTES;
+    let mut wrapper = source("model_chunk");
+    wrapper["observation_kind"] = json!("future_observation");
+    wrapper["data"]["value"] = json!("x".repeat(INLINE_OBSERVATION_BYTES - 2));
+    assert_eq!(
+        serde_json::to_vec(&wrapper["data"]["value"]).unwrap().len(),
+        INLINE_OBSERVATION_BYTES
+    );
+    assert!(decode_observation(&wrapper.to_string()).is_ok());
+    wrapper["data"]["value"] = json!("x".repeat(INLINE_OBSERVATION_BYTES - 1));
+    assert!(decode_observation(&wrapper.to_string()).is_err());
 }

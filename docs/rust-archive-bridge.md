@@ -1,9 +1,11 @@
 # Controller/archive bridge refinement
 
-Tracking: [#19](https://github.com/aortez/playtime/issues/19). This first slice
-implements protocol decoding and an executable mapping contract. It does not
-yet connect the live controller to `ArchiveWriter`, publish checkpoint content,
-recover interrupted archives, or read Python archives.
+Tracking: [#42](https://github.com/aortez/playtime/issues/42), under
+[#19](https://github.com/aortez/playtime/issues/19). This first slice
+implements protocol decoding, executable mapping fixtures, lossless controller
+facts, late checkpoint acknowledgments, and verified storage traversal. The
+incremental durable driver is the next part of this branch. Recovery and Python
+archive readers remain separate tickets.
 
 ## Pinned inputs
 
@@ -24,22 +26,20 @@ The version-1 event envelope gains kind `controller_observation`. Its data is:
 ```json
 {
   "schema_version": 1,
-  "record": {
-    "sequence": 14,
-    "elapsed_ms": 300,
-    "session_id": "s1",
-    "kind": "tool_dispatch",
-    "data": {"name": "exec", "request_sequence": 13}
-  },
+  "controller_sequence": 14,
+  "elapsed_ms": 300,
+  "session_id": "s1",
+  "observation_kind": "tool_dispatch",
   "identity": {
     "effect_id": 4,
     "request_id": "r1",
     "tool_request_sequence": 13
-  }
+  },
+  "data": {"storage": "inline", "value": {"name": "exec", "request_sequence": 13}}
 }
 ```
 
-The source record is unchanged. Controller sequence and elapsed time remain in
+The source record's fields and original JSON value are unchanged. Controller sequence and elapsed time remain in
 their original domains; the envelope owns archive sequence and UTC time. A
 tool's stable identity is `(run_id, original tool_request sequence)`. Effects
 and request IDs are scoped to the run. Null associations mean not recorded,
@@ -80,7 +80,40 @@ cover final text superseding chunks, a cancelled tool intent, and partial output
 followed by failed inference. An engine test independently executes their
 scenarios and checks every wrapped source record and effect association.
 
+## Controller and storage interfaces
+
+`Controller::take_control_updates()` drains a bounded queue independently of raw
+logging. Drivers must drain it before further transitions when its reserve is
+full, and retain the drained facts until publication resolves. `take_observations()`
+adds stable identities without changing `take_records()` or its behavioral
+fixtures. `pending_info()` provides a compact effect intent. `ScriptedAdapters`
+exposes incremental dispatch, scheduled inputs, and synchronous cancellation;
+the original simulator uses these same adapters.
+
+`Input::ExternalLogBudgetExhausted` supplies actual archive capacity exhaustion.
+`Input::PublicationCommitted` acknowledges an exact dispatched checkpoint even
+after timeout or cleanup, preserving the first stop reason and never starting a
+new session on a late receipt. Wrong, duplicate, and unstarted acknowledgments
+are rejected. An ordinary `Outcome::Published` remains available to existing
+drivers, but must only represent a successful durable receipt.
+
+`ArchiveWriter::open_prepared` acquires writer ownership, verifies the expected
+archive identity and every frozen input, requires an empty event file and exact
+zero marker, and confirms durability before returning a live receipt. It cannot
+resume a nonempty archive or hide an uncommitted tail. Execution authorization
+belongs to the caller. Storage validates checkpoint-index/source-map references
+and their content leaves; model JSON is never searched for paths. Source maps
+must name exact preceding committed observations, including their LF bytes.
+
 ## Durable driver mapping to implement next
+
+Canonical facts come from the lossless typed control-update drain required by
+#42, never by scraping the byte-limited raw outbox. The raw copies remain
+inspectable but may be explicitly omitted when their allowance is exhausted.
+The implemented typed drain supplies admission/settlement/non-dispatch, session boundaries,
+checkpoint receipts, the first stop decision, and the final result even when
+ordinary observations cannot fit. Actual capacity exhaustion enters the
+controller through its external-log-budget input and stops with `log_limit`.
 
 | Boundary | Required archive behavior |
 | --- | --- |
@@ -88,7 +121,7 @@ scenarios and checks every wrapped source record and effect association.
 | `take_records()` | Move records into an owned pending batch. Retain records and associations until commit succeeds; never retry an uncertain writer. |
 | Phase observation | Keep the source wrapper and deliberately emit the typed canonical phase event. |
 | Model/tool pending effect | Commit intent, effect/request identity and allowance; recheck cancellation and current deadlines after I/O; acknowledge `Dispatched` with current time; recheck the pending ID; only then invoke the adapter. |
-| `request_settled` | Emit one canonical `request_finished` for that request with the exact known or unknown charge. No zero-token settlement stands in for non-dispatch. |
+| Typed request settlement | Emit one canonical `request_finished` for that request with the exact known or unknown charge. Raw `request_settled` is a copy, not another charge. No zero-token settlement stands in for non-dispatch. |
 | Session start | Publish the exact incoming memory and separate evidence, then emit `session_started` with the selected workspace and content references. Fresh conversation policy stays in the controller. |
 | `PublishCheckpoint` effect | Publish and verify full workspace, file index/changes, incoming/outgoing memory, evidence/provenance, and a checkpoint content manifest. Commit typed publication before acknowledging `Outcome::Published`. |
 | `controller_checkpoint` | Preserve the internal observation; it is not a second publication transaction. Only the durable publication can advance archive availability. |
@@ -99,10 +132,10 @@ workshop work. Observation batching targets 250 ms or 64 KiB, with immediate
 commits before dependent effects and lifecycle acknowledgments. Larger valid
 records commit individually. Only successful writer receipts feed live reads.
 Actual serialized envelopes and mapping metadata count against the frozen log
-allocation, including the 65,536-byte finalization reserve. A size/I/O failure
-feeds `PersistenceFailed` into the controller and prevents new experimental
-effects. Sync storage alone does not establish interruptible I/O deadlines;
-#20's driver/supervisor owns that execution boundary.
+allocation, including the 65,536-byte finalization reserve. Prewrite capacity refusal feeds `ExternalLogBudgetExhausted`; uncertain I/O
+failure feeds `PersistenceFailed` and retires the writer. Neither permits new
+experimental effects. The integration driver will service timers while a
+serialized writer thread owns pending I/O; #20 owns worker termination.
 
 The checkpoint content manifest must expose immutable file-version references,
 session/checkpoint provenance, original metadata, and explicit unavailable
@@ -110,27 +143,36 @@ content. Individual retained images must be downloadable without extracting a
 workspace archive. #35 maps verified references to opaque artifact IDs; source
 paths and unpublished workspace contents are not remote API capabilities.
 
-## Remaining contract decision: large observation bodies
+## Large observation bodies
 
 The pinned engine permits model responses up to 4 MiB and chunks up to 512 KiB
 under its own encoded-size accounting. Storage defaults to 1 MiB per JSONL
 record, and #35 also specifies 1 MiB per event (with a separate SSE framing
 allowance).
 Adding an inline wrapper can exceed those bounds even when the source response
-is valid. This small-fixture contract does not resolve that mismatch.
+is valid. #42 settles the representation at a 256 KiB inline value threshold.
 
-Proposed next change: publish an oversized original source record as an immutable
-JSON artifact, and commit a small versioned reference observation carrying its
-source identity and exact `ContentRef`. Extend storage verification and protocol
-decoding together so a client can fetch and decode the full record through the
-opaque artifact endpoint. Inline and referenced records must yield the same
-typed transcript. Review that representation before using it for the execution
-gate; do not silently truncate, raise API limits, or treat an unverified artifact
-as available evidence. Include exact-boundary and Unicode/escaping cases.
+Larger original data values are immutable JSON artifacts. The same observation
+header retains sequence, elapsed time, kind and identities, with
+`data: {"storage": "artifact", "content": <ContentRef>}`. Protocol decoding
+returns an explicit referenced payload until exact bytes are fetched; `resolve`
+verifies length and SHA-256 before typed interpretation. Both representations
+yield the same source record. Clients fetch through the opaque artifact endpoint.
+Storage traversal must verify these known references; arbitrary model JSON does
+not grant file access. Externalized payload bytes still consume the frozen log
+allocation. This representation neither truncates content nor raises event
+limits; it is not a claim that a reference has already been published.
+
+A late checkpoint commit requires a distinct typed acknowledgment path. It must
+register the last durable checkpoint without replacing the first stop reason or
+starting another session, even after the ordinary publication effect timed out.
+The final archive outcome waits until that publication result is settled. An
+unresolved operation can still commit; a timeout does not establish failure.
 
 ## Recovery handoff and subsequent gates
 
-The intended recovery entry point consumes a #34-owned exclusion guard, the
+Recovery is owned by sibling #43, outside #42's driver scope. Its intended entry
+point consumes a #34-owned exclusion guard, the
 exact admitted archive identity, and termination/cleanup evidence. The guard
 must hold both the shared legacy run exclusion and archive writer exclusion
 through reconciliation and publication. It is not a public boolean or a socket
@@ -151,6 +193,7 @@ folder, and read identical observations/accounting/content references without
 SQLite. Test commit/dispatch/acknowledgment failure boundaries and retained
 outboxes. Fixture replay does not meet this gate.
 
-Subsequent #19 work supplies complete synthetic Python-baseline archives,
-read-only legacy adapters, detached initial-input reconstruction, and controlled
-reconciliation tested with #34. This mapping PR does not close #19.
+Sibling #44 supplies complete synthetic Python-baseline archives, read-only
+legacy adapters and detached initial-input reconstruction. Sibling #43 provides
+controlled reconciliation tested with #34. #42 can execute its Rust-only gate
+independently of those siblings. This mapping change does not close #42 or #19.
