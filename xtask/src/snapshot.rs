@@ -41,6 +41,29 @@ impl Snapshot {
         }
         Ok(())
     }
+
+    pub fn verify_staged_file(&self, root: &Path, path: &Path) -> Result<()> {
+        let path = fs::canonicalize(path)?;
+        let relative = path.strip_prefix(root).map_err(|_| {
+            format!(
+                "resolved local input is outside staging: {}",
+                path.display()
+            )
+        })?;
+        let name = relative.to_str().ok_or("non-UTF8 resolved local input")?;
+        let expected = self
+            .files
+            .get(name)
+            .ok_or_else(|| format!("resolved local input was not captured: {name}"))?;
+        let actual = playtime_worker::PrivateDirectory::open(root)?.read(
+            name,
+            playtime_storage::StorageLimits::default().content_bytes,
+        )?;
+        if actual != expected.bytes() {
+            return Err(format!("resolved local input differs from snapshot: {name}").into());
+        }
+        Ok(())
+    }
 }
 pub fn capture(root: &Path) -> Result<Snapshot> {
     let revision = crate::output(
@@ -111,9 +134,131 @@ pub fn capture(root: &Path) -> Result<Snapshot> {
 // checkout despite a correctly recorded snapshot digest.
 fn validate_paths(files: &BTreeMap<String, Contents>) -> Result<()> {
     for (name, contents) in files {
+        let path = Path::new(name);
         if name == "Cargo.toml" || name.ends_with("/Cargo.toml") {
             let value: toml::Value = toml::from_str(std::str::from_utf8(contents.bytes())?)?;
-            validate_table(&value, Path::new(name).parent().unwrap(), files)?;
+            validate_table(&value, path.parent().unwrap(), files)?;
+        } else if matches!(
+            path.file_name().and_then(|s| s.to_str()),
+            Some("config" | "config.toml")
+        ) && path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|s| s == ".cargo")
+        {
+            let value: toml::Value = toml::from_str(std::str::from_utf8(contents.bytes())?)?;
+            // Cargo resolves these paths against the parent of .cargo, not
+            // against the configuration file's directory.
+            validate_config(&value, path.parent().unwrap().parent().unwrap(), files)?;
+        }
+    }
+    Ok(())
+}
+
+fn captured_path(
+    path: &str,
+    base: &Path,
+    files: &BTreeMap<String, Contents>,
+    package: bool,
+) -> Result<()> {
+    let mut resolved = base.to_path_buf();
+    for part in Path::new(path).components() {
+        match part {
+            std::path::Component::Normal(name) => resolved.push(name),
+            std::path::Component::CurDir => (),
+            std::path::Component::ParentDir if resolved.pop() => (),
+            _ => return Err("Cargo source path escapes captured workspace".into()),
+        }
+    }
+    let target = resolved.to_str().ok_or("non-UTF8 dependency path")?;
+    let manifest = resolved.join("Cargo.toml");
+    if !files.contains_key(manifest.to_str().unwrap()) && (package || !files.contains_key(target)) {
+        return Err(format!("Cargo source path is not captured: {target}").into());
+    }
+    Ok(())
+}
+
+// Deliberately bounded configuration support. Checking only fields named `path`
+// misses directory/local-registry sources, includes, compiler wrappers and env
+// injection. Reject those forms rather than record unverified external inputs.
+fn validate_config(
+    value: &toml::Value,
+    base: &Path,
+    files: &BTreeMap<String, Contents>,
+) -> Result<()> {
+    let table = value.as_table().ok_or("invalid Cargo configuration")?;
+    for (key, value) in table {
+        match key.as_str() {
+            "paths" => {
+                for path in value.as_array().ok_or("Cargo paths must be an array")? {
+                    captured_path(
+                        path.as_str().ok_or("Cargo override must be a path")?,
+                        base,
+                        files,
+                        true,
+                    )?;
+                }
+            }
+            "patch" => {
+                for patches in value
+                    .as_table()
+                    .ok_or("invalid Cargo patch table")?
+                    .values()
+                {
+                    for patch in patches
+                        .as_table()
+                        .ok_or("invalid Cargo patch registry")?
+                        .values()
+                    {
+                        config_keys(patch, &["path", "package", "version"], "patch")?;
+                        let path = patch
+                            .get("path")
+                            .and_then(toml::Value::as_str)
+                            .ok_or("bundle configuration only supports captured path patches")?;
+                        captured_path(path, base, files, true)?;
+                    }
+                }
+            }
+            "build" => config_keys(value, &["jobs"], "build")?,
+            "net" => config_keys(value, &["offline", "retry"], "net")?,
+            "term" => {
+                config_keys(
+                    value,
+                    &[
+                        "quiet",
+                        "verbose",
+                        "color",
+                        "hyperlinks",
+                        "unicode",
+                        "progress",
+                    ],
+                    "term",
+                )?;
+                if let Some(progress) = value.get("progress") {
+                    config_keys(
+                        progress,
+                        &["when", "width", "term-integration"],
+                        "term.progress",
+                    )?;
+                }
+            }
+            _ => {
+                return Err(format!("unsupported frozen-worker Cargo configuration: {key}").into());
+            }
+        }
+    }
+    Ok(())
+}
+fn config_keys(value: &toml::Value, allowed: &[&str], context: &str) -> Result<()> {
+    for key in value
+        .as_table()
+        .ok_or("expected Cargo configuration table")?
+        .keys()
+    {
+        if !allowed.contains(&key.as_str()) {
+            return Err(
+                format!("unsupported frozen-worker Cargo configuration: {context}.{key}").into(),
+            );
         }
     }
     Ok(())
@@ -125,20 +270,7 @@ fn validate_table(
 ) -> Result<()> {
     if let Some(table) = value.as_table() {
         if let Some(path) = table.get("path").and_then(toml::Value::as_str) {
-            let mut resolved = base.to_path_buf();
-            for part in Path::new(path).components() {
-                match part {
-                    std::path::Component::Normal(name) => resolved.push(name),
-                    std::path::Component::CurDir => (),
-                    std::path::Component::ParentDir if resolved.pop() => (),
-                    _ => return Err("manifest path escapes captured workspace".into()),
-                }
-            }
-            let target = resolved.to_str().ok_or("non-UTF8 dependency path")?;
-            let manifest = resolved.join("Cargo.toml");
-            if !files.contains_key(target) && !files.contains_key(manifest.to_str().unwrap()) {
-                return Err(format!("manifest path is not captured: {target}").into());
-            }
+            captured_path(path, base, files, false)?;
         }
         for value in table.values() {
             validate_table(value, base, files)?;
@@ -229,6 +361,55 @@ mod tests {
                 "Cargo.toml".into(),
                 Contents::Utf8 {
                     text: format!("[workspace.dependencies]\na = {{ path = '{path}' }}"),
+                },
+            );
+            assert!(validate_paths(&files).is_err());
+        }
+    }
+
+    #[test]
+    fn cargo_configuration_cannot_select_uncaptured_sources() {
+        for name in [".cargo/config", ".cargo/config.toml"] {
+            for config in [
+                "[patch.crates-io]\ndep = { path = '/tmp/outside' }",
+                "[patch.crates-io]\ndep = { path = '../outside' }",
+                "paths = ['/tmp/outside']",
+                "[source.local]\ndirectory = '/tmp/outside'",
+                "[source.local]\nlocal-registry = '/tmp/outside'",
+                "include = ['/tmp/external.toml']",
+                "[build]\nrustc-wrapper = '/tmp/wrapper'",
+                "[env]\nRUSTC_WRAPPER = { value = '/tmp/wrapper', force = true }",
+            ] {
+                let files = BTreeMap::from([(
+                    name.into(),
+                    Contents::Utf8 {
+                        text: config.into(),
+                    },
+                )]);
+                assert!(validate_paths(&files).is_err(), "accepted {name}: {config}");
+            }
+        }
+    }
+
+    #[test]
+    fn configuration_paths_are_relative_to_the_parent_of_dot_cargo() {
+        for name in [".cargo/config", ".cargo/config.toml"] {
+            let mut files = BTreeMap::from([
+                ("crates/dep/Cargo.toml".into(), Contents::Utf8 { text: "[package]\nname='dep'".into() }),
+                (name.into(), Contents::Utf8 { text: "paths=['crates/dep']\n[patch.crates-io]\ndep={path='crates/dep'}\n[build]\njobs=2".into() }),
+            ]);
+            validate_paths(&files).unwrap();
+            files.insert(
+                name.into(),
+                Contents::Utf8 {
+                    text: "[patch.crates-io]\ndep={path='.cargo/../crates/dep'}".into(),
+                },
+            );
+            validate_paths(&files).unwrap();
+            files.insert(
+                name.into(),
+                Contents::Utf8 {
+                    text: "[patch.crates-io]\ndep={path='../crates/dep'}".into(),
                 },
             );
             assert!(validate_paths(&files).is_err());

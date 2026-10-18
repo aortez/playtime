@@ -1,3 +1,4 @@
+mod cargo_sources;
 mod snapshot;
 use playtime_protocol::{
     archive::{BuildProvenance, PlatformRequirements, WorkerIdentity},
@@ -113,29 +114,43 @@ fn build(root: &Path, destination: &Path) -> Result<()> {
     let record_path = build_root.join("build.json");
     fs::write(&record_path, &record_bytes)?;
     let target = build_root.join("target");
+    let cargo_home = build_root.join("cargo-home");
+    playtime_worker_control::create_private_dir(&cargo_home)?;
     // Isolate Cargo configuration as well as target files. Registry packages may
     // be fetched; the locked first-party snapshot is the only compiled source.
-    let mut command = Command::new(cargo);
-    command
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("RUSTC", rustc)
-        .env("CARGO_HOME", build_root.join("cargo-home"))
-        .env("CARGO_TARGET_DIR", &target)
-        .env("CARGO_ENCODED_RUSTFLAGS", rustflags.join("\x1f"))
-        .env("PLAYTIME_WORKER_BUILD_RECORD", &record_path)
-        .current_dir(&staging)
-        .args([
-            "build",
-            "--locked",
-            "--release",
-            "--target",
-            wire::TARGET,
-            "-p",
-            "playtime-worker",
-            "--bin",
-            "playtime-worker",
-        ]);
+    let cargo_command = || {
+        let mut command = Command::new(&cargo);
+        command
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("RUSTC", &rustc)
+            .env("CARGO_HOME", &cargo_home)
+            .env("CARGO_TARGET_DIR", &target)
+            .env("CARGO_ENCODED_RUSTFLAGS", rustflags.join("\x1f"))
+            .env("PLAYTIME_WORKER_BUILD_RECORD", &record_path)
+            .current_dir(&staging);
+        command
+    };
+    eprintln!("Verifying resolved dependencies stay inside the frozen build...");
+    cargo_sources::verify(
+        &mut cargo_command(),
+        &captured,
+        &staging,
+        &cargo_home,
+        wire::TARGET,
+    )?;
+    let mut command = cargo_command();
+    command.args([
+        "build",
+        "--locked",
+        "--release",
+        "--target",
+        wire::TARGET,
+        "-p",
+        "playtime-worker",
+        "--bin",
+        "playtime-worker",
+    ]);
     eprintln!("Building staged worker for {}...", wire::TARGET);
     if !command.status()?.success() {
         return Err(format!("staged build failed; install Rust target {} and a C compiler/linker; staging retained at {}", wire::TARGET, build_root.display()).into());

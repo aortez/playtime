@@ -24,11 +24,31 @@ cargo run --locked -p xtask -- bundle-worker --output /existing/parent/new-bundl
 
 The output directory must not exist. The builder captures the workspace
 manifests, lockfile, toolchain, first-party crates (including build scripts and
-included data), xtask and any project `.cargo` configuration. It compiles only
+included data), xtask and supported project `.cargo` configuration. It compiles only
 the captured files in a private staging directory, with a separate target and
 Cargo home, cleared build environment, explicit compiler/linker and locked
 release build. Registry downloads are allowed during this explicit operation.
 Admission and the worker never invoke Cargo.
+
+Both `.cargo/config` and `.cargo/config.toml` are validated before staging. The
+supported configuration is deliberately limited to `build.jobs`, terminal
+presentation settings, `net.offline`/`net.retry`, and captured local `paths` or
+`patch` entries. Local source paths must be relative, stay within the captured
+tree, and name a captured package. They follow Cargo's
+[configuration-relative path rules](https://doc.rust-lang.org/cargo/reference/config.html#config-relative-paths),
+relative to the parent of `.cargo`. Other configuration, including source
+replacement directories/local registries, includes, environment injection,
+compiler wrappers and target overrides, is rejected explicitly. These forms
+require a reviewed capture/validation policy before packaging supports them.
+
+Before compilation, the builder runs full `cargo metadata --locked` with the
+same isolated environment and target selection as the build. Every resolved
+local package manifest and target source must canonicalize inside staging,
+belong to the snapshot, and match its captured bytes. Registry/git dependencies
+must reside within the isolated Cargo cache; a registry source ID alone cannot
+authorize reading a host directory. This second check does not rely on the
+configuration parser catching every dependency path. Metadata resolution may
+fetch dependencies but does not compile them or execute their build scripts.
 
 `source.bundle` is versioned JSON mapping paths to exact UTF-8 or byte contents.
 Dirty status compares those captured bytes and paths with the recorded revision,
@@ -122,3 +142,6 @@ static PIE, directory/file links, no-replace copying, permissions, noexec where
 available, empty-prefix ownership and competing writers at every commit through
 handoff. All roots are isolated and owned child processes are reaped. Reconnecting
 this private client tests the worker seam; it is not an API restart gate.
+Real-Cargo packaging regressions also exercise a captured configuration patch,
+an external patch whose source changes without changing the snapshot/lockfile,
+and a symlink escape. Rejected resolutions never reach a fixture build script.
