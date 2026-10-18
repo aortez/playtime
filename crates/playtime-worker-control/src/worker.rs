@@ -82,9 +82,7 @@ impl Grant {
     fn confirm(&self, name: &str) -> Result<()> {
         // A prior caller may have lost an acknowledgment. Reconfirm durability
         // before acknowledging the same immutable permission/revocation.
-        File::open(self.directory.join(name))?.sync_all()?;
-        File::open(&self.directory)?.sync_all()?;
-        Ok(())
+        crate::files::sync_private(&self.directory.join(name))
     }
     pub fn authorize(&self) -> Result<()> {
         let _lock = self.lock()?;

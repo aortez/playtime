@@ -28,6 +28,7 @@ impl Gate {
 }
 struct Archive {
     inner: Arc<FixtureArchive>,
+    previews: AtomicUsize,
     prepare: Gate,
     verify_started: Gate,
 }
@@ -35,6 +36,7 @@ impl Archive {
     fn new(root: &Path) -> Arc<Self> {
         Arc::new(Self {
             inner: archive(root),
+            previews: AtomicUsize::new(0),
             prepare: Gate::default(),
             verify_started: Gate::default(),
         })
@@ -43,6 +45,7 @@ impl Archive {
 #[async_trait::async_trait]
 impl ArchivePort for Archive {
     async fn validate_preview(&self, request: &AdmissionRequest) -> Result<Selection> {
+        self.previews.fetch_add(1, Ordering::SeqCst);
         self.inner.validate_preview(request).await
     }
     async fn prepare(&self, record: &Admission) -> Result<PreparedLaunch> {
@@ -102,6 +105,163 @@ async fn quick_cancel(c: &Coordinator, id: &playtime_core::RunId) -> Admission {
         .await
         .expect("cancellation was blocked by unrelated work")
         .unwrap()
+}
+
+#[tokio::test]
+async fn accepted_request_replays_while_preparation_holds_launch_control() {
+    let root = Root::new();
+    let archive = Archive::new(&root.0);
+    let c = coordinator(
+        &root.0,
+        archive.clone(),
+        Arc::new(FixtureSupervisor::default()),
+    )
+    .await;
+    let admitted = admit(&c).await;
+    archive.prepare.arm();
+    let starting = {
+        let c = c.clone();
+        let id = admitted.run_id.clone();
+        tokio::spawn(async move { c.start(id).await })
+    };
+    archive.prepare.entered().await;
+    let replay = tokio::time::timeout(
+        Duration::from_secs(2),
+        c.admit(
+            admitted.service_id.clone(),
+            admitted.key.clone(),
+            admitted.request.clone(),
+        ),
+    )
+    .await
+    .expect("replay waited for preparation")
+    .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.admission, admitted);
+    let mut changed = admitted.request.clone();
+    changed.mode = RunMode::Experiment;
+    assert!(matches!(
+        c.admit(admitted.service_id.clone(), admitted.key.clone(), changed)
+            .await,
+        Err(Error::Conflict)
+    ));
+    assert!(matches!(
+        c.admit(
+            random_id().unwrap(),
+            admitted.key.clone(),
+            admitted.request.clone()
+        )
+        .await,
+        Err(Error::ServiceMismatch)
+    ));
+    assert!(matches!(
+        c.admit(
+            admitted.service_id.clone(),
+            "competitor".into(),
+            admitted.request.clone()
+        )
+        .await,
+        Err(Error::Busy)
+    ));
+    assert_eq!(archive.previews.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        c.ledger().trace(&admitted.run_id).await.unwrap(),
+        vec!["reserved"]
+    );
+    quick_cancel(&c, &admitted.run_id).await;
+    archive.prepare.release.notify_one();
+    assert!(!starting.await.unwrap().unwrap().start_attempted);
+}
+
+#[tokio::test]
+#[ignore = "subprocess entry; bounded by invalid_control_fifo_returns_cancellation_uncertainty"]
+async fn fifo_cancellation_process() {
+    struct UnsubmittedSupervisor;
+    #[async_trait::async_trait]
+    impl Supervisor for UnsubmittedSupervisor {
+        async fn ensure_legacy_idle(&self, _: &Path) -> Result<()> {
+            Ok(())
+        }
+        async fn start(&self, _: &PreparedLaunch) -> Result<Endpoint> {
+            Err(Error::Uncertain)
+        }
+        async fn locate(&self, _: &PreparedLaunch) -> Result<Endpoint> {
+            panic!("invalid revocation must fail before control exchange")
+        }
+    }
+    let root = PathBuf::from(std::env::var_os("PLAYTIME_FIFO_ROOT").unwrap());
+    let c = coordinator(&root, archive(&root), Arc::new(UnsubmittedSupervisor)).await;
+    let admitted = admit(&c).await;
+    let started = c.start(admitted.run_id.clone()).await.unwrap();
+    let launch = started.prepared.as_ref().unwrap();
+    let revoked = launch.private_dir.join("revoked.json");
+    rustix::fs::mkfifoat(
+        rustix::fs::CWD,
+        &revoked,
+        rustix::fs::Mode::from_raw_mode(0o600),
+    )
+    .unwrap();
+    let cancelled = c.cancel(admitted.run_id.clone()).await.unwrap();
+    assert!(cancelled.cancel_requested.is_some());
+    assert_eq!(cancelled.cancel_delivery, Some(CancelDelivery::Uncertain));
+    assert_eq!(cancelled.reason, Some(Reason::ControlUncertain));
+    assert_eq!(cancelled.last_status, started.last_status);
+    assert_eq!(c.ledger().get(&admitted.run_id).await.unwrap(), cancelled);
+    assert_eq!(c.cancel(admitted.run_id.clone()).await.unwrap(), cancelled);
+    assert!(matches!(
+        c.admit(admitted.service_id, "competitor".into(), request())
+            .await,
+        Err(Error::Busy)
+    ));
+    use std::os::unix::fs::FileTypeExt;
+    assert!(fs::symlink_metadata(revoked).unwrap().file_type().is_fifo());
+    assert!(!launch.private_dir.join("consumed.json").exists());
+    write_once(&root.join("fifo-cancellation-checked"), b"ok").unwrap();
+}
+
+#[test]
+fn invalid_control_fifo_returns_cancellation_uncertainty() {
+    struct ChildGuard(std::process::Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let root = Root::new();
+    let mut child = ChildGuard(
+        ProcessCommand::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "coordination::fifo_cancellation_process",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("PLAYTIME_FIFO_ROOT", &root.0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            assert!(
+                status.success(),
+                "FIFO cancellation fixture failed: {status}"
+            );
+            assert_eq!(
+                fs::read(root.0.join("fifo-cancellation-checked")).unwrap(),
+                b"ok"
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "invalid FIFO blocked cancellation before the control deadline"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[tokio::test]

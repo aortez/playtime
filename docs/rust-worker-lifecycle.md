@@ -68,8 +68,11 @@ stateDiagram-v2
     Reconciling --> Starting: authenticate original prepared invocation
 ```
 
-1. Lookup the key before checking today's preview or busy state. A matching
-   typed request returns its original selection and run; a different request
+1. Validate the service/request and look up the key before acquiring launch
+   control or checking today's preview or busy state. Accepted retries remain
+   available while preparation or Begin owns launch control. Recheck the key
+   when acquiring that control, including a busy result racing another commit.
+   A matching typed request returns its original selection and run; a different request
    conflicts. A different service identity is rejected first.
 2. Under the Python-compatible run lock, validate/freeze the selection and save
    the reservation. Acceptance means that reservation exists, not that work ran.
@@ -154,6 +157,12 @@ self-reported identity alone is insufficient. The fixture supervisor additionall
 checks the boot ID, process start ticks and actual executing image; its persisted
 record is explicitly fixture evidence, not systemd authority.
 
+Private file reads and grant durability reconfirmation use nonblocking,
+no-follow opens followed by descriptor type, ownership, link-count and mode
+checks. A FIFO cannot block open before these checks run. Directory syncs require
+directory descriptors. Invalid revocation evidence preserves the cancellation
+intent and active reservation while reporting delivery uncertainty.
+
 Status distinguishes `prepared`, `running`, `cancelled_before_begin`, `cancelling`
 and `reconciling`; it separately carries an optional compact returned receipt,
 publication-pending flag, frozen wall allocation and original work-clock start.
@@ -201,11 +210,16 @@ extensions; avoid duplicate confirmation history; and exercise schema migration
 and damaged revision fields. A virtual-clock test verifies the refresh floor,
 backoff cap and continued ownership after observers disappear.
 
+Review regressions hold preparation open while replaying accepted requests and
+checking conflicts, and use bounded subprocesses to exercise FIFO rejection during
+cancellation and file reconfirmation. They also reject links, directories and
+non-private file modes without replacing the invalid evidence.
+
 Validation for these slices: workspace formatting and locked Clippy passed;
-150 Rust tests passed (six ignored subprocess entries are invoked by their parent
+153 Rust tests passed (eight ignored subprocess entries are invoked by their parent
 tests), and the Python suite passed 88 tests with six Docker checks skipped.
-The focused lifecycle suite passed 17 integration tests plus three coordinator
-unit tests; worker control passed three additional unit tests.
+The focused lifecycle suite passed 19 integration tests plus three coordinator
+unit tests; worker control passed four additional unit tests.
 The walkthrough above completed with the same worker across coordinator restart.
 A temporary export of #46 at `e834fadb50b1df9094456ae139a7a10f5d746381`, with
 the additive manifest/module union described above, passed

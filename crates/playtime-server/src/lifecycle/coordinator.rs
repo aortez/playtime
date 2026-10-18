@@ -77,52 +77,63 @@ impl Coordinator {
         key: String,
         request: AdmissionRequest,
     ) -> Result<Acceptance> {
-        self.owned_launch(move |inner| async move {
-            if service_id != *inner.ledger.service_id() {
-                return Err(Error::ServiceMismatch);
-            }
-            request.validate()?;
-            if key.is_empty()
-                || key.len() > 128
-                || !key
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-            {
-                return Err(Error::Invalid("invalid idempotency key"));
-            }
-            // Replay precedes today's preview, worker selection and busy checks.
-            if let Some(admission) = inner.ledger.lookup(&key).await? {
-                if admission.request != request {
-                    return Err(Error::Conflict);
+        if service_id != *self.inner.ledger.service_id() {
+            return Err(Error::ServiceMismatch);
+        }
+        request.validate()?;
+        if key.is_empty()
+            || key.len() > 128
+            || !key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        {
+            return Err(Error::Invalid("invalid idempotency key"));
+        }
+        // Accepted requests remain readable while preparation or Begin owns
+        // launch control. Only a new reservation needs that ownership.
+        if let Some(accepted) = self.inner.replay(&key, &request).await? {
+            return Ok(accepted);
+        }
+        let (retry_key, retry_request) = (key.clone(), request.clone());
+        let result = self
+            .owned_launch(move |inner| async move {
+                // Another admission may have committed after the first lookup.
+                if let Some(accepted) = inner.replay(&key, &request).await? {
+                    return Ok(accepted);
                 }
-                return Ok(Acceptance {
-                    replayed: true,
-                    admission,
-                });
-            }
-            let root = inner.ledger.root().to_path_buf();
-            let _run_lock = tokio::task::spawn_blocking(move || {
-                FileLock::acquire(&root.join(".playtime/run.lock"))
-            })
-            .await
-            .map_err(|_| Error::Uncertain)??;
-            inner
-                .supervisor
-                .ensure_legacy_idle(inner.ledger.root())
-                .await?;
-            let selection = inner.archive.validate_preview(&request).await?;
-            if selection.wall_ms == 0
-                || selection.wall_ms > 86_400_000
-                || selection.token_limit == 0
-            {
-                return Err(Error::Invalid("invalid frozen allocation"));
-            }
-            inner
-                .ledger
-                .reserve(key, request, selection, inner.clock.now())
+                let root = inner.ledger.root().to_path_buf();
+                let _run_lock = tokio::task::spawn_blocking(move || {
+                    FileLock::acquire(&root.join(".playtime/run.lock"))
+                })
                 .await
-        })
-        .await
+                .map_err(|_| Error::Uncertain)??;
+                inner
+                    .supervisor
+                    .ensure_legacy_idle(inner.ledger.root())
+                    .await?;
+                let selection = inner.archive.validate_preview(&request).await?;
+                if selection.wall_ms == 0
+                    || selection.wall_ms > 86_400_000
+                    || selection.token_limit == 0
+                {
+                    return Err(Error::Invalid("invalid frozen allocation"));
+                }
+                inner
+                    .ledger
+                    .reserve(key, request, selection, inner.clock.now())
+                    .await
+            })
+            .await;
+        if matches!(result, Err(Error::Busy)) {
+            // Include a commit racing the attempted acquisition of launch
+            // control, even if preparation already owns it again.
+            return self
+                .inner
+                .replay(&retry_key, &retry_request)
+                .await?
+                .ok_or(Error::Busy);
+        }
+        result
     }
     pub async fn start(&self, run: RunId) -> Result<Admission> {
         self.owned_launch(move |inner| async move {
@@ -335,5 +346,20 @@ impl Coordinator {
             Some(record) => Ok(record),
             None => self.inner.ledger.get(&run).await,
         }
+    }
+}
+
+impl Inner {
+    async fn replay(&self, key: &str, request: &AdmissionRequest) -> Result<Option<Acceptance>> {
+        let Some(admission) = self.ledger.lookup(key).await? else {
+            return Ok(None);
+        };
+        if admission.request != *request {
+            return Err(Error::Conflict);
+        }
+        Ok(Some(Acceptance {
+            replayed: true,
+            admission,
+        }))
     }
 }
