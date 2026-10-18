@@ -10,7 +10,9 @@ permissions:
 jobs:
   foundation:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Durable archive failure tests verify captured executables repeatedly.
+    # The combined driver/API suite takes over eight minutes on this runner.
+    timeout-minutes: 20
     env:
       PLAYTIME_DOCKER_TESTS: "0"
     steps:
