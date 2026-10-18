@@ -246,6 +246,9 @@ impl NormalService {
     }
     /// Copy another run's archive from this service, as evidence.
     pub fn retain_run(&self, run: &RunId, destination: &Path) -> Result<()> {
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         copy(
             &self.root.join("service/runs").join(run.as_str()),
             destination,
@@ -271,7 +274,6 @@ impl NormalService {
         };
         let anchors = initial.event_anchors.unwrap();
         let mut observed = BTreeMap::new();
-        let mut arrived = BTreeMap::new();
         let mut stream = self.client.follow(
             &self.run,
             Some(anchors.history_cursor.clone()),
@@ -288,7 +290,6 @@ impl NormalService {
                 loop {
                     match stream.next(&cancel).await? {
                         Observation::Record(record) => {
-                            arrived.insert(record.event.sequence.get(), Instant::now());
                             observed.insert(record.event.sequence.get(), record.event.clone());
                             stream.acknowledge(&record)?;
                         }
@@ -592,7 +593,7 @@ impl NormalService {
             self.verify_docker_absence().await?;
         }
         if let Backend::Live(_) = self.backend {
-            live_streaming_and_timing(&history, &arrived, &self.view)?;
+            live_streaming_and_timing(&history, &self.view)?;
         }
         self.artifacts = artifacts.clone();
         println!(
@@ -757,11 +758,12 @@ fn fresh_second_session(history: &[playtime_protocol::events::EventEnvelope]) ->
     }
     Ok(())
 }
-/// Partial output reached this client while a request was still running, and
-/// every request recorded timing with no sign of contention.
+/// Every live response follows streamed chunks, and any request that generated
+/// for 1.5 seconds or more streamed one at least 300 ms earlier. Batches commit
+/// every 250 ms, so that chunk was readable before the response. Every request
+/// recorded timing, with no sign of contention.
 fn live_streaming_and_timing(
     history: &[playtime_protocol::events::EventEnvelope],
-    arrived: &BTreeMap<u64, Instant>,
     view: &RunView,
 ) -> Result<()> {
     let observations = |kind: &'static str| {
@@ -769,21 +771,38 @@ fn live_streaming_and_timing(
             e.kind == "controller_observation" && e.data["observation_kind"] == kind
         })
     };
-    let call =
-        |e: &playtime_protocol::events::EventEnvelope| e.data["data"]["value"]["call"].as_u64();
-    let mut first_chunk = BTreeMap::new();
+    let value = |e: &playtime_protocol::events::EventEnvelope| e.data["data"]["value"].clone();
+    let elapsed = |e: &playtime_protocol::events::EventEnvelope| e.data["elapsed_ms"].as_u64();
+    let (mut first_chunk, mut generated) = (BTreeMap::new(), BTreeMap::new());
     for e in observations("model_chunk") {
-        first_chunk
-            .entry(call(e))
-            .or_insert(arrived[&e.sequence.get()]);
+        let chunk = value(e);
+        if chunk["chunk"]["observation"] == "timing" {
+            generated.insert(
+                chunk["call"].as_u64(),
+                chunk["chunk"]["eval_duration"].as_u64(),
+            );
+        } else {
+            first_chunk
+                .entry(chunk["call"].as_u64())
+                .or_insert(elapsed(e));
+        }
     }
-    if !observations("model_response").any(|e| {
-        first_chunk.get(&call(e)).is_some_and(|first| {
-            arrived[&e.sequence.get()].duration_since(*first) >= Duration::from_millis(100)
-        })
-    }) {
-        return Err("no partial model output arrived before its final response".into());
+    let mut long = 0;
+    for e in observations("model_response") {
+        let call = value(e)["call"].as_u64();
+        let first = first_chunk
+            .get(&call)
+            .copied()
+            .flatten()
+            .ok_or("a live response had no streamed chunk")?;
+        if generated.get(&call).copied().flatten().unwrap_or(0) >= 1_500_000_000 {
+            long += 1;
+            if elapsed(e).unwrap_or(0) < first + 300 {
+                return Err("a long live response showed no partial output first".into());
+            }
+        }
     }
+    println!("Live streaming: {long} responses generated for 1.5 seconds or more");
     let contention = view
         .contention
         .as_ref()

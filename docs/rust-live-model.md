@@ -100,6 +100,10 @@ checks that another daemon root gets `run_busy` while the worker holds the lock.
 It then requires agent completion, two checkpoints, `result.txt` containing
 `persistence-ok`, a 32×32 PNG, non-empty mementos, a fresh second conversation
 that carries the delivered memento, a copied archive, and exact Docker cleanup.
+Every live response must follow streamed chunks, and any response that generated
+for 1.5 seconds or more must show its first chunk at least 300 ms earlier. Batches
+commit every 250 ms, so that chunk was readable while the request ran. Every
+request must record timing, with no contention flagged.
 Finally it launches the same recipe from the workbench and records that run's
 outcome. Failed attempts are kept as records; the gate never loops. Set
 `PLAYTIME_LIVE_ENDPOINT` to use another endpoint.
@@ -114,9 +118,15 @@ after coalescing) the stream and every infrastructure check passed. The model
 retried a broken `bash -c` heredoc five times in session 1, then reported success
 in session 2 without writing `result.txt`. This smoke tests the live path, not
 the model's shell skills, so the prompt now gives each session two short commands
-and their expected output.
+and their expected output. The third attempt (run `20261018T221517Z-679794a1`)
+completed the task in 8.4 work seconds and passed every check except an earlier
+version of the streaming check. That version timed records at the client, which
+began following only after the busy probe, and each response had generated in
+under half a second, so there was no partial output to show. The gate now uses
+the archive timing above, and a CPU test checks commits directly.
 
 CPU tests drive the live port through a fake transport and the real controller
-and writer. They cover identity checks before each session, archived raw chunks,
-an identity change that stops the run before another request, and a cut stream
-that keeps partial output while usage stays unknown.
+and writer. They cover identity checks before each session, archived chunks, an
+identity change that stops the run before another request, a cut stream that
+keeps partial output while usage stays unknown, and a slow stream whose first
+partial output is committed before the response.

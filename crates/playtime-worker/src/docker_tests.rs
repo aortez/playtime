@@ -155,6 +155,7 @@ fn execute_with(
     hooks: Option<Box<dyn playtime_runner::WriterHooks>>,
     live: Option<ollama::Fake>,
 ) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
+    let is_live = live.is_some();
     let root = std::env::temp_dir().join(format!(
         "pt66-native-{}",
         Ownership::random_nonce().unwrap()
@@ -279,7 +280,8 @@ fn execute_with(
     if case == FaultCase::CancelPublication {
         options.writer_hooks = Box::new(CancelPublication(cancel));
     }
-    if hooks.is_some() {
+    // Publication fault tests need a short wait; live tests only observe commits.
+    if hooks.is_some() && !is_live {
         options.publication_wait = Duration::from_millis(50);
     }
     if let Some(hooks) = hooks {
@@ -559,6 +561,15 @@ fn lost_native_owner_cannot_replace_itself_or_replay_tools_and_keeps_proposals()
 
 /// Every resolved controller record, in archive order.
 fn records(archive: &std::path::Path) -> Vec<playtime_protocol::observations::ControllerRecord> {
+    sequenced_records(archive)
+        .into_iter()
+        .map(|(_, record)| record)
+        .collect()
+}
+/// The same, with each record's archive sequence.
+fn sequenced_records(
+    archive: &std::path::Path,
+) -> Vec<(u64, playtime_protocol::observations::ControllerRecord)> {
     let queries = ArchiveQueries::offline(archive, Default::default()).unwrap();
     let (mut after, mut records) = (0, vec![]);
     loop {
@@ -569,7 +580,7 @@ fn records(archive: &std::path::Path) -> Vec<playtime_protocol::observations::Co
                 ..
             } = entry.fact
             {
-                records.push(record);
+                records.push((entry.envelope.sequence.get(), record));
             }
         }
         if !page.has_more {
@@ -611,9 +622,9 @@ fn identity() -> Vec<playtime_ollama::HttpResponse> {
         .map(|v| ollama::response(200, serde_json::to_vec(&v).unwrap()))
         .collect()
 }
-/// The scripted smoke's five replies as native Ollama streams: a thinking
-/// record, then the final record with its tool calls, usage and durations.
-fn native_replies() -> Vec<playtime_ollama::HttpResponse> {
+/// The scripted smoke's five replies as native records: a thinking record,
+/// then the final record with its tool calls, usage and durations.
+fn native_records() -> Vec<[serde_json::Value; 2]> {
     let scenario: playtime_engine::simulation::Scenario =
         serde_json::from_slice(playtime_runner::docker::SCENARIO).unwrap();
     scenario
@@ -632,9 +643,28 @@ fn native_replies() -> Vec<playtime_ollama::HttpResponse> {
                 "prompt_eval_count": 200, "total_duration": 900_000_000u64,
                 "load_duration": 1_000_000u64, "prompt_eval_duration": 100_000_000u64,
                 "eval_duration": 700_000_000u64});
-            ollama::response(200, format!("{first}\n{last}\n"))
+            [first, last]
         })
         .collect()
+}
+fn native_replies() -> Vec<playtime_ollama::HttpResponse> {
+    native_records()
+        .into_iter()
+        .map(|[first, last]| ollama::response(200, format!("{first}\n{last}\n")))
+        .collect()
+}
+/// A stream whose records arrive `gap` apart, as from a slow model.
+fn slow_reply(records: Vec<serde_json::Value>, gap: Duration) -> playtime_ollama::HttpResponse {
+    let body = futures_util::stream::unfold(records.into_iter(), move |mut rest| async move {
+        let record = rest.next()?;
+        tokio::time::sleep(gap).await;
+        Some((Ok(format!("{record}\n").into_bytes()), rest))
+    });
+    playtime_ollama::HttpResponse {
+        status: 200,
+        content_encoding: None,
+        body: Box::pin(body),
+    }
 }
 #[test]
 fn live_port_checks_identity_per_session_and_archives_raw_records_as_chunks() {
@@ -780,4 +810,76 @@ fn live_partial_output_survives_a_cut_stream_and_usage_stays_unknown() {
     // Without a terminal record, timing has only the latency seen here.
     assert_eq!(chunks[1]["observation"], "timing");
     assert!(chunks[1]["observed_ms"].is_u64() && chunks[1].get("total_duration").is_none());
+}
+struct Commits(Arc<Mutex<Vec<(u64, u64)>>>);
+impl playtime_runner::WriterHooks for Commits {
+    fn before(
+        &mut self,
+        c: &playtime_runner::CommitContext,
+        _: &mut playtime_storage::ArchiveWriter,
+    ) -> Result<()> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((c.first_sequence, c.last_sequence));
+        Ok(())
+    }
+}
+#[test]
+fn live_partial_output_is_committed_before_a_slow_response_finishes() {
+    // The first reply thinks for 1.2 seconds before its terminal record.
+    let mut replies = native_records().into_iter();
+    let [_, last] = replies.next().unwrap();
+    let thinking = |text: &str| {
+        serde_json::json!({"model": "gpt-oss:20b", "done": false,
+            "message": {"role": "assistant", "content": "", "thinking": text}})
+    };
+    let mut records: Vec<_> = ["one ", "two ", "three ", "four "].map(thinking).into();
+    records.push(last);
+    let mut later =
+        replies.map(|[first, last]| ollama::response(200, format!("{first}\n{last}\n")));
+    let session_one: Vec<_> = [slow_reply(records, Duration::from_millis(300))]
+        .into_iter()
+        .chain(later.by_ref().take(2))
+        .collect();
+    let fake = ollama::Fake::new(
+        identity()
+            .into_iter()
+            .chain(session_one)
+            .chain(identity())
+            .chain(later),
+    );
+    let commits = Arc::new(Mutex::new(vec![]));
+    let (temp, _port, report) = execute_with(
+        FaultCase::None,
+        Some(Box::new(Commits(commits.clone()))),
+        Some(fake),
+    );
+    assert_eq!(
+        report.result.unwrap().reason,
+        playtime_core::StopReason::AgentFinished
+    );
+    let records = sequenced_records(&temp.0.join("archive"));
+    let partial: Vec<u64> = records
+        .iter()
+        .filter(|(_, r)| {
+            r.kind == "model_chunk" && r.data["call"] == 1 && r.data["chunk"]["done"] == false
+        })
+        .map(|(sequence, _)| *sequence)
+        .collect();
+    let response = records
+        .iter()
+        .find(|(_, r)| r.kind == "model_response" && r.data["call"] == 1)
+        .unwrap()
+        .0;
+    // Half-second coalescing split the thinking, and the first part was already
+    // committed, so readable, while the request was still running.
+    assert!(partial.len() >= 2, "{partial:?}");
+    let commits = commits.lock().unwrap();
+    let committed_through = commits
+        .iter()
+        .find(|(first, last)| (*first..=*last).contains(&partial[0]))
+        .unwrap()
+        .1;
+    assert!(committed_through < response, "{commits:?} {response}");
 }
