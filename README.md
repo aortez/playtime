@@ -208,7 +208,7 @@ HTTP/client fixture. The Python command remains the operational runner. See the
 [controller contract](docs/rust-controller.md), [storage contract](docs/rust-storage.md),
 [durable simulation driver](docs/rust-archive-driver.md),
 [HTTP/client contract](docs/rust-http-api.md), and
-[compatibility matrix](docs/rust-compatibility.md) for scope and remaining work.
+[compatibility notes](docs/rust-compatibility.md) for scope and remaining work.
 With rustup installed, Cargo selects the pinned toolchain:
 
 ```sh

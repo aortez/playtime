@@ -10,13 +10,21 @@ workshop. Keep the controller independent of third-party Python packages.
 - `models/` and `environments/`: small identity lock files; commit these.
 - `.playtime/` and `runs/`: local image archives and run records; never commit.
 
+The Rust MVP (#16) is the target. The Python controller is frozen: don't modify
+`src/playtime/` or `tests/*.py`, and don't run Python experiments. It is no
+longer a parity oracle, the legacy compatibility matrix is retired, and legacy
+archives and fixtures no longer constrain Rust. The committed Rust goldens are
+the spec. The Python suite stays in CI for now; some of its tests read Rust
+files, so a deliberate Rust change that would break one adds a new versioned
+file instead (see `docs/rust-compatibility.md`).
+
 The Rust foundation is a root Cargo workspace under `crates/`. Keep
 `playtime-core` independent of I/O, async runtimes, HTTP, databases, and UI;
 `playtime-protocol` owns wire types and serialization/schema dependencies.
 `playtime-engine` owns the bounded controller and replaceable external effects.
 Its simulator must drive the same controller and never execute command text on
 the host. See `docs/rust-controller.md` for dispatch, deadline, and accounting
-invariants. Keep the Python parity fixtures and independent oracle tests intact.
+invariants.
 `playtime-storage` owns synchronous portable archive I/O. Preserve its distinction
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`
@@ -28,7 +36,6 @@ and incomplete evidence on uncertain writes. See `docs/rust-archive-driver.md`.
 Its demo must explicitly capture the actual executing image through `/proc/self/exe`;
 preparation accepts an explicit worker bundle. Latest-receipt observers never
 promote a discovered marker or wait on filesystem work.
-Retain the Python launcher during migration.
 `playtime-backend-guard` owns private backend-host leases, durable dispatch fencing
 and independent stop servicing. Keep its journal outside experiment archives and
 retain replay tombstones. Wire observations are not held termination authority.
@@ -39,8 +46,8 @@ control, Ollama ownership or real systemd enforcement.
 Keep Docker/process dependencies outside core/engine. Preserve precommitted
 resource ownership, exact identity checks, absolute timers, uncertain-exec fencing
 and aggregate cleanup bounds. See `docs/rust-docker.md`; explicitly run
-`./scripts/test-rust-docker-e2e.sh --case sandbox` and the opt-in Python Docker
-suite for adapter changes when the locked local environment is available. The
+`./scripts/test-rust-docker-e2e.sh --case sandbox` for adapter changes when the
+locked local environment is available. The
 sandbox gate is not checkpoint publication or production run-and-view evidence.
 Stopped-workspace capture owns bounded unextracted candidates, not writer receipts.
 See `docs/rust-workspace-capture.md`; run the additional Docker `--case checkpoint`
@@ -83,17 +90,13 @@ Commit `Cargo.lock`; ignore
 `target/`. Validate Rust changes with `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, and
 `cargo test --workspace --locked`, plus the Python suite below. See
-`docs/rust-foundation.md` and `docs/rust-compatibility.md` for the scope, pinned
-baseline, versioning rules, and synthetic fixture provenance. Keep runtime,
-service, database, and GUI dependencies in their later owning crates. Changing
-behavioral or schema goldens requires reviewing the contract difference; do not
-automatically regenerate them just to make a test pass.
+`docs/rust-foundation.md` for the scope and versioning rules. Keep runtime,
+service, database, and GUI dependencies in their later owning crates. When Rust
+behavior changes on purpose, update the affected behavioral or schema goldens and
+add a short reviewed note to `docs/rust-compatibility.md`; do not automatically
+regenerate them just to make a test pass.
 
-Use `python3 -m unittest discover -s tests -v` for controller tests. Use
-`PLAYTIME_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v` when changing
-the Docker integration or workspace limits. `./playtime smoke
-experiments/pilot.toml` exercises the real runner without a model; `--live`
-adds a small real-model check.
+Run the frozen Python suite with `python3 -m unittest discover -s tests -v`.
 
 Preserve these properties:
 
