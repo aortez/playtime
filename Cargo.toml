@@ -9,6 +9,7 @@ members = [
     "crates/playtime-local",
     "crates/playtime-cli",
     "crates/playtime-test-support",
+    "crates/playtime-runner",
 ]
 resolver = "3"
 
@@ -21,6 +22,8 @@ publish = false
 [workspace.dependencies]
 playtime-core = { path = "crates/playtime-core" }
 playtime-protocol = { path = "crates/playtime-protocol" }
+playtime-engine = { path = "crates/playtime-engine" }
+playtime-storage = { path = "crates/playtime-storage" }
 playtime-local = { path = "crates/playtime-local" }
 playtime-client = { path = "crates/playtime-client" }
 playtime-test-support = { path = "crates/playtime-test-support" }

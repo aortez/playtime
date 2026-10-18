@@ -116,8 +116,16 @@ exhaustion, oversized/missing memory, cancellation races, and checkpoint/cleanup
 failures. The Python suite independently verifies tool definitions, canonical
 JSON sizing, and bounded Unicode evidence without third-party packages.
 
-This branch stops at the controller/effect boundary. #19 must integrate durable
-records and artifacts, publication acknowledgments and crash reconciliation;
-it must not substitute another retry/stop policy. The simulation's JSON workspace
-artifacts are explicitly synthetic and do not establish Docker isolation,
-network deadline enforcement, real process cancellation, or production readiness.
+The engine retains its I/O-independent boundary. The [durable driver](rust-archive-driver.md)
+now supplies publication during execution, typed lossless facts, explicit source
+identities, external log-capacity feedback, and late checkpoint receipts.
+`take_control_updates` must be drained before its bounded transition reserve is
+full; raw logging may omit records without erasing those control facts.
+`ScriptedAdapters` supports incremental dispatch/cancellation and remains the
+adapter used by the original in-memory simulation.
+
+The simulation's JSON workspaces remain explicitly synthetic. Real adapters,
+process supervision, and recovery require their owning tickets. The
+[transcript contract](rust-archive-bridge.md) defines protocol-only decoding,
+reviewed mapping fixtures, and the separation between raw copies and canonical
+accounting/publication authority.

@@ -86,7 +86,7 @@ pub enum WriteStep {
     ResultDirectorySync,
 }
 
-pub trait PublicationObserver {
+pub trait PublicationObserver: Send {
     fn before(&mut self, _step: WriteStep) -> io::Result<()> {
         Ok(())
     }

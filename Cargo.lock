@@ -1101,7 +1101,20 @@ dependencies = [
  "playtime-core",
  "serde",
  "serde_json",
+ "sha2",
  "utoipa",
+]
+
+[[package]]
+name = "playtime-runner"
+version = "0.1.0"
+dependencies = [
+ "playtime-core",
+ "playtime-engine",
+ "playtime-protocol",
+ "playtime-storage",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
