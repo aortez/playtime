@@ -199,7 +199,14 @@ to another service even when its endpoint is reused.
 `EventStream::next` and `Follow::next` deliver one record pending acknowledgment.
 Apply it, durably save its cursor as appropriate, then call `acknowledge`.
 Reading/parsing alone does not advance the saved cursor. Deduplicate by run and
-sequence if application and cursor persistence can be interrupted. Follow has a
+sequence if application and cursor persistence can be interrupted. Records must
+preserve run/manifest identity and advance prefix sequence/bytes monotonically;
+an unchanged prefix sequence must retain exactly the same offset and digest.
+A terminal notice must be structurally valid and match the entire acknowledged
+frontier after all its records have been applied. Contradictions return a
+non-retryable `InvalidResponse` without advancing acknowledgment or reporting
+completion. These checks compare metadata; verifying actual archived bytes
+remains the backend's responsibility. Follow has a
 caller-selected reconnect count, consecutive-outage budget and bounded backoff.
 Valid SSE activity resets that budget; stalled reconnect bodies cannot extend it. Auth,
 version, corruption and parser failures are surfaced; they do not trigger an

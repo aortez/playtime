@@ -285,6 +285,16 @@ impl EventStream {
                     {
                         return Err(Error::InvalidResponse);
                     }
+                    // HTTP event projections are not archive bytes. Compare the
+                    // advertised prefix metadata, without rehashing event JSON.
+                    let old = &previous.frontier.prefix;
+                    let new = &position.frontier.prefix;
+                    if new.sequence < old.sequence
+                        || (new.sequence == old.sequence && new != old)
+                        || (new.sequence > old.sequence && new.byte_offset <= old.byte_offset)
+                    {
+                        return Err(Error::InvalidResponse);
+                    }
                 } else if event.sequence.get() != 1 {
                     return Err(Error::InvalidResponse);
                 }
@@ -297,6 +307,8 @@ impl EventStream {
                 }
                 let end: StreamEnd =
                     serde_json::from_str(&frame.data).map_err(|_| Error::InvalidResponse)?;
+                EventCursor::new(end.frontier.clone(), end.frontier.prefix.sequence)
+                    .map_err(|_| Error::InvalidResponse)?;
                 let previous = self
                     .acknowledged
                     .as_deref()
@@ -305,7 +317,7 @@ impl EventStream {
                     .map_err(|_| Error::InvalidResponse)?;
                 if end.frontier.run_id != self.run
                     || previous.as_ref().is_some_and(|p| {
-                        p.frontier.manifest_sha256 != end.frontier.manifest_sha256
+                        p.frontier != end.frontier
                             || p.after_sequence != end.frontier.prefix.sequence
                     })
                     || (previous.is_none() && end.frontier.prefix.sequence != 0)

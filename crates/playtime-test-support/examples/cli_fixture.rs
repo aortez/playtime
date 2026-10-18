@@ -24,7 +24,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !matches!(
         scenario.as_str(),
-        "normal" | "hold" | "unclean" | "abnormal" | "lost-launch" | "corrupt"
+        "normal"
+            | "hold"
+            | "unclean"
+            | "abnormal"
+            | "lost-launch"
+            | "corrupt"
+            | "conflicting-frontier"
     ) {
         return Err("unknown scenario".into());
     }

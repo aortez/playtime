@@ -137,7 +137,17 @@ impl Application for Script {
         limit: u32,
         bytes: usize,
     ) -> Result<History> {
-        self.fixture.history(id, cursor, follow, limit, bytes).await
+        let mut history = self
+            .fixture
+            .history(id, cursor, follow, limit, bytes)
+            .await?;
+        if self.scenario == "conflicting-frontier" && follow && history.after_sequence == 1 {
+            // Deliberately contradict the prefix advertised with record one.
+            // The real HTTP client must reject record two before emitting it.
+            history.frontier.prefix.sha256 =
+                playtime_server::fixture::digest(b"conflicting fixture prefix");
+        }
+        Ok(history)
     }
     async fn subscribe(&self, id: RunId) -> Result<watch::Receiver<LiveState>> {
         self.fixture.subscribe(id).await

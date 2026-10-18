@@ -599,6 +599,50 @@ async fn cases(cli: &Path, fixture: Option<&Path>) -> Result<usize> {
             "failed output advanced saved cursor"
         );
     });
+    case!(
+        "conflicting frontier preserves saved position",
+        "conflicting-frontier",
+        h,
+        {
+            let run = h.launched("conflicting", true).await?;
+            let cursor = h.root.join("cursor.json");
+            let observed = h
+                .run(&[
+                    "events",
+                    &run,
+                    "--follow",
+                    "--cursor-file",
+                    cursor.to_str().unwrap(),
+                    "--timeout",
+                    "5s",
+                    "--format",
+                    "jsonl",
+                ])
+                .await?;
+            observed.expect(6)?;
+            let frames = observed.frames()?;
+            ensure!(
+                frames.len() == 1
+                    && frames[0]["kind"] == "event"
+                    && frames[0]["data"]["event"]["sequence"] == 1,
+                "conflicting frontier emitted another event or completion"
+            );
+            let saved: playtime_client::state::CursorReceipt =
+                serde_json::from_slice(&std::fs::read(&cursor)?)?;
+            ensure!(
+                frames[0]["data"]["cursor"] == saved.cursor,
+                "conflicting frontier advanced the saved cursor"
+            );
+            ensure!(
+                EventCursor::decode(&saved.cursor)?.after_sequence == 1,
+                "saved cursor did not retain the last valid event"
+            );
+            ensure!(
+                !h.calls().await?.iter().any(|c| c["operation"] == "cancel"),
+                "observation failure cancelled the run"
+            );
+        }
+    );
     case!("killed observer reconnects with no gap", "normal", h, {
         use tokio::io::{AsyncBufReadExt, BufReader};
         let run = h.launched("crash", false).await?;

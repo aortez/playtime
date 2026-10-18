@@ -149,6 +149,9 @@ Reconnect uses the shared client's bounded exponential backoff, at most 60
 seconds of consecutive outage. Valid SSE activity resets that outage budget;
 quiet stalled reconnect bodies cannot extend it. Status polling handles pending
 preparation and lifecycle reconciliation. EOF is transport loss, never completion.
+Conflicting prefix metadata on a record or terminal notice fails with exit 6;
+the CLI emits no conflicting record or successful completion, and retains its
+last saved cursor. The shared client checks prefix continuity across reconnects.
 
 Optional cursor files are private, versioned, and bound to service/run/archive
 identity. After a complete event frame is written **and flushed**, the CLI saves
