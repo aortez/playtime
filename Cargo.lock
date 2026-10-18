@@ -3248,6 +3248,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "utoipa",
+ "zbus",
 ]
 
 [[package]]

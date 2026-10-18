@@ -81,6 +81,30 @@ pub enum CancelDelivery {
     Uncertain,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopDelivery {
+    Requested,
+    Accepted,
+    Stopped,
+    Uncertain,
+}
+
+/// Supervisor evidence is distinct from archive/controller outcome and cannot
+/// release admission or authorize recovery. Zero timestamps mean unobserved.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SupervisorObservation {
+    pub manager_id: ControlId,
+    pub cgroup: String,
+    pub active_state: String,
+    pub main_pid: u32,
+    pub ready_monotonic_us: u64,
+    pub stopping_monotonic_us: u64,
+    pub result: String,
+    pub stopped: bool,
+    pub exit: Option<playtime_worker_control::systemd::Exit>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Admission {
     pub service_id: ControlId,
@@ -98,6 +122,9 @@ pub struct Admission {
     pub begin_authorized: bool,
     pub cancel_requested: Option<Stamp>,
     pub cancel_delivery: Option<CancelDelivery>,
+    pub stop_delivery: Option<StopDelivery>,
+    pub stop_accepted: Option<Stamp>,
+    pub supervisor: Option<SupervisorObservation>,
     /// Superseded by exclusive takeover, never inferred from a worker reply.
     pub owner_generation: u64,
     /// Incremented on each changed durable record, including control decisions.

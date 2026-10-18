@@ -19,6 +19,10 @@ impl Inner {
                 if record.phase == Phase::Terminal || record.prepared.is_none() {
                     return Ok(record);
                 }
+                let record = inner.observe_supervisor(record).await?;
+                if record.supervisor.as_ref().is_some_and(|s| s.stopped) {
+                    return Ok(record);
+                }
                 match inner.exchange(&record, Command::Status).await {
                     Ok((endpoint, reply)) => inner.accept(record, endpoint, reply).await,
                     Err(reason) => inner.uncertain(&record, reason).await,
@@ -293,7 +297,7 @@ mod tests {
         async fn ensure_legacy_idle(&self, _: &Path) -> Result<()> {
             unreachable!()
         }
-        async fn start(&self, _: &PreparedLaunch) -> Result<Endpoint> {
+        async fn start(&self, _: &PreparedLaunch) -> Result<Option<Endpoint>> {
             unreachable!()
         }
         async fn locate(&self, _: &PreparedLaunch) -> Result<Endpoint> {

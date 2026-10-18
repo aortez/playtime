@@ -3,7 +3,8 @@ use playtime_core::RunMode;
 use playtime_protocol::worker::WorkerState;
 use playtime_server::lifecycle::{
     fixture::{self, FixtureArchive, FixtureSupervisor},
-    ports::SystemClock,
+    ports::{Supervisor, SystemClock},
+    systemd::SystemdSupervisor,
     *,
 };
 use std::{
@@ -18,9 +19,27 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         fixture::run_worker(Path::new(&path)).await?;
         return Ok(());
     }
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    tokio::time::timeout(Duration::from_secs(260), walkthrough()).await?
+}
+
+// Failed walkthroughs retain their private records and request only their own
+// unit's stop. The service manager enforces the bound even if this process dies.
+struct Cleanup(Option<String>);
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        if let Some(unit) = &self.0 {
+            fixture::cleanup_systemd_unit(unit, false);
+        }
+    }
+}
+async fn walkthrough() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let mut arguments: Vec<String> = std::env::args().skip(1).collect();
+    let systemd = arguments.last().is_some_and(|arg| arg == "--systemd");
+    if systemd {
+        arguments.pop();
+    }
     if arguments.len() != 2 || arguments[0] != "--root" {
-        return Err("usage: lifecycle_fixture --root <new-short-directory>; subprocess fixture only, systemd is a later slice".into());
+        return Err("usage: lifecycle_fixture --root <new-short-directory> [--systemd]".into());
     }
     let root = PathBuf::from(&arguments[1]);
     std::fs::create_dir(&root)?;
@@ -29,7 +48,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         &std::env::current_exe()?,
         Vec::new(),
     )?);
-    let supervisor = Arc::new(FixtureSupervisor::default());
+    let subprocess = Arc::new(FixtureSupervisor::default());
+    let supervisor: Arc<dyn Supervisor> = if systemd {
+        Arc::new(SystemdSupervisor::connect().await?)
+    } else {
+        subprocess.clone()
+    };
     let preview_revision = archive.preview_revision();
     let ledger = Ledger::open(&root).await?;
     let coordinator = Coordinator::new(
@@ -50,7 +74,12 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     let run = accepted.admission.run_id;
-    coordinator.start(run.clone()).await?;
+    let submitted = coordinator.start(run.clone()).await?;
+    let mut cleanup = Cleanup(if systemd {
+        submitted.prepared.as_ref().map(|p| p.binding.unit.clone())
+    } else {
+        None
+    });
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let record = coordinator.refresh(run.clone()).await?;
@@ -83,7 +112,19 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     {
         return Err("fixture did not reattach to its original worker".into());
     }
-    let cancelled = restarted.cancel(run.clone()).await?;
+    let mut cancelled = restarted.cancel(run.clone()).await?;
+    if systemd {
+        cancelled = tokio::time::timeout(Duration::from_secs(200), async {
+            loop {
+                let record = restarted.refresh(run.clone()).await?;
+                if record.stop_delivery == Some(StopDelivery::Stopped) {
+                    return Result::Ok(record);
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        })
+        .await??;
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
@@ -93,11 +134,16 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             "same_surviving_worker_pid":original,
             "phase":cancelled.phase,
             "cancel_delivery":cancelled.cancel_delivery,
+            "stop_delivery":cancelled.stop_delivery,
+            "supervisor":cancelled.supervisor,
             "worker_status":cancelled.last_status,
             "trace":restarted.ledger().trace(&run).await?,
-            "limitation":"fixture cancellation is acknowledged; full stop enforcement and recovery remain in #34"
+            "limitation":"synthetic execution only; stopped processes do not authorize recovery or release admission"
         }))?
     );
-    supervisor.terminate(cancelled.prepared.as_ref().ok_or("missing preparation")?)?;
+    if !systemd {
+        subprocess.terminate(cancelled.prepared.as_ref().ok_or("missing preparation")?)?;
+    }
+    cleanup.0 = None;
     Ok(())
 }

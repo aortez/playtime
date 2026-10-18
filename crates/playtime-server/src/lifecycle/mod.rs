@@ -6,6 +6,8 @@ pub mod fixture;
 mod flights;
 mod ledger;
 pub mod ports;
+mod supervision;
+pub mod systemd;
 mod types;
 
 pub use coordinator::Coordinator;
@@ -25,6 +27,7 @@ pub enum Error {
     ServiceMismatch,
     Uncertain,
     Shared(std::sync::Arc<Error>),
+    Supervisor(zbus::Error),
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -39,10 +42,21 @@ impl std::fmt::Display for Error {
             Self::ServiceMismatch => f.write_str("service identity mismatch"),
             Self::Uncertain => f.write_str("worker ownership unresolved"),
             Self::Shared(error) => error.fmt(f),
+            Self::Supervisor(error) => write!(f, "systemd user supervisor: {error}"),
         }
     }
 }
 impl std::error::Error for Error {}
+impl From<zbus::Error> for Error {
+    fn from(error: zbus::Error) -> Self {
+        Self::Supervisor(error)
+    }
+}
+impl From<zbus::zvariant::Error> for Error {
+    fn from(error: zbus::zvariant::Error) -> Self {
+        Self::Supervisor(error.into())
+    }
+}
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)

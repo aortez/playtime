@@ -18,6 +18,10 @@ use std::{
 
 #[path = "lifecycle/coordination.rs"]
 mod coordination;
+#[path = "lifecycle/supervision.rs"]
+mod supervision;
+#[path = "lifecycle/systemd_live.rs"]
+mod systemd_live;
 
 struct Root(PathBuf);
 impl Root {
@@ -470,7 +474,7 @@ assert not lock_held(root)
 assert RUN_ID.fullmatch(sys.argv[3])
 class StartingUnit:
     def state(self, unit):
-        assert unit == 'playtime-' + sys.argv[3] + '.service'
+        assert unit == sys.argv[4]
         return 'activating'
 try:
     with RunLock(root):
@@ -485,6 +489,7 @@ else:
         .arg(&root.0)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src"))
         .arg(admission.run_id.as_str())
+        .arg(&bootstrap.binding.unit)
         .output()
         .unwrap();
     assert!(
@@ -538,12 +543,17 @@ fn fixture_coordinator_process() {
         .build()
         .unwrap()
         .block_on(async {
-            let c = coordinator(
-                &root,
-                archive(&root),
-                Arc::new(FixtureSupervisor::default()),
-            )
-            .await;
+            let supervisor: Arc<dyn Supervisor> =
+                if std::env::var_os("PLAYTIME_COORDINATOR_SYSTEMD").is_some() {
+                    Arc::new(
+                        playtime_server::lifecycle::systemd::SystemdSupervisor::connect()
+                            .await
+                            .unwrap(),
+                    )
+                } else {
+                    Arc::new(FixtureSupervisor::default())
+                };
+            let c = coordinator(&root, archive(&root), supervisor).await;
             let admission = admit(&c).await;
             prepared(&c, &admission).await;
             let running = c.begin(admission.run_id).await.unwrap();

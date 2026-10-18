@@ -1,10 +1,11 @@
-# Worker lifecycle: admission, Begin and independent control
+# Worker lifecycle: admission, control and systemd supervision
 
-These are the first two reviewable slices of [#34](https://github.com/aortez/playtime/issues/34),
-based on merged main `a8a3dab9b5824d19b778c1ac597d6bd609eb0806`.
-They provide a durable admission ledger, private worker control, independent
-cancellation, coalesced status refresh and an explicitly synthetic subprocess
-fixture. They do **not** finish #34 or enable unattended experimental execution.
+The admission/control and real systemd supervision slices of
+[#34](https://github.com/aortez/playtime/issues/34) are based on merged main
+`b81db2a7aa4d38e702627ee78cceff2f171ca225`. They provide durable admission,
+private worker control, independent cancellation, confirmed reads and a Linux
+user-manager adapter. Execution in the conformance harness is still explicitly
+synthetic. Recovery ownership and production integration remain in #34/#43/#20.
 
 ## Ownership and the HTTP branch
 
@@ -34,17 +35,20 @@ no HTTP `Application` implementation in this slice.
 ## Durable transitions
 
 The SQLite ledger lives at `.playtime/service.sqlite3`, with verified WAL,
-`synchronous=FULL`, foreign keys and schema version 2. A version-1 ledger upgrades
-in one transaction, preserving service identity and canonical requests while
-adding an ownership generation, record revision and cancellation delivery state.
-Version 2 requires both counters; missing fields cannot silently reset them.
+`synchronous=FULL`, foreign keys and schema version 3. Versions 1 and 2 upgrade
+in one transaction, preserving service identity, canonical requests and counters.
+Version 1 adds ownership/revision counters; version 2 must already contain them.
+Version 3 adds supervisor observations and stop acceptance/delivery separately
+from private-control cancellation. Migration never defaults damaged v2 counters.
 Older binaries refuse the upgraded schema. Its service identity is
 created once and cross-checked against a private identity file. Missing, damaged,
 incomplete or unsupported ledgers fail closed; they are never silently rebuilt.
 The identity file cannot reconstruct missing idempotency history.
 
 The separate `service.lock` protects the coordinator. A unique active column
-reserves one run, including uncertain and cancelling runs. The ledger stores the
+reserves one run, including uncertain and cancelling runs. Lock guard drop explicitly
+unlocks its file description before close: a descriptor temporarily inherited by
+a concurrent process spawn must not prolong the guard's ownership lifetime. The ledger stores the
 canonical typed request and its digest, frozen worker selection and allocation,
 accepted time, prepared identity, start intent, Begin permission, cancellation
 intent, delivery acknowledgment and last verified worker status. There are at most
@@ -229,30 +233,122 @@ checking conflicts, and use bounded subprocesses to exercise FIFO rejection duri
 cancellation and file reconfirmation. They also reject links, directories and
 non-private file modes without replacing the invalid evidence.
 
-Validation for these slices: workspace formatting and locked Clippy passed;
-156 Rust tests passed (eight ignored subprocess entries are invoked by their parent
-tests), and the Python suite passed 88 tests with six Docker checks skipped.
-The focused lifecycle suite passed 19 integration tests plus three coordinator
-unit tests; worker control passed seven additional unit tests, including brief
-ownership contention and expiry while waiting for either ownership or blocking
-pool capacity. CPU contention reproduced the unoptimized hashing timeout; the
-optimized build passed repeated runs of the cancellation fixture under that load.
-The walkthrough above completed with the same worker across coordinator restart.
-A temporary export of #46 at `e834fadb50b1df9094456ae139a7a10f5d746381`, with
-the additive manifest/module union described above, passed
-`cargo check --workspace --all-targets --locked`. This establishes compile compatibility,
-not the real HTTP/worker/archive integration owned by #20.
+## Real systemd supervision
+
+`SystemdSupervisor::connect()` requires a user systemd manager >=250 and cgroup
+v2. It never falls back to subprocess supervision. `StartTransientUnit` receives
+typed `ExecStartEx`/`ExecStopPostEx` arguments with `no-env-expand`; `$`, percent
+specifiers, whitespace and shell punctuation remain literal. No Cargo, shell or
+mutable executable pointer is involved. The start port returns `Ok(None)` for
+accepted submission before a peer PID is available. The coordinator releases its
+run lock before waiting for preparation. Lost replies retain the one start intent.
+
+The unit name is `playtime-<launch invocation nonce>.service`, and compatibility
+job metadata names that actual unit. The existing wire binding carries this
+preallocated launch identity. systemd assigns its own invocation ID at start;
+the worker durably binds that ID, PID/start ticks and cgroup to the frozen bootstrap.
+Reattachment checks both identities, current manager properties, executing image,
+boot, process identity, cgroup and authenticated socket peer. Missing/conflicting
+observations fail closed. Unit names are never reused by the coordinator.
+
+The pinned D-Bus dependency uses the same `async-io` backend as the workbench's
+AccessKit dependency. Lifecycle orchestration still uses Tokio. Enabling
+`zbus/tokio` here would unify features across the workspace and silently change
+AccessKit's D-Bus runtime; avoid that cross-workspace behavior change.
+
+The adapter sets `Type=notify`, `NotifyAccess=main`, `Restart=no`, `UMask=0077`,
+`KillMode=mixed`, `SendSIGKILL=yes` and `TimeoutStopSec=180s`. Startup uses the
+remaining original startup allocation, at most 60 seconds; submission never
+extends the prepared deadline. `RuntimeMaxSec` uses the frozen wall allocation
+and starts at READY. Effective enforcement properties are checked on observation.
+The worker notification API sends only READY, never timeout extensions. D-Bus
+operations have five-second bounds; timed-out filesystem work retains one of four
+supervisor I/O permits until it settles.
+
+Worker integration for #20:
+
+1. At the frozen worker's entry point, call
+   `systemd::record_exit_if_requested(bootstrap_path)` before acquiring exclusion.
+   A true result means ExecStopPost saved systemd's exit diagnostics; exit then.
+2. Verify the bootstrap/actual executable and hold the same prepared writer and
+   run lock. For `PLAYTIME_SYSTEMD_WORKER=1`, attach `systemd::Notify` and pass it
+   to `Worker::with_systemd`. Grant consumption and the initial returned receipt
+   precede READY; failed publication and duplicate Begin never emit another READY.
+3. Handle SIGTERM independently in the production controller. Preserve its first
+   stop decision and original clock, distinguishing wall expiry from explicit
+   cancellation. The fixture's signal marker is not controller policy.
+
+ExecStopPost runs the same immutable executable/argv and saves manager-provided
+`SERVICE_RESULT`, `EXIT_CODE` and `EXIT_STATUS` in a private operational file. It
+can run after the API has died. These records are not archive evidence. Missing
+or conflicting diagnostics remain uncertain. Stop-post publication itself is
+bounded by systemd's stop timeout; admission remains reserved until the entire
+unit cgroup has gone, including that helper.
+
+Cancellation first persists intent, revokes the grant and attempts private
+notification, then requests the original unit's stop. The ledger distinguishes
+requested, supervisor-accepted, stopped and uncertain enforcement. A private
+Cancel acknowledgment is still separate. Accepted jobs are queried on retries;
+a lost acknowledgment is recovered from the existing deactivating unit. The
+original manager stop timestamp is retained when later observations lose it.
+`stop_accepted` records when acceptance was first observed, not a new grace clock.
+Stop submission uses the ledger's previously authenticated invocation plus fresh
+manager unit, invocation, cgroup and policy checks. It does not reread private
+bootstrap/identity/exit files or acquire a supervisor filesystem permit. Without
+a saved identity, initial authentication must succeed before a stop can be sent.
+Manager acceptance is persisted before querying termination diagnostics; failed
+diagnostic reads leave reconciliation uncertain without downgrading an accepted
+stop or restarting its grace. The independent stop remains effective even if
+ExecStopPost cannot publish its diagnostic.
+Stopped means an inactive/failed/unloaded matching invocation and empty cgroup.
+It does **not** establish external-resource cleanup or grant recovery authority.
+
+```sh
+cargo run --locked -p playtime-server --example lifecycle_fixture -- --root /tmp/pt-systemd-demo --systemd
+cargo test --locked -p playtime-server --test lifecycle systemd_live -- --ignored --nocapture
+```
+
+The opt-in tests use unique units and private roots; they exercise the actual
+60-second startup bound, frozen wall timer, 180-second ignored-stop grace,
+descendant cleanup, cancellation before Begin, literal arguments, wrong invocation
+rejection, cancellation with corrupt private exit/identity/bootstrap files, and
+reattachment after killing the coordinator. They require no model,
+Docker or GPU. Tests clean only their own units. On failure they request stop and
+retain the frozen files for the independently bounded service's exit hook.
+
+Default tests cover lost stop replies, manager outages, stable acceptance/grace
+across coordinator restart and diagnostic failures, retained admission after
+worker termination, v1/v2 ledger migration, and READY ordering around initial
+publication. They do not
+substitute for the opt-in manager tests. The private wire protocol stays v1;
+HTTP DTOs and archive formats are unchanged by this slice.
+
+See systemd's [D-Bus interface](https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.systemd1.html),
+[service timeout semantics](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html),
+and [notification contract](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html).
+
+Validation for this slice: formatting and locked workspace Clippy passed;
+258 Rust tests passed, with 14 opt-in/helper entries ignored in the default run.
+All six opt-in systemd tests passed against user systemd 259.5, including the
+full 60/180-second bounds. The Python suite ran 94 tests: 88 passed and six Docker
+checks were skipped. Native and systemd walkthroughs completed. The inherited
+file-description regression failed before the explicit-unlock fix and passed
+afterward. Corrupt private diagnostics reproduced blocked cancellation before the
+manager-only stop fix. Fixture spawning also retries explicit pre-exec `ETXTBSY`
+rejections for at most five seconds within the original startup deadline; it does
+not retry ambiguous starts. A held-writer regression verifies both retry and expiry.
+PR #51's shared `Worker` status-refresh additions were reviewed as
+additive; production integration still must install the systemd entry/notify hooks.
 
 ## Remaining #34 work
 
-- Add systemd user-service supervision, independent startup/wall/stop bounds,
-  persisted exit/stop diagnostics, cancellation enforcement states and the opt-in
-  systemd walkthrough. Current fixture timers are not proof of systemd enforcement.
 - Extend fault injection across every ledger/port acknowledgment boundary and
   cover real exclusive takeover and incomplete publication ownership.
-- Pin the ownership-generation/recovery guard, persisted recovery attempts and
-  explicit abandon-incomplete port with #43. Releasing admission requires proven
-  worker/resource termination and the reviewed recovery transaction.
+- Implement #43's proposed owned `InvocationFence`, `HeldRecoveryAuthority`,
+  stable recovery attempt and explicit resolution ports against #50's compiled
+  DTO/JSONL contract once reviewed. A serializable stopped observation is not
+  that fence. Releasing admission additionally requires proven resource cleanup
+  and the reviewed recovery transaction.
 - #20 joins these ports to the real prepared runner handle and authenticated
   returned receipts, production bundles and #46's handlers/client. The real
   worker's source/lock/protocol binding and production packaging remain there.
