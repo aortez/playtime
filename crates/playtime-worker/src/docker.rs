@@ -144,7 +144,7 @@ impl Live {
             limits,
         })
     }
-    /// Each raw record becomes a chunk while the request runs, so partial
+    /// Streamed records become chunks while the request runs, so partial
     /// output is visible live and stays recorded if the request fails. A final
     /// timing chunk records the latency seen here and the server's durations.
     async fn chat(
@@ -158,25 +158,30 @@ impl Live {
         let (sender, mut receiver) = playtime_ollama::observations(&self.limits)
             .map_err(|e| Error::Invalid(e.to_string()))?;
         let started = std::time::Instant::now();
-        let mut terminal = None;
+        let (mut terminal, mut pending) = (None, Pending::default());
         let result = {
             let chat = self
                 .adapter
                 .chat(request, &self.settings, deadline, cancel, &sender);
             tokio::pin!(chat);
             loop {
+                let due = pending.since.map(|since| since + CHUNK_INTERVAL);
                 tokio::select! {
                     result = &mut chat => break result,
                     Some(observation) = receiver.recv() => {
-                        terminal = forward(id, observation, chunks).or(terminal);
+                        terminal = forward(id, observation, &mut pending, chunks).or(terminal);
+                    }
+                    () = tokio::time::sleep_until(due.unwrap_or(deadline)), if due.is_some() => {
+                        pending.flush(id, chunks);
                     }
                 }
             }
         };
         let observed_ms = started.elapsed().as_millis() as u64;
         while let Some(observation) = receiver.try_recv() {
-            terminal = forward(id, observation, chunks).or(terminal);
+            terminal = forward(id, observation, &mut pending, chunks).or(terminal);
         }
+        pending.flush(id, chunks);
         let mut timing = serde_json::json!({"observation": "timing", "observed_ms": observed_ms});
         for key in [
             "load_duration",
@@ -195,24 +200,86 @@ impl Live {
 fn invalid(_: playtime_ollama::Failure) -> crate::Error {
     crate::Error::Invalid("invalid frozen live model configuration")
 }
-/// Returns the forwarded record when it is the request's terminal record.
+/// Native records arrive about once per token. They're coalesced into at most
+/// two chunks a second, which keeps long runs inside their event-log budget and
+/// lets live readers keep up.
+const CHUNK_INTERVAL: Duration = Duration::from_millis(500);
+const CHUNK_TEXT_BYTES: usize = 16 * 1024;
+/// Message deltas from native records not yet sent as a chunk.
+#[derive(Default)]
+struct Pending {
+    thinking: String,
+    content: String,
+    tool_calls: Vec<serde_json::Value>,
+    records: u64,
+    since: Option<Instant>,
+}
+impl Pending {
+    fn add(&mut self, record: &serde_json::Value) {
+        let message = &record["message"];
+        self.thinking
+            .push_str(message["thinking"].as_str().unwrap_or_default());
+        self.content
+            .push_str(message["content"].as_str().unwrap_or_default());
+        if let Some(calls) = message["tool_calls"].as_array() {
+            self.tool_calls.extend(calls.iter().cloned());
+        }
+        self.records += 1;
+        self.since.get_or_insert_with(Instant::now);
+    }
+    /// The same message shape as a native record, plus how many it covers.
+    fn flush(&mut self, id: u64, chunks: &mpsc::Sender<(u64, serde_json::Value)>) {
+        if self.records == 0 {
+            return;
+        }
+        let mut message = serde_json::json!({"role": "assistant"});
+        for (key, text) in [
+            ("thinking", std::mem::take(&mut self.thinking)),
+            ("content", std::mem::take(&mut self.content)),
+        ] {
+            if !text.is_empty() {
+                message[key] = text.into();
+            }
+        }
+        if !self.tool_calls.is_empty() {
+            message["tool_calls"] = std::mem::take(&mut self.tool_calls).into();
+        }
+        let chunk = serde_json::json!({"message": message, "done": false, "records": self.records});
+        (self.records, self.since) = (0, None);
+        // A retired effect owner discards chunks; nothing is lost while it drains.
+        let _ = chunks.send((id, chunk));
+    }
+}
+/// Returns the terminal record, which is always sent verbatim.
 fn forward(
     id: u64,
     observation: Observation,
+    pending: &mut Pending,
     chunks: &mpsc::Sender<(u64, serde_json::Value)>,
 ) -> Option<serde_json::Value> {
     let text = || String::from_utf8_lossy(&observation.bytes).into_owned();
     let chunk = match &observation.kind {
-        ObservationKind::NativeChunk => serde_json::from_slice(&observation.bytes)
-            .unwrap_or_else(|_| serde_json::json!({"observation": "native_chunk", "text": text()})),
+        ObservationKind::NativeChunk => {
+            match serde_json::from_slice::<serde_json::Value>(&observation.bytes) {
+                Ok(record) if record["done"] != true => {
+                    pending.add(&record);
+                    if pending.thinking.len() + pending.content.len() >= CHUNK_TEXT_BYTES {
+                        pending.flush(id, chunks);
+                    }
+                    return None;
+                }
+                Ok(record) => record,
+                Err(_) => serde_json::json!({"observation": "native_chunk", "text": text()}),
+            }
+        }
         ObservationKind::HttpError { status, truncated } => serde_json::json!({
             "observation": "http_error", "status": status, "truncated": truncated, "text": text()}),
         ObservationKind::ProtocolFragment => {
             serde_json::json!({"observation": "protocol_fragment", "text": text()})
         }
     };
+    pending.flush(id, chunks);
     let terminal = (chunk["done"] == true).then(|| chunk.clone());
-    // A retired effect owner discards chunks; nothing is lost while it drains.
     let _ = chunks.send((id, chunk));
     terminal
 }

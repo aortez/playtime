@@ -772,9 +772,12 @@ fn live_partial_output_survives_a_cut_stream_and_usage_stays_unknown() {
         .filter(|r| r.kind == "model_chunk")
         .map(|r| r.data["chunk"].clone())
         .collect();
-    assert_eq!(chunks.len(), 3);
-    assert_eq!(chunks[1]["message"]["content"], "Half");
+    // Both records arrived within one interval, so they share one chunk.
+    assert_eq!(chunks.len(), 2);
+    assert_eq!(chunks[0]["message"]["thinking"], "Plan");
+    assert_eq!(chunks[0]["message"]["content"], "Half");
+    assert_eq!(chunks[0]["records"], 2);
     // Without a terminal record, timing has only the latency seen here.
-    assert_eq!(chunks[2]["observation"], "timing");
-    assert!(chunks[2]["observed_ms"].is_u64() && chunks[2].get("total_duration").is_none());
+    assert_eq!(chunks[1]["observation"], "timing");
+    assert!(chunks[1]["observed_ms"].is_u64() && chunks[1].get("total_duration").is_none());
 }

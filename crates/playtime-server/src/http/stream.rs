@@ -29,6 +29,17 @@ fn queue(tx: &mpsc::Sender<Frame>, budget: &Arc<Semaphore>, bytes: Vec<u8>) -> R
     })
     .map_err(|_| ApiError::new("too_many_observers"))
 }
+/// The next history page fits what the client's pending queue can still take.
+/// Each read rescans the archive prefix, so one record per read made following
+/// a long run quadratic.
+fn room(free_records: usize, free_bytes: usize, limits: &ApiLimits) -> (u32, usize) {
+    let records = free_records.min(limits.stream_pending_records);
+    let framing = records * limits.sse_framing_bytes;
+    if records <= 1 || free_bytes < framing + limits.event_bytes {
+        return (1, limits.event_bytes + 1);
+    }
+    (records as u32, free_bytes - framing)
+}
 fn notice(kind: &str, value: &impl Serialize) -> Result<Vec<u8>> {
     let data = bounded_json(value, 8192)?;
     Ok(format!(
@@ -53,15 +64,15 @@ pub(super) async fn events(
     // remains pending on this receiver; no filesystem notification is trusted.
     let mut live = server.application.subscribe(run.clone()).await?;
     let signal = live.borrow_and_update().clone();
+    let limits = server.limits();
+    let (records, bytes) = room(
+        limits.stream_pending_records,
+        limits.stream_pending_bytes,
+        limits,
+    );
     let first = server
         .application
-        .history(
-            run.clone(),
-            cursor,
-            true,
-            1,
-            server.limits().event_bytes + 1,
-        )
+        .history(run.clone(), cursor, true, records, bytes)
         .await?;
     let (tx, mut rx) = mpsc::channel::<Frame>(server.limits().stream_pending_records);
     let budget = Arc::new(Semaphore::new(server.limits().stream_pending_bytes));
@@ -111,6 +122,15 @@ async fn follow(
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     heartbeat.tick().await;
     loop {
+        // An oversized record ends the stream with an error, but only after the
+        // records before it in this page.
+        let oversized = history
+            .events
+            .iter()
+            .position(|event| bounded_json(event, server.limits().event_bytes).is_err());
+        if let Some(index) = oversized {
+            history.events.truncate(index);
+        }
         let page = event_page(history, server.limits())?;
         for event in &page.events {
             let cursor = EventCursor::new(page.frontier.clone(), event.sequence.get())
@@ -127,6 +147,9 @@ async fn follow(
                 return Err(ApiError::new("evidence_limit_exceeded"));
             }
             queue(tx, budget, bytes)?;
+        }
+        if oversized.is_some() {
+            return Err(ApiError::new("evidence_limit_exceeded"));
         }
         let cursor = EventCursor::decode(&page.resume_cursor).unwrap();
         if !page.has_more {
@@ -149,15 +172,24 @@ async fn follow(
             }
         }
         signal = live.borrow_and_update().clone();
+        // Let the client drain a full queue before reading more. One that
+        // doesn't within a heartbeat interval is closed as saturated.
+        if tx.capacity() == 0 {
+            tokio::select! {
+                permit = tx.reserve() => match permit {
+                    Ok(permit) => drop(permit),
+                    Err(_) => return Ok(()),
+                },
+                _ = heartbeat.tick() => return Err(ApiError::new("too_many_observers")),
+                _ = server.shutdown.cancelled() => return Ok(()),
+            }
+        }
+        let (records, bytes) = room(tx.capacity(), budget.available_permits(), server.limits());
         let read = tokio::time::timeout(
             Duration::from_secs(server.limits().handler_seconds),
-            server.application.history(
-                run.clone(),
-                Some(cursor),
-                true,
-                1,
-                server.limits().event_bytes + 1,
-            ),
+            server
+                .application
+                .history(run.clone(), Some(cursor), true, records, bytes),
         );
         tokio::pin!(read);
         history = loop {

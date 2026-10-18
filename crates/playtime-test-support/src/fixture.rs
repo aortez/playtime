@@ -141,6 +141,12 @@ impl Application for Script {
             .fixture
             .history(id, cursor, follow, limit, bytes)
             .await?;
+        if self.scenario == "conflicting-frontier" && follow && history.after_sequence == 0 {
+            // Streams read many records at once. Serve record one alone, so
+            // the next read is the one that contradicts it.
+            history.events.truncate(1);
+            history.has_more = true;
+        }
         if self.scenario == "conflicting-frontier" && follow && history.after_sequence == 1 {
             // Deliberately contradict the prefix advertised with record one.
             // The real HTTP client must reject record two before emitting it.

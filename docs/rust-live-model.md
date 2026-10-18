@@ -50,9 +50,16 @@ crypto toolchain. HTTPS endpoints are refused without it.
 
 Request settings are frozen with the profile: context 32,768, `think: "low"`,
 seed 1042 (advanced per request by the controller), temperature 0.8, top-p 0.95,
-top-k 40, repeat penalty 1.0 and `keep_alive: "5m"`. Each native record streams
-to the controller as a chunk while the request runs, so the workbench shows
-partial thinking and content live, and a failed request keeps what arrived.
+top-k 40, repeat penalty 1.0 and `keep_alive: "5m"`. Streamed records reach the
+controller as chunks while the request runs, so the workbench shows partial
+thinking and content live, and a failed request keeps what arrived. Native
+records arrive about once per token, so the worker coalesces their message deltas
+into at most one chunk every half second or 16 KiB of text; the terminal record
+is kept verbatim. The first live smoke recorded 1,332 events, one per token, and
+the daemon's event stream needed about 465 seconds to deliver them, because each
+read handled one record and rescanned the archive. Stream reads now take as many
+records as the client's queue can hold (7.5 seconds for the same archive), and
+coalescing keeps long runs inside their event-log budget.
 
 The existing rules hold. Nothing retries after a possible dispatch, and only a
 tool-parse failure lets the controller ask again. An incomplete stream or a
@@ -96,6 +103,18 @@ that carries the delivered memento, a copied archive, and exact Docker cleanup.
 Finally it launches the same recipe from the workbench and records that run's
 outcome. Failed attempts are kept as records; the gate never loops. Set
 `PLAYTIME_LIVE_ENDPOINT` to use another endpoint.
+
+The first live attempt (run `20261018T214653Z-67973162`, evidence retained
+outside version control) ran end to end in 28 seconds: two checkpoints, complete
+cleanup, and two tool-parse errors recovered by the retries. It failed the gate
+anyway. The event stream was too slow, as described above, and the model redid
+session 1's steps in session 2, so the run ended at the session limit without
+`result.txt`. In the second attempt (run `20261018T221255Z-cd78e60f`, 221 events
+after coalescing) the stream and every infrastructure check passed. The model
+retried a broken `bash -c` heredoc five times in session 1, then reported success
+in session 2 without writing `result.txt`. This smoke tests the live path, not
+the model's shell skills, so the prompt now gives each session two short commands
+and their expected output.
 
 CPU tests drive the live port through a fake transport and the real controller
 and writer. They cover identity checks before each session, archived raw chunks,
