@@ -291,6 +291,7 @@ impl Encoder {
                         session_id: request.session_id,
                         request_id: request.request_id,
                         usage,
+                        recovery_origin: None,
                     },
                     Vec::new(),
                 )?,
@@ -752,6 +753,7 @@ impl Encoder {
                 usage: result.usage.clone(),
                 cleanup: result.cleanup.clone(),
                 last_checkpoint: self.last_checkpoint.clone(),
+                recovery_origin: None,
             },
             Vec::new(),
         )

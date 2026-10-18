@@ -2,7 +2,7 @@ use crate::{Error, PrivateDirectory, Result, verify_static_elf};
 use playtime_core::{ArchivePath, RunId, Sha256Digest};
 use playtime_protocol::{
     archive::ContentRef,
-    worker_bundle::{self as wire, BuildRecord, BundleDescriptor, Capabilities},
+    worker_bundle::{self as wire, BuildRecord, BundleDescriptor},
 };
 use playtime_runner::{PreparedSimulation, WorkerBundle, prepare_simulation_with_inputs};
 use playtime_storage::{ArchiveReader, FrozenInput, StorageLimits, content_ref, sha256};
@@ -69,7 +69,7 @@ impl VerifiedBundle {
         {
             return Err(Error::UnsupportedPlatform);
         }
-        if descriptor.capabilities != Capabilities::default() {
+        if !descriptor.capabilities.supported() {
             return Err(Error::UnsupportedCapability);
         }
         let refs = [
@@ -138,6 +138,24 @@ impl VerifiedBundle {
         run_id: RunId,
         scenario: &[u8],
     ) -> Result<PreparedSimulation> {
+        self.prepare_inner(path, run_id, scenario, false)
+    }
+    /// Advertise recovery only for this validated bundle's supported capability.
+    pub fn prepare_recoverable(
+        self,
+        path: &Path,
+        run_id: RunId,
+        scenario: &[u8],
+    ) -> Result<PreparedSimulation> {
+        self.prepare_inner(path, run_id, scenario, true)
+    }
+    fn prepare_inner(
+        self,
+        path: &Path,
+        run_id: RunId,
+        scenario: &[u8],
+        recoverable: bool,
+    ) -> Result<PreparedSimulation> {
         let Self {
             descriptor,
             descriptor_bytes,
@@ -148,7 +166,12 @@ impl VerifiedBundle {
             frozen(wire::DESCRIPTOR, descriptor_bytes),
             frozen(wire::BUILD, files.remove(wire::BUILD).unwrap()),
         ];
-        Ok(prepare_simulation_with_inputs(
+        let prepare = if recoverable {
+            playtime_runner::prepare_recoverable_simulation_with_inputs
+        } else {
+            prepare_simulation_with_inputs
+        };
+        Ok(prepare(
             path,
             run_id,
             scenario,

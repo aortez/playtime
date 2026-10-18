@@ -98,6 +98,7 @@ impl PreparedExecution {
                 "executing worker bytes differ from frozen identity".into(),
             ));
         }
+        crate::recovery::verify_worker_contract(&reader, &snapshot, &scenario, &prepared.limits)?;
         let adapters = ScriptedAdapters::new(&scenario)?;
         if adapters.config().initial_workspace != reader.manifest().initial_workspace {
             return Err(Error::Invalid(

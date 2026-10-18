@@ -97,6 +97,38 @@ pub fn prepare_simulation_with_inputs(
     bundle: WorkerBundle,
     extra: Vec<FrozenInput>,
 ) -> Result<PreparedSimulation> {
+    prepare(path.as_ref(), run_id, scenario_bytes, bundle, extra, false)
+}
+
+/// Explicit recovery opt-in. The caller supplies its validated package; its
+/// frozen descriptor/build metadata must advertise this compiled profile.
+/// Arbitrary old bundles and manually inserted contracts are rejected.
+pub fn prepare_recoverable_simulation_with_inputs(
+    path: impl AsRef<Path>,
+    run_id: RunId,
+    scenario_bytes: &[u8],
+    bundle: WorkerBundle,
+    extra: Vec<FrozenInput>,
+) -> Result<PreparedSimulation> {
+    prepare(path.as_ref(), run_id, scenario_bytes, bundle, extra, true)
+}
+
+fn prepare(
+    path: &Path,
+    run_id: RunId,
+    scenario_bytes: &[u8],
+    bundle: WorkerBundle,
+    extra: Vec<FrozenInput>,
+    recoverable: bool,
+) -> Result<PreparedSimulation> {
+    if extra
+        .iter()
+        .any(|i| i.reference.path.as_str() == playtime_protocol::recovery::EXECUTION_CONTRACT)
+    {
+        return Err(Error::Invalid(
+            "execution contract is reserved for explicit recoverable preparation".into(),
+        ));
+    }
     if scenario_bytes.len() as u64 > StorageLimits::default().content_bytes {
         return Err(Error::Capacity(
             "scenario exceeds frozen content bound".into(),
@@ -137,7 +169,7 @@ pub fn prepare_simulation_with_inputs(
     };
     let files = extra.iter().map(|input| input.reference.clone()).collect();
     inputs.extend(extra);
-    let manifest = InputManifest {
+    let mut manifest = InputManifest {
         schema_version: 1,
         run_id: run_id.clone(),
         worker,
@@ -145,6 +177,22 @@ pub fn prepare_simulation_with_inputs(
         initial_workspace,
         files,
     };
+    if recoverable {
+        crate::recovery::verify_bundle_support(&manifest, |r| {
+            inputs
+                .iter()
+                .find(|i| &i.reference == r)
+                .map(|i| i.bytes.clone())
+                .ok_or_else(|| Error::Invalid("missing recovery capability bytes".into()))
+        })?;
+        let contract = crate::recovery::contract_for(&manifest, &scenario, &limits);
+        use playtime_protocol::recovery::RecoveryRecord;
+        contract.validate()?;
+        let bytes = serde_json::to_vec(&contract)?;
+        let reference = reference(playtime_protocol::recovery::EXECUTION_CONTRACT, &bytes);
+        manifest.files.push(reference.clone());
+        inputs.push(FrozenInput { reference, bytes });
+    }
     let manifest_bytes = serde_json::to_vec(&manifest)?;
     let descriptor = ArchiveDescriptor {
         schema_version: 1,

@@ -7,6 +7,7 @@ pub mod bridge;
 pub mod events;
 pub mod observations;
 mod read;
+pub mod recovery;
 pub mod storage;
 pub mod v1;
 pub mod worker;
