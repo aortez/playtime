@@ -105,7 +105,7 @@ impl InputManifest {
     }
 }
 
-/// Structural validation only; hashing bytes and publishing archives belong to #19.
+/// Structural validation only; playtime-storage (#33) verifies and publishes bytes.
 pub fn decode_input_manifest(json: &str) -> Result<InputManifest, ReadError> {
     require_version(json, "input manifest", INPUT_MANIFEST_SCHEMA_VERSION)?;
     let manifest: InputManifest = serde_json::from_str(json).map_err(ReadError::malformed)?;

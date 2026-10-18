@@ -1,0 +1,45 @@
+# Prompt comparison variant; see experiments/prompt-screening.md.
+name = "prompt-minimal-001"
+prompt = "prompts/minimal-invitation.txt"
+protocol = "prompts/protocol.txt"
+seeds = "seeds/assortment-01"
+reset_mode = "files_only"
+memory_condition = "self"
+sampling_seed = 1042
+sessions = 10
+work_turns_per_session = 10
+
+[workshop]
+toolsets = ["core", "computation", "browser", "systems"]
+lock = "environments/general.lock.json"
+cpus = 8
+memory_mb = 10000
+workspace_mb = 1024
+tmp_mb = 1024
+pids = 256
+
+[model]
+endpoint = "http://oldman-bird.local:11434"
+name = "gpt-oss:20b"
+lock = "models/gpt-oss-20b.lock.json"
+think = "high"
+context_tokens = 65536
+temperature = 0.8
+top_p = 0.95
+top_k = 40
+repeat_penalty = 1.0
+
+[limits]
+wall_seconds = 900
+generated_tokens = 100000
+tokens_per_call = 8192
+handoff_tokens = 8192
+model_seconds = 180
+command_seconds = 60
+output_bytes = 16384
+memento_bytes = 8192
+log_mb = 64
+# Allow two consecutive parser failures to receive correction feedback.
+tool_parse_retries = 2
+# Stop on the eighth parser failure across the run, including recovered failures.
+tool_parse_error_limit = 8

@@ -41,8 +41,9 @@ persistence task with the real model and smaller budgets.
 
 ## Recipes
 
-Paths in recipes are relative to the project root. All bundled recipes use the
-same model, inspiration prompt, protocol, and workshop image.
+Paths in recipes are relative to the project root. The recipes below use the
+same model, inspiration prompt, protocol, and workshop image. Additional prompt
+variants are described in the [chunked prompt comparison](experiments/prompt-screening.md).
 
 | Recipe | Thinking | Sessions × work turns | Context tokens | Generation budget | Wall limit |
 | --- | --- | --- | --- | --- | --- |
@@ -197,10 +198,11 @@ PLAYTIME_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 The second command includes Docker integration checks. Use `smoke --live` with
 a recipe when checking the real model's tool use and handoff behavior.
 
-The Rust workspace contains `playtime-core`, `playtime-protocol`, and
-`playtime-engine`: typed contracts, a bounded controller, and a deterministic
-simulation. The Python command remains the operational implementation. See the
-[architecture decision](docs/rust-foundation.md), [controller contract](docs/rust-controller.md),
+The Rust workspace contains `playtime-core`, `playtime-protocol`,
+`playtime-engine`, and `playtime-storage`: typed contracts, a bounded controller,
+deterministic simulation, and portable archive I/O. The Python command remains
+the operational runner. See the [architecture decision](docs/rust-foundation.md),
+[controller contract](docs/rust-controller.md), [storage contract](docs/rust-storage.md),
 and [compatibility matrix](docs/rust-compatibility.md) for scope and remaining work.
 With rustup installed, Cargo selects the pinned toolchain:
 
@@ -219,4 +221,14 @@ cargo run --locked -p playtime-engine --example simulate -- crates/playtime-engi
 This prints a simulation-labeled result and event trace. Scripted commands only
 mutate an in-memory workshop; their command text is never executed on the host.
 The example spends 26 measured tokens over 400 virtual milliseconds. Real Rust
-adapters, archive persistence, service, and clients remain later migration work.
+adapters, controller/archive integration, service, and clients remain later work.
+
+To publish and verify the synthetic two-session archive in a **new** directory:
+
+```sh
+cargo run --locked -p playtime-storage --example archive_fixture -- --output /tmp/playtime-archive-fixture
+```
+
+This is a fixture replay; it executes no controller, worker, model, or workshop.
+The resulting folder contains all inputs and evidence and can be copied and
+inspected without a service database. Controller integration follows in #19.

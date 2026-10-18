@@ -194,7 +194,7 @@ pub fn decode_event(json: &str) -> Result<DecodedEvent, ReadError> {
 }
 
 /// Checks ordered observations per run. Gaps are allowed for filtered pages;
-/// durable publication and detecting missing log records belong to #19.
+/// playtime-storage (#33) separately checks complete durable log continuity.
 #[derive(Default)]
 pub struct EventOrder {
     last: BTreeMap<RunId, NonZeroU64>,

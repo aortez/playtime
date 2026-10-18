@@ -17,6 +17,10 @@ The Rust foundation is a root Cargo workspace under `crates/`. Keep
 Its simulator must drive the same controller and never execute command text on
 the host. See `docs/rust-controller.md` for dispatch, deadline, and accounting
 invariants. Keep the Python parity fixtures and independent oracle tests intact.
+`playtime-storage` owns synchronous portable archive I/O. Preserve its distinction
+between writer-confirmed live frontiers and offline recovered markers. Never
+retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`
+for publication, file/link policy, limits, and failure-test contracts.
 Retain the Python launcher during migration. Commit `Cargo.lock`; ignore
 `target/`. Validate Rust changes with `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, and
