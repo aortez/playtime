@@ -336,6 +336,9 @@ pub(super) fn validate(
         entries.push(entry);
     }
     let index = serde_json::to_vec(&entries).map_err(|_| malformed("index encoding"))?;
+    if index.len() as u64 > limits.index_bytes {
+        return Err(capacity());
+    }
     profile.capacity(
         (stream.raw.len() as u64)
             .checked_add(retained_bytes)
