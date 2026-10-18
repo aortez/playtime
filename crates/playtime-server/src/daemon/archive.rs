@@ -699,4 +699,88 @@ impl ArchivePort for Archive {
         .await
         .map_err(|_| Error::Uncertain)?
     }
+    async fn external_resources(&self, admission: &Admission) -> life::Result<ExternalResources> {
+        match admission.request.mode {
+            // Controller simulation workers create no external resources.
+            RunMode::Simulation => Ok(ExternalResources::default()),
+            RunMode::ScriptedSmoke => {
+                let engine = self.docker_engine.clone().ok_or(Error::Invalid(
+                    "Docker is not enabled, so its resources cannot be verified",
+                ))?;
+                let prepared = admission.prepared.clone().ok_or(Error::Uncertain)?;
+                let proposals = tokio::task::spawn_blocking(move || ownership_journal(&prepared))
+                    .await
+                    .map_err(|_| Error::Uncertain)??;
+                let mut resources = ExternalResources::default();
+                for proposal in proposals {
+                    let kind = if proposal.role == playtime_docker::Role::Volume {
+                        "volume"
+                    } else {
+                        "container"
+                    };
+                    let name = format!("{kind} {}", proposal.name);
+                    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+                    let cancel = playtime_docker::CancellationToken::new();
+                    match engine.residual(&proposal, deadline, cancel).await {
+                        Ok(None) => resources.absent.push(name),
+                        Ok(Some(true)) => resources.present.push(format!("{name} is present")),
+                        Ok(Some(false)) => resources
+                            .present
+                            .push(format!("{name} is present with different labels")),
+                        Err(error) => resources
+                            .present
+                            .push(format!("{name} could not be inspected: {error}")),
+                    }
+                }
+                Ok(resources)
+            }
+            _ => Err(Error::Invalid(
+                "external resources cannot be verified for this run mode",
+            )),
+        }
+    }
+}
+
+/// The worker publishes one ownership record per proposed Docker resource
+/// before any create, so these records bound everything it may have created.
+pub(super) fn ownership_journal(
+    prepared: &PreparedLaunch,
+) -> life::Result<Vec<playtime_docker::Proposal>> {
+    #[derive(serde::Deserialize)]
+    struct Record {
+        version: u32,
+        binding: Binding,
+        proposal: playtime_docker::Proposal,
+    }
+    let mut proposals = Vec::new();
+    for entry in std::fs::read_dir(&prepared.private_dir)? {
+        let name = entry?.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let owned = name
+            .strip_prefix("docker-")
+            .and_then(|n| n.strip_suffix(".json"))
+            .and_then(|n| n.rsplit_once('-'))
+            .is_some_and(|(role, session)| {
+                matches!(role, "volume" | "holder" | "agent")
+                    && !session.is_empty()
+                    && session.bytes().all(|b| b.is_ascii_digit())
+            });
+        if !owned {
+            continue;
+        }
+        if proposals.len() == 64 {
+            return Err(Error::Invalid("Docker ownership journal exceeds its bound"));
+        }
+        let record: Record =
+            serde_json::from_slice(&read_private(&prepared.private_dir.join(name), 32_768)?)?;
+        if record.version != 1 || record.binding != prepared.binding {
+            return Err(Error::Invalid(
+                "Docker ownership record does not match this launch",
+            ));
+        }
+        proposals.push(record.proposal);
+    }
+    Ok(proposals)
 }

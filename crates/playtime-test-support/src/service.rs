@@ -20,6 +20,80 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// A cancelled run keeps the data root's slot until the operator releases it.
+/// Cancel a first run through the shared client, which avoids the CLI's
+/// process start-up before the cancel, then release it through the CLI.
+async fn cancel_and_release(
+    cli: &Path,
+    root: &TestRoot,
+    connection: &Path,
+    client: &Client,
+    records: &mut Vec<serde_json::Value>,
+) -> Result<RunView> {
+    let key = "released-service-gate";
+    let launched = run_command(
+        cli,
+        root,
+        Some(connection),
+        [
+            "run",
+            "two-session",
+            "--mode",
+            "simulation",
+            "--idempotency-key",
+            key,
+            "--format",
+            "json",
+        ],
+        records,
+    )
+    .await?;
+    launched.expect(0)?;
+    let run = client.lookup_key(&IdempotencyKey::new(key)?).await?.run_id;
+    client.cancel(&run).await?;
+    // Release is refused until the CPU test supervisor has reaped the worker,
+    // and is busy while the daemon's own start still holds launch control.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let view = client.run(&run).await?;
+        if view.orchestration.state == OrchestrationState::Terminal {
+            return Err("the cancelled run reached Terminal before its release".into());
+        }
+        let released = run_command(
+            cli,
+            root,
+            Some(connection),
+            [
+                "runs",
+                "release",
+                run.as_str(),
+                "--reason",
+                "service gate: cancelled run",
+                "--format",
+                "json",
+            ],
+            records,
+        )
+        .await?;
+        if released.code == 0 {
+            break;
+        }
+        let stderr = String::from_utf8_lossy(&released.stderr);
+        let retryable = stderr.contains("release_refused") || stderr.contains("run_busy");
+        if !retryable || Instant::now() >= deadline {
+            return Err(format!("operator release failed: {stderr}").into());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    let view = client.run(&run).await?;
+    if view.orchestration.state != OrchestrationState::Terminal
+        || view.orchestration.reason.as_deref() != Some("operator_released")
+    {
+        return Err("a released run must report an operator release".into());
+    }
+    Ok(view)
+}
+
 /// The production backend a gate exercises.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
@@ -97,6 +171,8 @@ pub struct NormalService {
     pub view: RunView,
     pub backend: Backend,
     pub artifacts: Vec<Artifact>,
+    /// The cancelled run released before the normal launch.
+    pub released: Option<RunView>,
 }
 impl NormalService {
     pub async fn start(cli: &Path, daemon: &Path, bundle: &Path) -> Result<Self> {
@@ -147,6 +223,11 @@ impl NormalService {
             std::fs::remove_dir_all(&owned_bundle)?;
         }
         let mut records = Vec::new();
+        let released = if docker {
+            None
+        } else {
+            Some(cancel_and_release(cli, &root, &connection, &client, &mut records).await?)
+        };
         let launched = run_command(
             cli,
             &root,
@@ -193,6 +274,7 @@ impl NormalService {
             view: acceptance.run,
             backend,
             artifacts: vec![],
+            released,
         };
         if !docker {
             this.verify(cli, &mut records).await?;
@@ -495,6 +577,7 @@ impl NormalService {
         .await?;
         response.expect(0)?;
         // A same-key replay remains the original admission after completion.
+        let runs = self.client.runs(&PageQuery::default()).await?.items.len();
         let replay = run_command(
             cli,
             &self.root,
@@ -513,7 +596,7 @@ impl NormalService {
         )
         .await?;
         replay.expect(0)?;
-        if self.client.runs(&PageQuery::default()).await?.items.len() != 1 {
+        if self.client.runs(&PageQuery::default()).await?.items.len() != runs {
             return Err("replay created another run".into());
         }
         let source = self.root.join("service/runs").join(self.run.as_str());
@@ -602,7 +685,7 @@ impl NormalService {
                 Backend::Simulation => "normal",
                 Backend::DockerScripted => "run-and-view",
                 Backend::Live(_) => "live-run-and-view",
-            },"run_id":self.run,"frontier":final_frontier,"sessions":2,"known_tokens":usage.known_generated_tokens,"unknown_reserved_tokens":usage.unknown_reserved_tokens,"verified_artifacts":artifacts.len(),"copied_archive":true,"supervision":if self.backend.docker() { "real user systemd" } else { "CPU test; no systemd enforcement" }})
+            },"run_id":self.run,"frontier":final_frontier,"sessions":2,"known_tokens":usage.known_generated_tokens,"unknown_reserved_tokens":usage.unknown_reserved_tokens,"verified_artifacts":artifacts.len(),"copied_archive":true,"supervision":if self.backend.docker() { "real user systemd" } else { "CPU test; no systemd enforcement" },"released":self.released.as_ref().map(|r| json!({"run_id":r.run_id,"orchestration":r.orchestration,"cancellation":r.cancellation}))})
         );
         Ok(())
     }

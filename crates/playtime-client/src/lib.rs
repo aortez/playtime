@@ -407,6 +407,24 @@ impl Client {
         }
         Ok(reply)
     }
+    /// Operator release of an interrupted or failed run. The service verifies
+    /// that its worker stopped and its external resources are absent.
+    pub async fn release(&self, id: &RunId, reason: &str) -> Result<ReleaseResponse> {
+        let reply: ReleaseResponse = ambiguous(
+            self.json(
+                self.request(Method::POST, &format!("runs/{id}/release"))
+                    .json(&ReleaseRequest {
+                        reason: reason.into(),
+                    }),
+            )
+            .await,
+        )?;
+        ambiguous(validate_run(&reply.run))?;
+        if reply.run.run_id != *id {
+            return Err(Error::AmbiguousMutation(Box::new(Error::InvalidResponse)));
+        }
+        Ok(reply)
+    }
     pub async fn history(&self, id: &RunId, query: &PageQuery) -> Result<EventPage> {
         let page: EventPage = self
             .json(

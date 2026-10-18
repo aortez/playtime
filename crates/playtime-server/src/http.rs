@@ -440,6 +440,24 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
                 limits.json_bytes,
             )
         }
+        ("POST", ["api", "v1", "runs", id, "release"]) => {
+            no_query(&request)?;
+            let id = run_id(id)?;
+            let value = body::<ReleaseRequest>(request, limits).await?;
+            let permit = server
+                .mutations
+                .clone()
+                .try_acquire_owned()
+                .map_err(|_| ApiError::new("backend_unavailable"))?;
+            let app = app.clone();
+            let reply = tokio::spawn(async move {
+                let _permit = permit;
+                app.release(id, value).await
+            })
+            .await
+            .map_err(|_| ApiError::new("internal_error"))??;
+            json(&reply, status, limits.json_bytes)
+        }
         ("GET", ["api", "v1", "runs", id, "events"]) => {
             let query = query(&request, limits)?;
             let cursor = decode_cursor(query.cursor.as_deref())?;

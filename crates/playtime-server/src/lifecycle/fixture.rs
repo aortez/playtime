@@ -15,7 +15,7 @@ use playtime_worker_control::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::Read,
     os::unix::fs::{MetadataExt, PermissionsExt},
@@ -160,6 +160,10 @@ impl ArchivePort for FixtureArchive {
         .await
         .map_err(|_| Error::Uncertain)?
     }
+    async fn external_resources(&self, _admission: &Admission) -> Result<ExternalResources> {
+        // Fixture workers create no external resources.
+        Ok(ExternalResources::default())
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -173,21 +177,27 @@ struct Invocation {
 #[derive(Default)]
 pub struct FixtureSupervisor {
     children: Arc<Mutex<HashMap<String, Child>>>,
+    terminated: Mutex<HashSet<String>>,
     pub lose_next_start_reply: AtomicBool,
 }
 impl FixtureSupervisor {
     pub fn terminate(&self, launch: &PreparedLaunch) -> Result<()> {
+        let id = launch.binding.invocation_id.as_str();
         if let Some(mut child) = self
             .children
             .lock()
             .map_err(|_| Error::Uncertain)?
-            .remove(launch.binding.invocation_id.as_str())
+            .remove(id)
         {
             if child.try_wait()?.is_none() {
                 child.kill()?;
             }
             child.wait()?;
         }
+        self.terminated
+            .lock()
+            .map_err(|_| Error::Uncertain)?
+            .insert(id.to_owned());
         Ok(())
     }
 }
@@ -308,6 +318,26 @@ impl Supervisor for FixtureSupervisor {
         })
         .await
         .map_err(|_| Error::Uncertain)?
+    }
+    /// Only a child reaped through `terminate` is reported, as stopped. Live
+    /// children remain unenforced and cannot be verified stopped.
+    async fn observe(&self, launch: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
+        let reaped = self
+            .terminated
+            .lock()
+            .map_err(|_| Error::Uncertain)?
+            .contains(launch.binding.invocation_id.as_str());
+        Ok(reaped.then(|| SupervisorObservation {
+            manager_id: launch.binding.invocation_id.clone(),
+            cgroup: "fixture-owned-child-no-systemd-enforcement".into(),
+            active_state: "inactive".into(),
+            main_pid: 0,
+            ready_monotonic_us: 0,
+            stopping_monotonic_us: 0,
+            result: "reaped".into(),
+            stopped: true,
+            exit: None,
+        }))
     }
 }
 fn process_start(pid: u32) -> Result<u64> {

@@ -43,6 +43,7 @@ reserved-command explanations, and local receipt listing work offline.
 | `launches list`; `launches show KEY`; `launches retry KEY` | Offline local receipts / service lookup / original request recovery |
 | `runs list`; `runs show ID`; `runs wait ID` | One page / detailed run view / outcome-sensitive observation |
 | `runs cancel ID [--wait]` | Cancellation intent, optionally await quiescence and cleanup |
+| `runs release ID --reason TEXT` | Operator release of an interrupted or failed run; refused with what remains |
 | `events ID [--cursor CURSOR \| --cursor-file FILE] [--limit N] [--all \| --follow]` | Fixed-frontier page by default; all keeps that frontier, follow observes later commits |
 | `checkpoints list ID`; `checkpoints show ID SESSION` | Published checkpoint metadata and content references |
 | `artifacts list ID`; `artifacts show ID ARTIFACT` | Published/frozen-content catalog and metadata |

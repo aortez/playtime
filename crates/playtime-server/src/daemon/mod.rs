@@ -191,7 +191,12 @@ impl Daemon {
                 .as_ref()
                 .and_then(|e| e.view.last_confirmed_frontier.clone())
                 .map(|frontier| StreamEnd {
-                    status: StreamEndStatus::CommittedCompletion,
+                    // A release ends observation without claiming completion.
+                    status: if record.operator_release.is_some() {
+                        StreamEndStatus::Incomplete
+                    } else {
+                        StreamEndStatus::CommittedCompletion
+                    },
                     frontier,
                 })
         } else {
@@ -386,6 +391,7 @@ impl Application for Daemon {
                 "verified_artifacts".into(),
                 "accounting_coverage_v1".into(),
                 "checkpoint_index_v1".into(),
+                "operator_release".into(),
                 if self.inner.test_supervision {
                     "cpu_test_supervision"
                 } else {
@@ -567,6 +573,34 @@ impl Application for Daemon {
             pending: run.orchestration.state != OrchestrationState::Terminal,
             intent: run.cancellation.clone(),
             run,
+        })
+    }
+    async fn release(&self, run: RunId, request: ReleaseRequest) -> Result<ReleaseResponse> {
+        self.published(&run).await?;
+        let record = self
+            .inner
+            .coordinator
+            .release(run.clone(), request.reason)
+            .await
+            .map_err(|error| match error {
+                life::Error::Refused(remaining) => {
+                    let mut refused = ApiError::new("release_refused");
+                    refused
+                        .0
+                        .details
+                        .insert("remaining".into(), serde_json::json!(remaining));
+                    refused
+                }
+                life::Error::Invalid("release reason must be 1 to 512 printable bytes") => {
+                    ApiError::new("invalid_parameters")
+                }
+                other => lifecycle(other),
+            })?;
+        // The release is already durable. A projection failure is reported by
+        // the run view rather than by this response.
+        let _ = self.publish(record).await;
+        Ok(ReleaseResponse {
+            run: self.run(run).await?,
         })
     }
     async fn history(

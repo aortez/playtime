@@ -166,6 +166,14 @@ pub enum Runs {
         #[arg(long)]
         wait: bool,
     },
+    /// Release an interrupted or failed run's slot after the service verifies
+    /// that its worker stopped and its external resources are absent.
+    Release {
+        #[arg(value_parser = run_id)]
+        run_id: RunId,
+        #[arg(long)]
+        reason: String,
+    },
 }
 #[derive(Debug, Args)]
 pub struct Events {
