@@ -6,7 +6,9 @@ use std::{
 use playtime_core::{ArchivePath, RequestId, UsageTotals};
 use playtime_protocol::{
     archive::{ContentRef, InputManifest},
-    events::{CheckpointRef, DecodedEvent, KnownEvent, MemoryRef, decode_event},
+    bridge::{BridgeEvent, decode_checkpoint_index, decode_source_map},
+    events::{CheckpointRef, DecodedEvent, EventPayload, KnownEvent, MemoryRef, decode_event},
+    observations::{ObservationData, ObservationLocation},
     storage::{ArchiveDescriptor, EventFrontier},
     v1::UsageSummary,
 };
@@ -28,6 +30,17 @@ pub(crate) struct LogState {
     pub terminal: Option<StoredEvent>,
     pub references: BTreeMap<ArchivePath, ContentRef>,
     pub referenced_bytes: u64,
+    observations: BTreeMap<u64, ObservationLocation>,
+    roles: BTreeMap<ArchivePath, ReferenceRole>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ReferenceRole {
+    InputManifest,
+    Leaf,
+    CheckpointIndex,
+    SourceMap,
+    ObservationPayload,
 }
 
 pub(crate) fn evidence_path(reference: &ContentRef) -> Result<()> {
@@ -49,9 +62,13 @@ impl LogState {
         limits: &StorageLimits,
     ) -> Result<Self> {
         let mut state = Self::default();
-        state.add_reference(&descriptor.input_manifest, limits)?;
+        state.typed_reference(
+            &descriptor.input_manifest,
+            ReferenceRole::InputManifest,
+            limits,
+        )?;
         for reference in manifest.references() {
-            state.add_reference(reference, limits)?;
+            state.typed_reference(reference, ReferenceRole::Leaf, limits)?;
         }
         Ok(state)
     }
@@ -92,6 +109,8 @@ impl LogState {
         bytes: &[u8],
         descriptor: &ArchiveDescriptor,
         limits: &StorageLimits,
+        directory: &Directory,
+        committed_sequence: u64,
     ) -> Result<Vec<ContentRef>> {
         let envelope = decoded.envelope();
         if envelope.run_id != descriptor.run_id
@@ -118,6 +137,42 @@ impl LogState {
             ));
         }
         let mut references = Vec::new();
+        match decoded.payload() {
+            EventPayload::Observation(observation) => {
+                let source = observation.observation();
+                if self
+                    .observations
+                    .last_key_value()
+                    .is_some_and(|(previous, _)| *previous >= source.controller_sequence.get())
+                {
+                    return Err(StorageError::malformed(
+                        "controller observation sequences must increase",
+                    ));
+                }
+                if let ObservationData::Artifact { content } = &source.data {
+                    self.typed_reference(content, ReferenceRole::ObservationPayload, limits)?;
+                    let bytes = directory.verify(content, limits.content_bytes)?;
+                    observation.clone().resolve(&bytes)?;
+                    references.push(content.clone());
+                }
+                self.observations.insert(
+                    source.controller_sequence.get(),
+                    ObservationLocation {
+                        controller_sequence: source.controller_sequence,
+                        archive_sequence: envelope.sequence,
+                        record_sha256: crate::sha256(bytes),
+                    },
+                );
+            }
+            EventPayload::Control(control) => {
+                if let BridgeEvent::EffectIntent(intent) = control.as_ref() {
+                    for source in &intent.sources {
+                        self.validate_source(source, self.sequence)?;
+                    }
+                }
+            }
+            _ => {}
+        }
         match decoded.payload().known() {
             Some(KnownEvent::RunStarted {
                 mode,
@@ -137,10 +192,17 @@ impl LogState {
                 workspace,
                 memento,
                 evidence,
+                delivery,
                 ..
             }) => {
                 references.push(workspace.clone());
                 memory_references(memento, evidence, &mut references);
+                if let Some(delivery) = delivery {
+                    references.push(delivery.memento.content.clone());
+                    if let Some(evidence) = &delivery.evidence {
+                        references.extend([evidence.text.clone(), evidence.provenance.clone()]);
+                    }
+                }
             }
             Some(KnownEvent::RequestFinished {
                 request_id, usage, ..
@@ -152,6 +214,52 @@ impl LogState {
             }
             Some(KnownEvent::CheckpointPublished { checkpoint }) => {
                 checkpoint_references(checkpoint, &mut references);
+                if let Some(content) = &checkpoint.index {
+                    self.typed_reference(content, ReferenceRole::CheckpointIndex, limits)?;
+                    let bytes = directory.verify(content, limits.manifest_bytes)?;
+                    let index = decode_checkpoint_index(utf8(&bytes)?)?;
+                    if index.files.len() as u64 > limits.references
+                        || index.changes.len() as u64 > limits.references
+                    {
+                        return Err(StorageError::limit(
+                            "checkpoint metadata count bound exceeded",
+                        ));
+                    }
+                    if index.run_id != descriptor.run_id
+                        || index.session_id != checkpoint.session_id
+                        || index.workspace != checkpoint.workspace
+                        || index
+                            .outgoing_evidence
+                            .as_ref()
+                            .map(|evidence| &evidence.text)
+                            != checkpoint.evidence.as_ref()
+                        || checkpoint.memento != index.outgoing_memory.memory_ref()
+                    {
+                        return Err(StorageError::malformed(
+                            "checkpoint index disagrees with checkpoint event",
+                        ));
+                    }
+                    references.push(content.clone());
+                    self.typed_reference(&index.source_map, ReferenceRole::SourceMap, limits)?;
+                    let map_bytes = directory.verify(&index.source_map, limits.manifest_bytes)?;
+                    let map = decode_source_map(utf8(&map_bytes)?)?;
+                    if map.entries.len() as u64 > limits.events {
+                        return Err(StorageError::limit("source map entry count bound exceeded"));
+                    }
+                    if map.run_id != descriptor.run_id {
+                        return Err(StorageError::malformed(
+                            "source map belongs to a different run",
+                        ));
+                    }
+                    for source in &map.entries {
+                        self.validate_source(source, committed_sequence.min(self.sequence))?;
+                    }
+                    references.push(index.source_map.clone());
+                    for leaf in index.content_leaves() {
+                        self.typed_reference(leaf, ReferenceRole::Leaf, limits)?;
+                        references.push(leaf.clone());
+                    }
+                }
                 self.checkpoints.push(checkpoint.clone());
             }
             Some(KnownEvent::RunFinished {
@@ -176,11 +284,72 @@ impl LogState {
             }
             _ => {}
         }
+        let mut leaves = Vec::new();
+        match decoded.payload().known() {
+            Some(KnownEvent::SessionStarted {
+                workspace,
+                memento,
+                evidence,
+                delivery,
+                ..
+            }) => {
+                leaves.push(workspace.clone());
+                memory_references(memento, evidence, &mut leaves);
+                if let Some(delivery) = delivery {
+                    leaves.push(delivery.memento.content.clone());
+                    if let Some(evidence) = &delivery.evidence {
+                        leaves.extend([evidence.text.clone(), evidence.provenance.clone()]);
+                    }
+                }
+            }
+            Some(KnownEvent::CheckpointPublished { checkpoint }) => {
+                checkpoint_references(checkpoint, &mut leaves)
+            }
+            Some(KnownEvent::RunFinished {
+                last_checkpoint: Some(checkpoint),
+                ..
+            }) => checkpoint_references(checkpoint, &mut leaves),
+            _ => {}
+        }
+        for leaf in &leaves {
+            self.typed_reference(leaf, ReferenceRole::Leaf, limits)?;
+        }
         for reference in &references {
             self.add_reference(reference, limits)?;
         }
         self.sequence = envelope.sequence.get();
         Ok(references)
+    }
+
+    fn typed_reference(
+        &mut self,
+        reference: &ContentRef,
+        role: ReferenceRole,
+        limits: &StorageLimits,
+    ) -> Result<()> {
+        if self
+            .roles
+            .get(&reference.path)
+            .is_some_and(|previous| *previous != role)
+        {
+            return Err(StorageError::malformed(
+                "content reference has conflicting traversal roles or a manifest cycle",
+            ));
+        }
+        self.add_reference(reference, limits)?;
+        self.roles.insert(reference.path.clone(), role);
+        Ok(())
+    }
+
+    fn validate_source(&self, source: &ObservationLocation, committed_sequence: u64) -> Result<()> {
+        if source.archive_sequence.get() > committed_sequence
+            || self.observations.get(&source.controller_sequence.get()) != Some(source)
+        {
+            return Err(StorageError::malformed(
+                "source reference must match the exact preceding committed observation including LF",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -265,7 +434,14 @@ pub(crate) fn scan(
         hash.update(&bytes);
         let decoded = decode_line(&bytes, limits).map_err(committed_error)?;
         for reference in state
-            .observe(&decoded, &bytes, descriptor, limits)
+            .observe(
+                &decoded,
+                &bytes,
+                descriptor,
+                limits,
+                directory,
+                state.sequence,
+            )
             .map_err(committed_error)?
         {
             if verified.insert(reference.path.clone()) {

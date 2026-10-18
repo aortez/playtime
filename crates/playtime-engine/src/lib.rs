@@ -5,10 +5,12 @@
 //! and cancel abandoned effects. The simulation drives this same controller.
 
 mod context;
+mod control;
 mod controller;
 pub mod evidence;
 pub mod simulation;
 mod types;
 
+pub use control::*;
 pub use controller::Controller;
 pub use types::*;

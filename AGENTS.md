@@ -21,6 +21,13 @@ invariants. Keep the Python parity fixtures and independent oracle tests intact.
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`
 for publication, file/link policy, limits, and failure-test contracts.
+`playtime-runner` integrates the controller and storage through incremental
+scripted adapters. Preserve committed-intent dispatch barriers, independent
+timer/cancel servicing, late checkpoint receipts, actual log-byte accounting,
+and incomplete evidence on uncertain writes. See `docs/rust-archive-driver.md`.
+Its demo must explicitly capture the actual executing image through `/proc/self/exe`;
+preparation accepts an explicit worker bundle. Latest-receipt observers never
+promote a discovered marker or wait on filesystem work.
 Retain the Python launcher during migration. Commit `Cargo.lock`; ignore
 `target/`. Validate Rust changes with `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, and

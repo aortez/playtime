@@ -4,6 +4,7 @@ members = [
     "crates/playtime-protocol",
     "crates/playtime-engine",
     "crates/playtime-storage",
+    "crates/playtime-runner",
 ]
 resolver = "3"
 
@@ -16,6 +17,8 @@ publish = false
 [workspace.dependencies]
 playtime-core = { path = "crates/playtime-core" }
 playtime-protocol = { path = "crates/playtime-protocol" }
+playtime-engine = { path = "crates/playtime-engine" }
+playtime-storage = { path = "crates/playtime-storage" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 utoipa = "=6.0.0"
