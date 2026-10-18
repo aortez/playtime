@@ -16,6 +16,7 @@ pub enum Observation {
 #[derive(Clone, Debug)]
 pub struct RetryPolicy {
     pub max_reconnects: u32,
+    /// Maximum consecutive outage; valid SSE activity resets this budget.
     pub max_elapsed: Duration,
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
@@ -44,6 +45,7 @@ struct Parser {
     bytes: usize,
     skip_lf: bool,
     first_line: bool,
+    boundaries: u64,
 }
 impl Parser {
     fn new() -> Self {
@@ -74,6 +76,7 @@ impl Parser {
                 };
                 self.first_line = false;
                 if line.is_empty() {
+                    self.boundaries = self.boundaries.saturating_add(1);
                     let frame = std::mem::take(&mut self.frame);
                     self.bytes = 0;
                     self.line.clear();
@@ -207,6 +210,13 @@ impl EventStream {
         Ok(())
     }
     pub async fn next(&mut self, cancel: &CancellationToken) -> Result<Observation> {
+        self.next_with_outage_deadline(cancel, None).await
+    }
+    async fn next_with_outage_deadline(
+        &mut self,
+        cancel: &CancellationToken,
+        mut outage: Option<Instant>,
+    ) -> Result<Observation> {
         if self.delivered.is_some() {
             return Err(Error::UnacknowledgedRecord);
         }
@@ -219,14 +229,19 @@ impl EventStream {
                 self.limits.event_bytes + self.limits.sse_framing_bytes,
             )?;
             self.offset += consumed;
+            if self.parser.boundaries > 0 {
+                outage = None;
+            }
             if let Some(frame) = frame {
                 return self.observation(frame);
             }
             self.pending.clear();
             self.offset = 0;
+            let idle = Instant::now() + Duration::from_secs(self.limits.stream_idle_seconds);
+            let deadline = outage.map_or(idle, |outage| outage.min(idle));
             let chunk = tokio::select! {
                 _ = cancel.cancelled() => return Err(Error::Cancelled),
-                result = timeout(Duration::from_secs(self.limits.stream_idle_seconds), self.response.chunk()) => result.map_err(|_| Error::Timeout)?.map_err(transport)?,
+                result = timeout_at(deadline, self.response.chunk()) => result.map_err(|_| if outage.is_some_and(|outage| outage <= idle) { Error::RetryBudgetExhausted } else { Error::Timeout })?.map_err(transport)?,
             };
             let Some(chunk) = chunk else {
                 self.ended = true;
@@ -270,6 +285,16 @@ impl EventStream {
                     {
                         return Err(Error::InvalidResponse);
                     }
+                    // HTTP event projections are not archive bytes. Compare the
+                    // advertised prefix metadata, without rehashing event JSON.
+                    let old = &previous.frontier.prefix;
+                    let new = &position.frontier.prefix;
+                    if new.sequence < old.sequence
+                        || (new.sequence == old.sequence && new != old)
+                        || (new.sequence > old.sequence && new.byte_offset <= old.byte_offset)
+                    {
+                        return Err(Error::InvalidResponse);
+                    }
                 } else if event.sequence.get() != 1 {
                     return Err(Error::InvalidResponse);
                 }
@@ -282,6 +307,8 @@ impl EventStream {
                 }
                 let end: StreamEnd =
                     serde_json::from_str(&frame.data).map_err(|_| Error::InvalidResponse)?;
+                EventCursor::new(end.frontier.clone(), end.frontier.prefix.sequence)
+                    .map_err(|_| Error::InvalidResponse)?;
                 let previous = self
                     .acknowledged
                     .as_deref()
@@ -290,7 +317,7 @@ impl EventStream {
                     .map_err(|_| Error::InvalidResponse)?;
                 if end.frontier.run_id != self.run
                     || previous.as_ref().is_some_and(|p| {
-                        p.frontier.manifest_sha256 != end.frontier.manifest_sha256
+                        p.frontier != end.frontier
                             || p.after_sequence != end.frontier.prefix.sequence
                     })
                     || (previous.is_none() && end.frontier.prefix.sequence != 0)
@@ -333,6 +360,18 @@ pub struct Follow {
     ended: bool,
 }
 impl Follow {
+    fn reconnect_after_loss(&mut self) {
+        let healthy = self
+            .stream
+            .as_ref()
+            .is_some_and(|stream| stream.parser.boundaries > 0);
+        if !self.needs_reconnect || healthy {
+            self.started = Instant::now();
+            self.reconnects = 0;
+        }
+        self.stream = None;
+        self.needs_reconnect = true;
+    }
     pub fn acknowledged_cursor(&self) -> Option<&str> {
         self.acknowledged.as_deref()
     }
@@ -395,22 +434,31 @@ impl Follow {
                 match result {
                     Ok(stream) => self.stream = Some(stream),
                     Err(error) if error.retryable() => {
-                        self.needs_reconnect = true;
+                        self.reconnect_after_loss();
                         continue;
                     }
                     Err(error) => return Err(error),
                 }
             }
-            match self.stream.as_mut().unwrap().next(cancel).await {
+            let outage = self
+                .needs_reconnect
+                .then_some(self.started + self.policy.max_elapsed);
+            match self
+                .stream
+                .as_mut()
+                .unwrap()
+                .next_with_outage_deadline(cancel, outage)
+                .await
+            {
                 Ok(Observation::Disconnected) => {
-                    self.stream = None;
-                    self.needs_reconnect = true;
+                    self.reconnect_after_loss();
                 }
                 Err(error) if error.retryable() => {
-                    self.stream = None;
-                    self.needs_reconnect = true;
+                    self.reconnect_after_loss();
                 }
                 Ok(Observation::Record(record)) => {
+                    self.needs_reconnect = false;
+                    self.reconnects = 0;
                     self.delivered = Some(record.cursor.clone());
                     return Ok(Observation::Record(record));
                 }

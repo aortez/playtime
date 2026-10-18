@@ -25,6 +25,8 @@ enum Behavior {
     LargeJson,
     Stall,
     PartialSse,
+    DelayedSse,
+    SseOutage,
     LargeSse,
     BadVersion,
     Unauthenticated,
@@ -32,12 +34,15 @@ enum Behavior {
     EmptySse,
     CutDownload,
     WrongCancel,
+    WrongArtifact,
+    ScriptedSse,
 }
 struct StateData {
     behavior: Behavior,
     calls: AtomicUsize,
     caps: Capabilities,
     token: String,
+    sse: Vec<String>,
 }
 struct Peer {
     endpoint: String,
@@ -52,6 +57,9 @@ impl Drop for Peer {
 }
 impl Peer {
     async fn start(behavior: Behavior) -> Self {
+        Self::start_with_sse(behavior, vec![]).await
+    }
+    async fn start_with_sse(behavior: Behavior, sse: Vec<String>) -> Self {
         let token = Token::generate().unwrap();
         let mut caps = Fixture::new(ServiceId::new("peer-fixture").unwrap()).capabilities();
         caps.limits.handler_seconds = 1;
@@ -60,6 +68,7 @@ impl Peer {
             calls: AtomicUsize::new(0),
             caps,
             token: token.expose(),
+            sse,
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -103,6 +112,9 @@ fn record(sequence: u64, version: u32) -> (String, String) {
             sha256: Sha256Digest::new("22".repeat(32)).unwrap(),
         },
     };
+    record_at(sequence, version, frontier)
+}
+fn record_at(sequence: u64, version: u32, frontier: Frontier) -> (String, String) {
     let cursor = EventCursor::new(frontier, sequence)
         .unwrap()
         .encode()
@@ -123,7 +135,18 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
     }
     let call = state.calls.fetch_add(1, Ordering::SeqCst);
     match state.behavior {
-        Behavior::WrongCancel => {
+        Behavior::ScriptedSse => Response::builder()
+            .header(SERVICE_HEADER, "peer-fixture")
+            .header("content-type", "text/event-stream")
+            .body(Body::from(
+                state
+                    .sse
+                    .get(call)
+                    .expect("unexpected SSE reconnect")
+                    .clone(),
+            ))
+            .unwrap(),
+        Behavior::WrongCancel | Behavior::WrongArtifact => {
             let fixture = Fixture::new(state.caps.service_id.clone());
             let launch = fixture
                 .admit(
@@ -136,8 +159,35 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
                 )
                 .await
                 .unwrap();
+            if matches!(state.behavior, Behavior::WrongArtifact) {
+                fixture.reveal(
+                    &launch.run_id,
+                    4,
+                    Some(StreamEndStatus::CommittedCompletion),
+                );
+                let artifact = fixture
+                    .artifact(launch.run_id, ArtifactId::new("saved-image").unwrap())
+                    .await
+                    .unwrap();
+                return json_response(200, serde_json::to_vec(&artifact).unwrap());
+            }
             let reply = fixture.cancel(launch.run_id).await.unwrap();
             json_response(202, serde_json::to_vec(&reply).unwrap())
+        }
+        Behavior::SseOutage => {
+            let body = if call == 0 {
+                Body::empty()
+            } else {
+                Body::from_stream(async_stream::stream! {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    yield Ok::<_, std::io::Error>(Bytes::from_static(b": heartbeat\n\n"));
+                })
+            };
+            Response::builder()
+                .header(SERVICE_HEADER, "peer-fixture")
+                .header("content-type", "text/event-stream")
+                .body(body)
+                .unwrap()
         }
         Behavior::EmptySse => Response::builder()
             .header(SERVICE_HEADER, "peer-fixture")
@@ -215,7 +265,7 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
             serde_json::to_vec(&playtime_server::application::ApiError::new("unauthenticated").0)
                 .unwrap(),
         ),
-        Behavior::PartialSse | Behavior::LargeSse | Behavior::BadVersion => {
+        Behavior::PartialSse | Behavior::DelayedSse | Behavior::LargeSse | Behavior::BadVersion => {
             let bytes = match state.behavior {
                 Behavior::LargeSse => {
                     format!("event: record\ndata: {}", "x".repeat((1 << 20) + (8 << 10)))
@@ -239,6 +289,16 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
                     )
                 }
             };
+            if matches!(state.behavior, Behavior::DelayedSse) && call == 0 {
+                return Response::builder()
+                    .header(SERVICE_HEADER, "peer-fixture")
+                    .header("content-type", "text/event-stream")
+                    .body(Body::from_stream(async_stream::stream! {
+                        yield Ok::<_, std::io::Error>(Bytes::from(bytes));
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }))
+                    .unwrap();
+            }
             // Small transport chunks exercise UTF-8 and frame boundaries on a
             // real socket, independently from the parser's unit checks.
             let chunks: Vec<_> = bytes
@@ -445,4 +505,305 @@ async fn interrupted_download_keeps_partial_bytes_out_of_the_final_destination()
     assert!(!path.exists());
     assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 0);
     std::fs::remove_dir(directory).unwrap();
+}
+
+#[tokio::test]
+async fn healthy_observation_does_not_spend_later_outage_budget() {
+    let peer = Peer::start(Behavior::DelayedSse).await;
+    let mut follow = peer.client().await.follow(
+        &RunId::new("run-peer").unwrap(),
+        None,
+        RetryPolicy {
+            max_elapsed: Duration::from_millis(50),
+            initial_backoff: Duration::from_millis(1),
+            ..Default::default()
+        },
+    );
+    let cancel = CancellationToken::new();
+    for sequence in 1..=2 {
+        let Observation::Record(record) = follow.next(&cancel).await.unwrap() else {
+            panic!("missing record")
+        };
+        assert_eq!(record.event.sequence.get(), sequence);
+        follow.acknowledge(&record).unwrap();
+    }
+    assert!(matches!(
+        follow.next(&cancel).await.unwrap(),
+        Observation::End(_)
+    ));
+}
+#[tokio::test]
+async fn reconnect_handshake_cannot_extend_outage_with_a_stalled_body() {
+    let peer = Peer::start(Behavior::SseOutage).await;
+    let mut follow = peer.client().await.follow(
+        &RunId::new("run-peer").unwrap(),
+        None,
+        RetryPolicy {
+            max_elapsed: Duration::from_millis(30),
+            initial_backoff: Duration::from_millis(1),
+            ..Default::default()
+        },
+    );
+    let result = tokio::time::timeout(
+        Duration::from_millis(500),
+        follow.next(&CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(result, Err(Error::RetryBudgetExhausted)));
+}
+
+#[tokio::test]
+async fn artifact_metadata_cannot_redirect_the_requested_download_identity() {
+    let peer = Peer::start(Behavior::WrongArtifact).await;
+    let result = peer
+        .client()
+        .await
+        .artifact(
+            &RunId::new("run-peer").unwrap(),
+            &ArtifactId::new("requested-image").unwrap(),
+        )
+        .await;
+    assert!(matches!(result, Err(Error::InvalidResponse)));
+    assert_eq!(peer.state.calls.load(Ordering::SeqCst), 1);
+}
+
+fn peer_frontier() -> Frontier {
+    EventCursor::decode(&record(1, 1).1).unwrap().frontier
+}
+fn stream_end(frontier: Frontier) -> String {
+    let end = StreamEnd {
+        status: StreamEndStatus::CommittedCompletion,
+        frontier,
+    };
+    format!(
+        "event: stream_end\ndata: {}\n\n",
+        serde_json::to_string(&end).unwrap()
+    )
+}
+
+#[tokio::test]
+async fn records_reject_conflicting_or_regressing_frontiers_without_advancing() {
+    let original = peer_frontier();
+    for case in [
+        "digest",
+        "offset",
+        "sequence",
+        "same_bytes",
+        "fewer_bytes",
+        "manifest",
+        "run",
+    ] {
+        let mut first = original.clone();
+        let mut second = original.clone();
+        match case {
+            "digest" => second.prefix.sha256 = Sha256Digest::new("33".repeat(32)).unwrap(),
+            "offset" => second.prefix.byte_offset += 1,
+            "sequence" => first.prefix.sequence += 1,
+            "same_bytes" => second.prefix.sequence += 1,
+            "fewer_bytes" => {
+                second.prefix.sequence += 1;
+                second.prefix.byte_offset -= 1;
+            }
+            "manifest" => second.manifest_sha256 = Sha256Digest::new("33".repeat(32)).unwrap(),
+            "run" => second.run_id = RunId::new("another-run").unwrap(),
+            _ => unreachable!(),
+        }
+        let peer = Peer::start_with_sse(
+            Behavior::ScriptedSse,
+            vec![format!(
+                "{}{}",
+                record_at(1, 1, first).0,
+                record_at(2, 1, second).0
+            )],
+        )
+        .await;
+        let mut follow = peer.client().await.follow(
+            &RunId::new("run-peer").unwrap(),
+            None,
+            RetryPolicy::default(),
+        );
+        let cancel = CancellationToken::new();
+        let Observation::Record(first) = follow.next(&cancel).await.unwrap() else {
+            panic!("missing first record")
+        };
+        follow.acknowledge(&first).unwrap();
+        let next = tokio::time::timeout(Duration::from_secs(1), follow.next(&cancel))
+            .await
+            .unwrap();
+        assert!(
+            matches!(next, Err(Error::InvalidResponse)),
+            "{case}: {next:?}"
+        );
+        assert_eq!(
+            follow.acknowledged_cursor(),
+            Some(first.cursor.as_str()),
+            "{case}"
+        );
+        assert_eq!(
+            peer.state.calls.load(Ordering::SeqCst),
+            1,
+            "{case}: retried a consistency error"
+        );
+    }
+}
+
+#[tokio::test]
+async fn reconnect_preserves_acknowledged_prefix_consistency() {
+    let mut changed = peer_frontier();
+    changed.prefix.sha256 = Sha256Digest::new("33".repeat(32)).unwrap();
+    let peer = Peer::start_with_sse(
+        Behavior::ScriptedSse,
+        vec![record(1, 1).0, record_at(2, 1, changed).0],
+    )
+    .await;
+    let mut follow = peer.client().await.follow(
+        &RunId::new("run-peer").unwrap(),
+        None,
+        RetryPolicy {
+            initial_backoff: Duration::from_millis(1),
+            ..Default::default()
+        },
+    );
+    let cancel = CancellationToken::new();
+    let Observation::Record(first) = follow.next(&cancel).await.unwrap() else {
+        panic!("missing first record")
+    };
+    follow.acknowledge(&first).unwrap();
+    assert!(matches!(
+        follow.next(&cancel).await,
+        Err(Error::InvalidResponse)
+    ));
+    assert_eq!(follow.acknowledged_cursor(), Some(first.cursor.as_str()));
+    assert_eq!(peer.state.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn terminal_notices_cannot_change_or_discard_acknowledged_frontiers() {
+    for case in [
+        "digest",
+        "offset",
+        "manifest",
+        "run",
+        "truncated",
+        "ahead",
+        "invalid_bytes",
+    ] {
+        let mut frontier = peer_frontier();
+        let mut count = 2;
+        match case {
+            "digest" => frontier.prefix.sha256 = Sha256Digest::new("33".repeat(32)).unwrap(),
+            "offset" => frontier.prefix.byte_offset += 1,
+            "manifest" => frontier.manifest_sha256 = Sha256Digest::new("33".repeat(32)).unwrap(),
+            "run" => frontier.run_id = RunId::new("another-run").unwrap(),
+            "truncated" => {
+                count = 1;
+                frontier.prefix.sequence = 1;
+            }
+            "ahead" => frontier.prefix.sequence += 1,
+            "invalid_bytes" => frontier.prefix.byte_offset = 0,
+            _ => unreachable!(),
+        }
+        let mut body = (1..=count).map(|n| record(n, 1).0).collect::<String>();
+        body.push_str(&stream_end(frontier));
+        let peer = Peer::start_with_sse(Behavior::ScriptedSse, vec![body]).await;
+        let mut follow = peer.client().await.follow(
+            &RunId::new("run-peer").unwrap(),
+            None,
+            RetryPolicy::default(),
+        );
+        let cancel = CancellationToken::new();
+        for _ in 0..count {
+            let Observation::Record(record) = follow.next(&cancel).await.unwrap() else {
+                panic!("missing record")
+            };
+            follow.acknowledge(&record).unwrap();
+        }
+        let saved = follow.acknowledged_cursor().unwrap().to_owned();
+        let next = follow.next(&cancel).await;
+        assert!(
+            matches!(next, Err(Error::InvalidResponse)),
+            "{case}: {next:?}"
+        );
+        assert_eq!(follow.acknowledged_cursor(), Some(saved.as_str()), "{case}");
+        assert_eq!(peer.state.calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn repeated_and_advancing_prefixes_allow_acknowledged_completion() {
+    for growing in [false, true] {
+        let mut first = peer_frontier();
+        if growing {
+            first.prefix.sequence = 1;
+            first.prefix.byte_offset = 256;
+            first.prefix.sha256 = Sha256Digest::new("44".repeat(32)).unwrap();
+        }
+        let final_frontier = peer_frontier();
+        let peer = Peer::start_with_sse(
+            Behavior::ScriptedSse,
+            vec![format!(
+                "{}{}{}",
+                record_at(1, 1, first).0,
+                record(2, 1).0,
+                stream_end(final_frontier.clone())
+            )],
+        )
+        .await;
+        let mut follow = peer.client().await.follow(
+            &RunId::new("run-peer").unwrap(),
+            None,
+            RetryPolicy::default(),
+        );
+        let cancel = CancellationToken::new();
+        for n in 1..=2 {
+            let Observation::Record(record) = follow.next(&cancel).await.unwrap() else {
+                panic!("missing record")
+            };
+            assert_eq!(record.event.sequence.get(), n);
+            follow.acknowledge(&record).unwrap();
+        }
+        let Observation::End(end) = follow.next(&cancel).await.unwrap() else {
+            panic!("missing terminal notice")
+        };
+        assert_eq!(end.frontier, final_frontier);
+        assert_eq!(end.status, StreamEndStatus::CommittedCompletion);
+    }
+}
+
+#[tokio::test]
+async fn empty_terminal_prefixes_require_valid_structure_with_or_without_a_cursor() {
+    let mut empty = peer_frontier();
+    empty.prefix = Prefix {
+        sequence: 0,
+        byte_offset: 0,
+        sha256: playtime_server::fixture::digest(b""),
+    };
+    for initial in [
+        None,
+        Some(
+            EventCursor::new(empty.clone(), 0)
+                .unwrap()
+                .encode()
+                .unwrap(),
+        ),
+    ] {
+        for byte_offset in [0, 1] {
+            let mut end = empty.clone();
+            end.prefix.byte_offset = byte_offset;
+            let peer = Peer::start_with_sse(Behavior::ScriptedSse, vec![stream_end(end)]).await;
+            let mut follow = peer.client().await.follow(
+                &RunId::new("run-peer").unwrap(),
+                initial.clone(),
+                RetryPolicy::default(),
+            );
+            let next = follow.next(&CancellationToken::new()).await;
+            if byte_offset == 0 {
+                assert!(matches!(next, Ok(Observation::End(_))));
+            } else {
+                assert!(matches!(next, Err(Error::InvalidResponse)), "{next:?}");
+            }
+            assert_eq!(follow.acknowledged_cursor(), initial.as_deref());
+        }
+    }
 }

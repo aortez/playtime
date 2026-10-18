@@ -36,6 +36,14 @@ provenance explicit, and do not treat serializable API frontiers as writer
 receipts. See `docs/rust-http-api.md` for the application boundary and conformance
 tests. HTTP fixture tests use temporary roots and port zero, and must not launch
 experimental workers.
+`playtime-cli` owns clap parsing/presentation. Shared connection resolution,
+durable launch receipts, cursor files and verified downloads belong in
+`playtime-client`; keep these independent of clap/egui. Local I/O stays outside
+UI render loops. `playtime-test-support` owns native-client subprocess fixtures,
+isolated roots, readiness deadlines and owned-process cleanup. See
+`docs/rust-cli.md`; run `./scripts/test-rust-cli-e2e.sh --backend fixture` for CLI
+changes. The simulation gate must fail clearly until #20/#42/#43 are available;
+never substitute fixtures or claim this completes #21.
 Commit `Cargo.lock`; ignore
 `target/`. Validate Rust changes with `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, and
