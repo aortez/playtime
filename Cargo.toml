@@ -8,6 +8,7 @@ members = [
     "crates/playtime-client",
     "crates/playtime-local",
     "crates/playtime-runner",
+    "crates/playtime-worker-control",
 ]
 resolver = "3"
 
@@ -23,6 +24,7 @@ playtime-protocol = { path = "crates/playtime-protocol" }
 playtime-engine = { path = "crates/playtime-engine" }
 playtime-storage = { path = "crates/playtime-storage" }
 playtime-local = { path = "crates/playtime-local" }
+playtime-worker-control = { path = "crates/playtime-worker-control" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 utoipa = "=6.0.0"
@@ -41,6 +43,13 @@ getrandom = "=0.4.3"
 subtle = "=2.6.1"
 serde_urlencoded = "=0.7.1"
 http-body-util = "=0.1.5"
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
+time = { version = "=0.3.47", features = ["formatting"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+# Fixture control verifies large captured executables inside a five-second
+# request deadline. Keep hashing fast in debug/test builds under CI contention.
+[profile.dev.package.sha2]
+opt-level = 3

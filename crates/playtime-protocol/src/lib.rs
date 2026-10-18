@@ -9,6 +9,7 @@ pub mod observations;
 mod read;
 pub mod storage;
 pub mod v1;
+pub mod worker;
 
 pub use read::ReadError;
 

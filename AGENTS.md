@@ -29,7 +29,7 @@ Its demo must explicitly capture the actual executing image through `/proc/self/
 preparation accepts an explicit worker bundle. Latest-receipt observers never
 promote a discovered marker or wait on filesystem work.
 Retain the Python launcher during migration.
-`playtime-server` owns HTTP/auth in modules separate from future lifecycle work;
+`playtime-server` owns HTTP/auth in modules separate from lifecycle coordination;
 `playtime-client` owns native transport and acknowledged event reconnect.
 `playtime-local` shares credential/discovery file policy. Keep HTTP fixture
 provenance explicit, and do not treat serializable API frontiers as writer
