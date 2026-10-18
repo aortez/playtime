@@ -200,7 +200,8 @@ a recipe when checking the real model's tool use and handoff behavior.
 
 The Rust workspace contains `playtime-core`, `playtime-protocol`,
 `playtime-engine`, `playtime-storage`, `playtime-runner`, `playtime-server`,
-`playtime-client`, and `playtime-local`: typed contracts, a bounded controller,
+`playtime-client`, `playtime-local`, `playtime-cli`, `playtime-test-support`, and
+`playtime-ui`: typed contracts, a bounded controller,
 deterministic simulation, durable portable archives, and an authenticated
 HTTP/client fixture. The Python command remains the operational runner. See the
 [architecture decision](docs/rust-foundation.md),
@@ -272,3 +273,16 @@ cargo run --locked -p playtime-cli -- --connection-file /tmp/playtime-api-demo/.
 See [the native client guide](docs/rust-cli.md) for launches, saved-key retries,
 observation, downloads, and exit codes. The fixture gate is implemented; the
 production simulation gate remains #20/#42/#43. `./playtime` is still Python.
+
+The native Linux workbench uses that same public service connection:
+
+```sh
+cargo run --locked -p playtime-ui -- --connection-file /tmp/playtime-api-demo/.playtime/connection.json
+./scripts/test-rust-ui-e2e.sh --backend fixture
+```
+
+It provides recipe preview/launch, pending launch recovery, a grouped live
+transcript, memory/file inspection, and verified image previews/downloads. See
+[the workbench guide](docs/rust-ui.md) for bounds, screenshots and performance.
+The fixture milestone advances #22; the real simulation gate still requires
+#20/#43 before #22 can close.

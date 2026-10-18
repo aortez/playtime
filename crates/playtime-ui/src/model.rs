@@ -1,0 +1,719 @@
+//! Pure presentation state and explicit user intents. No execution authority.
+use crate::transcript::{SourcePage, Window};
+use playtime_client::{config::Options, state::LaunchReceipt};
+use playtime_core::{RunId, RunMode, SessionId};
+use playtime_protocol::api::*;
+use serde::{Deserialize, Serialize};
+use std::{collections::VecDeque, path::PathBuf, sync::Arc};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Tag {
+    pub connection: u64,
+    pub selection: u64,
+    pub preview: u64,
+    pub inspection: u64,
+    pub launch: u64,
+}
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum Disclosure {
+    Compact,
+    #[default]
+    Readable,
+    Full,
+}
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Inspector {
+    #[default]
+    Details,
+    Memory,
+    Files,
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum ConnectionState {
+    #[default]
+    Disconnected,
+    Connecting,
+    Connected,
+    Reconnecting,
+    Error(String),
+}
+impl ConnectionState {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Disconnected => "Disconnected",
+            Self::Connecting => "Connecting",
+            Self::Connected => "Connected",
+            Self::Reconnecting => "Reconnecting",
+            Self::Error(_) => "Connection error",
+        }
+    }
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum Mutation {
+    #[default]
+    Idle,
+    Recording,
+    Submitting,
+    Accepted,
+    Unresolved(String),
+    Rejected(String),
+}
+#[derive(Clone, Debug)]
+pub struct PreviewView {
+    pub value: Preview,
+    pub summary: Vec<String>,
+    pub source: SourcePage,
+}
+#[derive(Clone, Debug)]
+pub struct RunViewData {
+    pub value: RunView,
+    pub summary: Vec<String>,
+    pub source: SourcePage,
+}
+#[derive(Clone, Debug)]
+pub struct MemoryView {
+    pub incoming: String,
+    pub outgoing: String,
+    pub evidence: String,
+    pub diff: String,
+    pub notice: String,
+}
+#[derive(Clone, Debug)]
+pub struct ContentView {
+    pub artifact: Artifact,
+    pub source: Option<SourcePage>,
+    pub image: Option<Arc<crate::media::Pixels>>,
+    pub notice: String,
+    pub animated: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Preferences {
+    pub schema_version: u32,
+    pub disclosure: Disclosure,
+    pub left_width: f32,
+    pub right_width: f32,
+    pub service_id: Option<ServiceId>,
+    pub run_id: Option<RunId>,
+}
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            disclosure: Disclosure::Readable,
+            left_width: 240.0,
+            right_width: 330.0,
+            service_id: None,
+            run_id: None,
+        }
+    }
+}
+#[derive(Clone, Debug)]
+pub enum Action {
+    Connect(Options),
+    Recipes(Option<String>),
+    Runs(Option<String>),
+    Receipts(Option<IdempotencyKey>),
+    Preview(RecipeId, RunMode),
+    PreviewPage(Box<Preview>, usize),
+    Launch(LaunchRequest),
+    Recover(IdempotencyKey, bool),
+    Cancel(RunId),
+    Observe(RunId),
+    StopObservation,
+    Window(usize, usize),
+    Source(usize, u64, usize),
+    Checkpoints(RunId, Option<String>),
+    Checkpoint(RunId, SessionId),
+    Content(RunId, ArtifactId, usize),
+    Retained(RunId, playtime_protocol::archive::ContentRef),
+    Download(RunId, ArtifactId, PathBuf),
+    PlayGif(RunId, ArtifactId),
+    StopGif,
+    Preferences(Preferences),
+}
+#[derive(Clone, Debug)]
+pub struct Command {
+    pub tag: Tag,
+    pub action: Action,
+}
+pub enum Data {
+    Connected(Capabilities, String),
+    Preferences(Preferences),
+    Recipes(Page<Recipe>),
+    Runs(Page<RunView>),
+    Receipts(Vec<LaunchReceipt>, Option<IdempotencyKey>),
+    Preview(Box<PreviewView>),
+    PreviewError(String),
+    PreviewPage(SourcePage),
+    LaunchProgress(Mutation, Option<LaunchReceipt>),
+    Accepted(Box<LaunchResponse>, LaunchReceipt),
+    Run(Box<RunViewData>),
+    Cancellation(Box<RunViewData>),
+    CancellationUnresolved(String),
+    Window(Window, String, u64),
+    Checkpoints(Page<Checkpoint>),
+    Checkpoint(Box<Checkpoint>, MemoryView),
+    Content(ContentView),
+    GifFrame(Arc<crate::media::Pixels>, tokio::sync::oneshot::Sender<()>),
+    GifStopped(String),
+    Source(u64, SourcePage),
+    Notice(String),
+    Connection(ConnectionState),
+    Error(String),
+}
+pub struct Reply {
+    pub tag: Tag,
+    pub run: Option<RunId>,
+    pub data: Data,
+}
+
+pub struct Model {
+    pub tag: Tag,
+    pub connection: ConnectionState,
+    pub service: Option<ServiceId>,
+    pub backend: String,
+    pub modes: Vec<RunMode>,
+    pub endpoint: String,
+    pub stale: bool,
+    pub last_update: f64,
+    pub clock: f64,
+    pub recipes: Vec<Recipe>,
+    pub recipe_next: Option<String>,
+    pub recipe: Option<RecipeId>,
+    pub mode: RunMode,
+    pub preview: Option<PreviewView>,
+    pub previewing: bool,
+    pub runs: Vec<RunView>,
+    pub runs_next: Option<String>,
+    pub receipts: Vec<LaunchReceipt>,
+    pub receipts_next: Option<IdempotencyKey>,
+    pub launch: Mutation,
+    pub saved: Option<LaunchReceipt>,
+    pub cancellation: Mutation,
+    pub selected: Option<RunId>,
+    pub run: Option<RunViewData>,
+    pub launcher: bool,
+    pub window: Window,
+    pub history: String,
+    pub live_count: u64,
+    pub seen_live: u64,
+    pub following: bool,
+    pub selected_row: Option<usize>,
+    pub expanded: std::collections::BTreeSet<usize>,
+    pub source: Option<SourcePage>,
+    pub source_sequence: u64,
+    pub checkpoints: Vec<Checkpoint>,
+    pub checkpoints_next: Option<String>,
+    pub checkpoint: Option<Checkpoint>,
+    pub file_page: usize,
+    pub memory: Option<MemoryView>,
+    pub content: Option<ContentView>,
+    pub inspector: Inspector,
+    pub show_inspector: bool,
+    pub show_runs: bool,
+    pub enlarged: bool,
+    pub actual_size: bool,
+    pub playing: bool,
+    pub preferences: Preferences,
+    pub notice: String,
+    pub destination: String,
+    pub connection_file: String,
+    pub commands: VecDeque<Command>,
+}
+impl Default for Model {
+    fn default() -> Self {
+        Self {
+            tag: Tag::default(),
+            connection: ConnectionState::Disconnected,
+            service: None,
+            backend: "Backend unavailable".into(),
+            modes: vec![],
+            endpoint: String::new(),
+            stale: true,
+            last_update: 0.0,
+            clock: 0.0,
+            recipes: vec![],
+            recipe_next: None,
+            recipe: None,
+            mode: RunMode::Simulation,
+            preview: None,
+            previewing: false,
+            runs: vec![],
+            runs_next: None,
+            receipts: vec![],
+            receipts_next: None,
+            launch: Mutation::Idle,
+            saved: None,
+            cancellation: Mutation::Idle,
+            selected: None,
+            run: None,
+            launcher: true,
+            window: Window::default(),
+            history: String::new(),
+            live_count: 0,
+            seen_live: 0,
+            following: true,
+            selected_row: None,
+            expanded: Default::default(),
+            source: None,
+            source_sequence: 0,
+            checkpoints: vec![],
+            checkpoints_next: None,
+            checkpoint: None,
+            file_page: 0,
+            memory: None,
+            content: None,
+            inspector: Inspector::Details,
+            show_inspector: true,
+            show_runs: true,
+            enlarged: false,
+            actual_size: false,
+            playing: false,
+            preferences: Preferences::default(),
+            notice: String::new(),
+            destination: String::new(),
+            connection_file: String::new(),
+            commands: VecDeque::new(),
+        }
+    }
+}
+impl Model {
+    pub fn command(&mut self, action: Action) {
+        if self.commands.len() >= 64 {
+            self.notice =
+                "Client work queue is full; retry this action after current work finishes".into();
+            match action {
+                Action::Launch(_) => self.launch = Mutation::Rejected(self.notice.clone()),
+                Action::Recover(..) => self.launch = Mutation::Unresolved(self.notice.clone()),
+                Action::Cancel(_) => self.cancellation = Mutation::Unresolved(self.notice.clone()),
+                Action::Preview(..) => self.previewing = false,
+                _ => (),
+            }
+            return;
+        }
+        if matches!(action, Action::Launch(_) | Action::Recover(..)) {
+            self.tag.launch += 1;
+            self.launch = if matches!(action, Action::Launch(_)) {
+                Mutation::Recording
+            } else {
+                Mutation::Submitting
+            };
+        }
+        self.commands.push_back(Command {
+            tag: self.tag,
+            action,
+        });
+    }
+    pub fn connect(&mut self, options: Options) {
+        if matches!(self.launch, Mutation::Recording | Mutation::Submitting) {
+            self.launch = Mutation::Unresolved(
+                "Connection changed while launching; look up the saved request before retrying"
+                    .into(),
+            );
+        }
+        self.tag.connection += 1;
+        self.tag.selection += 1;
+        self.tag.preview += 1;
+        self.connection = ConnectionState::Connecting;
+        self.stale = true;
+        self.preview = None;
+        self.command(Action::Connect(options));
+    }
+    pub fn choose_recipe(&mut self, recipe: RecipeId, mode: RunMode) {
+        self.recipe = Some(recipe.clone());
+        self.mode = mode;
+        self.preview = None;
+        self.previewing = true;
+        self.tag.preview += 1;
+        if !matches!(
+            self.launch,
+            Mutation::Recording | Mutation::Submitting | Mutation::Unresolved(_)
+        ) {
+            self.launch = Mutation::Idle;
+        }
+        self.command(Action::Preview(recipe, mode));
+    }
+    pub fn can_launch(&self) -> bool {
+        self.connection == ConnectionState::Connected
+            && self.modes.contains(&self.mode)
+            && !matches!(
+                self.launch,
+                Mutation::Recording | Mutation::Submitting | Mutation::Unresolved(_)
+            )
+            && self.preview.as_ref().is_some_and(|p| {
+                p.value.readiness.ready
+                    && Some(&p.value.recipe_id) == self.recipe.as_ref()
+                    && p.value.mode == self.mode
+            })
+    }
+    pub fn launch(&mut self) {
+        if !self.can_launch() {
+            return;
+        }
+        let p = &self.preview.as_ref().unwrap().value;
+        let request = LaunchRequest {
+            recipe_id: p.recipe_id.clone(),
+            mode: p.mode,
+            preview_revision: p.preview_revision.clone(),
+        };
+        self.launch = Mutation::Recording;
+        self.command(Action::Launch(request));
+    }
+    pub fn select_run(&mut self, run: RunId) {
+        self.tag.selection += 1;
+        self.selected = Some(run.clone());
+        self.launcher = false;
+        self.run = None;
+        self.window = Window::default();
+        self.selected_row = None;
+        self.expanded.clear();
+        self.source = None;
+        self.checkpoints.clear();
+        self.checkpoint = None;
+        self.memory = None;
+        self.content = None;
+        self.playing = false;
+        self.cancellation = Mutation::Idle;
+        self.following = true;
+        self.live_count = 0;
+        self.seen_live = 0;
+        self.history = "Attaching live stream and loading history".into();
+        self.preferences.service_id = self.service.clone();
+        self.preferences.run_id = Some(run.clone());
+        self.command(Action::Preferences(self.preferences.clone()));
+        self.command(Action::Observe(run.clone()));
+        self.command(Action::Checkpoints(run, None));
+    }
+    pub fn cancel(&mut self) {
+        if self.connection != ConnectionState::Connected
+            || matches!(
+                self.cancellation,
+                Mutation::Submitting | Mutation::Recording
+            )
+        {
+            return;
+        }
+        if let Some(run) = self.selected.clone() {
+            self.cancellation = Mutation::Submitting;
+            self.command(Action::Cancel(run));
+        }
+    }
+    pub fn new_experiment(&mut self) {
+        self.tag.selection += 1;
+        self.launcher = true;
+        self.command(Action::StopObservation);
+        self.stop_animation();
+    }
+    pub fn inspect(&mut self, id: usize, sequence: u64) {
+        self.stop_animation();
+        self.tag.inspection += 1;
+        self.following = false;
+        self.selected_row = Some(id);
+        self.source_sequence = sequence;
+        self.source = None;
+        self.inspector = Inspector::Details;
+        self.show_inspector = true;
+        self.command(Action::Source(id, sequence, 0));
+    }
+    pub fn jump_live(&mut self) {
+        self.following = true;
+        self.seen_live = self.live_count;
+    }
+    pub fn new_activity(&self) -> u64 {
+        self.live_count.saturating_sub(self.seen_live)
+    }
+    pub fn apply(&mut self, reply: Reply) {
+        if reply.tag.connection != self.tag.connection {
+            return;
+        }
+        if reply.run.is_some()
+            && (reply.tag.selection != self.tag.selection || reply.run != self.selected)
+        {
+            return;
+        }
+        if matches!(
+            &reply.data,
+            Data::Preview(_) | Data::PreviewError(_) | Data::PreviewPage(_)
+        ) && (reply.tag.selection != self.tag.selection || reply.tag.preview != self.tag.preview)
+        {
+            return;
+        }
+        // A preview refresh or navigation does not resolve a submitted launch.
+        // Only another explicit launch/recovery operation supersedes its replies.
+        if matches!(&reply.data, Data::LaunchProgress(..) | Data::Accepted(..))
+            && reply.tag.launch != self.tag.launch
+        {
+            return;
+        }
+        if matches!(
+            &reply.data,
+            Data::Checkpoint(..)
+                | Data::Content(_)
+                | Data::Source(..)
+                | Data::GifFrame(..)
+                | Data::GifStopped(_)
+        ) && reply.tag.inspection != self.tag.inspection
+        {
+            return;
+        }
+        match reply.data {
+            Data::Connected(caps, endpoint) => {
+                if self
+                    .service
+                    .as_ref()
+                    .is_some_and(|old| *old != caps.service_id)
+                {
+                    self.connection = ConnectionState::Error(
+                        "Service identity changed; restart the workbench with the intended connection descriptor".into(),
+                    );
+                    self.stale = true;
+                    return;
+                }
+                self.service = Some(caps.service_id);
+                self.modes = caps.modes;
+                self.endpoint = endpoint;
+                self.backend = format!(
+                    "{} · {}",
+                    if caps.backend.kind == BackendKind::Fixture {
+                        "Fixture replay"
+                    } else {
+                        "Controller"
+                    },
+                    caps.backend.description
+                );
+                self.connection = ConnectionState::Connected;
+                self.stale = false;
+                self.last_update = self.clock;
+                self.command(Action::Recipes(None));
+                self.command(Action::Runs(None));
+                self.command(Action::Receipts(None));
+                if self.selected.is_none()
+                    && self.preferences.service_id == self.service
+                    && let Some(run) = self.preferences.run_id.clone()
+                {
+                    self.select_run(run);
+                } else if let Some(run) = self.selected.clone() {
+                    self.command(Action::Observe(run));
+                }
+            }
+            Data::Preferences(p) => {
+                self.preferences = p;
+            }
+            Data::Recipes(p) => {
+                self.recipes = p.items;
+                self.recipe_next = p.next_cursor;
+            }
+            Data::Runs(p) => {
+                self.runs = p.items;
+                self.runs_next = p.next_cursor;
+            }
+            Data::Receipts(items, next) => {
+                self.receipts = items;
+                self.receipts_next = next;
+            }
+            Data::Preview(p) if reply.tag.preview == self.tag.preview => {
+                self.previewing = false;
+                self.preview = Some(*p);
+            }
+            Data::Preview(_) => (),
+            Data::PreviewPage(source) => {
+                if let Some(preview) = &mut self.preview {
+                    preview.source = source;
+                }
+            }
+            Data::PreviewError(error) => {
+                self.previewing = false;
+                self.preview = None;
+                self.notice = error;
+            }
+            Data::LaunchProgress(state, saved) => {
+                self.launch = state;
+                if saved.is_some() {
+                    self.saved = saved;
+                }
+            }
+            Data::Accepted(accepted, saved) => {
+                self.launch = Mutation::Accepted;
+                self.saved = Some(saved);
+                if reply.tag.selection == self.tag.selection {
+                    self.select_run(accepted.run_id);
+                }
+                self.command(Action::Receipts(None));
+            }
+            Data::Run(run) => {
+                self.apply_run(*run);
+            }
+            Data::Cancellation(cancel) => {
+                self.cancellation = Mutation::Accepted;
+                self.notice =
+                    "Cancellation intent acknowledged; inspect enforcement and cleanup below"
+                        .into();
+                self.apply_run(*cancel);
+            }
+            Data::CancellationUnresolved(error) => {
+                self.cancellation = Mutation::Unresolved(error.clone());
+                self.notice = error;
+            }
+            Data::Window(window, history, live) => {
+                self.window = window;
+                self.history = history;
+                self.live_count = live;
+                if self.following {
+                    self.seen_live = live;
+                }
+            }
+            Data::Checkpoints(page) => {
+                if self.checkpoint.is_none()
+                    && self.selected_row.is_none()
+                    && let Some(checkpoint) = page.items.first()
+                    && let Some(run) = self.selected.clone()
+                {
+                    self.command(Action::Checkpoint(
+                        run,
+                        checkpoint.checkpoint.session_id.clone(),
+                    ));
+                }
+                self.checkpoints = page.items;
+                self.checkpoints_next = page.next_cursor;
+            }
+            Data::Checkpoint(c, memory) => {
+                if self.content.is_none()
+                    && let Some(run) = self.selected.clone()
+                    && let Some(id) = c.files.iter().find_map(|file| {
+                        let lower = file.name.to_ascii_lowercase();
+                        let image = [".png", ".jpg", ".jpeg", ".webp", ".gif"]
+                            .iter()
+                            .any(|suffix| lower.ends_with(suffix));
+                        if image
+                            && let ContentAvailability::Available { artifact_id, .. } =
+                                &file.content
+                        {
+                            Some(artifact_id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                {
+                    self.command(Action::Content(run, id, 0));
+                }
+                self.file_page = 0;
+                self.checkpoint = Some(*c);
+                self.memory = Some(memory);
+            }
+            Data::Content(content) => {
+                if let Some(checkpoint) = &self.checkpoint {
+                    let references = [
+                        &checkpoint.incoming_memory,
+                        &checkpoint.outgoing_memory,
+                        &checkpoint.evidence,
+                        &checkpoint.workspace,
+                    ];
+                    let expected = references
+                        .into_iter()
+                        .chain(checkpoint.files.iter().map(|f| &f.content))
+                        .find_map(|reference| match reference {
+                            ContentAvailability::Available {
+                                artifact_id,
+                                content: expected,
+                            } if artifact_id == &content.artifact.artifact_id => Some(expected),
+                            _ => None,
+                        });
+                    if expected.is_some_and(|expected| *expected != content.artifact.content) {
+                        self.notice = "Published content identity mismatch; preview refused".into();
+                        return;
+                    }
+                }
+                self.content = Some(content);
+            }
+            Data::GifFrame(pixels, applied) => {
+                if self.playing
+                    && let Some(content) = &mut self.content
+                {
+                    content.image = Some(pixels);
+                }
+                let _ = applied.send(());
+            }
+            Data::GifStopped(notice) => {
+                self.playing = false;
+                if let Some(content) = &mut self.content {
+                    content.notice = notice;
+                }
+            }
+            Data::Source(sequence, source) => {
+                self.source_sequence = sequence;
+                self.source = Some(source);
+            }
+            Data::Notice(message) => {
+                self.notice = message;
+            }
+            Data::Connection(state) => {
+                self.stale = state != ConnectionState::Connected;
+                self.connection = state;
+            }
+            Data::Error(error) => {
+                self.notice = error;
+            }
+        }
+    }
+    pub fn stop_animation(&mut self) {
+        if self.playing {
+            self.playing = false;
+            self.command(Action::StopGif);
+        }
+    }
+    fn apply_run(&mut self, run: RunViewData) {
+        if let Some(current) = &self.run {
+            let old = &current.value;
+            let next = &run.value;
+            // Status GET and Cancel run concurrently. updated_at is not a unique
+            // revision: ties (and clock changes) must not erase durable facts.
+            if snapshot_time(&next.updated_at) < snapshot_time(&old.updated_at)
+                || (old.orchestration.state == OrchestrationState::Terminal
+                    && next.orchestration.state != OrchestrationState::Terminal)
+                || (old.cancellation.is_some() && next.cancellation.is_none())
+                || old.cancellation.as_ref().is_some_and(|ack| {
+                    next.cancellation.as_ref().is_some_and(|next| {
+                        (ack.stop_accepted_at.is_some() && next.stop_accepted_at.is_none())
+                            || (ack.enforcement == Enforcement::Stopped
+                                && next.enforcement != Enforcement::Stopped)
+                    })
+                })
+            {
+                return;
+            }
+        }
+        if run.value.checkpoint.as_ref()
+            != self.run.as_ref().and_then(|r| r.value.checkpoint.as_ref())
+        {
+            self.command(Action::Checkpoints(run.value.run_id.clone(), None));
+        }
+        self.run = Some(run);
+        self.stale = self.connection != ConnectionState::Connected;
+        self.last_update = self.clock;
+    }
+    pub fn inspect_action(&mut self, action: Action) {
+        self.stop_animation();
+        self.tag.inspection += 1;
+        self.following = false;
+        if matches!(
+            action,
+            Action::Checkpoint(..) | Action::Content(..) | Action::Retained(..)
+        ) {
+            self.content = None;
+        }
+        self.command(action);
+    }
+}
+
+fn snapshot_time(time: &playtime_core::UtcTime) -> (&str, [u8; 9]) {
+    // UtcTime validates UTC seconds and up to nine fractional digits. Its string
+    // ordering alone would put a whole second after that second's fractions.
+    let text = time.as_str();
+    let mut fraction = [b'0'; 9];
+    if text.as_bytes()[19] == b'.' {
+        let digits = &text.as_bytes()[20..text.len() - 1];
+        fraction[..digits.len()].copy_from_slice(digits);
+    }
+    (&text[..19], fraction)
+}

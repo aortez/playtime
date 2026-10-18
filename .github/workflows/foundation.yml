@@ -15,6 +15,11 @@ jobs:
     timeout-minutes: 20
     env:
       PLAYTIME_DOCKER_TESTS: "0"
+      # Keep the GUI dependency graph and repeated fixture links within hosted
+      # runner disk/memory limits. Local development retains its debug profiles.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -28,4 +33,35 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: ./scripts/test-rust-cli-e2e.sh --backend fixture
+      - run: ./scripts/test-rust-ui-e2e.sh --backend fixture
       - run: python3 -m unittest discover -s tests -v
+      - name: Report runner resources
+        if: always()
+        run: |
+          df -h .
+          du -sh target
+          free -h
+
+  ui-snapshots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      # Ubuntu 26.04 multiarch index, verified 2026-10-17; amd64 runner.
+      image: ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
+    env:
+      VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.json
+      XDG_RUNTIME_DIR: /tmp/playtime-ui-runtime
+    steps:
+      - name: Install the exact reviewed software Vulkan renderer
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config libxkbcommon-dev libwayland-dev libudev-dev mesa-vulkan-drivers=26.0.8-1ubuntu0.3 libllvm21=1:21.1.8-6ubuntu1 libvulkan1=1.4.341.0-1
+          install -d -m 700 "$XDG_RUNTIME_DIR"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the pinned Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/playtime-rustup.sh
+          sh /tmp/playtime-rustup.sh -y --profile minimal --default-toolchain 1.94.1
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Compare reviewed workbench screenshots (no renderer fallback)
+        run: cargo test --locked -p playtime-ui --features ui-snapshots --test snapshots
