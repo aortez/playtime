@@ -305,6 +305,39 @@ fn capture_and_archive_budgets_are_checked_independently_with_overflow_rejected(
     assert_eq!(p.limits().tar_bytes, 10240);
     assert!(validate_workspace(&[0u8; 11264][..], &p, &CancellationToken::new()).is_err());
 }
+#[test]
+fn empty_workspace_index_obeys_requested_and_storage_limits() {
+    for limit in [1, 2] {
+        for (limits, storage) in [
+            (
+                CaptureLimits {
+                    index_bytes: limit,
+                    ..CaptureLimits::default()
+                },
+                StorageLimits::default(),
+            ),
+            (
+                CaptureLimits::default(),
+                StorageLimits {
+                    manifest_bytes: limit,
+                    ..StorageLimits::default()
+                },
+            ),
+        ] {
+            let p = CaptureProfile::prepare(limits, 8 << 20, &storage, ArchiveUsage::default())
+                .unwrap();
+            let result = validate_workspace(&[0u8; 10240][..], &p, &CancellationToken::new());
+            if limit == 1 {
+                assert_eq!(result.map(|_| ()).unwrap_err().failure, Failure::Capacity);
+            } else {
+                let workspace = result.unwrap();
+                assert!(workspace.entries().is_empty());
+                assert_eq!(workspace.index(), b"[]");
+            }
+        }
+    }
+}
+
 struct Fragmented<'a> {
     bytes: &'a [u8],
     cancel: CancellationToken,
