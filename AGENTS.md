@@ -29,6 +29,13 @@ Its demo must explicitly capture the actual executing image through `/proc/self/
 preparation accepts an explicit worker bundle. Latest-receipt observers never
 promote a discovered marker or wait on filesystem work.
 Retain the Python launcher during migration.
+`playtime-docker` owns bounded native Docker transport and the owned sandbox.
+Keep Docker/process dependencies outside core/engine. Preserve precommitted
+resource ownership, exact identity checks, absolute timers, uncertain-exec fencing
+and aggregate cleanup bounds. See `docs/rust-docker.md`; explicitly run
+`./scripts/test-rust-docker-e2e.sh --case sandbox` and the opt-in Python Docker
+suite for adapter changes when the locked local environment is available. The
+sandbox gate is not checkpoint publication or production run-and-view evidence.
 `playtime-worker` composes the real runner and private worker control; `xtask`
 builds verified static bundles from a staged source snapshot. Preserve the same
 owned prepared writer through Begin, and never invoke Cargo during admission or

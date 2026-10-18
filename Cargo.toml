@@ -14,6 +14,7 @@ members = [
     "crates/playtime-worker-control",
     "crates/playtime-worker",
     "crates/playtime-ollama",
+    "crates/playtime-docker",
     "xtask",
 ]
 resolver = "3"
@@ -35,6 +36,7 @@ playtime-test-support = { path = "crates/playtime-test-support" }
 playtime-worker-control = { path = "crates/playtime-worker-control" }
 playtime-runner = { path = "crates/playtime-runner" }
 playtime-worker = { path = "crates/playtime-worker" }
+playtime-docker = { path = "crates/playtime-docker" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 utoipa = "=6.0.0"

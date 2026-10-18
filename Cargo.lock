@@ -3363,6 +3363,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "playtime-docker"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "getrandom 0.4.3",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "playtime-engine"
 version = "0.1.0"
 dependencies = [
