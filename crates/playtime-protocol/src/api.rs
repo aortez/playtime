@@ -309,11 +309,11 @@ pub struct EventAnchors {
 pub struct Contention {
     /// Model requests with recorded timing.
     pub timed_requests: u64,
-    /// Requests after the first whose model load took over a second.
+    /// Requests after the first whose model load took over two seconds.
     pub reloads: u64,
-    /// Requests whose observed latency exceeded the server's total by over two
-    /// seconds and half again.
-    pub delays: u64,
+    /// Requests whose server total exceeded their load, prompt and generation
+    /// time by over two seconds: they waited behind other work.
+    pub queue_waits: u64,
     pub possible: bool,
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]

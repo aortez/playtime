@@ -694,17 +694,17 @@
       "Contention": {
         "description": "Signs that something else used the model host during a live run. Advisory\nonly: it never fails a run.",
         "properties": {
-          "delays": {
-            "description": "Requests whose observed latency exceeded the server's total by over two\nseconds and half again.",
+          "possible": {
+            "type": "boolean"
+          },
+          "queue_waits": {
+            "description": "Requests whose server total exceeded their load, prompt and generation\ntime by over two seconds: they waited behind other work.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
           },
-          "possible": {
-            "type": "boolean"
-          },
           "reloads": {
-            "description": "Requests after the first whose model load took over a second.",
+            "description": "Requests after the first whose model load took over two seconds.",
             "format": "int64",
             "minimum": 0,
             "type": "integer"
@@ -719,7 +719,7 @@
         "required": [
           "timed_requests",
           "reloads",
-          "delays",
+          "queue_waits",
           "possible"
         ],
         "type": "object"

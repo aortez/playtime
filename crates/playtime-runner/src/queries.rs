@@ -272,64 +272,92 @@ impl ArchiveQueries {
     }
 }
 
-/// Possible contention in live request timing: a model reload after the first
-/// request, or a client-observed latency far above the server's own total.
+/// Possible contention in live request timing, from the server's own
+/// durations: a model reload after the first request, or a request whose total
+/// exceeds its load, prompt and generation time, so it waited behind other work.
+/// A queued request's wait shows up inside its total, not in its client-observed
+/// latency.
 pub fn contention(timings: &[serde_json::Value]) -> Option<playtime_protocol::api::Contention> {
+    const LIMIT_NS: u64 = 2_000_000_000;
     if timings.is_empty() {
         return None;
     }
     let reloads = timings
         .iter()
         .skip(1)
-        .filter(|t| {
-            t["load_duration"]
-                .as_u64()
-                .is_some_and(|ns| ns > 1_000_000_000)
-        })
+        .filter(|t| t["load_duration"].as_u64().is_some_and(|ns| ns > LIMIT_NS))
         .count() as u64;
-    let delays = timings
+    let queue_waits = timings
         .iter()
-        .filter(
-            |t| match (t["observed_ms"].as_u64(), t["total_duration"].as_u64()) {
-                (Some(observed), Some(total)) => {
-                    let total = total / 1_000_000;
-                    observed > total + 2_000 && observed > total + total / 2
-                }
-                _ => false,
-            },
-        )
+        .filter(|t| {
+            t["total_duration"].as_u64().is_some_and(|total| {
+                let busy = ["load_duration", "prompt_eval_duration", "eval_duration"]
+                    .into_iter()
+                    .filter_map(|key| t[key].as_u64())
+                    .fold(0, u64::saturating_add);
+                total.saturating_sub(busy) > LIMIT_NS
+            })
+        })
         .count() as u64;
     Some(playtime_protocol::api::Contention {
         timed_requests: timings.len() as u64,
         reloads,
-        delays,
-        possible: reloads + delays > 0,
+        queue_waits,
+        possible: reloads + queue_waits > 0,
     })
 }
 
 #[cfg(test)]
 mod contention_tests {
     use serde_json::json;
+    fn timing(
+        observed_ms: u64,
+        load: u64,
+        prompt: u64,
+        eval: u64,
+        total: u64,
+    ) -> serde_json::Value {
+        json!({"observed_ms": observed_ms, "load_duration": load,
+            "prompt_eval_duration": prompt, "eval_duration": eval, "total_duration": total})
+    }
+
     #[test]
-    fn reloads_after_the_first_request_and_long_waits_are_flagged() {
+    fn reloads_after_the_first_request_and_queue_waits_are_flagged() {
         assert!(super::contention(&[]).is_none());
         let clean = [
-            json!({"observed_ms": 12_000, "load_duration": 9_000_000_000u64, "total_duration": 11_500_000_000u64}),
-            json!({"observed_ms": 2_100, "load_duration": 50_000_000u64, "total_duration": 2_000_000_000u64}),
+            // A cold first load is not contention.
+            timing(7_700, 7_000_000_000, 40_000_000, 500_000_000, 7_600_000_000),
+            timing(1_900, 300_000_000, 40_000_000, 1_500_000_000, 1_860_000_000),
+            // A failed request without a terminal record has no durations.
             json!({"observed_ms": 900}),
+            // Client-observed latency far above the server's total is not
+            // contention on its own.
+            timing(
+                30_000,
+                300_000_000,
+                40_000_000,
+                1_000_000_000,
+                1_400_000_000,
+            ),
         ];
         let summary = super::contention(&clean).unwrap();
-        assert_eq!((summary.timed_requests, summary.possible), (3, false));
+        assert_eq!((summary.timed_requests, summary.possible), (4, false));
         let busy = [
             clean[0].clone(),
-            json!({"observed_ms": 9_000, "load_duration": 4_000_000_000u64, "total_duration": 8_800_000_000u64}),
-            json!({"observed_ms": 7_000, "load_duration": 10_000_000u64, "total_duration": 3_000_000_000u64}),
-            // A two-second gap alone is not enough on a long request.
-            json!({"observed_ms": 22_500, "total_duration": 20_000_000_000u64}),
+            // Another model or context size was loaded in between.
+            timing(4_700, 4_000_000_000, 40_000_000, 500_000_000, 4_600_000_000),
+            // Measured on 2026-10-18: a request queued behind another one.
+            timing(
+                20_600,
+                310_000_000,
+                40_000_000,
+                1_000_000_000,
+                20_500_000_000,
+            ),
         ];
         let summary = super::contention(&busy).unwrap();
         assert_eq!(
-            (summary.reloads, summary.delays, summary.possible),
+            (summary.reloads, summary.queue_waits, summary.possible),
             (1, 1, true)
         );
     }

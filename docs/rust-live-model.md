@@ -67,6 +67,22 @@ transport, HTTP, timeout or byte-limit failure stops the run with its own reason
 Usage stays unknown unless the terminal record reports it, and the full request
 cap is charged then.
 
+After each request the worker records one timing chunk: the latency it observed
+and Ollama's load, prompt, generation and total durations. The run view and
+workbench flag possible GPU contention from the server's durations, as #72
+defines it:
+
+- **Model reload.** A load takes over two seconds on any request after the first,
+  so another model or context size was loaded in between. Warm loads report
+  about 0.3 seconds.
+- **Queue wait.** A request's total exceeds its load, prompt and generation time
+  by over two seconds, so it waited behind other work. A queued request's wait
+  shows up inside its total, not in the latency the worker observes.
+
+The flags are advisory and never fail a run. On the retained clean runs, warm
+loads took 0.22–0.33 seconds and the unexplained part of each total was at most
+0.062 seconds.
+
 ## Profile and capabilities
 
 The live profile is `docker_live_no_seed_self_v1`, worker kind `docker_live`, run

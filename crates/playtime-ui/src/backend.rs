@@ -472,8 +472,8 @@ pub fn prepare_run(value: RunView) -> RunViewData {
     if let Some(c) = &value.contention {
         summary.push(if c.possible {
             format!(
-                "Possible GPU contention: {} model reloads and {} delayed requests across {} timed requests",
-                c.reloads, c.delays, c.timed_requests
+                "Possible GPU contention: {} model reloads and {} queued requests across {} timed requests",
+                c.reloads, c.queue_waits, c.timed_requests
             )
         } else {
             format!(
