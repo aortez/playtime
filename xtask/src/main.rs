@@ -126,7 +126,11 @@ fn build(root: &Path, destination: &Path) -> Result<()> {
         .collect::<Result<_>>()?,
         features: vec![],
         rustflags: rustflags.clone(),
-        capabilities: Capabilities::current(),
+        // The staged worker refuses at startup if this differs from its own.
+        capabilities: Capabilities {
+            docker_profile: Some(playtime_runner::docker::digest()?),
+            ..Capabilities::current()
+        },
     };
     let record_bytes = serde_json::to_vec(&record)?;
     let record_path = build_root.join("build.json");

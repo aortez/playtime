@@ -533,12 +533,17 @@ impl Effects for NativeEffects {
                 cancel: cancel.clone(),
             })
             .map_err(|_| Error::Uncertain("native owner unavailable; no replay".into()))?;
+        // User cancellation never aborts finalization. The controller keeps a
+        // pending Snapshot through its stop to publish an interrupted
+        // checkpoint, and each finalization effect stays bounded by its deadline.
         self.active = Some((
             effect.id,
             cancel,
             !matches!(
                 effect.kind,
-                EffectKind::Cleanup | EffectKind::PublishCheckpoint(_)
+                EffectKind::Snapshot { .. }
+                    | EffectKind::Cleanup
+                    | EffectKind::PublishCheckpoint(_)
             ),
         ));
         Ok(())

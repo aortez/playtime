@@ -40,10 +40,15 @@ The worker receives `PATH=/no-runtime-cargo` under systemd.
 
 The profile is `docker_scripted_no_seed_self_v1`, with private worker kind
 `docker_scripted` and archive/run mode `scripted_smoke`. The packaged executable
-advertises `real_workshop` and never `real_model`. A worker and producer both
-reject unsupported profile versions, changed recipes/prompts/limits, seeds and
-other memory conditions. Older simulation bundles/archives retain their existing
-path. `controller_archive_v1` recovery does not authorize this Docker profile;
+advertises `real_workshop`, never `real_model`, and the `docker_profile` digest of
+its compiled profile (everything except the host's Docker selection and daemon
+identity). `--docker-scripted` startup refuses a bundle whose digest differs from
+the service's own, so a bundle from another revision cannot pass admission and
+then stall in `Reconciling`. The preview revision includes the digest. A worker
+and producer both reject unsupported profile versions, changed
+recipes/prompts/limits, seeds and other memory conditions. Older simulation
+bundles/archives retain their existing path. `controller_archive_v1` recovery
+does not authorize this Docker profile;
 its configuration cannot decode as the simulation recovery contract.
 
 The fixed recipe and prompts live in
@@ -125,7 +130,10 @@ Only the existing storage thread publishes candidates. Successful capture or
 handoff is not publication. Failed writers never retry; late receipts retain
 writer ownership and can advance confirmed evidence only when actually returned.
 A second-capture failure retains 160 known tokens and the saved handoff, leaves
-checkpoint one authoritative, and reports cleanup independently.
+checkpoint one authoritative, and reports cleanup independently. User cancellation
+aborts in-flight model and tool effects but never Snapshot, publication or
+cleanup. A cancel during capture therefore still publishes that session's
+interrupted checkpoint, within the 80-second stop/capture bound.
 
 Normal admission release requires committed terminal/accounting evidence, settled
 publication, exact successful Docker cleanup and original-worker termination.

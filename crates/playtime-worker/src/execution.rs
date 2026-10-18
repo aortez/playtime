@@ -99,9 +99,12 @@ impl Execution {
         let snapshot = reader.live_snapshot(owned.confirmed())?;
         let bundle = VerifiedBundle::from_archive(&reader, &snapshot)?;
         bundle.verify_embedded(crate::EMBEDDED_BUILD)?;
+        // A bundle never advertises a profile its own worker does not implement.
         if native
-            && (!bundle.descriptor().capabilities.real_workshop
-                || bundle.descriptor().capabilities.real_model)
+            && !bundle
+                .descriptor()
+                .capabilities
+                .implements_docker(&playtime_runner::docker::digest()?)
         {
             return Err(Error::UnsupportedCapability);
         }

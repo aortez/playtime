@@ -20,6 +20,10 @@ pub struct Capabilities {
     /// Absence means the older bundle did not advertise recovery semantics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_profile: Option<String>,
+    /// Digest of the exact frozen Docker profile this worker implements.
+    /// Absence means the older bundle did not advertise one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_profile: Option<Sha256Digest>,
 }
 impl Default for Capabilities {
     fn default() -> Self {
@@ -31,6 +35,7 @@ impl Default for Capabilities {
             real_model: false,
             real_workshop: false,
             recovery_profile: None,
+            docker_profile: None,
         }
     }
 }
@@ -46,11 +51,16 @@ impl Capabilities {
         let mut ordinary = self.clone();
         ordinary.recovery_profile = None;
         ordinary.real_workshop = false;
+        ordinary.docker_profile = None;
         ordinary == Self::default()
             && self
                 .recovery_profile
                 .as_deref()
                 .is_none_or(|p| p == crate::recovery::RULE_SET)
+    }
+    /// Docker execution requires the exact frozen profile the caller implements.
+    pub fn implements_docker(&self, profile: &Sha256Digest) -> bool {
+        self.real_workshop && !self.real_model && self.docker_profile.as_ref() == Some(profile)
     }
 }
 

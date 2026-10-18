@@ -431,20 +431,34 @@ async fn forged_execution_contract(bundle: &Path) -> Result<()> {
     Ok(())
 }
 
-fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
-    let case = Case::new(bundle, false)?;
-    let path = case.root.join("older-bundle");
+/// Copy the bundle with edited capabilities and a matching build record.
+fn rewritten(
+    case: &Case,
+    bundle: &Path,
+    name: &str,
+    edit: impl FnOnce(&mut wire::Capabilities),
+) -> Result<PathBuf> {
+    let path = case.root.join(name);
     copy(bundle, &path)?;
     let mut descriptor: BundleDescriptor =
         serde_json::from_slice(&fs::read(path.join("bundle.json"))?)?;
     let mut build: BuildRecord = serde_json::from_slice(&fs::read(path.join(wire::BUILD))?)?;
-    build.capabilities.recovery_profile = None;
-    build.capabilities.real_workshop = false;
+    edit(&mut build.capabilities);
     descriptor.capabilities = build.capabilities.clone();
     let bytes = serde_json::to_vec(&build)?;
     descriptor.build_record = reference(wire::BUILD, &bytes);
     overwrite(&path.join(wire::BUILD), &bytes)?;
     overwrite(&path.join("bundle.json"), &serde_json::to_vec(&descriptor)?)?;
+    Ok(path)
+}
+
+fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
+    let case = Case::new(bundle, false)?;
+    let path = rewritten(&case, bundle, "older-bundle", |capabilities| {
+        capabilities.recovery_profile = None;
+        capabilities.real_workshop = false;
+        capabilities.docker_profile = None;
+    })?;
     let archive = case.root.join("older-archive");
     assert!(
         VerifiedBundle::open(&path)?
@@ -469,6 +483,24 @@ fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
         include_bytes!("../../playtime-engine/tests/fixtures/two-session.json"),
     )?;
     println!("PASS older simulation bundle cannot opt in to recovery or Docker");
+    Ok(())
+}
+
+fn other_docker_profile_is_refused(bundle: &Path) -> Result<()> {
+    let case = Case::new(bundle, false)?;
+    let built = playtime_runner::docker::digest()?;
+    let path = rewritten(&case, bundle, "other-profile-bundle", |capabilities| {
+        assert_eq!(capabilities.docker_profile.as_ref(), Some(&built));
+        capabilities.docker_profile = Some(playtime_storage::sha256(b"another frozen profile"));
+    })?;
+    let archive = case.root.join("other-profile-archive");
+    assert!(
+        VerifiedBundle::open(&path)?
+            .prepare_docker(&archive, RunId::new("other")?, &docker_profile()?)
+            .is_err()
+    );
+    assert!(!archive.exists());
+    println!("PASS bundle advertising another Docker profile cannot prepare Docker");
     Ok(())
 }
 
@@ -659,6 +691,7 @@ async fn main() -> Result<()> {
     cancelled_or_revoked(bundle, false).await?;
     forged_embedded_identity(bundle).await?;
     older_bundle_cannot_opt_in(bundle)?;
+    other_docker_profile_is_refused(bundle)?;
     forged_execution_contract(bundle).await?;
     docker_startup_rejections(bundle).await?;
     Ok(())

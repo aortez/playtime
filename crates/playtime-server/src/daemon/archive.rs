@@ -48,11 +48,18 @@ impl Archive {
         socket: &std::path::Path,
     ) -> life::Result<()> {
         use playtime_docker::{CancellationToken, Engine, transport::Cli};
-        if !self.bundle.descriptor().capabilities.real_workshop
-            || self.bundle.descriptor().capabilities.real_model
+        let profile_digest = playtime_runner::docker::digest()
+            .map_err(|_| Error::Invalid("invalid Docker profile"))?;
+        // The worker accepts only its own compiled profile. Refuse a bundle
+        // with a different one here, before any admission is reserved.
+        if !self
+            .bundle
+            .descriptor()
+            .capabilities
+            .implements_docker(&profile_digest)
         {
             return Err(Error::Invalid(
-                "bundle does not support Docker scripted execution",
+                "bundle does not implement this daemon's frozen Docker profile",
             ));
         }
         let cli = Cli::resolve(
@@ -89,8 +96,9 @@ impl Archive {
         let mut preview = self.preview();
         preview.recipe_id = RecipeId::new(playtime_runner::docker::RECIPE).unwrap();
         preview.mode = RunMode::ScriptedSmoke;
+        let advertised = &self.bundle.descriptor().capabilities.docker_profile;
         preview.preview_revision = PreviewRevision::new(
-            digest(&serde_json::to_vec(&(profile, self.bundle.id())).unwrap()).as_str(),
+            digest(&serde_json::to_vec(&(profile, self.bundle.id(), advertised)).unwrap()).as_str(),
         )
         .unwrap();
         preview.effective_configuration = serde_json::to_value(profile).unwrap();

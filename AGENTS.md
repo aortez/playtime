@@ -63,6 +63,11 @@ the same handlers; see `docs/rust-daemon.md` and run
 `./scripts/test-rust-service-e2e.sh --case normal` for daemon integration changes.
 Its CPU test supervisor is explicitly separate from real systemd enforcement;
 restart/recovery and the full CLI/UI simulation gates remain subsequent work.
+`playtimed --docker-scripted` runs the frozen `docker-two-session` recipe in a
+packaged systemd worker with real Docker. See `docs/rust-docker-run-and-view.md`;
+run `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted`
+for native-effect, Docker-profile or run-and-view changes when user systemd and the
+locked image are available.
 `playtime-cli` owns clap parsing/presentation. Shared connection resolution,
 durable launch receipts, cursor files and verified downloads belong in
 `playtime-client`; keep these independent of clap/egui. Local I/O stays outside

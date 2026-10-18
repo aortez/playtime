@@ -149,10 +149,14 @@ impl VerifiedBundle {
         run_id: RunId,
         profile: &playtime_runner::docker::Profile,
     ) -> Result<PreparedSimulation> {
-        if !self.descriptor.capabilities.real_workshop || self.descriptor.capabilities.real_model {
+        profile.validate()?;
+        if !self
+            .descriptor
+            .capabilities
+            .implements_docker(&profile.digest()?)
+        {
             return Err(Error::UnsupportedCapability);
         }
-        profile.validate()?;
         let Self {
             descriptor,
             descriptor_bytes,

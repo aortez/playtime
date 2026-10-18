@@ -1,6 +1,6 @@
 //! Versioned, intentionally narrow frozen Docker/scripted-model profile.
 use crate::{Error, Result};
-use playtime_core::RunMode;
+use playtime_core::{RunMode, Sha256Digest};
 use playtime_docker::{DaemonIdentity, Limits, capture::CaptureLimits, transport::Selection};
 use playtime_engine::{ControllerConfig, simulation::Scenario};
 use playtime_storage::StorageLimits;
@@ -11,6 +11,25 @@ pub const RETURN_OVERHEAD_MS: u64 = 1000;
 pub const RECIPE: &str = "docker-two-session";
 pub const SCENARIO: &[u8] = include_bytes!("smoke.json");
 pub const IMAGE_LOCK: &[u8] = include_bytes!("image-lock.json");
+
+/// Digest of this build's compiled profile, which its bundles advertise.
+pub fn digest() -> Result<Sha256Digest> {
+    // The digest excludes host bindings, so these placeholders never matter.
+    let daemon = DaemonIdentity {
+        id: String::new(),
+        name: String::new(),
+        cli_version: String::new(),
+        server_version: String::new(),
+        api_version: String::new(),
+        kernel: String::new(),
+    };
+    let selection = Selection {
+        executable: "/".into(),
+        executable_sha256: String::new(),
+        socket: "/".into(),
+    };
+    Profile::freeze(selection, daemon)?.digest()
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -72,6 +91,18 @@ impl Profile {
         self.scenario.parameters.validate()?;
         Ok(())
     }
+    /// SHA-256 of every build-time field: version, recipe, image lock, helpers
+    /// and limits. The host's Docker selection and daemon identity are frozen
+    /// at daemon startup instead, so they are excluded.
+    pub fn digest(&self) -> Result<Sha256Digest> {
+        let mut value = serde_json::to_value(self)?;
+        let fields = value
+            .as_object_mut()
+            .ok_or_else(|| Error::Invalid("profile is not an object".into()))?;
+        fields.remove("selection");
+        fields.remove("daemon");
+        Ok(playtime_storage::sha256(&serde_json::to_vec(&value)?))
+    }
     pub fn config(&self) -> ControllerConfig {
         ControllerConfig {
             parameters: self.scenario.parameters.clone(),
@@ -112,6 +143,8 @@ mod tests {
         )
         .unwrap();
         profile.validate().unwrap();
+        // Host bindings never change the advertised build-time digest.
+        assert_eq!(profile.digest().unwrap(), digest().unwrap());
         for (pointer, replacement) in [
             ("/version", serde_json::json!(2)),
             ("/mode", serde_json::json!("simulation")),
@@ -140,6 +173,11 @@ mod tests {
             *bytes.pointer_mut(pointer).unwrap() = replacement;
             let changed: Profile = serde_json::from_value(bytes).unwrap();
             assert!(changed.validate().is_err(), "{pointer}");
+            assert_eq!(
+                changed.digest().unwrap() == profile.digest().unwrap(),
+                pointer.starts_with("/selection"),
+                "{pointer}"
+            );
         }
     }
 }

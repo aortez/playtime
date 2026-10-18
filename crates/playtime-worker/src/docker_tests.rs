@@ -76,9 +76,21 @@ impl Transport for Port {
                 return fake::lost(Fault::Deadline);
             }
             if self.case == FaultCase::CancelCapture {
+                // Export only after the stop is durable, so this capture
+                // completes after the controller decided to stop. An aborted
+                // capture loses the checkpoint.
                 self.cancellation.cancel();
-                cancel.cancelled().await;
-                return fake::lost(Fault::Cancelled);
+                let events = self.archive.join("events.jsonl");
+                while !std::fs::read(&events)
+                    .unwrap()
+                    .windows(14)
+                    .any(|w| w == b"\"stop_decided\"")
+                {
+                    if cancel.is_cancelled() {
+                        return fake::lost(Fault::Cancelled);
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
             }
         }
         if let Operation::Bridge { payload, .. } = &op {
@@ -322,11 +334,16 @@ fn ambiguous_tools_and_daemon_loss_never_dispatch_another_model_or_tool() {
 #[test]
 fn cancellation_during_tool_and_capture_retains_owner_until_bounded_cleanup() {
     for case in [FaultCase::CancelTool, FaultCase::CancelCapture] {
-        let (_temp, port, report) = execute(case, None);
-        assert_eq!(
-            report.result.unwrap().reason,
-            playtime_core::StopReason::Interrupted
-        );
+        let (temp, port, report) = execute(case, None);
+        let result = report.result.unwrap();
+        assert_eq!(result.reason, playtime_core::StopReason::Interrupted);
+        // Either cancel publishes session 1's interrupted checkpoint before
+        // cleanup removes its volume.
+        assert_eq!(result.last_checkpoint.unwrap().ordinal, 1);
+        let archive = ArchiveQueries::offline(temp.0.join("archive"), Default::default()).unwrap();
+        assert_eq!(archive.checkpoints().unwrap().len(), 1);
+        let raw = std::fs::read_to_string(temp.0.join("archive/events.jsonl")).unwrap();
+        assert!(raw.contains("\"interrupted\":true"));
         assert!(port.fake.state.lock().unwrap().containers.is_empty());
         assert!(port.fake.state.lock().unwrap().volumes.is_empty());
         assert_eq!(port.fake.journal.proposals.lock().unwrap().len(), 3);
