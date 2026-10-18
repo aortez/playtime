@@ -1,0 +1,9 @@
+{
+  "code": "unsupported_version",
+  "message": "Unsupported event schema version.",
+  "request_id": "request-fixture-1",
+  "details": {
+    "received": 2,
+    "supported": [1]
+  }
+}

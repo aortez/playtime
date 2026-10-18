@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "run_id": "run-two-session-fixture",
+  "worker": {
+    "executable": {
+      "path": "inputs/worker/executable.fixture",
+      "sha256": "7cc9ebbe17c501a3743d5cd5be4094cd2a111c2ba6dedbc5ba8aad6b6b38fd08",
+      "size_bytes": 45
+    },
+    "source": {
+      "path": "inputs/worker/source.fixture",
+      "sha256": "e07c579aa6de7435d03ecd2f4c196208d8a338e5ed8cba55c4b548aab7b2310b",
+      "size_bytes": 55
+    },
+    "cargo_lock": {
+      "path": "inputs/worker/Cargo.lock",
+      "sha256": "ca10abf593d4787bcba237554cc69e825ada382640e1cae2c0487d46d98a594e",
+      "size_bytes": 65
+    },
+    "build": {
+      "rustc_version": "rustc 1.94.1",
+      "target_triple": "x86_64-unknown-linux-gnu",
+      "cargo_profile": "fixture",
+      "source_revision": null,
+      "dirty": false
+    },
+    "platform": {
+      "os": "linux",
+      "architecture": "x86_64",
+      "abi": "gnu",
+      "requirements": [
+        "synthetic fixture; execution is unavailable"
+      ]
+    }
+  },
+  "configuration": {
+    "path": "inputs/configuration.json",
+    "sha256": "636f8f3c4dc8991c61083c0d9536c799413d2d4dbb1be52ddeb260264c05e059",
+    "size_bytes": 619
+  },
+  "initial_workspace": {
+    "path": "inputs/initial-workspace.fixture",
+    "sha256": "01d6ec877acd77c70d847be250832842c3aaa717a1084765ca0671af192e3107",
+    "size_bytes": 71
+  },
+  "files": [
+    {
+      "path": "inputs/prompt.txt",
+      "sha256": "294374119045ce94e41cc34f87028af5ac6b52e9ce8c82fbe52c0c68f536d5fd",
+      "size_bytes": 36
+    },
+    {
+      "path": "inputs/protocol.txt",
+      "sha256": "6e7c0c2a3a83a4143b8ce07d85ed6d5c38398e78fa04d6de88587a061a58b0f2",
+      "size_bytes": 66
+    },
+    {
+      "path": "inputs/tools.json",
+      "sha256": "b294a99049f150ba7c20993e4f09bc3fa4c4f7f81b4a7fc622f494110f8f9aec",
+      "size_bytes": 75
+    },
+    {
+      "path": "inputs/model.lock.json",
+      "sha256": "a30ceb089d65852ae752da77e4c30e86ce37baefb44fb520728206db14327034",
+      "size_bytes": 55
+    },
+    {
+      "path": "inputs/workshop.lock.json",
+      "sha256": "974ff60cda6e0a3b813fe929e04d23d9bc80fbd968a370db5501e938d30f42fa",
+      "size_bytes": 54
+    }
+  ]
+}

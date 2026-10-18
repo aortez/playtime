@@ -1,0 +1,7 @@
+{
+  "fixture_only": true,
+  "names": [
+    "exec",
+    "end_session"
+  ]
+}

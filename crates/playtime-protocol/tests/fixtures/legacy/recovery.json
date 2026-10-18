@@ -1,0 +1,96 @@
+{
+  "result": {
+    "stop_reason": "agent_finished",
+    "generated_tokens": 10,
+    "token_budget_charged": 110,
+    "unaccounted_token_reserve": 100,
+    "unaccounted_model_calls": 1,
+    "token_usage_complete": false,
+    "model_calls": 3,
+    "tool_parse_errors": 1
+  },
+  "requests": [
+    {
+      "call": 1,
+      "handoff": false,
+      "seed": 1042,
+      "num_predict": 100,
+      "message_count": 2,
+      "tools": [
+        "exec",
+        "read_file",
+        "write_file",
+        "end_session"
+      ]
+    },
+    {
+      "call": 2,
+      "handoff": true,
+      "seed": 1043,
+      "num_predict": 50,
+      "message_count": 5,
+      "tools": [
+        "end_session"
+      ]
+    },
+    {
+      "call": 3,
+      "handoff": false,
+      "seed": 1044,
+      "num_predict": 100,
+      "message_count": 2,
+      "tools": [
+        "exec",
+        "read_file",
+        "write_file",
+        "end_session"
+      ]
+    }
+  ],
+  "session_starts": [
+    {
+      "kind": "session_start",
+      "session": 1,
+      "memory": {
+        "content": "",
+        "status": "loaded"
+      }
+    },
+    {
+      "kind": "session_start",
+      "session": 2,
+      "memory": {
+        "content": "The project is in progress.",
+        "status": "loaded"
+      }
+    }
+  ],
+  "handoffs": [
+    {
+      "kind": "tool_request",
+      "session": 1,
+      "arguments": {
+        "finish_run": false,
+        "memento": "The project is in progress."
+      }
+    },
+    {
+      "kind": "tool_request",
+      "session": 2,
+      "arguments": {
+        "finish_run": true,
+        "memento": "The project is in progress."
+      }
+    }
+  ],
+  "model_errors": [
+    {
+      "kind": "model_error",
+      "reason": "tool_call_parse_error",
+      "recovery_allowed": true,
+      "token_budget_charge": 100,
+      "unaccounted_model_calls": 1,
+      "unaccounted_token_reserve": 100
+    }
+  ]
+}

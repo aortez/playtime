@@ -1,0 +1,271 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Playtime foundation contracts",
+    "version": "1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "BuildProvenance": {
+        "type": "object",
+        "required": [
+          "rustc_version",
+          "target_triple",
+          "cargo_profile",
+          "dirty"
+        ],
+        "properties": {
+          "cargo_profile": {
+            "type": "string"
+          },
+          "dirty": {
+            "type": "boolean"
+          },
+          "rustc_version": {
+            "type": "string"
+          },
+          "source_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_triple": {
+            "type": "string"
+          }
+        }
+      },
+      "ContentRef": {
+        "type": "object",
+        "description": "SHA-256 and length refer to exact stored bytes, without canonicalization.",
+        "required": [
+          "path",
+          "sha256",
+          "size_bytes"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "Clients may display errors with new codes and compatible additional fields.",
+        "required": [
+          "code",
+          "message",
+          "details"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable machine-readable code; do not branch on the readable message."
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional opaque correlation ID; an empty ID is invalid.",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          }
+        }
+      },
+      "EventEnvelope": {
+        "type": "object",
+        "description": "Raw wire data. Use decode_event() before interpreting its version or payload.",
+        "required": [
+          "schema_version",
+          "run_id",
+          "sequence",
+          "time",
+          "kind",
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": [
+              "object",
+              "array",
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "InputManifest": {
+        "type": "object",
+        "description": "Raw frozen-input DTO; use decode_input_manifest() for structural validation.\nThe stored manifest's own hash is held outside this file.",
+        "required": [
+          "schema_version",
+          "run_id",
+          "worker",
+          "configuration",
+          "initial_workspace",
+          "files"
+        ],
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ContentRef"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentRef"
+            },
+            "description": "Prompts, tool definitions, seed materials, and model/workshop identities."
+          },
+          "initial_workspace": {
+            "$ref": "#/components/schemas/ContentRef"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "worker": {
+            "$ref": "#/components/schemas/WorkerIdentity"
+          }
+        }
+      },
+      "PlatformRequirements": {
+        "type": "object",
+        "description": "Recorded requirements are verified on the executing host by the worker route.",
+        "required": [
+          "os",
+          "architecture",
+          "abi",
+          "requirements"
+        ],
+        "properties": {
+          "abi": {
+            "type": "string"
+          },
+          "architecture": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string"
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UsageSummary": {
+        "type": "object",
+        "description": "A read model of accounting outcomes, never an admission/config input.",
+        "required": [
+          "known_generated_tokens",
+          "unknown_reserved_tokens",
+          "unknown_requests",
+          "budget_charged_tokens",
+          "usage_complete"
+        ],
+        "properties": {
+          "budget_charged_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "known_generated_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unknown_requests": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unknown_reserved_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "usage_complete": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WorkerIdentity": {
+        "type": "object",
+        "description": "Repeat identity belongs to the experimental worker, independently of viewers.",
+        "required": [
+          "executable",
+          "source",
+          "cargo_lock",
+          "build",
+          "platform"
+        ],
+        "properties": {
+          "build": {
+            "$ref": "#/components/schemas/BuildProvenance"
+          },
+          "cargo_lock": {
+            "$ref": "#/components/schemas/ContentRef"
+          },
+          "executable": {
+            "$ref": "#/components/schemas/ContentRef"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/PlatformRequirements"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ContentRef"
+          }
+        }
+      }
+    }
+  }
+}

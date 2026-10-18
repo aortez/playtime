@@ -197,3 +197,15 @@ PLAYTIME_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 
 The second command includes Docker integration checks. Use `smoke --live` with
 a recipe when checking the real model's tool use and handoff behavior.
+
+The Rust foundation contains `playtime-core` and `playtime-protocol` library
+crates with typed contracts and synthetic fixtures. The Python command remains
+the runnable implementation. See the [architecture decision](docs/rust-foundation.md)
+and [compatibility matrix](docs/rust-compatibility.md) for scope and remaining work.
+With rustup installed, Cargo selects the pinned toolchain:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```

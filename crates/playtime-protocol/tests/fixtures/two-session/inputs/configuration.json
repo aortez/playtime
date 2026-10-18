@@ -1,0 +1,27 @@
+{
+  "sampling_seed": 0,
+  "memory_condition": "self_plus_evidence",
+  "limits": {
+    "sessions": 3,
+    "work_turns_per_session": 1,
+    "wall_seconds": 300,
+    "generated_tokens": 1000,
+    "tokens_per_call": 100,
+    "handoff_tokens": 50,
+    "context_tokens": 32768,
+    "model_seconds": 30,
+    "command_seconds": 5,
+    "output_bytes": 16384,
+    "memento_bytes": 8192,
+    "log_bytes": 1048576,
+    "tool_parse_retries": 2,
+    "tool_parse_error_limit": 8
+  },
+  "workshop": {
+    "cpu_cores": 1.0,
+    "memory_bytes": 536870912,
+    "workspace_bytes": 67108864,
+    "tmp_bytes": 67108864,
+    "pids": 64
+  }
+}

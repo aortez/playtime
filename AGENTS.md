@@ -10,6 +10,19 @@ workshop. Keep the controller independent of third-party Python packages.
 - `models/` and `environments/`: small identity lock files; commit these.
 - `.playtime/` and `runs/`: local image archives and run records; never commit.
 
+The Rust foundation is a root Cargo workspace under `crates/`. Keep
+`playtime-core` independent of I/O, async runtimes, HTTP, databases, and UI;
+`playtime-protocol` owns wire types and serialization/schema dependencies.
+Retain the Python launcher during migration. Commit `Cargo.lock`; ignore
+`target/`. Validate Rust changes with `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`, and
+`cargo test --workspace --locked`, plus the Python suite below. See
+`docs/rust-foundation.md` and `docs/rust-compatibility.md` for the scope, pinned
+baseline, versioning rules, and synthetic fixture provenance. Keep runtime,
+service, database, and GUI dependencies in their later owning crates. Changing
+behavioral or schema goldens requires reviewing the contract difference; do not
+automatically regenerate them just to make a test pass.
+
 Use `python3 -m unittest discover -s tests -v` for controller tests. Use
 `PLAYTIME_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v` when changing
 the Docker integration or workspace limits. `./playtime smoke

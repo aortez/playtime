@@ -1,0 +1,1 @@
+Synthetic observations from session 2: a command exited with code 0.

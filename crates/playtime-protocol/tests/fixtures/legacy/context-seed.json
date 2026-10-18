@@ -1,0 +1,10 @@
+{
+  "request_seeds": [
+    2147483647,
+    0
+  ],
+  "context_guard": "context_guard",
+  "calls_after_rejection": 2,
+  "same_context_basis": "server_usage_plus_new_bytes",
+  "fresh_context_basis": "input_bytes"
+}
