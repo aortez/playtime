@@ -217,6 +217,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
+The independent [backend ownership guard](docs/rust-backend-guard.md) has a CPU
+subprocess/crash gate, `./scripts/test-rust-backend-guard.sh`. It fences requests
+and preserves uncertainty using private durable state; production Ollama host
+enforcement and worker integration remain separate work.
+
 Run the two-session simulation without Docker, Ollama, or wall-clock sleeps:
 
 ```sh

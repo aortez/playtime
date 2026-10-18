@@ -29,6 +29,12 @@ Its demo must explicitly capture the actual executing image through `/proc/self/
 preparation accepts an explicit worker bundle. Latest-receipt observers never
 promote a discovered marker or wait on filesystem work.
 Retain the Python launcher during migration.
+`playtime-backend-guard` owns private backend-host leases, durable dispatch fencing
+and independent stop servicing. Keep its journal outside experiment archives and
+retain replay tombstones. Wire observations are not held termination authority.
+See `docs/rust-backend-guard.md`; run `./scripts/test-rust-backend-guard.sh` for
+guard changes. Its owned-child CPU gate does not establish production host access
+control, Ollama ownership or real systemd enforcement.
 `playtime-docker` owns bounded native Docker transport and the owned sandbox.
 Keep Docker/process dependencies outside core/engine. Preserve precommitted
 resource ownership, exact identity checks, absolute timers, uncertain-exec fencing

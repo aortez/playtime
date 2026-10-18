@@ -3320,6 +3320,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "playtime-backend-guard"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "getrandom 0.4.3",
+ "playtime-core",
+ "playtime-local",
+ "playtime-protocol",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "playtime-cli"
 version = "0.1.0"
 dependencies = [
