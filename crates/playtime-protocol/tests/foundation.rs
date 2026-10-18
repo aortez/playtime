@@ -453,18 +453,18 @@ fn docker_requires_the_exact_advertised_profile_and_older_bundles_stay_readable(
         ..Capabilities::current()
     };
     assert!(current.supported());
-    assert!(current.implements_docker(&profile));
-    assert!(!current.implements_docker(&Sha256Digest::new("b".repeat(64)).unwrap()));
-    for changed in [
-        Capabilities {
-            real_model: true,
-            ..current.clone()
-        },
-        Capabilities {
-            real_workshop: false,
-            ..current
-        },
-    ] {
-        assert!(!changed.implements_docker(&profile));
-    }
+    assert!(current.implements_docker(&profile) && current.implements_live(&profile));
+    let other = Sha256Digest::new("b".repeat(64)).unwrap();
+    assert!(!current.implements_docker(&other) && !current.implements_live(&other));
+    let scripted_only = Capabilities {
+        real_model: false,
+        ..current.clone()
+    };
+    assert!(scripted_only.supported());
+    assert!(scripted_only.implements_docker(&profile) && !scripted_only.implements_live(&profile));
+    let no_workshop = Capabilities {
+        real_workshop: false,
+        ..current
+    };
+    assert!(!no_workshop.implements_docker(&profile) && !no_workshop.implements_live(&profile));
 }

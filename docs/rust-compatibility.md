@@ -101,3 +101,18 @@ stop the run, and every failed request still charges its full allowance as
 unknown usage. No golden files changed, and older runs that stopped with
 `tool_parse_error_limit` still decode. See
 [the controller notes](rust-controller.md).
+
+### Live model profile v1
+
+New bundles also advertise `real_model`. `docker_profile` now digests both
+compiled profile templates, scripted and live, so a bundle from before this
+change can't run either through a new daemon. `implements_docker` no longer
+requires the absence of `real_model`; live runs also need it. The worker kind
+`docker_live` and run mode `live_smoke` are new. Scripted Docker archives are
+unchanged. See [live model](rust-live-model.md).
+
+Reviewed golden change: the HTTP `openapi.json` gains a `Contention` schema and an
+optional `contention` property on `RunView`, its only difference. A run without
+live timing omits the field, so recorded responses and the other goldens are
+unchanged. The flags come from the live worker's per-request timing chunks,
+which use the existing `model_chunk` observation.

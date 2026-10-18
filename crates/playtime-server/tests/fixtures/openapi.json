@@ -691,6 +691,39 @@
         ],
         "type": "object"
       },
+      "Contention": {
+        "description": "Signs that something else used the model host during a live run. Advisory\nonly: it never fails a run.",
+        "properties": {
+          "delays": {
+            "description": "Requests whose observed latency exceeded the server's total by over two\nseconds and half again.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "possible": {
+            "type": "boolean"
+          },
+          "reloads": {
+            "description": "Requests after the first whose model load took over a second.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timed_requests": {
+            "description": "Model requests with recorded timing.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "timed_requests",
+          "reloads",
+          "delays",
+          "possible"
+        ],
+        "type": "object"
+      },
       "Enforcement": {
         "enum": [
           "requested",
@@ -1294,6 +1327,17 @@
                 "cleanup": {
                   "$ref": "#/components/schemas/Cleanup"
                 },
+                "contention": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Contention",
+                      "description": "Missing means the run recorded no live request timing."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "controller_phase": {
                   "oneOf": [
                     {
@@ -1775,6 +1819,17 @@
           },
           "cleanup": {
             "$ref": "#/components/schemas/Cleanup"
+          },
+          "contention": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Contention",
+                "description": "Missing means the run recorded no live request timing."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "controller_phase": {
             "oneOf": [

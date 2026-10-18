@@ -12,6 +12,7 @@ playtime-core.workspace = true
 playtime-protocol.workspace = true
 playtime-runner.workspace = true
 playtime-engine.workspace = true
+playtime-ollama.workspace = true
 playtime-storage.workspace = true
 playtime-worker-control.workspace = true
 serde.workspace = true
@@ -19,6 +20,9 @@ serde_json.workspace = true
 rustix = { workspace = true, features = ["process", "time"] }
 tokio = { workspace = true, features = ["signal"] }
 time.workspace = true
+
+[dev-dependencies]
+futures-util.workspace = true
 
 [lints]
 workspace = true

@@ -292,6 +292,9 @@ pub struct RunView {
     pub worker: Option<WorkerIdentity>,
     pub last_confirmed_frontier: Option<Frontier>,
     pub event_anchors: Option<EventAnchors>,
+    /// Missing means the run recorded no live request timing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contention: Option<Contention>,
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 pub struct EventAnchors {
@@ -300,6 +303,19 @@ pub struct EventAnchors {
     pub live_cursor: String,
 }
 
+/// Signs that something else used the model host during a live run. Advisory
+/// only: it never fails a run.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
+pub struct Contention {
+    /// Model requests with recorded timing.
+    pub timed_requests: u64,
+    /// Requests after the first whose model load took over a second.
+    pub reloads: u64,
+    /// Requests whose observed latency exceeded the server's total by over two
+    /// seconds and half again.
+    pub delays: u64,
+    pub possible: bool,
+}
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 pub struct AccountingCoverage {
     pub schema_version: u32,

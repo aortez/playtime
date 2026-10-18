@@ -6,9 +6,18 @@ use playtime_docker::{
     capture::{ArchiveUsage, CaptureProfile, SnapshotCandidate},
     transport::Cli,
 };
-use playtime_engine::{Effect, EffectKind, FileInfo, Input, Memory, Outcome, ToolPolicy};
+use playtime_engine::{
+    Effect, EffectKind, FileInfo, Input, Memory, ModelFailure, ModelRequest, Outcome, ToolPolicy,
+};
+use playtime_ollama::{
+    Adapter, ChatResult, EffectiveSettings, Endpoint, FailureKind, HttpResponse, ModelLock,
+    NativeTransport, Observation, ObservationKind, Request, Resolution, Transport, Trust,
+};
 use playtime_protocol::worker::Binding;
-use playtime_runner::{CheckpointBytes, Effects, Error, Result, docker::Profile};
+use playtime_runner::{
+    CheckpointBytes, Effects, Error, Result,
+    docker::{LiveModel, Profile},
+};
 use playtime_storage::CommittedFrontier;
 use playtime_worker_control::{Bootstrap, boot_ms, write_once};
 use serde::Serialize;
@@ -88,9 +97,143 @@ struct Actor {
     profile: Profile,
     memory: Memory,
     journal: Arc<Journal>,
-    models: VecDeque<playtime_engine::simulation::ModelScript>,
-    calls: u64,
+    model: Model,
+    chunks: mpsc::Sender<(u64, serde_json::Value)>,
     private: PathBuf,
+}
+/// Scripted responses for the CPU and CI gates, or the live locked model.
+enum Model {
+    Scripted(VecDeque<playtime_engine::simulation::ModelScript>),
+    Live(Box<Live>),
+}
+/// The live transport; CPU tests replace the native one.
+struct Port(Box<dyn Transport>);
+#[async_trait::async_trait]
+impl Transport for Port {
+    async fn send(&self, request: Request) -> playtime_ollama::Result<HttpResponse> {
+        self.0.send(request).await
+    }
+}
+struct Live {
+    adapter: Adapter<Port>,
+    settings: EffectiveSettings,
+    limits: playtime_ollama::Limits,
+}
+impl Live {
+    fn prepare(model: &LiveModel) -> crate::Result<Self> {
+        // The static worker can't resolve mDNS names, so it connects only to
+        // the addresses the daemon resolved and froze. It has no TLS: the
+        // endpoint is plain HTTP and the trust setting is unused.
+        let transport = NativeTransport::with_resolution(
+            Endpoint::parse(&model.host.endpoint).map_err(invalid)?,
+            Trust::BundledWebPki,
+            Resolution::Pinned {
+                addresses: model.host.addresses.clone(),
+            },
+            &playtime_ollama::Limits::default(),
+        )
+        .map_err(invalid)?;
+        Self::with_transport(Box::new(transport), model)
+    }
+    fn with_transport(transport: Box<dyn Transport>, model: &LiveModel) -> crate::Result<Self> {
+        let limits = playtime_ollama::Limits::default();
+        let lock = ModelLock::parse(&serde_json::to_vec(&model.lock)?).map_err(invalid)?;
+        Ok(Self {
+            adapter: Adapter::new(Port(transport), lock, limits.clone()).map_err(invalid)?,
+            settings: serde_json::from_value(model.settings.clone())?,
+            limits,
+        })
+    }
+    /// Each raw record becomes a chunk while the request runs, so partial
+    /// output is visible live and stays recorded if the request fails. A final
+    /// timing chunk records the latency seen here and the server's durations.
+    async fn chat(
+        &mut self,
+        id: u64,
+        request: &ModelRequest,
+        deadline: Instant,
+        cancel: &CancellationToken,
+        chunks: &mpsc::Sender<(u64, serde_json::Value)>,
+    ) -> Result<Outcome> {
+        let (sender, mut receiver) = playtime_ollama::observations(&self.limits)
+            .map_err(|e| Error::Invalid(e.to_string()))?;
+        let started = std::time::Instant::now();
+        let mut terminal = None;
+        let result = {
+            let chat = self
+                .adapter
+                .chat(request, &self.settings, deadline, cancel, &sender);
+            tokio::pin!(chat);
+            loop {
+                tokio::select! {
+                    result = &mut chat => break result,
+                    Some(observation) = receiver.recv() => {
+                        terminal = forward(id, observation, chunks).or(terminal);
+                    }
+                }
+            }
+        };
+        let observed_ms = started.elapsed().as_millis() as u64;
+        while let Some(observation) = receiver.try_recv() {
+            terminal = forward(id, observation, chunks).or(terminal);
+        }
+        let mut timing = serde_json::json!({"observation": "timing", "observed_ms": observed_ms});
+        for key in [
+            "load_duration",
+            "prompt_eval_duration",
+            "eval_duration",
+            "total_duration",
+        ] {
+            if let Some(ns) = terminal.as_ref().and_then(|t| t[key].as_u64()) {
+                timing[key] = ns.into();
+            }
+        }
+        let _ = chunks.send((id, timing));
+        Ok(outcome(result))
+    }
+}
+fn invalid(_: playtime_ollama::Failure) -> crate::Error {
+    crate::Error::Invalid("invalid frozen live model configuration")
+}
+/// Returns the forwarded record when it is the request's terminal record.
+fn forward(
+    id: u64,
+    observation: Observation,
+    chunks: &mpsc::Sender<(u64, serde_json::Value)>,
+) -> Option<serde_json::Value> {
+    let text = || String::from_utf8_lossy(&observation.bytes).into_owned();
+    let chunk = match &observation.kind {
+        ObservationKind::NativeChunk => serde_json::from_slice(&observation.bytes)
+            .unwrap_or_else(|_| serde_json::json!({"observation": "native_chunk", "text": text()})),
+        ObservationKind::HttpError { status, truncated } => serde_json::json!({
+            "observation": "http_error", "status": status, "truncated": truncated, "text": text()}),
+        ObservationKind::ProtocolFragment => {
+            serde_json::json!({"observation": "protocol_fragment", "text": text()})
+        }
+    };
+    let terminal = (chunk["done"] == true).then(|| chunk.clone());
+    // A retired effect owner discards chunks; nothing is lost while it drains.
+    let _ = chunks.send((id, chunk));
+    terminal
+}
+/// No retry here: only a tool-parse failure lets the controller ask again.
+fn outcome(result: ChatResult) -> Outcome {
+    match result.outcome {
+        Ok(response) => Outcome::Model(response),
+        Err(failure) => Outcome::ModelError(match failure.kind {
+            FailureKind::BackendToolParse => ModelFailure::Parse(failure.detail),
+            FailureKind::Timeout => ModelFailure::Timeout(failure.detail),
+            FailureKind::MissingUsage => ModelFailure::MissingUsage(failure.detail),
+            FailureKind::ByteLimit => ModelFailure::ByteLimit(failure.detail),
+            FailureKind::Incomplete | FailureKind::Protocol => {
+                ModelFailure::Incomplete(failure.detail)
+            }
+            FailureKind::Http | FailureKind::Transport => ModelFailure::Connection(failure.detail),
+            FailureKind::Identity | FailureKind::Request | FailureKind::Cancelled => {
+                ModelFailure::Infrastructure(failure.detail)
+            }
+        }),
+    }
 }
 impl Actor {
     async fn execute(&mut self, task: &Task) -> Result<(Outcome, Option<SnapshotCandidate>)> {
@@ -110,6 +253,13 @@ impl Actor {
         let map = |e: playtime_docker::Error| Error::Uncertain(e.to_string());
         let outcome = match &effect.kind {
             EffectKind::StartSession { ordinal, .. } => {
+                // A changed model stops the run before this session dispatches.
+                if let Model::Live(live) = &mut self.model {
+                    live.adapter
+                        .inspect(false, deadline, &cancel)
+                        .await
+                        .map_err(|e| Error::Invalid(format!("live model identity: {e}")))?;
+                }
                 if *ordinal == 1 {
                     self.sandbox
                         .initialize(deadline, cancel.clone())
@@ -122,37 +272,26 @@ impl Actor {
                     .map_err(map)?;
                 Outcome::Started(self.memory.clone())
             }
-            EffectKind::Model(request) => {
-                self.calls += 1;
-                if self.calls == 4
-                    && (request.messages.len() != 2
-                        || request
-                            .messages
-                            .iter()
-                            .any(|m| matches!(m["role"].as_str(), Some("assistant" | "tool")))
-                        || !request.messages.iter().any(|m| {
-                            m["content"]
-                                .as_str()
-                                .is_some_and(|text| text.contains(&self.memory.content))
-                        }))
-                {
-                    return Err(Error::Invalid(
-                        "second session did not receive a fresh conversation and actual memento"
-                            .into(),
-                    ));
+            EffectKind::Model(request) => match &mut self.model {
+                Model::Scripted(models) => {
+                    let model = models
+                        .pop_front()
+                        .ok_or_else(|| Error::Invalid("frozen model responses exhausted".into()))?;
+                    let response = model
+                        .completion
+                        .ok_or_else(|| Error::Invalid("missing scripted completion".into()))?;
+                    match response.outcome {
+                        playtime_engine::simulation::ModelEnding::Response(r) => Outcome::Model(r),
+                        playtime_engine::simulation::ModelEnding::Error(e) => {
+                            Outcome::ModelError(e)
+                        }
+                    }
                 }
-                let model = self
-                    .models
-                    .pop_front()
-                    .ok_or_else(|| Error::Invalid("frozen model responses exhausted".into()))?;
-                let response = model
-                    .completion
-                    .ok_or_else(|| Error::Invalid("missing scripted completion".into()))?;
-                match response.outcome {
-                    playtime_engine::simulation::ModelEnding::Response(r) => Outcome::Model(r),
-                    playtime_engine::simulation::ModelEnding::Error(e) => Outcome::ModelError(e),
+                Model::Live(live) => {
+                    live.chat(effect.id, request, deadline, &cancel, &self.chunks)
+                        .await?
                 }
-            }
+            },
             EffectKind::Tool(request) => {
                 let a = &request.arguments;
                 let string = |key: &str| {
@@ -317,13 +456,15 @@ fn capture_profile(profile: &Profile, confirmed: &CommittedFrontier) -> Result<C
 }
 
 pub(crate) struct NativeEffects {
-    prepared: Option<(ReadyImage, Ownership, Arc<Journal>, PathBuf)>,
+    prepared: Option<(ReadyImage, Ownership, Arc<Journal>, PathBuf, Model)>,
     profile: Profile,
     sender: Option<mpsc::SyncSender<Task>>,
     receiver: Option<mpsc::Receiver<Reply>>,
+    chunks: Option<mpsc::Receiver<(u64, serde_json::Value)>>,
     active: Option<(u64, CancellationToken, bool)>,
     retiring: bool,
-    input: Option<(u64, Input)>,
+    /// Streamed chunks, then the effect's completion.
+    inputs: VecDeque<(u64, Input)>,
     candidate: Option<SnapshotCandidate>,
 }
 impl NativeEffects {
@@ -377,14 +518,19 @@ impl NativeEffects {
             intent: Mutex::new(None),
             slot: Arc::new(tokio::sync::Semaphore::new(1)),
         });
+        let model = match &profile.model {
+            None => Model::Scripted(profile.scenario.models.clone().into()),
+            Some(model) => Model::Live(Box::new(Live::prepare(model)?)),
+        };
         Ok(Self {
-            prepared: Some((ready, owner, journal, bootstrap.private_dir.clone())),
+            prepared: Some((ready, owner, journal, bootstrap.private_dir.clone(), model)),
             profile,
             sender: None,
             receiver: None,
+            chunks: None,
             active: None,
             retiring: false,
-            input: None,
+            inputs: VecDeque::new(),
             candidate: None,
         })
     }
@@ -396,7 +542,7 @@ impl Effects for NativeEffects {
         }
     }
     fn begin(&mut self, started_ms: u64) -> Result<()> {
-        let (ready, owner, journal, private) = self
+        let (ready, owner, journal, private, model) = self
             .prepared
             .take()
             .ok_or_else(|| Error::Invalid("native owner already begun".into()))?;
@@ -416,6 +562,8 @@ impl Effects for NativeEffects {
             journal.clone(),
         )
         .map_err(|e| Error::Invalid(e.to_string()))?;
+        // Unbounded here, but each request's adapter limits bound its records.
+        let (chunk_sender, chunks) = mpsc::channel();
         let mut actor = Actor {
             sandbox,
             profile: self.profile.clone(),
@@ -424,8 +572,8 @@ impl Effects for NativeEffects {
                 content: String::new(),
             },
             journal,
-            models: self.profile.scenario.models.clone().into(),
-            calls: 0,
+            model,
+            chunks: chunk_sender,
             private,
         };
         let (sender, tasks) = mpsc::sync_channel::<Task>(1);
@@ -454,6 +602,7 @@ impl Effects for NativeEffects {
         });
         self.sender = Some(sender);
         self.receiver = Some(receiver);
+        self.chunks = Some(chunks);
         Ok(())
     }
     fn poll(&mut self, now: u64) {
@@ -461,11 +610,20 @@ impl Effects for NativeEffects {
             return;
         }
         let result = self.receiver.as_ref().expect("begun").try_recv();
+        // Drain after checking for the reply: every chunk the actor sent before
+        // replying is then queued ahead of the completion.
+        let id = self.active.as_ref().unwrap().0;
+        while let Ok((effect_id, chunk)) = self.chunks.as_ref().expect("begun").try_recv() {
+            if !self.retiring && effect_id == id {
+                self.inputs
+                    .push_back((now, Input::Chunk { effect_id, chunk }));
+            }
+        }
         let reply = match result {
             Ok(r) => r,
             Err(mpsc::TryRecvError::Empty) => return,
             Err(mpsc::TryRecvError::Disconnected) => Reply {
-                id: self.active.as_ref().unwrap().0,
+                id,
                 outcome: Outcome::Failed(
                     "native effect owner lost; resources remain reserved".into(),
                 ),
@@ -477,7 +635,7 @@ impl Effects for NativeEffects {
             if let Some(candidate) = reply.candidate {
                 self.candidate = Some(candidate);
             }
-            self.input = Some((
+            self.inputs.push_back((
                 now,
                 Input::Complete {
                     effect_id: reply.id,
@@ -489,7 +647,7 @@ impl Effects for NativeEffects {
     }
     fn active(&self) -> Option<u64> {
         self.active.as_ref().map(|v| v.0).or_else(|| {
-            self.input.as_ref().and_then(|(_, i)| {
+            self.inputs.iter().find_map(|(_, i)| {
                 if let Input::Complete { effect_id, .. } = i {
                     Some(*effect_id)
                 } else {
@@ -499,13 +657,13 @@ impl Effects for NativeEffects {
         })
     }
     fn next_input_ms(&self) -> Option<u64> {
-        self.input.as_ref().map(|v| v.0)
+        self.inputs.front().map(|v| v.0)
     }
     fn pop_input(&mut self) -> Option<(u64, Input)> {
-        self.input.take()
+        self.inputs.pop_front()
     }
     fn cancel(&mut self) {
-        self.input = None;
+        self.inputs.clear();
         if let Some((_, cancel, _)) = &self.active {
             self.retiring = true;
             cancel.cancel();

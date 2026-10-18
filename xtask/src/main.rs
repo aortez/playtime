@@ -196,7 +196,8 @@ fn build(root: &Path, destination: &Path) -> Result<()> {
         requirements: vec![
             "Linux /proc and durable local filesystem; executable service-private filesystem"
                 .into(),
-            "CPU-only controller simulation; no real model/workshop adapters".into(),
+            "Controller simulation, the locked Docker workshop, and the locked model over plain HTTP"
+                .into(),
         ],
     };
     let descriptor = BundleDescriptor {

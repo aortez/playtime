@@ -223,6 +223,7 @@ impl Run {
             worker: None,
             last_confirmed_frontier: None,
             event_anchors: None,
+            contention: None,
         };
         Self {
             view,

@@ -184,7 +184,7 @@ pub fn prepare_docker_with_inputs(
         extra,
         false,
         &profile.scenario,
-        RunMode::ScriptedSmoke,
+        profile.mode,
         profile.config().initial_workspace,
         crate::docker::Profile::initial_bytes(),
         profile.storage.clone(),

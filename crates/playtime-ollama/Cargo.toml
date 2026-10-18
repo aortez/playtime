@@ -5,6 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = ["tls"]
+# HTTPS endpoints. The static packaged worker reaches its LAN backend over plain
+# HTTP and builds without this, so it needs no C crypto toolchain.
+tls = ["reqwest/rustls", "dep:rustls", "dep:webpki-roots"]
+
 [dependencies]
 playtime-core.workspace = true
 playtime-engine.workspace = true
@@ -14,9 +20,9 @@ ryu = "=1.0.23"
 sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-reqwest = { workspace = true, features = ["rustls"] }
-rustls = { version = "=0.23.46", default-features = false, features = ["std", "aws_lc_rs", "tls12"] }
-webpki-roots = "=1.0.9"
+reqwest.workspace = true
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "aws_lc_rs", "tls12"], optional = true }
+webpki-roots = { version = "=1.0.9", optional = true }
 async-trait.workspace = true
 futures-util.workspace = true
 

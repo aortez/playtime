@@ -159,6 +159,9 @@ Run-and-view has a 540-second bound after explicit build/preparation. It uses th
 actual user-systemd supervisor, real Docker and the existing native client/CLI/UI.
 It verifies exactly 160 known and zero unknown tokens, two checkpoints, transcript,
 actual bridge timeout, memory, all artifact downloads and source-map byte hashes.
+It also checks, from archived records, that session two's first request is a new
+conversation carrying the delivered memento. That check used to be fixture logic
+inside the production effect owner.
 The deterministic PNG is 102 bytes with SHA-256
 `20647f03edd42b248b8e05de3ca738bd1a1bb1cdc59b101126be8d35d63dd9e1`.
 The workbench attaches while the run is active, disconnects, then reopens after

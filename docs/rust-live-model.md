@@ -1,0 +1,103 @@
+# Live model, called directly (#72)
+
+The `live-two-session` catalog recipe runs the same packaged worker, controller,
+writer and Docker workshop as [run-and-view](rust-docker-run-and-view.md). Its
+model requests go to the locked `gpt-oss:20b` through the `playtime-ollama`
+adapter (#61), directly over plain HTTP. Scripted mode stays the CPU and CI path.
+Host enforcement and the guarded composition (#67, #68 as written, #70) are not
+part of the MVP; only the owner and Playtime use the model host.
+
+## Run it
+
+```sh
+target/debug/playtimed --root /absolute/service-root --bundle /absolute/new-bundle \
+  --docker-scripted --ollama-endpoint http://oldman-bird.local:11434
+target/debug/playtime --connection-file /absolute/service-root/.playtime/connection.json \
+  run live-two-session --mode live_smoke --idempotency-key my-retained-key --wait
+```
+
+The workbench offers the same recipe. `--ollama-endpoint` needs
+`--docker-scripted`, a plain `http://` URL with a host name, and
+`XDG_RUNTIME_DIR`.
+
+## Endpoint, identity and the live-run lock
+
+- **Endpoint.** The static musl worker can't resolve mDNS names such as
+  `oldman-bird.local`. The daemon resolves the endpoint at startup and freezes the
+  addresses (IPv4, or IPv6 other than link-local) into the profile. The worker
+  connects only to those addresses through `Resolution::Pinned`; the host name
+  stays in the URL and `Host` header. Each admission resolves again and refuses
+  if the addresses changed: restart the daemon between runs after the host moves.
+  No address is ever hard-coded.
+- **Identity.** The profile freezes the exact model lock, a copy of
+  `models/gpt-oss-20b.lock.json` tied to it by a unit test. The daemon inspects
+  the model at startup and at each admission, and the worker inspects it at each
+  session start. A mismatch refuses the admission or stops the run before the
+  session's first request. Inspection is read-only metadata (version, tags,
+  show); nothing on the model host changes.
+- **Live-run lock.** Every checkout's daemon and worker share
+  `$XDG_RUNTIME_DIR/playtime/live-model.lock`. The worker takes it before any
+  Docker or model work and holds it, close-on-exec, for its whole lifetime;
+  without it the worker fails before Begin. The daemon try-locks at admission
+  and releases at once, so a second live admission from any checkout gets
+  `run_busy` before a worker starts.
+
+The worker build has no TLS: `playtime-ollama`'s `tls` feature is on by default
+but off for the packaged worker and the daemon, so the static build needs no C
+crypto toolchain. HTTPS endpoints are refused without it.
+
+## Requests and results
+
+Request settings are frozen with the profile: context 32,768, `think: "low"`,
+seed 1042 (advanced per request by the controller), temperature 0.8, top-p 0.95,
+top-k 40, repeat penalty 1.0 and `keep_alive: "5m"`. Each native record streams
+to the controller as a chunk while the request runs, so the workbench shows
+partial thinking and content live, and a failed request keeps what arrived.
+
+The existing rules hold. Nothing retries after a possible dispatch, and only a
+tool-parse failure lets the controller ask again. An incomplete stream or a
+transport, HTTP, timeout or byte-limit failure stops the run with its own reason.
+Usage stays unknown unless the terminal record reports it, and the full request
+cap is charged then.
+
+## Profile and capabilities
+
+The live profile is `docker_live_no_seed_self_v1`, worker kind `docker_live`, run
+mode `live_smoke`. It reuses the scripted profile's workshop, capture and storage
+limits. Its smoke limits follow #68's draft (two sessions, six turns per session,
+120 work seconds, 4,096 tokens, 512 per request, 256 per handoff, 30-second model
+and five-second command caps, 4,096 output bytes, 2,048 memento bytes, 8 MiB
+log), with two differences:
+
+- `tool_parse_retries = 2`. With none, about half of all smokes would fail at the
+  observed 6.4% parse-error rate per request.
+- Context 32,768 instead of 8,192. The controller's context guard always reserves
+  8,192 tokens plus the handoff cap and output bytes before each request, so an
+  8,192-token context would hand off before any work. The scripted profile uses
+  32,768 for the same reason.
+
+New bundles advertise `real_model` and a `docker_profile` digest covering both
+compiled profile templates. A live admission needs both; a bundle without
+`real_model` still runs scripted Docker and simulation. Older bundles reject the
+live worker kind.
+
+## Evidence
+
+```sh
+./scripts/test-rust-service-e2e.sh --case run-and-view --backend live
+```
+
+The live gate refuses to start while any Playtime worker unit is active. It
+launches one run from the CLI, closes and reopens the workbench while it runs, and
+checks that another daemon root gets `run_busy` while the worker holds the lock.
+It then requires agent completion, two checkpoints, `result.txt` containing
+`persistence-ok`, a 32×32 PNG, non-empty mementos, a fresh second conversation
+that carries the delivered memento, a copied archive, and exact Docker cleanup.
+Finally it launches the same recipe from the workbench and records that run's
+outcome. Failed attempts are kept as records; the gate never loops. Set
+`PLAYTIME_LIVE_ENDPOINT` to use another endpoint.
+
+CPU tests drive the live port through a fake transport and the real controller
+and writer. They cover identity checks before each session, archived raw chunks,
+an identity change that stops the run before another request, and a cut stream
+that keeps partial output while usage stays unknown.

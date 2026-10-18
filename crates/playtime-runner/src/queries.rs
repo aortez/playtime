@@ -123,10 +123,21 @@ impl ArchiveQueries {
             frontier: self.snapshot.frontier().clone(),
             incomplete_evidence: inspection.incomplete_evidence,
             uncommitted_event_bytes: inspection.uncommitted_event_bytes,
+            contention: None,
         };
         let mut unsettled = BTreeMap::new();
+        let mut timings = Vec::new();
         self.visit(|entry| {
             match &entry.fact {
+                // The live worker's own timing chunk follows each request's records.
+                ArchiveFact::Observation {
+                    record: Some(record),
+                    ..
+                } if record.kind == "model_chunk"
+                    && record.data["chunk"]["observation"] == "timing" =>
+                {
+                    timings.push(record.data["chunk"].clone());
+                }
                 ArchiveFact::Control {
                     event: BridgeEvent::EffectIntent(intent),
                 } if intent.effect_kind == "model" => {
@@ -168,6 +179,7 @@ impl ArchiveQueries {
             Ok(())
         })?;
         run.unsettled_model_intents = unsettled.into_values().collect();
+        run.contention = contention(&timings);
         Ok(run)
     }
 
@@ -257,5 +269,68 @@ impl ArchiveQueries {
             }
             after = page.next_after_sequence;
         }
+    }
+}
+
+/// Possible contention in live request timing: a model reload after the first
+/// request, or a client-observed latency far above the server's own total.
+pub fn contention(timings: &[serde_json::Value]) -> Option<playtime_protocol::api::Contention> {
+    if timings.is_empty() {
+        return None;
+    }
+    let reloads = timings
+        .iter()
+        .skip(1)
+        .filter(|t| {
+            t["load_duration"]
+                .as_u64()
+                .is_some_and(|ns| ns > 1_000_000_000)
+        })
+        .count() as u64;
+    let delays = timings
+        .iter()
+        .filter(
+            |t| match (t["observed_ms"].as_u64(), t["total_duration"].as_u64()) {
+                (Some(observed), Some(total)) => {
+                    let total = total / 1_000_000;
+                    observed > total + 2_000 && observed > total + total / 2
+                }
+                _ => false,
+            },
+        )
+        .count() as u64;
+    Some(playtime_protocol::api::Contention {
+        timed_requests: timings.len() as u64,
+        reloads,
+        delays,
+        possible: reloads + delays > 0,
+    })
+}
+
+#[cfg(test)]
+mod contention_tests {
+    use serde_json::json;
+    #[test]
+    fn reloads_after_the_first_request_and_long_waits_are_flagged() {
+        assert!(super::contention(&[]).is_none());
+        let clean = [
+            json!({"observed_ms": 12_000, "load_duration": 9_000_000_000u64, "total_duration": 11_500_000_000u64}),
+            json!({"observed_ms": 2_100, "load_duration": 50_000_000u64, "total_duration": 2_000_000_000u64}),
+            json!({"observed_ms": 900}),
+        ];
+        let summary = super::contention(&clean).unwrap();
+        assert_eq!((summary.timed_requests, summary.possible), (3, false));
+        let busy = [
+            clean[0].clone(),
+            json!({"observed_ms": 9_000, "load_duration": 4_000_000_000u64, "total_duration": 8_800_000_000u64}),
+            json!({"observed_ms": 7_000, "load_duration": 10_000_000u64, "total_duration": 3_000_000_000u64}),
+            // A two-second gap alone is not enough on a long request.
+            json!({"observed_ms": 22_500, "total_duration": 20_000_000_000u64}),
+        ];
+        let summary = super::contention(&busy).unwrap();
+        assert_eq!(
+            (summary.reloads, summary.delays, summary.possible),
+            (1, 1, true)
+        );
     }
 }
