@@ -93,11 +93,6 @@ impl Supervisor for SupervisorGate {
     }
 }
 
-// Wait for the specified scheduler floor, not as evidence that any action has
-// happened. Every race below then synchronizes on an explicit port boundary.
-async fn after_refresh_floor() {
-    tokio::time::sleep(Duration::from_millis(250)).await;
-}
 async fn quick_cancel(c: &Coordinator, id: &playtime_core::RunId) -> Admission {
     // The held gates prove independence. Allow the five-second control deadline
     // plus scheduling margin, including actual executable verification.
@@ -344,6 +339,10 @@ async fn cancel_does_not_wait_for_begin_receipt_verification_or_promote_its_repl
         tokio::spawn(async move { c.begin(id).await })
     };
     archive.verify_started.entered().await;
+    // Begin may complete its control exchange inside the prepared refresh's
+    // cooldown. These observers must join a new refresh, not twenty independent
+    // cached-ledger reads that can exhaust the bounded ledger lane.
+    after_refresh_floor().await;
     let waiting: Vec<_> = (0..20)
         .map(|_| {
             let c = c.clone();

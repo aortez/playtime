@@ -73,12 +73,24 @@ async fn coordinator(
     archive: Arc<dyn ArchivePort>,
     supervisor: Arc<dyn Supervisor>,
 ) -> Coordinator {
-    Coordinator::new(
-        Ledger::open(root).await.unwrap(),
-        archive,
-        supervisor,
-        Arc::new(SystemClock),
-    )
+    // Dropping the previous caller does not abort owned operations. A restart
+    // waits for actual service exclusion instead of assuming immediate release.
+    let ledger = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match Ledger::open(root).await {
+                Ok(ledger) => return ledger,
+                Err(Error::Control(playtime_worker_control::Error::Io(error)))
+                    if error.kind() == std::io::ErrorKind::WouldBlock =>
+                {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => panic!("fixture ledger open failed: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("previous coordinator must release service exclusion");
+    Coordinator::new(ledger, archive, supervisor, Arc::new(SystemClock))
 }
 async fn admit(c: &Coordinator) -> Admission {
     c.admit(
@@ -90,8 +102,14 @@ async fn admit(c: &Coordinator) -> Admission {
     .unwrap()
     .admission
 }
+// Wait for the scheduler's refresh cooldown, not as evidence of a worker
+// transition. Tests separately synchronize on port or process boundaries.
+async fn after_refresh_floor() {
+    tokio::time::sleep(Duration::from_millis(250)).await;
+}
 async fn prepared(c: &Coordinator, admission: &Admission) -> Admission {
     c.start(admission.run_id.clone()).await.unwrap();
+    let mut last = None;
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let current = c.refresh(admission.run_id.clone()).await.unwrap();
@@ -102,11 +120,12 @@ async fn prepared(c: &Coordinator, admission: &Admission) -> Admission {
             {
                 return current;
             }
+            last = Some(current);
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("fixture must report prepared")
+    .unwrap_or_else(|error| panic!("fixture must report prepared: {error}; last: {last:?}"))
 }
 fn client(admission: &Admission) -> Client {
     let prepared = admission.prepared.as_ref().unwrap();
@@ -267,6 +286,7 @@ async fn lost_start_and_begin_replies_restart_and_duplicate_begin_keep_one_worke
     // A replacement process cannot consume the grant a second time.
     supervisor.terminate(launch).unwrap();
     assert!(fixture::run_worker(&launch.bootstrap).await.is_err());
+    after_refresh_floor().await;
     assert_eq!(
         c.refresh(admitted.run_id.clone()).await.unwrap().phase,
         Phase::Reconciling
@@ -633,6 +653,7 @@ async fn killed_coordinator_reattaches_to_original_surviving_process() {
     })
     .await
     .unwrap();
+    after_refresh_floor().await;
     assert_eq!(
         restarted.refresh(saved.run_id).await.unwrap().phase,
         Phase::Reconciling,

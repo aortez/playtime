@@ -37,3 +37,8 @@ time = { version = "=0.3.47", features = ["formatting"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+# Fixture control verifies large captured executables inside a five-second
+# request deadline. Keep hashing fast in debug/test builds under CI contention.
+[profile.dev.package.sha2]
+opt-level = 3

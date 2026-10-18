@@ -388,7 +388,7 @@ pub async fn run_worker(bootstrap_path: &Path) -> Result<()> {
             _writer: FileLock::acquire(&bootstrap.private_dir.join("writer.fixture.lock"))?,
         };
         let owner = Worker::prepared(bootstrap.clone(), execution, run_lock)?;
-        Ok((bootstrap, Arc::new(Mutex::new(owner))))
+        Ok((bootstrap, Arc::new(tokio::sync::Mutex::new(owner))))
     })
     .await
     .map_err(|_| Error::Uncertain)??;

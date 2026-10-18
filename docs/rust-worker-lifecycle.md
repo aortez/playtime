@@ -117,6 +117,10 @@ five-second deadline. A preflight still blocked after its deadline retains its
 lane until it settles, so retries cannot accumulate abandoned I/O. It rechecks
 the deadline and saved ownership before sending. The fixture accepts at most
 eight concurrent connections, allowing cancellation alongside an incomplete frame.
+Worker ownership waits share that same request deadline, so brief Status or timer
+contention does not reject a control command. Once queued on the blocking pool,
+an operation retains ownership and rechecks its deadline before executing; an
+expired queued command cannot run later when the pool becomes available.
 
 Archive verification runs outside ledger transactions and cancellation. Both
 successful confirmations and failures condition their commit on the saved record
@@ -162,6 +166,17 @@ no-follow opens followed by descriptor type, ownership, link-count and mode
 checks. A FIFO cannot block open before these checks run. Directory syncs require
 directory descriptors. Invalid revocation evidence preserves the cancellation
 intent and active reservation while reporting delivery uncertainty.
+
+Development and test builds optimize the SHA-256 dependency. The fixture hashes
+the actual executing image during supervisor lookup, including large debug test
+executables; unoptimized hashing under CPU contention can exhaust the five-second
+control deadline before a request is sent. The deadline and image checks remain
+unchanged. Fixtures explicitly wait out the refresh cooldown when asserting a
+fresh probe after worker termination or joining concurrent observers. This avoids
+mistaking cached state for a new probe or saturating the bounded ledger with
+independent cached-status reads.
+Restart fixtures likewise wait for actual service-lock availability after
+dropping a coordinator; owned operations retain exclusion until they settle.
 
 Status distinguishes `prepared`, `running`, `cancelled_before_begin`, `cancelling`
 and `reconciling`; it separately carries an optional compact returned receipt,
@@ -216,10 +231,13 @@ cancellation and file reconfirmation. They also reject links, directories and
 non-private file modes without replacing the invalid evidence.
 
 Validation for these slices: workspace formatting and locked Clippy passed;
-153 Rust tests passed (eight ignored subprocess entries are invoked by their parent
+156 Rust tests passed (eight ignored subprocess entries are invoked by their parent
 tests), and the Python suite passed 88 tests with six Docker checks skipped.
 The focused lifecycle suite passed 19 integration tests plus three coordinator
-unit tests; worker control passed four additional unit tests.
+unit tests; worker control passed seven additional unit tests, including brief
+ownership contention and expiry while waiting for either ownership or blocking
+pool capacity. CPU contention reproduced the unoptimized hashing timeout; the
+optimized build passed repeated runs of the cancellation fixture under that load.
 The walkthrough above completed with the same worker across coordinator restart.
 A temporary export of #46 at `e834fadb50b1df9094456ae139a7a10f5d746381`, with
 the additive manifest/module union described above, passed
