@@ -323,6 +323,11 @@ impl WriterHooks for BlockCheckpoint {
         context: &CommitContext,
         _: &mut ArchiveWriter,
     ) -> playtime_runner::Result<()> {
+        if context.kinds.iter().any(|kind| kind == "run_started") {
+            // Model a slow earlier write: the checkpoint must remain the
+            // deliberately unresolved operation, even on a contended runner.
+            std::thread::sleep(Duration::from_millis(250));
+        }
         if context.checkpoint_effect.is_some() {
             *self.entered.lock().unwrap() = true;
             self.release.recv().unwrap();
@@ -341,7 +346,8 @@ fn unresolved_storage_retains_ownership_and_can_commit_after_the_driver_returns_
         &prepared,
         &mut clock(),
         DriverOptions {
-            publication_wait: Duration::from_millis(100),
+            // The supervision bound applies to every write. Keep the normal
+            // bound so earlier filesystem work can reach the checkpoint gate.
             writer_hooks: Box::new(BlockCheckpoint {
                 release: receiver,
                 entered: entered.clone(),
@@ -350,7 +356,11 @@ fn unresolved_storage_retains_ownership_and_can_commit_after_the_driver_returns_
         },
     )
     .unwrap();
-    assert!(*entered.lock().unwrap());
+    assert!(
+        *entered.lock().unwrap(),
+        "driver stopped before the checkpoint gate: {:?}",
+        report.diagnostics
+    );
     assert!(!report.terminal_committed);
     let pending = report.pending_publication.unwrap();
     assert!(pending.checkpoint_effect().is_some());
