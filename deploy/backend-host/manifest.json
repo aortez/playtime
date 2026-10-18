@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "host": "oldman-bird.local",
+  "backend_unit": "ollama.service",
+  "backend_endpoint": "http://127.0.0.1:11434",
+  "bridge_user": "playtime-bridge",
+  "client_host_key_pin": "client_known_hosts",
+  "state_root": "/var/lib/playtime-backend-owner",
+  "guard_state_root": "/var/lib/playtime-backend/guard",
+  "firewall_table": "inet playtime_backend",
+  "required_systemd": 255,
+  "work_ms": 120000,
+  "cleanup_ms": 180000,
+  "restart": "no",
+  "live_activation_requires_review": true
+}

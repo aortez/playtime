@@ -15,6 +15,7 @@ members = [
     "crates/playtime-worker",
     "crates/playtime-ollama",
     "crates/playtime-backend-guard",
+    "crates/playtime-backend-host",
     "crates/playtime-docker",
     "xtask",
 ]

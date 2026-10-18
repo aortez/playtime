@@ -1,0 +1,11 @@
+# Own only this table. Never flush the host ruleset or replace UFW policies.
+table inet playtime_backend {
+    chain input {
+        type filter hook input priority -10; policy accept;
+        iifname != "lo" tcp dport 11434 reject with tcp reset
+    }
+    chain output {
+        type filter hook output priority -10; policy accept;
+        fib daddr type local tcp dport 11434 meta skuid != @GUARD_UID@ reject with tcp reset
+    }
+}

@@ -1,0 +1,34 @@
+[Unit]
+Description=Playtime fixed backend deadline owner
+Requires=playtime-backend-firewall.service
+After=playtime-backend-firewall.service
+Before=ollama.service
+
+[Service]
+Type=exec
+ExecStart=/usr/libexec/playtime-backend-host owner-initialize
+User=root
+Group=playtime-bridge
+UMask=0077
+RuntimeDirectory=playtime-backend-owner
+RuntimeDirectoryMode=0750
+StateDirectory=playtime-backend-owner
+StateDirectoryMode=0700
+Restart=no
+WatchdogSec=2s
+NotifyAccess=main
+TimeoutStopSec=2s
+TimeoutAbortSec=2s
+KillMode=control-group
+SendSIGKILL=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/sys/fs/cgroup /var/lib/playtime-backend-owner /run/playtime-backend-owner
+ReadWritePaths=/var/lib/playtime-backend-deployment/.lock
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_KILL CAP_SYS_PTRACE
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,57 @@
+#!/usr/bin/python3 -I
+"""Fixed root-only boot policy; never flushes or replaces an existing table."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+
+
+def read(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or info.st_nlink != 1:
+            raise RuntimeError("invalid policy provenance")
+        data = source.read(4 * 1024 * 1024 + 1)
+        if len(data) > 4 * 1024 * 1024:
+            raise RuntimeError("policy limit")
+        return data
+
+
+def nft(*args, data=None):
+    return subprocess.run(["/usr/sbin/nft", *args], input=data, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, timeout=3)
+
+
+def main():
+    if os.geteuid() != 0 or len(os.sys.argv) != 1:
+        raise RuntimeError("fixed root policy only")
+    transaction = json.loads(read("/var/lib/playtime-backend-deployment/transaction.json"))
+    policy = read("/etc/playtime-backend/firewall.nft")
+    if hashlib.sha256(policy).hexdigest() != transaction["installed"]["/etc/playtime-backend/firewall.nft"]["sha256"]:
+        raise RuntimeError("policy artifact drift")
+    if transaction["phase"] not in ("closed", "managed-awaiting-live-gate"):
+        raise RuntimeError("unreviewed deployment state")
+    observed = nft("--stateless", "list", "table", "inet", "playtime_backend")
+    if observed.returncode:
+        # Only an explicit no-such-table response may install; distinguish it
+        # from permission, manager and malformed-policy failures.
+        tables = nft("--json", "list", "tables")
+        if tables.returncode or any(t.get("table", {}).get("name") == "playtime_backend"
+                                   for t in json.loads(tables.stdout)["nftables"]):
+            raise RuntimeError("firewall state uncertain")
+        if nft("-f", "-", data=policy).returncode:
+            raise RuntimeError("policy installation failed")
+        observed = nft("--stateless", "list", "table", "inet", "playtime_backend")
+    if observed.returncode or hashlib.sha256(observed.stdout).hexdigest() != transaction["table_sha256"]:
+        raise RuntimeError("owned firewall drift")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        os.sys.stderr.write("backend firewall remains unconfirmed\n")
+        raise SystemExit(1)

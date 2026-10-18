@@ -1,0 +1,13 @@
+[Unit]
+Description=Playtime narrowly owned backend access filter
+Before=playtime-backend-owner.service ollama.service
+After=ufw.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/playtime-backend-policy
+RemainAfterExit=yes
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

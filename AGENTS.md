@@ -35,6 +35,11 @@ retain replay tombstones. Wire observations are not held termination authority.
 See `docs/rust-backend-guard.md`; run `./scripts/test-rust-backend-guard.sh` for
 guard changes. Its owned-child CPU gate does not establish production host access
 control, Ollama ownership or real systemd enforcement.
+`playtime-backend-host` owns the production fixed host ports, restricted SSH,
+clock mapping and staged access policy. See `docs/rust-backend-host.md`; run
+`./scripts/test-rust-backend-host.sh cpu` and explicitly label the opt-in systemd
+gate. Live activation requires review of the exact staged artifacts and finished
+legacy work; CPU and disposable systemd tests do not establish live host policy.
 `playtime-docker` owns bounded native Docker transport and the owned sandbox.
 Keep Docker/process dependencies outside core/engine. Preserve precommitted
 resource ownership, exact identity checks, absolute timers, uncertain-exec fencing
