@@ -82,14 +82,50 @@ impl Ledger {
             tx.execute_batch("CREATE TABLE service (singleton INTEGER PRIMARY KEY CHECK(singleton=1), id TEXT NOT NULL);
                 CREATE TABLE runs (id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, active INTEGER UNIQUE CHECK(active=1 OR active IS NULL), record TEXT NOT NULL);
                 CREATE TABLE trace (seq INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), transition TEXT NOT NULL);
-                PRAGMA user_version=1;")?;
+                PRAGMA user_version=2;")?;
             tx.execute(
                 "INSERT INTO service VALUES (1, ?1)",
                 [random_id()?.as_str()],
             )?;
             tx.commit()?;
             File::open(&private)?.sync_all()?;
-        } else if version != 1 {
+        } else if version == 1 {
+            // Preserve service/admission history while adding explicit ownership
+            // and record revisions. A v1 binary must refuse the upgraded ledger.
+            let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut after = String::new();
+            loop {
+                let next: Option<(String, String)> = tx
+                    .query_row(
+                        "SELECT id,record FROM runs WHERE id>?1 ORDER BY id LIMIT 1",
+                        [&after],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let Some((id, json)) = next else {
+                    break;
+                };
+                let mut value: serde_json::Value = serde_json::from_str(&json)?;
+                let fields = value
+                    .as_object_mut()
+                    .ok_or(Error::Invalid("invalid legacy ledger record"))?;
+                fields
+                    .entry("owner_generation")
+                    .or_insert(serde_json::json!(1));
+                fields.entry("revision").or_insert(serde_json::json!(0));
+                fields
+                    .entry("cancel_delivery")
+                    .or_insert(serde_json::Value::Null);
+                let record: Admission = serde_json::from_value(value)?;
+                tx.execute(
+                    "UPDATE runs SET record=?2 WHERE id=?1",
+                    params![id, serde_json::to_string(&record)?],
+                )?;
+                after = id;
+            }
+            tx.execute_batch("PRAGMA user_version=2;")?;
+            tx.commit()?;
+        } else if version != 2 {
             return Err(Error::Invalid(
                 "unsupported or incomplete service ledger; refusing to replace admission history",
             ));
@@ -126,7 +162,7 @@ impl Ledger {
             }
             admission.phase = Phase::Reconciling;
             admission.reason = Some(Reason::CoordinatorRestarted);
-            save(&mut connection, &admission, "coordinator_restarted")?;
+            save(&mut connection, &mut admission, "coordinator_restarted")?;
         }
         Ok(Self {
             inner: Arc::new(Inner {
@@ -240,6 +276,9 @@ impl Ledger {
                 endpoint: None,
                 begin_authorized: false,
                 cancel_requested: None,
+                cancel_delivery: None,
+                owner_generation: 1,
+                revision: 0,
                 last_status: None,
             };
             tx.execute(
@@ -271,9 +310,41 @@ impl Ledger {
         let id = id.clone();
         self.call(move |db| {
             let mut admission = load(db, &id)?;
+            let before = admission.clone();
             change(&mut admission)?;
-            save(db, &admission, transition)?;
+            if admission != before {
+                save(db, &mut admission, transition)?;
+            }
             Ok(admission)
+        })
+        .await
+    }
+    /// Apply only to the same admission/ownership revision that was inspected.
+    /// In particular, verification may not erase cancellation or takeover while
+    /// it waited on archive I/O. No transaction spans that verification.
+    pub(crate) async fn compare_update(
+        &self,
+        expected: &Admission,
+        transition: &'static str,
+        change: impl FnOnce(&mut Admission) -> Result<()> + Send + 'static,
+    ) -> Result<(Admission, bool)> {
+        let id = expected.run_id.clone();
+        let generation = expected.owner_generation;
+        let revision = expected.revision;
+        self.call(move |db| {
+            let mut record = load(db, &id)?;
+            if record.owner_generation != generation
+                || record.revision != revision
+                || record.phase == Phase::Terminal
+            {
+                return Ok((record, false));
+            }
+            let before = record.clone();
+            change(&mut record)?;
+            if record != before {
+                save(db, &mut record, transition)?;
+            }
+            Ok((record, true))
         })
         .await
     }
@@ -297,7 +368,11 @@ fn load(db: &Connection, id: &RunId) -> Result<Admission> {
     )?;
     Ok(serde_json::from_str(&json)?)
 }
-fn save(db: &mut Connection, admission: &Admission, transition: &str) -> Result<()> {
+fn save(db: &mut Connection, admission: &mut Admission, transition: &str) -> Result<()> {
+    admission.revision = admission
+        .revision
+        .checked_add(1)
+        .ok_or(Error::Invalid("ledger revision exhausted"))?;
     let json = serde_json::to_string(admission)?;
     if json.len() > 65_536 {
         return Err(Error::Invalid("ledger record exceeds bound"));

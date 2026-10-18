@@ -395,26 +395,32 @@ pub async fn run_worker(bootstrap_path: &Path) -> Result<()> {
     let listener = tokio::net::UnixListener::bind(&bootstrap.socket)?;
     fs::set_permissions(&bootstrap.socket, fs::Permissions::from_mode(0o600))?;
     let uid = fs::metadata(&bootstrap.private_dir)?.uid();
+    let mut connections = tokio::task::JoinSet::new();
+    let mut deadline = bootstrap.startup_deadline_boot_ms;
     loop {
-        let deadline = {
-            let owner = owner.lock().map_err(|_| Error::Uncertain)?;
-            owner
+        if let Ok(owner) = owner.try_lock() {
+            deadline = owner
                 .status()
                 .work_started_boot_ms
                 .map(|start| start + bootstrap.wall_ms)
-                .unwrap_or(bootstrap.startup_deadline_boot_ms)
-        };
+                .unwrap_or(bootstrap.startup_deadline_boot_ms);
+        }
         if boot_ms() >= deadline {
             return Ok(());
         }
         tokio::select! {
             connected = listener.accept() => {
                 let (stream, _) = connected?;
+                if connections.len() == 8 { continue; }
                 let lost_reply = bootstrap.private_dir.join("lose-begin-reply.fixture");
-                let _ = serve_connection_with_delivery(stream, owner.clone(), &bootstrap.credential, uid, |command, _| {
-                    if command == Command::Begin && lost_reply.exists() { let _ = fs::remove_file(lost_reply); false } else { true }
-                }).await;
+                let (owner, credential) = (owner.clone(), bootstrap.credential.clone());
+                connections.spawn(async move {
+                    let _ = serve_connection_with_delivery(stream, owner, &credential, uid, |command, _| {
+                        if command == Command::Begin && lost_reply.exists() { let _ = fs::remove_file(lost_reply); false } else { true }
+                    }).await;
+                });
             }
+            _ = connections.join_next(), if !connections.is_empty() => (),
             _ = tokio::time::sleep(Duration::from_millis(100)) => (),
         }
     }

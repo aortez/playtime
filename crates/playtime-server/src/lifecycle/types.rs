@@ -4,7 +4,7 @@ use playtime_worker_control::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdmissionRequest {
     pub recipe_id: String,
@@ -63,7 +63,7 @@ pub enum Reason {
     ControlUncertain,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PreparedLaunch {
     pub binding: Binding,
     pub executable: PathBuf,
@@ -73,7 +73,15 @@ pub struct PreparedLaunch {
     pub socket: PathBuf,
     pub startup_deadline_boot_ms: u64,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CancelDelivery {
+    Requested,
+    WorkerAcknowledged,
+    Uncertain,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Admission {
     pub service_id: ControlId,
     pub run_id: RunId,
@@ -89,6 +97,11 @@ pub struct Admission {
     pub endpoint: Option<Endpoint>,
     pub begin_authorized: bool,
     pub cancel_requested: Option<Stamp>,
+    pub cancel_delivery: Option<CancelDelivery>,
+    /// Superseded by exclusive takeover, never inferred from a worker reply.
+    pub owner_generation: u64,
+    /// Incremented on each changed durable record, including control decisions.
+    pub revision: u64,
     /// Saved authenticated worker evidence, not a new liveness assertion.
     pub last_status: Option<Status>,
 }

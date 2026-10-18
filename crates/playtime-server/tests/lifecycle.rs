@@ -16,6 +16,9 @@ use std::{
     time::Duration,
 };
 
+#[path = "lifecycle/coordination.rs"]
+mod coordination;
+
 struct Root(PathBuf);
 impl Root {
     fn new() -> Self {
@@ -281,8 +284,12 @@ async fn cancellation_before_begin_is_durable_and_never_creates_run_records() {
     let p = prepared(&c, &admitted).await;
     let cancelled = c.cancel(admitted.run_id.clone()).await.unwrap();
     assert_eq!(
-        cancelled.last_status.as_ref().unwrap().state,
-        WorkerState::CancelledBeforeBegin
+        cancelled.cancel_delivery,
+        Some(CancelDelivery::WorkerAcknowledged)
+    );
+    assert_eq!(
+        cancelled.last_status, p.last_status,
+        "Cancel does not advance archive evidence"
     );
     let again = c.cancel(admitted.run_id.clone()).await.unwrap();
     assert_eq!(again.cancel_requested, cancelled.cancel_requested);

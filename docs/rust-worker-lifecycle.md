@@ -1,10 +1,10 @@
-# Worker lifecycle: admission and Begin slice
+# Worker lifecycle: admission, Begin and independent control
 
-This is the first reviewable slice of [#34](https://github.com/aortez/playtime/issues/34),
+These are the first two reviewable slices of [#34](https://github.com/aortez/playtime/issues/34),
 based on merged main `a8a3dab9b5824d19b778c1ac597d6bd609eb0806`.
-It provides a durable admission ledger, private worker control and an explicitly
-synthetic subprocess fixture. It does **not** finish #34 or enable unattended
-experimental execution.
+They provide a durable admission ledger, private worker control, independent
+cancellation, coalesced status refresh and an explicitly synthetic subprocess
+fixture. They do **not** finish #34 or enable unattended experimental execution.
 
 ## Ownership and the HTTP branch
 
@@ -16,9 +16,11 @@ from #35's HTTP DTOs. The current worker kind is `supervision_fixture`; a real
 worker is not advertised by this milestone.
 
 #46's application interface was inspected at `e2fa960f2cb9f5add6debe8fd147cbf9da527392`,
-then its integration with #45 at `c3ca5018d677f4b219eebe104f73ede5648361c8`.
-Lifecycle files, `tests/lifecycle.rs` and `examples/lifecycle_fixture.rs` are owned
-here; HTTP/auth/client files stay with #46. Tokio 1.53.3, async-trait 0.1.92,
+then its integration with #45 and CI adjustment at
+`e834fadb50b1df9094456ae139a7a10f5d746381`.
+Lifecycle files, `tests/lifecycle.rs`, `tests/lifecycle/` and
+`examples/lifecycle_fixture.rs` are owned here; HTTP/auth/client files stay with
+#46. Tokio 1.53.3, async-trait 0.1.92,
 getrandom 0.4.3 and subtle 2.6.1 match that committed branch. Merge the additive
 workspace/member dependencies, both `playtime-server` manifests and both library
 exports when integrating; retain every HTTP module and add `pub mod lifecycle`.
@@ -33,7 +35,11 @@ no HTTP `Application` implementation in this slice.
 ## Durable transitions
 
 The SQLite ledger lives at `.playtime/service.sqlite3`, with verified WAL,
-`synchronous=FULL`, foreign keys and schema version 1. Its service identity is
+`synchronous=FULL`, foreign keys and schema version 2. A version-1 ledger upgrades
+in one transaction, preserving service identity and canonical requests while
+adding an ownership generation, record revision and cancellation delivery state.
+Version 2 requires both counters; missing fields cannot silently reset them.
+Older binaries refuse the upgraded schema. Its service identity is
 created once and cross-checked against a private identity file. Missing, damaged,
 incomplete or unsupported ledgers fail closed; they are never silently rebuilt.
 The identity file cannot reconstruct missing idempotency history.
@@ -42,8 +48,8 @@ The separate `service.lock` protects the coordinator. A unique active column
 reserves one run, including uncertain and cancelling runs. The ledger stores the
 canonical typed request and its digest, frozen worker selection and allocation,
 accepted time, prepared identity, start intent, Begin permission, cancellation
-intent and last authenticated worker status. There are at most 16 admitted
-blocking ledger operations; short transactions do not cross archive or process
+intent, delivery acknowledgment and last verified worker status. There are at most
+16 admitted blocking ledger operations; short transactions do not cross archive or process
 operations. Once a coordinator operation is accepted, it belongs to a detached
 Tokio task, so dropping a caller does not roll back or abandon its commit.
 
@@ -84,10 +90,47 @@ stateDiagram-v2
    invocation and bytes. Duplicate Begin on the surviving worker returns its
    existing status; a replacement process refuses a consumed or revoked grant.
 
-Cancellation records the first intent before revocation/notification. Cancellation
-before Begin prevents consumption and initial publication, including a delayed
-Begin. Cancellation is idempotent and preserves its original time. It does not
-prove process termination or release the active slot in this slice.
+Cancellation records the first intent before revocation/notification and preserves
+its original time. Revocation prevents later Begin consumption, including a
+request still waiting on coordinator preflight. Cancellation racing an already
+dispatched Begin cannot undo work that has consumed its grant. If preparation
+finishes after cancellation, its identity is retained for cleanup, its grant is
+revoked and no worker is submitted. Cancellation does not prove process termination
+or release the active slot in these slices.
+
+## Independent control and confirmations
+
+Launch operations, cancellation and status refresh use separate bounded paths.
+Status callers share one operation per run, including archive verification.
+A completed refresh has a 250 ms minimum cooldown; failures back off exponentially
+to at most five seconds. Calls during cooldown read the saved ledger without
+creating another task or timer. Dropping all observers leaves the operation owned
+by the coordinator. Registries retain at most 16 runs, with 64 status observers
+and 16 cancellation observers; excess observers receive busy.
+
+Status, Begin and Cancel each have a separate one-operation transport lane.
+Supervisor lookup, private bootstrap reads and the socket exchange share a
+five-second deadline. A preflight still blocked after its deadline retains its
+lane until it settles, so retries cannot accumulate abandoned I/O. It rechecks
+the deadline and saved ownership before sending. The fixture accepts at most
+eight concurrent connections, allowing cancellation alongside an incomplete frame.
+
+Archive verification runs outside ledger transactions and cancellation. Both
+successful confirmations and failures condition their commit on the saved record
+revision and ownership generation. A cancellation or generation change during
+verification makes the candidate stale. Shorter receipts, conflicting equal
+receipts, invalid prefix extensions and changed work clocks preserve the previous
+confirmed evidence. Equal confirmations still verify bytes; an unchanged record
+adds no revision or trace entry.
+
+`cancel_delivery` distinguishes `requested`, `worker_acknowledged` and `uncertain`.
+An authenticated Cancel acknowledgment updates only delivery state, without
+waiting for archive validation. It cannot advance `last_status` or its receipt.
+Consequently, the saved worker status can still say running after cancellation
+was acknowledged; a later verified Status refresh supplies new archive evidence.
+These delivery states do not establish supervisor stop acceptance or termination.
+The generation check is a commit fence; exclusive recovery ownership and its
+authority to increment that generation remain part of the later recovery slice.
 
 A new coordinator marks active ownership reconciling before any public liveness
 claim. It can reattach to the **same surviving worker**; it never starts a
@@ -137,8 +180,10 @@ cargo test --locked -p playtime-worker-control
 
 The walkthrough launches a copied native fixture executable, observes prepared
 and running, restarts the coordinator, authenticates the same PID, cancels and
-prints its durable trace. It cleans up its own child and preserves the fixture
-records. It requires no model, Docker, GPU or user systemd. The private fixture
+prints its durable trace and separate cancellation delivery state. Its saved
+worker status describes the last verified confirmation before cancellation.
+It cleans up its own child and preserves the fixture records. It requires no
+model, Docker, GPU or user systemd. The private fixture
 root must already be private when reused; migration of a legacy root is not
 provided here.
 
@@ -149,26 +194,31 @@ images, damaged/deleted ledgers, legacy exclusion, and a **killed coordinator wi
 a surviving real worker process**. Subprocess helper test entries are ignored when
 listed directly and explicitly invoked by their parent tests.
 
-Validation for this slice: workspace formatting and locked Clippy passed;
-139 Rust tests passed (six ignored subprocess entries are invoked by their parent
+Coordination tests also block preparation, Begin preflight, archive verification
+and supervisor lookup while cancelling; coalesce concurrent observers; retain
+timed-out preflight ownership; reject stale generation results and invalid receipt
+extensions; avoid duplicate confirmation history; and exercise schema migration
+and damaged revision fields. A virtual-clock test verifies the refresh floor,
+backoff cap and continued ownership after observers disappear.
+
+Validation for these slices: workspace formatting and locked Clippy passed;
+150 Rust tests passed (six ignored subprocess entries are invoked by their parent
 tests), and the Python suite passed 88 tests with six Docker checks skipped.
-The final lifecycle/control edits also passed their focused 12-test suite.
+The focused lifecycle suite passed 17 integration tests plus three coordinator
+unit tests; worker control passed three additional unit tests.
 The walkthrough above completed with the same worker across coordinator restart.
-A temporary export of #46 at `c3ca5018d677f4b219eebe104f73ede5648361c8`, with
+A temporary export of #46 at `e834fadb50b1df9094456ae139a7a10f5d746381`, with
 the additive manifest/module union described above, passed
-`cargo check --workspace --all-targets`. This establishes compile compatibility,
+`cargo check --workspace --all-targets --locked`. This establishes compile compatibility,
 not the real HTTP/worker/archive integration owned by #20.
 
 ## Remaining #34 work
 
-- Replace the initial single-operation coordinator gate with independent bounded
-  start/cancel control and coalesced confirmation refresh (250 ms floor and bounded
-  backoff). Do not let slow archive verification block cancellation.
 - Add systemd user-service supervision, independent startup/wall/stop bounds,
   persisted exit/stop diagnostics, cancellation enforcement states and the opt-in
   systemd walkthrough. Current fixture timers are not proof of systemd enforcement.
 - Extend fault injection across every ledger/port acknowledgment boundary and
-  cover delayed status after takeover and incomplete publication ownership.
+  cover real exclusive takeover and incomplete publication ownership.
 - Pin the ownership-generation/recovery guard, persisted recovery attempts and
   explicit abandon-incomplete port with #43. Releasing admission requires proven
   worker/resource termination and the reviewed recovery transaction.

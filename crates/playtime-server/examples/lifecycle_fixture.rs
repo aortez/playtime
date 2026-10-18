@@ -92,6 +92,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             "run_id":run,
             "same_surviving_worker_pid":original,
             "phase":cancelled.phase,
+            "cancel_delivery":cancelled.cancel_delivery,
             "worker_status":cancelled.last_status,
             "trace":restarted.ledger().trace(&run).await?,
             "limitation":"fixture cancellation is acknowledged; full stop enforcement and recovery remain in #34"

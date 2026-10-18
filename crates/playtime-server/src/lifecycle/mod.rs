@@ -1,7 +1,9 @@
 //! Admission and private worker handshake, independently testable without HTTP.
 
+mod confirmation;
 mod coordinator;
 pub mod fixture;
+mod flights;
 mod ledger;
 pub mod ports;
 mod types;
@@ -22,6 +24,7 @@ pub enum Error {
     Conflict,
     ServiceMismatch,
     Uncertain,
+    Shared(std::sync::Arc<Error>),
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -35,6 +38,7 @@ impl std::fmt::Display for Error {
             Self::Conflict => f.write_str("idempotency key identifies a different request"),
             Self::ServiceMismatch => f.write_str("service identity mismatch"),
             Self::Uncertain => f.write_str("worker ownership unresolved"),
+            Self::Shared(error) => error.fmt(f),
         }
     }
 }
