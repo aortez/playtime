@@ -11,7 +11,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use utoipa::ToSchema;
 
-use crate::{ReadError, archive::ContentRef, read::require_version, v1::UsageSummary};
+use crate::{
+    ReadError,
+    archive::ContentRef,
+    observations::{
+        CONTROLLER_OBSERVATION_KIND, DecodedObservation, KnownObservation, ObservationPayload,
+        decode_observation,
+    },
+    read::require_version,
+    v1::UsageSummary,
+};
 
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
 
@@ -127,6 +136,7 @@ pub enum KnownEvent {
 #[derive(Clone, Debug, PartialEq)]
 pub enum EventPayload {
     Known(Box<KnownEvent>),
+    Observation(Box<DecodedObservation>),
     /// Unknown is visible data, never silently dropped or treated as executable.
     Unknown {
         kind: String,
@@ -138,7 +148,7 @@ impl EventPayload {
     pub fn known(&self) -> Option<&KnownEvent> {
         match self {
             Self::Known(event) => Some(event),
-            Self::Unknown { .. } => None,
+            Self::Observation(_) | Self::Unknown { .. } => None,
         }
     }
 }
@@ -184,6 +194,21 @@ pub fn decode_event(json: &str) -> Result<DecodedEvent, ReadError> {
                 }
             }
             EventPayload::Known(Box::new(event))
+        }
+        CONTROLLER_OBSERVATION_KIND => {
+            let observation = decode_observation(
+                &serde_json::to_string(&envelope.data).map_err(ReadError::malformed)?,
+            )?;
+            if let ObservationPayload::Known(known) = observation.payload()
+                && let KnownObservation::ControllerStarted { run_id, .. }
+                | KnownObservation::ControllerFinished { run_id, .. } = known.as_ref()
+                && *run_id != envelope.run_id
+            {
+                return Err(ReadError::malformed(
+                    "controller observation run disagrees with envelope",
+                ));
+            }
+            EventPayload::Observation(Box::new(observation))
         }
         _ => EventPayload::Unknown {
             kind: envelope.kind.clone(),

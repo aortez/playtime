@@ -2,6 +2,7 @@
 
 pub mod archive;
 pub mod events;
+pub mod observations;
 mod read;
 pub mod storage;
 pub mod v1;

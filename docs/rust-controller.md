@@ -121,3 +121,8 @@ records and artifacts, publication acknowledgments and crash reconciliation;
 it must not substitute another retry/stop policy. The simulation's JSON workspace
 artifacts are explicitly synthetic and do not establish Docker isolation,
 network deadline enforcement, real process cancellation, or production readiness.
+
+The first [archive bridge contract](rust-archive-bridge.md) pins the reviewed
+controller revision and introduces a protocol-only transcript wrapper and
+mapping fixtures. Durable execution and content publication remain subsequent
+integration work.
