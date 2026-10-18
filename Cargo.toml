@@ -13,6 +13,7 @@ members = [
     "crates/playtime-ui",
     "crates/playtime-worker-control",
     "crates/playtime-worker",
+    "crates/playtime-ollama",
     "crates/playtime-docker",
     "xtask",
 ]

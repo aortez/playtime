@@ -1,0 +1,8 @@
+{
+  "epsilon": 1e-05,
+  "false": false,
+  "float": 1.0,
+  "integer": 1,
+  "unicode": "é😀",
+  "zero": 0
+}
