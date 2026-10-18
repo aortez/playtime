@@ -80,6 +80,7 @@ pub struct Sandbox {
     ordinal: u32,
     initialized: bool,
     fenced: bool,
+    exporter_pending: bool,
     closed: bool,
     capture_deadline: Option<Instant>,
     quiescence_deadline: Option<Instant>,
@@ -112,6 +113,97 @@ impl Quiescent<'_> {
     }
     pub fn deadline(&self) -> Instant {
         self.deadline
+    }
+    /// Capture retains the exclusive holder borrow through transport, parsing
+    /// and final identity checks. A dropped/uncertain exec fences the holder
+    /// until final exact-container cleanup; re-quiescing cannot clear it.
+    pub async fn capture(
+        &mut self,
+        profile: &crate::capture::CaptureProfile,
+        cancel: CancellationToken,
+    ) -> Result<crate::capture::SnapshotCandidate> {
+        use crate::capture::{OutgoingMemory, SnapshotCandidate, validate_workspace};
+        capture_window(self.deadline, &cancel)?;
+        if self.sandbox.exporter_pending || self.sandbox.fenced {
+            return Err(Error::new(
+                Failure::Fenced,
+                "capture",
+                "holder exporter is unresolved",
+            ));
+        }
+        if profile.limits().retained_bytes > self.sandbox.limits.workspace_bytes
+            || profile.limits().file_bytes > self.sandbox.limits.workspace_bytes
+        {
+            return Err(Error::new(
+                Failure::InvalidInput,
+                "capture",
+                "profile exceeds frozen workspace limit",
+            ));
+        }
+        self.sandbox.fenced = true;
+        self.sandbox
+            .verify_holder(self.deadline, cancel.clone())
+            .await?;
+        self.sandbox
+            .verify_mounts(self.deadline, cancel.clone())
+            .await?;
+        let id = self.holder_id().to_owned();
+        let output = self
+            .helper(
+                Operation::Export {
+                    id: id.clone(),
+                    profile: profile.clone(),
+                },
+                cancel.clone(),
+            )
+            .await?;
+        let memory = self
+            .helper(
+                Operation::Memory {
+                    id,
+                    limit: profile.limits().memory_bytes,
+                },
+                cancel.clone(),
+            )
+            .await?;
+        let memory = OutgoingMemory::decode(&memory, profile.limits().memory_bytes)?;
+        let owned_cancel = cancel.child_token();
+        let guard = owned_cancel.clone().drop_guard();
+        let frozen = profile.clone();
+        let parse = tokio::task::spawn_blocking(move || {
+            validate_workspace(std::io::Cursor::new(output), &frozen, &owned_cancel)
+        });
+        let workspace = tokio::select! {
+            biased;
+            _=cancel.cancelled()=>return Err(Error::new(Failure::Cancelled,"capture","capture cancelled")),
+            _=tokio::time::sleep_until(self.deadline)=>return Err(Error::new(Failure::Deadline,"capture","capture deadline expired")),
+            result=parse=>result.map_err(|_|Error::new(Failure::Malformed,"capture","validator failed"))??,
+        };
+        drop(guard);
+        self.sandbox
+            .verify_holder(self.deadline, cancel.clone())
+            .await?;
+        self.sandbox
+            .verify_mounts(self.deadline, cancel.clone())
+            .await?;
+        capture_window(self.deadline, &cancel)?;
+        let candidate = SnapshotCandidate::finish(workspace, memory, profile)?;
+        self.sandbox.fenced = false;
+        Ok(candidate)
+    }
+    async fn helper(&mut self, operation: Operation, cancel: CancellationToken) -> Result<Vec<u8>> {
+        let engine = &self.sandbox.ready.engine;
+        engine.check(self.deadline, cancel.clone()).await?;
+        capture_window(self.deadline, &cancel)?;
+        self.sandbox.exporter_pending = true;
+        let result = engine.raw(operation, self.deadline, cancel).await;
+        if result.dispatch == Dispatch::NotStarted || result.success() {
+            self.sandbox.exporter_pending = false;
+        }
+        if !result.success() {
+            return Err(outcome_error(&result, "capture_helper"));
+        }
+        Ok(result.stdout)
     }
 }
 
@@ -173,6 +265,7 @@ impl Sandbox {
             ordinal: 0,
             initialized: false,
             fenced: false,
+            exporter_pending: false,
             closed: false,
             capture_deadline: None,
             quiescence_deadline: None,
@@ -400,7 +493,7 @@ impl Sandbox {
         deadline: Instant,
         cancel: CancellationToken,
     ) -> Result<Quiescent<'_>> {
-        if !self.initialized || self.closed {
+        if !self.initialized || self.closed || self.exporter_pending {
             return Err(Error::new(
                 Failure::Fenced,
                 "quiesce",
@@ -716,4 +809,22 @@ async fn remove_volume(
         ));
     }
     Ok(())
+}
+
+fn capture_window(deadline: Instant, cancel: &CancellationToken) -> Result<()> {
+    if cancel.is_cancelled() {
+        Err(Error::new(
+            Failure::Cancelled,
+            "capture",
+            "capture cancelled",
+        ))
+    } else if Instant::now() >= deadline {
+        Err(Error::new(
+            Failure::Deadline,
+            "capture",
+            "capture deadline expired",
+        ))
+    } else {
+        Ok(())
+    }
 }

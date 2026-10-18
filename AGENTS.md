@@ -36,6 +36,10 @@ and aggregate cleanup bounds. See `docs/rust-docker.md`; explicitly run
 `./scripts/test-rust-docker-e2e.sh --case sandbox` and the opt-in Python Docker
 suite for adapter changes when the locked local environment is available. The
 sandbox gate is not checkpoint publication or production run-and-view evidence.
+Stopped-workspace capture owns bounded unextracted candidates, not writer receipts.
+See `docs/rust-workspace-capture.md`; run the additional Docker `--case checkpoint`
+gate for capture changes. Keep embedded helper digests tied to the frozen worker
+build and preserve pending-exporter fencing through final cleanup.
 `playtime-worker` composes the real runner and private worker control; `xtask`
 builds verified static bundles from a staged source snapshot. Preserve the same
 owned prepared writer through Begin, and never invoke Cargo during admission or

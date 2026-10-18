@@ -239,6 +239,10 @@ impl Transport for Fake {
             Operation::Probe(_) => response(
                 json!({"python":PYTHON,"bridge_sha256":BRIDGE_SHA256,"uid":1000,"gid":1000}),
             ),
+            Operation::Export { .. } => {
+                Outcome::completed(include_bytes!("../fixtures/capture/reference.tar").to_vec())
+            }
+            Operation::Memory { .. } => response(json!({"status":"missing","content":""})),
             Operation::Bridge { payload, .. } => {
                 let v: Value = serde_json::from_slice(payload).unwrap();
                 match v["name"].as_str().unwrap() {

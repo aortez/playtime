@@ -106,6 +106,24 @@ fn build(root: &Path, destination: &Path) -> Result<()> {
             output(Command::new(linker).arg("--version"))?,
             output(Command::new(ld).arg("--version"))?
         ),
+        capture_helpers: [
+            (
+                "workspace-exporter-v1",
+                "crates/playtime-docker/src/capture/exporter.py",
+            ),
+            (
+                "outgoing-memory-v1",
+                "crates/playtime-docker/src/capture/memory.py",
+            ),
+        ]
+        .into_iter()
+        .map(|(name, path)| {
+            Ok((
+                name.into(),
+                playtime_storage::sha256(&captured.bytes(path)?).to_string(),
+            ))
+        })
+        .collect::<Result<_>>()?,
         features: vec![],
         rustflags: rustflags.clone(),
         capabilities: Capabilities::current(),
