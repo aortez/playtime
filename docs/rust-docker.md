@@ -51,6 +51,15 @@ and session ordinal, and bind the exact proposal. A preexisting proposed name is
 a conflict, even when Docker would reuse that volume. After create, containers
 use returned IDs only after verification. A lost acknowledgement retains the
 proposed name for exact reconciliation; create/start/tool are never replayed.
+An unacknowledged create remains pending until its exact owned resource is
+observed. An early name lookup reporting absence is not a completion barrier:
+the daemon can publish the create afterward, even if the local CLI was reaped.
+Repeated absence checks cannot clear this uncertainty. Cleanup reports a residual,
+quiescence stays fenced, and final cleanup retains the volume while any container
+create remains pending. A valid create acknowledgement or verified observation of
+the exact resource allows removal followed by an absence check; explicit transport
+non-dispatch evidence permits `NotDispatched`. Dropped futures preserve pending
+state before dispatch, with no new deadline or automatic create retry.
 Volumes require exact name/labels/local-driver/options. Cleanup checks identities
 again and uses only these resources; it never prunes, deletes images, scans broad
 prefixes for deletion or touches an unrelated same-name replacement.
@@ -162,7 +171,9 @@ are modified by this implementation.
 The container inspection fixture is a normalized capture from this gate's own
 synthetic Docker Engine 28.4.0 holder, with host/run identifiers and nonessential
 environment fields replaced. It is not an experiment record. Fault fixtures
-exercise lost acknowledgements, full pipes, malformed responses, same-name and
+exercise lost acknowledgements (including daemon publication delayed until after
+cleanup/absence queries), dropped create futures, non-dispatch proofs, full pipes,
+malformed responses, same-name and
 effective-config conflicts, changed/unavailable daemons and partial cleanup.
 
 Docker references: [create](https://docs.docker.com/reference/cli/docker/container/create/),

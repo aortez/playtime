@@ -2,7 +2,7 @@ use crate::{
     CancellationToken, Error, Failure, Result,
     bridge::{Tool, ToolLimits, ToolReply},
     engine::{ReadyImage, outcome_error, verify_container, verify_volume},
-    transport::{Operation, Outcome},
+    transport::{Dispatch, Operation, Outcome},
     types::*,
 };
 use serde::Serialize;
@@ -13,16 +13,54 @@ use tokio::time::Instant;
 struct Resource {
     proposal: Proposal,
     id: Option<String>,
-    dispatched: bool,
-    absent: bool,
+    create: CreateState,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CreateState {
+    NotDispatched,
+    // The daemon may publish this resource after a successful absence query.
+    Pending,
+    // A valid create acknowledgement or exact owned-resource inspection proves
+    // publication. Removal can now establish absence of this one-shot create.
+    Established,
 }
 impl Resource {
     fn new(proposal: Proposal) -> Self {
         Self {
             proposal,
             id: None,
-            dispatched: false,
-            absent: false,
+            create: CreateState::NotDispatched,
+        }
+    }
+    async fn create(
+        &mut self,
+        engine: &crate::Engine,
+        deadline: Instant,
+        cancel: CancellationToken,
+    ) -> Result<Outcome> {
+        engine.check(deadline, cancel.clone()).await?;
+        let operation = match self.proposal.role {
+            Role::Volume => Operation::CreateVolume(self.proposal.clone()),
+            Role::Holder | Role::Agent => Operation::CreateContainer(self.proposal.clone()),
+        };
+        // Mark before dispatch: dropped futures retain uncertainty. Only an
+        // explicit transport non-dispatch proof can restore NotDispatched.
+        self.create = CreateState::Pending;
+        let outcome = engine.raw(operation, deadline, cancel).await;
+        if outcome.dispatch == Dispatch::NotStarted {
+            self.create = CreateState::NotDispatched;
+        }
+        Ok(outcome)
+    }
+    fn confirm_absence(&self, operation: &'static str) -> Result<()> {
+        if self.create == CreateState::Pending {
+            Err(Error::new(
+                Failure::Fenced,
+                operation,
+                "create unresolved; current absence does not exclude late publication",
+            ))
+        } else {
+            Ok(())
         }
     }
 }
@@ -208,16 +246,9 @@ impl Sandbox {
                 "proposed name already exists",
             ));
         }
-        // Mark before await: timeout/drop/lost reply cannot erase this intent.
-        resource.dispatched = true;
-        let outcome = engine
-            .call(
-                Operation::CreateVolume(resource.proposal.clone()),
-                deadline,
-                cancel.clone(),
-            )
-            .await?;
+        let outcome = resource.create(&engine, deadline, cancel.clone()).await?;
         acknowledgement(&outcome, &resource.proposal.name, "volume_create")?;
+        resource.create = CreateState::Established;
         let actual = engine
             .volume(&resource.proposal.name, deadline, cancel.clone())
             .await?
@@ -490,7 +521,21 @@ impl Sandbox {
             resources.push(report(resource, result));
         }
         if let Some(volume) = self.volume.as_mut() {
-            let result = remove_volume(&self.ready.engine, volume, deadline, cancel).await;
+            // A container still being created may acquire (or recreate) this
+            // named volume after inspection. Keep the dependency reserved.
+            let pending = [&self.agent, &self.holder]
+                .into_iter()
+                .flatten()
+                .any(|r| r.create == CreateState::Pending);
+            let result = if pending {
+                Err(Error::new(
+                    Failure::Fenced,
+                    "volume_remove",
+                    "retained for unresolved container create",
+                ))
+            } else {
+                remove_volume(&self.ready.engine, volume, deadline, cancel).await
+            };
             resources.push(report(volume, result));
         }
         Cleanup { resources }
@@ -499,7 +544,7 @@ impl Sandbox {
 fn report(resource: &Resource, result: Result<()>) -> ResourceOutcome {
     let role = resource.proposal.role;
     let name = resource.proposal.name.clone();
-    if !resource.dispatched {
+    if resource.create == CreateState::NotDispatched {
         ResourceOutcome::NotDispatched { role, name }
     } else {
         match result {
@@ -527,9 +572,8 @@ async fn create_container(
     deadline: Instant,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let p = &resource.proposal;
     if engine
-        .container(&p.name, deadline, cancel.clone())
+        .container(&resource.proposal.name, deadline, cancel.clone())
         .await?
         .is_some()
     {
@@ -539,14 +583,7 @@ async fn create_container(
             "proposed name already exists",
         ));
     }
-    resource.dispatched = true;
-    let result = engine
-        .call(
-            Operation::CreateContainer(p.clone()),
-            deadline,
-            cancel.clone(),
-        )
-        .await?;
+    let result = resource.create(engine, deadline, cancel.clone()).await?;
     if !result.success() {
         return Err(outcome_error(&result, "container_create"));
     }
@@ -563,6 +600,8 @@ async fn create_container(
         })?
         .to_owned();
     resource.id = Some(id.clone());
+    resource.create = CreateState::Established;
+    let p = &resource.proposal;
     let actual = engine
         .container(&id, deadline, cancel.clone())
         .await?
@@ -612,14 +651,13 @@ async fn remove_container(
     deadline: Instant,
     cancel: CancellationToken,
 ) -> Result<()> {
-    if !resource.dispatched {
+    if resource.create == CreateState::NotDispatched {
         return Ok(());
     }
     // Reinspect even a previous absence: cleanup must not invent current proof.
     let target = resource.id.as_deref().unwrap_or(&resource.proposal.name);
     let Some(actual) = engine.container(target, deadline, cancel.clone()).await? else {
-        resource.absent = true;
-        return Ok(());
+        return resource.confirm_absence("container_remove");
     };
     let id = verify_container(&actual, &resource.proposal)?;
     if resource.id.as_ref().is_some_and(|old| old != &id) {
@@ -630,6 +668,7 @@ async fn remove_container(
         ));
     }
     resource.id = Some(id.clone());
+    resource.create = CreateState::Established;
     // Removal is safe to reconcile after a lost reply; tool execution is not.
     let _outcome = engine
         .call(
@@ -645,7 +684,6 @@ async fn remove_container(
             "owned container remains; cessation unconfirmed",
         ));
     }
-    resource.absent = true;
     Ok(())
 }
 async fn remove_volume(
@@ -654,15 +692,15 @@ async fn remove_volume(
     deadline: Instant,
     cancel: CancellationToken,
 ) -> Result<()> {
-    if !resource.dispatched {
+    if resource.create == CreateState::NotDispatched {
         return Ok(());
     }
     let name = &resource.proposal.name;
     let Some(actual) = engine.volume(name, deadline, cancel.clone()).await? else {
-        resource.absent = true;
-        return Ok(());
+        return resource.confirm_absence("volume_remove");
     };
     verify_volume(&actual, &resource.proposal)?;
+    resource.create = CreateState::Established;
     let _outcome = engine
         .call(
             Operation::RemoveVolume(name.clone()),
@@ -677,6 +715,5 @@ async fn remove_volume(
             "owned volume remains",
         ));
     }
-    resource.absent = true;
     Ok(())
 }
