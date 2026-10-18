@@ -6,9 +6,10 @@ Branch `17-rust-foundation` starts at the specified Python baseline
 `ad7a2f2a5a6947d396f601a43fe622716e41200c`. Its tree is identical to the merged
 `main` revision `ca276261605632701b018bb0a3b879eecc80d107` inspected at startup.
 
-Status: implemented foundation for #17, extended on this branch with #33's
-synchronous portable archive storage. See the [storage contract](rust-storage.md).
-The #18 controller is on its independent branch; #19 will integrate them.
+Status: implemented foundation for #17, extended with #18's bounded controller
+and deterministic in-memory driver, and #33's synchronous portable archive
+storage. See the [controller contract](rust-controller.md) and
+[storage contract](rust-storage.md). #19 will integrate these components.
 The Python launcher remains the operational entry point.
 
 ## Agreed boundaries
@@ -17,8 +18,9 @@ The Python launcher remains the operational entry point.
 I/O or a runtime. `playtime-protocol` owns versioned client/event contracts and
 serialization/schema dependencies. Neither depends on a service or UI.
 
-Later packages are `playtime-engine` (orchestration, adapters, and the internal
-`playtime-worker` binary), `playtime-server` (`playtimed`), `playtime-client`
+`playtime-engine` now implements orchestration decisions and simulation adapters;
+real adapters and the internal `playtime-worker` binary follow later. Later
+packages are `playtime-server` (`playtimed`), `playtime-client`
 (shared reqwest client), `playtime-cli` (`playtime`), and `playtime-ui` (egui).
 Add these in their owning issues when they have implementations.
 
@@ -75,7 +77,7 @@ foundation subset, not a complete recipe or the future override API.
 Command exits, timeouts, and absent results are separate outcomes. Missing,
 available (including empty), and unavailable memory are separate states.
 Cleanup can be complete, failed with errors, or unknown. These are observations;
-the phase vocabulary does not yet implement transition or cancellation rules.
+the engine implements transition and cancellation rules separately in #18.
 
 Archive paths are lexical relative paths without empty, dot, parent, backslash,
 NUL, or colon components. This is not permission to open/extract them: #33's
@@ -155,9 +157,12 @@ Docker skips. The GitHub workflow is provided but has not yet run remotely.
 ## Following work
 
 The [compatibility matrix](rust-compatibility.md) assigns operational parity
-to the later migration issues. #18 and #33 build independently on this foundation.
+to the later migration issues. #18's [controller contract](rust-controller.md)
+defines transitions/effects, request reservation/settlement, the deterministic
+scenario grammar, and cancellation/checkpoint/limit precedence.
 #19 joins a reviewed controller revision to storage, including observation
 mapping, retained outboxes, durable effect dispatch, and legacy readers. #20
-settles worker ownership/takeover and SQLite admission transactions. Real
+integrates worker ownership/takeover and SQLite admission from #34 with the
+HTTP/shared client from #35. Real
 adapters, service supervision, authenticated remote access, portable reports,
 and strict repeat remain separate deliverables.

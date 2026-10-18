@@ -1,9 +1,11 @@
 # Rust migration compatibility matrix
 
 Baseline: `ad7a2f2a5a6947d396f601a43fe622716e41200c`, including the committed
-memory experiment and interrupted-pilot exit behavior. The foundation in #17
-provides types and fixtures; **all executable Rust operations below are pending**.
-The existing Python commands remain supported during development.
+memory experiment and interrupted-pilot exit behavior. #17 provides shared types
+and fixtures; #18 adds the bounded controller and deterministic simulation.
+**The operational Rust commands below remain pending.** The existing Python
+commands remain supported during development. See [controller behavior and
+explicit race rules](rust-controller.md) for the implemented simulation scope.
 
 | Current operation | Behavior to preserve | Rust delivery / deliberate changes |
 | --- | --- | --- |

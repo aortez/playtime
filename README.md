@@ -198,10 +198,11 @@ PLAYTIME_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 The second command includes Docker integration checks. Use `smoke --live` with
 a recipe when checking the real model's tool use and handoff behavior.
 
-The Rust workspace contains `playtime-core`, `playtime-protocol`, and
-`playtime-storage`: typed contracts, synthetic fixtures, and portable archive
-I/O. The Python command remains the operational runner. See the
-[storage contract](docs/rust-storage.md), [architecture decision](docs/rust-foundation.md)
+The Rust workspace contains `playtime-core`, `playtime-protocol`,
+`playtime-engine`, and `playtime-storage`: typed contracts, a bounded controller,
+deterministic simulation, and portable archive I/O. The Python command remains
+the operational runner. See the [architecture decision](docs/rust-foundation.md),
+[controller contract](docs/rust-controller.md), [storage contract](docs/rust-storage.md),
 and [compatibility matrix](docs/rust-compatibility.md) for scope and remaining work.
 With rustup installed, Cargo selects the pinned toolchain:
 
@@ -210,6 +211,17 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
+
+Run the two-session simulation without Docker, Ollama, or wall-clock sleeps:
+
+```sh
+cargo run --locked -p playtime-engine --example simulate -- crates/playtime-engine/tests/fixtures/two-session.json
+```
+
+This prints a simulation-labeled result and event trace. Scripted commands only
+mutate an in-memory workshop; their command text is never executed on the host.
+The example spends 26 measured tokens over 400 virtual milliseconds. Real Rust
+adapters, controller/archive integration, service, and clients remain later work.
 
 To publish and verify the synthetic two-session archive in a **new** directory:
 

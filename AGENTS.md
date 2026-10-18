@@ -13,6 +13,10 @@ workshop. Keep the controller independent of third-party Python packages.
 The Rust foundation is a root Cargo workspace under `crates/`. Keep
 `playtime-core` independent of I/O, async runtimes, HTTP, databases, and UI;
 `playtime-protocol` owns wire types and serialization/schema dependencies.
+`playtime-engine` owns the bounded controller and replaceable external effects.
+Its simulator must drive the same controller and never execute command text on
+the host. See `docs/rust-controller.md` for dispatch, deadline, and accounting
+invariants. Keep the Python parity fixtures and independent oracle tests intact.
 `playtime-storage` owns synchronous portable archive I/O. Preserve its distinction
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`
