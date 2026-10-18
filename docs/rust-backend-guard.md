@@ -5,6 +5,9 @@ Its only executable is **`playtime-backend-guard-fixture`**, explicitly selected
 by the test harness. It cannot connect to Ollama, SSH, systemd, Docker, the public
 API or experimental archives. No managed host mode is installed by this slice.
 
+The subsequent [host boundary](rust-backend-host.md) supplies staged O2b ports
+and policy; its dedicated-host activation and live gate remain separate.
+
 ```sh
 ./scripts/test-rust-backend-guard.sh
 ```

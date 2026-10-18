@@ -291,3 +291,9 @@ transcript, memory/file inspection, and verified image previews/downloads. See
 [the workbench guide](docs/rust-ui.md) for bounds, screenshots and performance.
 The fixture milestone advances #22; the real simulation gate still requires
 #20/#43 before #22 can close.
+# Dedicated backend host staging
+
+The Rust-only Ollama host boundary and its separate CPU/systemd checks are
+documented in [rust-backend-host.md](docs/rust-backend-host.md). Building it does
+not activate managed mode; dedicated-host activation and live acceptance remain
+explicitly reviewed operations.

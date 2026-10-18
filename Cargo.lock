@@ -3338,6 +3338,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "playtime-backend-host"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "playtime-backend-guard",
+ "playtime-core",
+ "playtime-engine",
+ "playtime-local",
+ "playtime-ollama",
+ "playtime-protocol",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "tokio-util",
+ "zbus",
+]
+
+[[package]]
 name = "playtime-cli"
 version = "0.1.0"
 dependencies = [

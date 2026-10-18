@@ -1,0 +1,1 @@
+restrict,command="/usr/libexec/playtime-backend-bridge" @PUBLIC_ED25519_KEY@

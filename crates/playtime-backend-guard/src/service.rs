@@ -29,6 +29,7 @@ struct Inner {
     poisoned: bool,
     stop_started: bool,
     cancel: CancellationToken,
+    armed_lease: Option<ControlId>,
 }
 impl Inner {
     fn enqueue(&mut self, event: Event, admission: bool) -> Result<u64> {
@@ -91,6 +92,7 @@ struct Shared {
     supervisor: Arc<dyn Supervisor>,
     operations: Arc<Semaphore>,
     forwarding: Arc<Semaphore>,
+    enforcement: Option<Arc<dyn Enforcement>>,
 }
 #[derive(Clone)]
 pub struct Guard(Arc<Shared>);
@@ -117,11 +119,21 @@ impl Guard {
     /// `initial` is accepted only for an explicitly created empty journal.
     /// Reopening requires saved identity; it can never create a new generation.
     pub async fn start(
+        journal: Journal,
+        initial: Option<BackendIdentity>,
+        backend: Arc<dyn Backend>,
+        supervisor: Arc<dyn Supervisor>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
+        Self::start_enforced(journal, initial, backend, supervisor, clock, None).await
+    }
+    pub async fn start_enforced(
         mut journal: Journal,
         initial: Option<BackendIdentity>,
         backend: Arc<dyn Backend>,
         supervisor: Arc<dyn Supervisor>,
         clock: Arc<dyn Clock>,
+        enforcement: Option<Arc<dyn Enforcement>>,
     ) -> Result<Self> {
         if journal.machine.backend.is_none() {
             let identity = initial.ok_or(Failure::Blocked)?;
@@ -189,6 +201,7 @@ impl Guard {
                 poisoned: false,
                 stop_started: false,
                 cancel: CancellationToken::new(),
+                armed_lease: None,
             }),
             progress,
             clock,
@@ -196,6 +209,7 @@ impl Guard {
             supervisor,
             operations: Arc::new(Semaphore::new(16)),
             forwarding: Arc::new(Semaphore::new(QUEUE_BYTES)),
+            enforcement,
         }));
         let needs_stop = {
             let inner = guard.0.inner.lock().unwrap();
@@ -276,7 +290,7 @@ impl Guard {
             } else {
                 Gate::Preparing
             }
-        } else if machine.stop.is_some() {
+        } else if inner.stop_started {
             if machine
                 .stop
                 .as_ref()
@@ -348,7 +362,7 @@ impl Guard {
                 inner.enqueue(
                     Event::Acquired {
                         lease: LeaseRecord {
-                            spec,
+                            spec: spec.clone(),
                             capability_sha256: verifier,
                             last_ordinal: 0,
                             released: false,
@@ -358,6 +372,31 @@ impl Guard {
                 )?
             }
         };
+        let needs_arm = {
+            let inner = self.0.inner.lock().unwrap();
+            !inner.stop_started
+                && inner
+                    .machine
+                    .lease()
+                    .is_some_and(|lease| !lease.released && lease.spec == spec)
+        };
+        if needs_arm && let Some(enforcement) = &self.0.enforcement {
+            if tokio::time::timeout(PORT_WAIT, enforcement.arm_lease(&spec))
+                .await
+                .map_or(true, |r| r.is_err())
+            {
+                let _ = self.select_stop(StopReason::BackendUncertain, None);
+                return Err(Failure::Blocked);
+            }
+            let mut inner = self.0.inner.lock().unwrap();
+            if inner
+                .machine
+                .lease()
+                .is_some_and(|lease| !lease.released && lease.spec == spec)
+            {
+                inner.armed_lease = Some(spec.lease_id.clone());
+            }
+        }
         self.durable(sequence).await?;
         let mut status = self.status();
         status.lease = self
@@ -376,6 +415,7 @@ impl Guard {
         if inner.poisoned
             || self.0.progress.borrow().failed
             || inner.machine.stop.is_some()
+            || inner.stop_started
             || inner.verified.is_none()
             || now.boot_id != inner.machine.backend.as_ref().unwrap().boot_id
         {
@@ -431,6 +471,11 @@ impl Guard {
                 (inner.sequence, true, inner.machine.backend.clone().unwrap())
             } else {
                 self.check_gate(&inner)?;
+                if self.0.enforcement.is_some()
+                    && inner.armed_lease.as_ref() != Some(&spec.lease_id)
+                {
+                    return Err(Failure::Busy);
+                }
                 if inner.machine.pending_request() {
                     return Err(Failure::Busy);
                 }
@@ -468,6 +513,14 @@ impl Guard {
                 .get(spec.request_id.as_str())
                 .cloned();
             return Ok(Dispatch::Existing(Box::new(status)));
+        }
+        if let Some(enforcement) = &self.0.enforcement
+            && tokio::time::timeout(PORT_WAIT, enforcement.arm_request(&spec))
+                .await
+                .map_or(true, |r| r.is_err())
+        {
+            let _ = self.select_stop(StopReason::BackendUncertain, None);
+            return Err(Failure::Blocked);
         }
         let cancel = {
             let inner = self.0.inner.lock().unwrap();
@@ -531,6 +584,14 @@ impl Guard {
             )?
         };
         self.durable(sequence).await?;
+        if let Some(enforcement) = &self.0.enforcement
+            && tokio::time::timeout(PORT_WAIT, enforcement.terminal(request))
+                .await
+                .map_or(true, |r| r.is_err())
+        {
+            let _ = self.select_stop(StopReason::BackendUncertain, None);
+            return Err(Failure::Blocked);
+        }
         Ok(self.status())
     }
     fn owner_lost(&self, lease_id: &ControlId, request_id: &ControlId) {
@@ -569,10 +630,20 @@ impl Guard {
             }
         }
         self.select_stop(StopReason::Revoked, Some(operation))?;
-        let sequence = self.0.inner.lock().unwrap().sequence;
-        tokio::time::timeout(IO_GRACE, self.durable(sequence))
-            .await
-            .map_err(|_| Failure::Storage)??;
+        tokio::time::timeout(IO_GRACE, async {
+            loop {
+                let selected = {
+                    let inner = self.0.inner.lock().unwrap();
+                    inner.machine.stop.as_ref().map(|_| inner.sequence)
+                };
+                if let Some(sequence) = selected {
+                    return self.durable(sequence).await;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .map_err(|_| Failure::Storage)??;
         Ok(self.status())
     }
     fn select_stop(&self, reason: StopReason, operation_id: Option<ControlId>) -> Result<()> {
@@ -628,6 +699,8 @@ impl Guard {
             inner.stop_started = true;
             let sequence = if inner.machine.stop.is_some() {
                 Some(inner.sequence)
+            } else if self.0.enforcement.is_some() {
+                None
             } else {
                 match inner.enqueue(
                     Event::StopSelected {
@@ -647,6 +720,43 @@ impl Guard {
         };
         let guard = self.clone();
         tokio::spawn(async move {
+            let (operation, sequence) = if sequence.is_none()
+                && let Some(enforcement) = &guard.0.enforcement
+            {
+                let result =
+                    tokio::time::timeout(PORT_WAIT, enforcement.select_stop(&operation)).await;
+                let chosen = match result {
+                    Ok(Ok(chosen))
+                        if chosen.backend == operation.backend
+                            && chosen.lease_id == operation.lease_id =>
+                    {
+                        chosen
+                    }
+                    _ => {
+                        guard.0.inner.lock().unwrap().poisoned = true;
+                        operation
+                    }
+                };
+                let sequence = {
+                    let mut inner = guard.0.inner.lock().unwrap();
+                    match inner.enqueue(
+                        Event::StopSelected {
+                            operation: chosen.clone(),
+                        },
+                        false,
+                    ) {
+                        Ok(n) => Some(n),
+                        Err(_) => {
+                            inner.poisoned = true;
+                            inner.machine.stop = Some(chosen.clone());
+                            None
+                        }
+                    }
+                };
+                (chosen, sequence)
+            } else {
+                (operation, sequence)
+            };
             guard.service_stop(operation, sequence).await;
         });
         Ok(())
@@ -765,6 +875,9 @@ impl Guard {
         retry
     }
     /// Independent timer; virtual-clock fixtures call this directly.
+    pub fn enforcement_failed(&self) {
+        let _ = self.select_stop(StopReason::BackendUncertain, None);
+    }
     pub fn tick(&self) {
         let reason = {
             let inner = self.0.inner.lock().unwrap();
@@ -810,7 +923,7 @@ impl Guard {
                 let mut inner = guard.0.inner.lock().unwrap();
                 inner.authenticate(&lease_id, &capability)?;
                 let event = Event::Released {
-                    lease_id,
+                    lease_id: lease_id.clone(),
                     operation_id: operation_id.clone(),
                 };
                 if let Some(old) = inner.machine.operations.get(operation_id.as_str()) {
@@ -834,6 +947,11 @@ impl Guard {
                 }
             };
             guard.durable(sequence).await?;
+            if let Some(enforcement) = &guard.0.enforcement {
+                tokio::time::timeout(PORT_WAIT, enforcement.release(&lease_id))
+                    .await
+                    .map_err(|_| Failure::Blocked)??;
+            }
             Ok(guard.status())
         })
         .await
@@ -860,6 +978,7 @@ impl Guard {
             inner.verified = Some(verified);
             inner.termination = None;
             inner.stop_started = false;
+            inner.armed_lease = None;
             inner.cancel = CancellationToken::new();
             sequence
         };

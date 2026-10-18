@@ -1,0 +1,32 @@
+[Unit]
+Description=Playtime native guarded Ollama admission
+# Keep serving status/release after the owner stops an expired backend.
+BindsTo=playtime-backend-owner.service
+After=playtime-backend-owner.service ollama.service
+
+[Service]
+Type=notify
+ExecStart=/usr/libexec/playtime-backend-host guard-initialize
+User=playtime-bridge
+Group=playtime-bridge
+UMask=0077
+RuntimeDirectory=playtime-backend
+RuntimeDirectoryMode=0700
+StateDirectory=playtime-backend
+StateDirectoryMode=0700
+Restart=no
+WatchdogSec=2s
+NotifyAccess=main
+TimeoutStartSec=50s
+TimeoutStopSec=2s
+KillMode=control-group
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/playtime-backend /run/playtime-backend
+
+[Install]
+WantedBy=multi-user.target

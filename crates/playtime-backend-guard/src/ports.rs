@@ -109,6 +109,20 @@ pub trait Supervisor: Send + Sync + 'static {
     async fn terminated(&self, operation: &StopOperation) -> Result<Option<HeldTermination>>;
 }
 
+/// Production-only crash-independent enforcement. The CPU fixture constructor
+/// does not install this port. Acknowledgments bind the exact immutable input;
+/// a lost reply must never renew its deadlines.
+#[async_trait::async_trait]
+pub trait Enforcement: Send + Sync + 'static {
+    /// Adopt an earlier crash-independent host stop if one already exists.
+    /// The local gate is already closed; no host reply can reopen it.
+    async fn select_stop(&self, proposed: &StopOperation) -> Result<StopOperation>;
+    async fn arm_lease(&self, lease: &LeaseSpec) -> Result<()>;
+    async fn arm_request(&self, request: &RequestSpec) -> Result<()>;
+    async fn terminal(&self, request: &RequestSpec) -> Result<()>;
+    async fn release(&self, lease: &ControlId) -> Result<()>;
+}
+
 pub struct ObservationFrame {
     pub bytes: Vec<u8>,
     _permit: OwnedSemaphorePermit,
