@@ -192,17 +192,13 @@ impl Inner {
                     && (new.sequence != old.sequence || new == old)
             })
         });
-        if !shape_valid
-            || !clock_valid
-            || !receipt_valid
-            || self
-                .archive
-                .verify_status(prepared, prior, &status)
-                .await
-                .is_err()
-        {
+        if !shape_valid || !clock_valid || !receipt_valid {
             return self.uncertain(&expected, Reason::ControlUncertain).await;
         }
+        let frontier = match self.archive.confirmed_read(prepared, prior, &status).await {
+            Ok(frontier) => frontier,
+            Err(_) => return self.uncertain(&expected, Reason::ControlUncertain).await,
+        };
         self.ledger
             .compare_update(&expected, "worker_confirmed", move |record| {
                 record.phase = if record.cancel_requested.is_some() {
@@ -224,6 +220,13 @@ impl Inner {
                 };
                 record.endpoint = Some(endpoint);
                 record.last_status = Some(status);
+                if let Some(frontier) = frontier {
+                    record.confirmed_read = Some(ConfirmedRead {
+                        frontier,
+                        owner_generation: record.owner_generation,
+                        source: ConfirmationSource::Worker,
+                    });
+                }
                 Ok(())
             })
             .await
@@ -255,11 +258,15 @@ mod tests {
     struct Archive {
         calls: AtomicUsize,
         block: AtomicBool,
+        complete: AtomicBool,
         entered: Notify,
         release: Notify,
     }
     #[async_trait]
     impl ArchivePort for Archive {
+        async fn normal_completion(&self, _: &Admission) -> Result<bool> {
+            Ok(self.complete.load(Ordering::SeqCst))
+        }
         async fn validate_preview(&self, _: &AdmissionRequest) -> Result<Selection> {
             unreachable!()
         }
@@ -473,5 +480,144 @@ mod tests {
         assert_eq!(late, superseded);
         assert_eq!(late.last_status, record.last_status);
         assert_eq!(c.ledger().get(&record.run_id).await.unwrap(), superseded);
+    }
+    struct FinishSupervisor {
+        stopped: AtomicBool,
+        stop_calls: AtomicUsize,
+        ledger: Ledger,
+        change_owner: bool,
+    }
+    #[async_trait]
+    impl Supervisor for FinishSupervisor {
+        async fn ensure_legacy_idle(&self, _: &Path) -> Result<()> {
+            Ok(())
+        }
+        async fn start(&self, _: &PreparedLaunch) -> Result<Option<Endpoint>> {
+            unreachable!()
+        }
+        async fn locate(&self, _: &PreparedLaunch) -> Result<Endpoint> {
+            unreachable!()
+        }
+        async fn observe(&self, launch: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
+            let stopped = self.stopped.load(Ordering::SeqCst);
+            Ok(Some(SupervisorObservation {
+                manager_id: launch.binding.invocation_id.clone(),
+                cgroup: "/synthetic-test".into(),
+                active_state: if stopped { "inactive" } else { "active" }.into(),
+                main_pid: 123,
+                ready_monotonic_us: 0,
+                stopping_monotonic_us: 0,
+                result: "test".into(),
+                stopped,
+                exit: None,
+            }))
+        }
+        async fn stop(&self, launch: &PreparedLaunch, _: &SupervisorObservation) -> Result<()> {
+            self.stop_calls.fetch_add(1, Ordering::SeqCst);
+            self.stopped.store(true, Ordering::SeqCst);
+            if self.change_owner {
+                self.ledger
+                    .update(&launch.binding.run_id, "test_new_owner", |record| {
+                        record.owner_generation += 1;
+                        Ok(())
+                    })
+                    .await?;
+            }
+            Ok(())
+        }
+    }
+    #[tokio::test]
+    async fn normal_release_requires_settled_confirmed_terminal_and_original_owner_termination() {
+        for change_owner in [false, true] {
+            let (_root, old, archive, record, _) = setup().await;
+            let ledger = old.ledger().clone();
+            let supervisor = Arc::new(FinishSupervisor {
+                stopped: AtomicBool::new(false),
+                stop_calls: AtomicUsize::new(0),
+                ledger: ledger.clone(),
+                change_owner,
+            });
+            let coordinator = Coordinator::new(
+                ledger.clone(),
+                archive.clone(),
+                supervisor.clone(),
+                Arc::new(FixedClock),
+            );
+            let run = record.run_id.clone();
+            let record = coordinator.finish_normal(run.clone()).await.unwrap();
+            assert_ne!(
+                record.phase,
+                Phase::Terminal,
+                "missing trusted read boundary"
+            );
+            let reference = playtime_storage::content_ref(
+                playtime_core::ArchivePath::new("test").unwrap(),
+                b"test",
+            );
+            let identity = playtime_protocol::storage::ArchiveIdentity {
+                run_id: run.clone(),
+                descriptor: reference.clone(),
+                input_manifest: reference.clone(),
+            };
+            ledger
+                .update(&run, "test_confirmed", move |record| {
+                    record.confirmed_read = Some(ConfirmedRead {
+                        frontier: playtime_protocol::storage::EventFrontier {
+                            archive: identity,
+                            marker: reference,
+                            committed_sequence: 1,
+                            committed_bytes: 2,
+                            prefix_sha256: digest(b"a\n"),
+                        },
+                        owner_generation: 1,
+                        source: ConfirmationSource::Worker,
+                    });
+                    record.last_status.as_mut().unwrap().publication_pending = true;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            archive.complete.store(true, Ordering::SeqCst);
+            assert_ne!(
+                coordinator.finish_normal(run.clone()).await.unwrap().phase,
+                Phase::Terminal
+            );
+            assert_eq!(supervisor.stop_calls.load(Ordering::SeqCst), 0);
+            ledger
+                .update(&run, "test_settled", |record| {
+                    record.last_status.as_mut().unwrap().publication_pending = false;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            archive.complete.store(false, Ordering::SeqCst);
+            assert_ne!(
+                coordinator.finish_normal(run.clone()).await.unwrap().phase,
+                Phase::Terminal
+            );
+            assert_eq!(supervisor.stop_calls.load(Ordering::SeqCst), 0);
+            archive.complete.store(true, Ordering::SeqCst);
+            let final_record = coordinator.finish_normal(run.clone()).await.unwrap();
+            assert_eq!(final_record.phase == Phase::Terminal, !change_owner);
+            let next = ledger
+                .reserve(
+                    "next".into(),
+                    record.request.clone(),
+                    record.selection.clone(),
+                    FixedClock.now(),
+                )
+                .await;
+            assert_eq!(
+                next.is_ok(),
+                !change_owner,
+                "only proven normal completion releases admission"
+            );
+            let trace = ledger.trace(&run).await.unwrap();
+            if !change_owner {
+                assert_eq!(trace.last().unwrap(), "normal_completed");
+                assert!(final_record.supervisor.unwrap().stopped);
+                assert!(final_record.stop_accepted.is_some());
+            }
+        }
     }
 }

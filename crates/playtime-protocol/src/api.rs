@@ -280,6 +280,10 @@ pub struct RunView {
     pub controller_phase: Option<RunPhase>,
     pub outcome: Option<ExperimentalOutcome>,
     pub usage: Option<UsageSummary>,
+    /// Missing in older servers means coverage was not reported, never zero
+    /// pending usage. Settled usage remains separate from original allowances.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accounting_coverage: Option<AccountingCoverage>,
     pub checkpoint: Option<CheckpointSummary>,
     pub cancellation: Option<Cancellation>,
     pub cleanup: Cleanup,
@@ -294,6 +298,15 @@ pub struct EventAnchors {
     pub frontier: Frontier,
     pub history_cursor: String,
     pub live_cursor: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
+pub struct AccountingCoverage {
+    pub schema_version: u32,
+    pub availability: EvidenceAvailability,
+    pub unsettled_requests: u64,
+    pub unsettled_allowance: u64,
+    pub frontier: Frontier,
 }
 impl EventAnchors {
     pub fn new(frontier: Frontier) -> Result<Self, crate::ReadError> {
@@ -357,6 +370,10 @@ pub struct Checkpoint {
     pub evidence: ContentAvailability,
     pub workspace: ContentAvailability,
     pub files: Vec<FileVersion>,
+    /// Exact versioned checkpoint manifest and retained leaves use the ordinary
+    /// verified artifact routes. `evidence` above is outgoing evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<ContentAvailability>,
 }
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 pub struct Artifact {

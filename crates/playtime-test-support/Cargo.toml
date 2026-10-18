@@ -7,6 +7,8 @@ publish.workspace = true
 
 [dependencies]
 playtime-core.workspace = true
+playtime-runner.workspace = true
+playtime-storage.workspace = true
 playtime-server = { path = "../playtime-server" }
 async-trait.workspace = true
 serde.workspace = true

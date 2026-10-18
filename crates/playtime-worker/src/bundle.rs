@@ -16,6 +16,7 @@ pub const SOURCE: &str = "inputs/worker/source.bundle";
 pub const LOCK: &str = "inputs/worker/Cargo.lock";
 
 /// In-memory validated bytes. No mutable bundle pathname is retained as identity.
+#[derive(Clone)]
 pub struct VerifiedBundle {
     descriptor: BundleDescriptor,
     descriptor_bytes: Vec<u8>,

@@ -26,6 +26,24 @@ use crate::{
 
 const METADATA_BYTES: u64 = 65_536;
 
+/// Position supplied by a trusted confirmation authority or checked beneath a
+/// covering snapshot. This serializable-looking data is never a writer receipt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadPrefix {
+    pub sequence: u64,
+    pub bytes: u64,
+    pub sha256: Sha256Digest,
+}
+
+/// Host trust boundary, implemented privately by the service's authenticated,
+/// persisted-confirmation coordinator. Implementations must authorize this exact
+/// archive identity, not a cursor or a discovered marker. Storage independently
+/// verifies all bytes. Test authorities are permitted; this is not a sandbox
+/// against arbitrary host code.
+pub trait ConfirmationAuthority {
+    fn authorize(&self, archive: &ArchiveIdentity) -> Result<ReadPrefix>;
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredEvent {
     pub envelope: EventEnvelope,
@@ -191,6 +209,52 @@ impl ArchiveReader {
     /// receipt, even if a later commit/failed publication is visible on disk.
     pub fn live_snapshot(&self, receipt: &CommittedFrontier) -> Result<Snapshot> {
         self.snapshot_at(receipt.frontier().clone())
+    }
+
+    /// Read only: no marker discovery, writer acquisition or receipt creation.
+    pub fn confirmed_snapshot(&self, authority: &dyn ConfirmationAuthority) -> Result<Snapshot> {
+        self.snapshot_at(self.read_frontier(authority.authorize(&self.identity)?)?)
+    }
+
+    /// A public historical position is usable only beneath an already trusted
+    /// covering snapshot. Verify both exact prefixes, even for an equal cursor.
+    pub fn sub_snapshot(&self, covering: &Snapshot, prefix: ReadPrefix) -> Result<Snapshot> {
+        if covering.frontier.archive != self.identity {
+            return Err(StorageError::new(
+                ErrorCode::InvalidCursor,
+                "wrong covering archive",
+            ));
+        }
+        if prefix.sequence > covering.frontier.committed_sequence
+            || prefix.bytes > covering.frontier.committed_bytes
+        {
+            return Err(StorageError::new(
+                ErrorCode::CursorAhead,
+                "prefix exceeds confirmation",
+            ));
+        }
+        self.snapshot_at(covering.frontier.clone())?;
+        self.snapshot_at(self.read_frontier(prefix)?)
+    }
+
+    fn read_frontier(&self, prefix: ReadPrefix) -> Result<EventFrontier> {
+        // The v1 marker encoding is deterministic. This describes the marker
+        // associated with the authorized prefix; it never reads a current marker
+        // or pretends that synthesizing its identity certifies a write.
+        let marker = playtime_protocol::storage::CommitMarker {
+            schema_version: playtime_protocol::storage::COMMIT_SCHEMA_VERSION,
+            run_id: self.identity.run_id.clone(),
+            committed_sequence: prefix.sequence,
+            committed_bytes: prefix.bytes,
+            prefix_sha256: prefix.sha256.clone(),
+        };
+        Ok(EventFrontier {
+            archive: self.identity.clone(),
+            marker: reference("events.commit.json", &crate::files::json_bytes(&marker)?),
+            committed_sequence: prefix.sequence,
+            committed_bytes: prefix.bytes,
+            prefix_sha256: prefix.sha256,
+        })
     }
 
     fn snapshot_at(&self, frontier: EventFrontier) -> Result<Snapshot> {

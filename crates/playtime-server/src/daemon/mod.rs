@@ -1,0 +1,598 @@
+//! Production application: ordinary HTTP routes over the admission coordinator,
+//! detached packaged worker and verified archive queries. No fixture responses.
+mod archive;
+mod paging;
+mod projection;
+pub mod test_supervisor;
+
+use crate::{
+    application::{ApiError, Application, Download, History, LiveState, Result},
+    lifecycle::{
+        self as life, Admission, Coordinator, Ledger, Phase,
+        ports::{Supervisor, SystemClock},
+    },
+};
+use archive::Archive;
+use async_trait::async_trait;
+use playtime_core::{RunId, RunMode, SessionId};
+use playtime_protocol::{api::*, worker::WorkerState};
+use playtime_runner::ArchiveQueries;
+use playtime_storage::{ArchiveReader, ReadPrefix, StorageLimits};
+use playtime_worker::bundle::VerifiedBundle;
+use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
+use tokio::sync::{RwLock, Semaphore, watch};
+
+#[derive(Clone)]
+pub struct Daemon {
+    inner: Arc<Inner>,
+}
+struct Inner {
+    archive: Arc<Archive>,
+    coordinator: Coordinator,
+    published: RwLock<BTreeMap<RunId, Published>>,
+    reads: Arc<Semaphore>,
+    test_supervision: bool,
+}
+#[derive(Clone)]
+struct Published {
+    record: Admission,
+    evidence: Option<Arc<projection::Evidence>>,
+    live: watch::Sender<LiveState>,
+    error: bool,
+}
+impl Daemon {
+    pub async fn open(
+        root: &Path,
+        bundle: &Path,
+        supervisor: Arc<dyn Supervisor>,
+        test_supervision: bool,
+    ) -> life::Result<Self> {
+        let ledger = Ledger::open(root).await?;
+        let root = ledger.root().to_path_buf();
+        let bundle = bundle.to_owned();
+        let bundle = tokio::task::spawn_blocking(move || {
+            VerifiedBundle::open(&bundle)
+                .map_err(|_| life::Error::Invalid("invalid frozen worker bundle"))
+        })
+        .await
+        .map_err(|_| life::Error::Uncertain)??;
+        let archive = Arc::new(Archive::new(root, bundle)?);
+        let coordinator =
+            Coordinator::new(ledger, archive.clone(), supervisor, Arc::new(SystemClock));
+        let this = Self {
+            inner: Arc::new(Inner {
+                archive,
+                coordinator,
+                published: RwLock::new(BTreeMap::new()),
+                reads: Arc::new(Semaphore::new(4)),
+                test_supervision,
+            }),
+        };
+        for record in this.inner.coordinator.ledger().list().await? {
+            // A saved boundary is historical confirmation, never a fresh claim
+            // of worker liveness. Active restart/recovery remains a later slice.
+            this.publish(record)
+                .await
+                .map_err(|_| life::Error::Uncertain)?;
+        }
+        Ok(this)
+    }
+    pub fn coordinator(&self) -> &Coordinator {
+        &self.inner.coordinator
+    }
+    async fn blocking<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let permit = self
+            .inner
+            .reads
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ApiError::new("backend_unavailable"))?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            operation()
+        })
+        .await
+        .map_err(|_| ApiError::new("backend_unavailable"))?
+    }
+    async fn publish(&self, record: Admission) -> Result<()> {
+        let old = self
+            .inner
+            .published
+            .read()
+            .await
+            .get(&record.run_id)
+            .cloned();
+        if old.as_ref().is_some_and(|old| {
+            old.record == record
+                && !old.error
+                && old.evidence.as_ref().map(|e| e.snapshot.frontier())
+                    == record.confirmed_read.as_ref().map(|c| &c.frontier)
+        }) {
+            return Ok(());
+        }
+        let (archive, saved) = (self.inner.archive.clone(), record.clone());
+        let projected = if record.confirmed_read.is_none() {
+            Ok(None)
+        } else {
+            self.blocking(move || {
+                archive
+                    .saved_snapshot(&saved)
+                    .map_err(projection::evidence)?
+                    .map(|(reader, snapshot)| {
+                        let query = ArchiveQueries::from_snapshot(reader, snapshot)
+                            .map_err(projection::evidence)?;
+                        projection::project(&saved, &query).map(Arc::new)
+                    })
+                    .transpose()
+            })
+            .await
+        };
+        let mut published = self.inner.published.write().await;
+        if published
+            .get(&record.run_id)
+            .is_some_and(|old| old.record.revision > record.revision)
+        {
+            return Ok(());
+        }
+        let live = published
+            .get(&record.run_id)
+            .map(|old| old.live.clone())
+            .unwrap_or_else(|| watch::channel(LiveState::default()).0);
+        let (evidence, error) = match projected {
+            Ok(value) => (value, false),
+            Err(_) => (
+                published
+                    .get(&record.run_id)
+                    .and_then(|old| old.evidence.clone()),
+                true,
+            ),
+        };
+        let end = if record.phase == Phase::Terminal && !error {
+            evidence
+                .as_ref()
+                .and_then(|e| e.view.last_confirmed_frontier.clone())
+                .map(|frontier| StreamEnd {
+                    status: StreamEndStatus::CommittedCompletion,
+                    frontier,
+                })
+        } else {
+            None
+        };
+        live.send_replace(LiveState {
+            revision: record.revision,
+            end,
+        });
+        published.insert(
+            record.run_id.clone(),
+            Published {
+                record,
+                evidence,
+                live,
+                error,
+            },
+        );
+        if error {
+            Err(ApiError::new("archive_corrupt"))
+        } else {
+            Ok(())
+        }
+    }
+    async fn owned_run(self, run: RunId) {
+        let coordinator = &self.inner.coordinator;
+        if coordinator.start(run.clone()).await.is_err() {
+            if let Ok(record) = coordinator.ledger().get(&run).await {
+                let _ = self.publish(record).await;
+            }
+            return;
+        }
+        loop {
+            let result = async {
+                let mut record = coordinator.refresh(run.clone()).await.map_err(lifecycle)?;
+                if record
+                    .last_status
+                    .as_ref()
+                    .is_some_and(|s| s.state == WorkerState::Prepared)
+                    && record.cancel_requested.is_none()
+                {
+                    record = coordinator.begin(run.clone()).await.map_err(lifecycle)?;
+                }
+                self.publish(record).await?;
+                let record = coordinator
+                    .finish_normal(run.clone())
+                    .await
+                    .map_err(lifecycle)?;
+                let terminal = record.phase == Phase::Terminal;
+                let stopped = record.supervisor.as_ref().is_some_and(|s| s.stopped);
+                self.publish(record).await?;
+                Ok::<_, ApiError>(terminal || stopped)
+            }
+            .await;
+            if matches!(result, Ok(true)) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+    async fn published(&self, run: &RunId) -> Result<Published> {
+        self.inner
+            .published
+            .read()
+            .await
+            .get(run)
+            .cloned()
+            .ok_or_else(|| ApiError::new("not_found"))
+    }
+    /// Cancellation publishes control metadata using the existing read boundary.
+    /// It neither waits for hashing/download capacity nor promotes a receipt.
+    async fn publish_control(&self, record: Admission) {
+        let mut published = self.inner.published.write().await;
+        if let Some(old) = published.get_mut(&record.run_id)
+            && old.record.revision <= record.revision
+        {
+            old.record = record;
+            old.live
+                .send_modify(|state| state.revision = old.record.revision);
+        }
+    }
+    async fn selected(
+        &self,
+        run: &RunId,
+        selected: Option<Frontier>,
+    ) -> Result<Arc<projection::Evidence>> {
+        let published = self.published(run).await?;
+        let current = published
+            .evidence
+            .ok_or_else(|| ApiError::new("evidence_not_ready"))?;
+        let Some(frontier) = selected else {
+            return Ok(current);
+        };
+        let path = self.inner.archive.path(run);
+        self.blocking(move || {
+            let reader = ArchiveReader::open(path, StorageLimits::default())
+                .map_err(projection::evidence)?;
+            let snapshot = historical(&reader, &current.snapshot, &frontier)?;
+            let query =
+                ArchiveQueries::from_snapshot(reader, snapshot).map_err(projection::evidence)?;
+            projection::project(&published.record, &query).map(Arc::new)
+        })
+        .await
+    }
+    async fn launch_response(&self, record: Admission, replayed: bool) -> Result<LaunchResponse> {
+        let run = self.run(record.run_id.clone()).await?;
+        Ok(LaunchResponse {
+            run_id: record.run_id,
+            accepted_at: record.accepted.utc,
+            replayed,
+            run,
+        })
+    }
+}
+fn lifecycle(error: life::Error) -> ApiError {
+    match error {
+        life::Error::Busy => ApiError::new("run_busy"),
+        life::Error::Conflict => ApiError::new("idempotency_conflict"),
+        life::Error::ServiceMismatch => ApiError::new("service_identity_mismatch"),
+        life::Error::Invalid("stale preview") => ApiError::new("stale_preview"),
+        life::Error::Invalid("unsupported recipe or mode") => {
+            ApiError::new("unsupported_capability")
+        }
+        _ => ApiError::new("ownership_unresolved"),
+    }
+}
+fn historical(
+    reader: &ArchiveReader,
+    covering: &playtime_storage::Snapshot,
+    f: &Frontier,
+) -> Result<playtime_storage::Snapshot> {
+    if f.run_id != reader.identity().run_id
+        || f.manifest_sha256 != reader.identity().input_manifest.sha256
+    {
+        return Err(ApiError::new("invalid_cursor"));
+    }
+    reader
+        .sub_snapshot(
+            covering,
+            ReadPrefix {
+                sequence: f.prefix.sequence,
+                bytes: f.prefix.byte_offset,
+                sha256: f.prefix.sha256.clone(),
+            },
+        )
+        .map_err(|e| {
+            ApiError::new(if e.code == playtime_storage::ErrorCode::CursorAhead {
+                "cursor_ahead"
+            } else {
+                "invalid_cursor"
+            })
+        })
+}
+#[async_trait]
+impl Application for Daemon {
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            api_versions: vec![1],
+            archive_versions: vec![1],
+            event_versions: vec![1],
+            service_id: ServiceId::new(self.inner.coordinator.ledger().service_id().as_str())
+                .unwrap(),
+            service_build: env!("CARGO_PKG_VERSION").into(),
+            backend: projection::backend(),
+            modes: vec![RunMode::Simulation],
+            features: vec![
+                "keyed_launch".into(),
+                "event_stream".into(),
+                "verified_artifacts".into(),
+                "accounting_coverage_v1".into(),
+                "checkpoint_index_v1".into(),
+                if self.inner.test_supervision {
+                    "cpu_test_supervision"
+                } else {
+                    "systemd_supervision"
+                }
+                .into(),
+            ],
+            unsupported_adapters: vec![
+                "ollama".into(),
+                "docker".into(),
+                "restart_and_worker_loss_recovery".into(),
+            ],
+            limits: ApiLimits::default(),
+        }
+    }
+    async fn recipes(&self, query: PageQuery) -> Result<Page<Recipe>> {
+        paging::page(
+            vec![(
+                "two-session".into(),
+                Recipe {
+                    recipe_id: RecipeId::new("two-session").unwrap(),
+                    name: "Two-session controller simulation".into(),
+                    modes: vec![RunMode::Simulation],
+                },
+            )],
+            &query,
+            "recipes",
+            "catalog",
+            None,
+        )
+    }
+    async fn preview(&self, recipe: RecipeId, request: PreviewRequest) -> Result<Preview> {
+        if recipe.as_str() != "two-session" {
+            return Err(ApiError::new("not_found"));
+        }
+        if request.mode != RunMode::Simulation {
+            return Err(ApiError::new("unsupported_capability"));
+        }
+        Ok(self.inner.archive.preview())
+    }
+    async fn admit(&self, key: IdempotencyKey, request: LaunchRequest) -> Result<LaunchResponse> {
+        let this = self.clone();
+        // Own the entire reservation -> start scheduling chain across HTTP loss.
+        tokio::spawn(async move {
+            let accepted = this
+                .inner
+                .coordinator
+                .admit(
+                    this.inner.coordinator.ledger().service_id().clone(),
+                    key.to_string(),
+                    life::AdmissionRequest {
+                        recipe_id: request.recipe_id.to_string(),
+                        mode: request.mode,
+                        preview_revision: request.preview_revision.to_string(),
+                    },
+                )
+                .await
+                .map_err(lifecycle)?;
+            this.publish(accepted.admission.clone()).await?;
+            if !accepted.replayed {
+                tokio::spawn(this.clone().owned_run(accepted.admission.run_id.clone()));
+            }
+            this.launch_response(accepted.admission, accepted.replayed)
+                .await
+        })
+        .await
+        .map_err(|_| ApiError::new("backend_unavailable"))?
+    }
+    async fn launch(&self, key: IdempotencyKey) -> Result<LaunchResponse> {
+        let record = self
+            .inner
+            .coordinator
+            .ledger()
+            .lookup(key.as_str())
+            .await
+            .map_err(lifecycle)?
+            .ok_or_else(|| ApiError::new("not_found"))?;
+        self.launch_response(record, true).await
+    }
+    async fn runs(&self, query: PageQuery) -> Result<Page<RunView>> {
+        let ids: Vec<_> = self.inner.published.read().await.keys().cloned().collect();
+        let mut views = Vec::new();
+        for id in ids {
+            views.push((id.to_string(), self.run(id).await?));
+        }
+        paging::page(
+            views,
+            &query,
+            "runs",
+            self.capabilities().service_id.as_str(),
+            None,
+        )
+    }
+    async fn run(&self, run: RunId) -> Result<RunView> {
+        let published = self.published(&run).await?;
+        let mut view = published
+            .evidence
+            .as_ref()
+            .map(|e| e.view.clone())
+            .unwrap_or_else(|| projection::unprepared(&published.record));
+        // Control state may advance without a newer experimental boundary.
+        let control = projection::unprepared(&published.record);
+        view.orchestration = control.orchestration;
+        view.cancellation = control.cancellation;
+        if published.error {
+            view.evidence = EvidenceAvailability::OwnershipUnresolved {
+                reason: "newer confirmation could not be published; retaining verified evidence"
+                    .into(),
+            };
+        }
+        Ok(view)
+    }
+    async fn cancel(&self, run: RunId) -> Result<CancelResponse> {
+        let record = self
+            .inner
+            .coordinator
+            .cancel(run.clone())
+            .await
+            .map_err(lifecycle)?;
+        self.publish_control(record).await;
+        let run = self.run(run).await?;
+        Ok(CancelResponse {
+            pending: run.orchestration.state != OrchestrationState::Terminal,
+            intent: run.cancellation.clone(),
+            run,
+        })
+    }
+    async fn history(
+        &self,
+        run: RunId,
+        cursor: Option<EventCursor>,
+        follow: bool,
+        limit: u32,
+        byte_limit: usize,
+    ) -> Result<History> {
+        let evidence = self.selected(&run, None).await?;
+        let path = self.inner.archive.path(&run);
+        self.blocking(move || {
+            let reader = ArchiveReader::open(path, StorageLimits::default())
+                .map_err(projection::evidence)?;
+            let mut snapshot = evidence.snapshot.clone();
+            let after = if let Some(cursor) = cursor {
+                let older = historical(&reader, &snapshot, &cursor.frontier)?;
+                if !follow {
+                    snapshot = older;
+                }
+                cursor.after_sequence
+            } else {
+                0
+            };
+            let page = reader
+                .page(&snapshot, &snapshot.query(after, limit))
+                .map_err(projection::evidence)?;
+            let mut events = Vec::new();
+            let mut bytes = 0;
+            for event in page.events {
+                let size = serde_json::to_vec(&event.envelope)
+                    .map_err(projection::evidence)?
+                    .len()
+                    + 1;
+                if bytes + size > byte_limit {
+                    if events.is_empty() {
+                        return Err(ApiError::new("evidence_limit_exceeded"));
+                    }
+                    break;
+                }
+                bytes += size;
+                events.push(event.envelope);
+            }
+            let last = events.last().map_or(after, |e| e.sequence.get());
+            Ok(History {
+                frontier: projection::frontier(snapshot.frontier()),
+                has_more: last < snapshot.frontier().committed_sequence,
+                events,
+                after_sequence: after,
+            })
+        })
+        .await
+    }
+    async fn subscribe(&self, run: RunId) -> Result<watch::Receiver<LiveState>> {
+        Ok(self.published(&run).await?.live.subscribe())
+    }
+    async fn checkpoints(&self, run: RunId, query: PageQuery) -> Result<Page<Checkpoint>> {
+        let cursor = paging::decode(&query, "checkpoints", run.as_str())?;
+        let evidence = self.selected(&run, cursor.and_then(|c| c.frontier)).await?;
+        paging::page(
+            evidence
+                .checkpoints
+                .iter()
+                .cloned()
+                .map(|c| (format!("{:020}", c.checkpoint.published_sequence), c))
+                .collect(),
+            &query,
+            "checkpoints",
+            run.as_str(),
+            evidence.view.last_confirmed_frontier.clone(),
+        )
+    }
+    async fn checkpoint(&self, run: RunId, session: SessionId) -> Result<Checkpoint> {
+        self.selected(&run, None)
+            .await?
+            .checkpoints
+            .iter()
+            .find(|c| c.checkpoint.session_id == session)
+            .cloned()
+            .ok_or_else(|| ApiError::new("not_found"))
+    }
+    async fn artifacts(&self, run: RunId, query: PageQuery) -> Result<Page<Artifact>> {
+        let cursor = paging::decode(&query, "artifacts", run.as_str())?;
+        let evidence = self.selected(&run, cursor.and_then(|c| c.frontier)).await?;
+        paging::page(
+            evidence
+                .artifacts
+                .iter()
+                .cloned()
+                .map(|a| (a.artifact_id.to_string(), a))
+                .collect(),
+            &query,
+            "artifacts",
+            run.as_str(),
+            evidence.view.last_confirmed_frontier.clone(),
+        )
+    }
+    async fn artifact(&self, run: RunId, artifact: ArtifactId) -> Result<Artifact> {
+        self.selected(&run, None)
+            .await?
+            .artifacts
+            .iter()
+            .find(|a| a.artifact_id == artifact)
+            .cloned()
+            .ok_or_else(|| ApiError::new("not_found"))
+    }
+    async fn download(&self, run: RunId, artifact: ArtifactId) -> Result<Download> {
+        let evidence = self.selected(&run, None).await?;
+        let metadata = evidence
+            .artifacts
+            .iter()
+            .find(|a| a.artifact_id == artifact)
+            .cloned()
+            .ok_or_else(|| ApiError::new("not_found"))?;
+        let path = self.inner.archive.path(&run);
+        self.blocking(move || {
+            let reader = ArchiveReader::open(path, StorageLimits::default())
+                .map_err(projection::evidence)?;
+            let f = evidence.snapshot.frontier();
+            let snapshot = reader
+                .sub_snapshot(
+                    &evidence.snapshot,
+                    ReadPrefix {
+                        sequence: f.committed_sequence,
+                        bytes: f.committed_bytes,
+                        sha256: f.prefix_sha256.clone(),
+                    },
+                )
+                .map_err(projection::evidence)?;
+            let bytes = reader
+                .read_content(&snapshot, &metadata.content)
+                .map_err(|_| ApiError::new("content_mismatch"))?;
+            Ok(Download {
+                artifact: metadata,
+                reader: Box::pin(std::io::Cursor::new(bytes)),
+            })
+        })
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests;

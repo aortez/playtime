@@ -123,6 +123,39 @@
       }
     },
     "schemas": {
+      "AccountingCoverage": {
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/EvidenceAvailability"
+          },
+          "frontier": {
+            "$ref": "#/components/schemas/Frontier"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unsettled_allowance": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unsettled_requests": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "availability",
+          "unsettled_requests",
+          "unsettled_allowance",
+          "frontier"
+        ],
+        "type": "object"
+      },
       "ApiLimits": {
         "properties": {
           "artifact_bytes": {
@@ -465,6 +498,17 @@
           },
           "incoming_memory": {
             "$ref": "#/components/schemas/ContentAvailability"
+          },
+          "index": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ContentAvailability",
+                "description": "Exact versioned checkpoint manifest and retained leaves use the ordinary\nverified artifact routes. `evidence` above is outgoing evidence."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "outgoing_memory": {
             "$ref": "#/components/schemas/ContentAvailability"
@@ -1101,6 +1145,17 @@
                 "incoming_memory": {
                   "$ref": "#/components/schemas/ContentAvailability"
                 },
+                "index": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ContentAvailability",
+                      "description": "Exact versioned checkpoint manifest and retained leaves use the ordinary\nverified artifact routes. `evidence` above is outgoing evidence."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "outgoing_memory": {
                   "$ref": "#/components/schemas/ContentAvailability"
                 },
@@ -1201,6 +1256,17 @@
                 "accepted_at": {
                   "format": "date-time",
                   "type": "string"
+                },
+                "accounting_coverage": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AccountingCoverage",
+                      "description": "Missing in older servers means coverage was not reported, never zero\npending usage. Settled usage remains separate from original allowances."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "backend": {
                   "$ref": "#/components/schemas/BackendIdentity"
@@ -1672,6 +1738,17 @@
           "accepted_at": {
             "format": "date-time",
             "type": "string"
+          },
+          "accounting_coverage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AccountingCoverage",
+                "description": "Missing in older servers means coverage was not reported, never zero\npending usage. Settled usage remains separate from original allowances."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "backend": {
             "$ref": "#/components/schemas/BackendIdentity"

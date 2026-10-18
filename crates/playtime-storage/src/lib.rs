@@ -16,7 +16,10 @@ mod writer;
 pub use error::{ErrorCode, Result, StorageError};
 pub use files::{PublicationObserver, WriteStep, WriterLock, content_ref, sha256};
 pub use playtime_protocol::storage::StorageLimits;
-pub use reader::{ArchiveReader, EventPage, Inspection, Snapshot, StoredEvent, WorkerAvailability};
+pub use reader::{
+    ArchiveReader, ConfirmationAuthority, EventPage, Inspection, ReadPrefix, Snapshot, StoredEvent,
+    WorkerAvailability,
+};
 pub use writer::{ArchiveWriter, BatchClass, CommittedFrontier, FrozenInput};
 
 pub(crate) fn validate_limits(limits: &StorageLimits) -> Result<()> {

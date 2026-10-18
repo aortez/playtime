@@ -1,6 +1,8 @@
 //! Shared native HTTP client. Observation cancellation only detaches the client.
+mod checkpoints;
 pub mod config;
 mod downloads;
+pub use checkpoints::CheckpointIndexRead;
 mod events;
 pub mod state;
 pub use events::{EventStream, Follow, Observation, ObservedRecord, RetryPolicy};
@@ -609,6 +611,14 @@ async fn read_json<T: DeserializeOwned>(mut response: Response, limit: usize) ->
 fn validate_run(run: &RunView) -> Result<()> {
     if let Some(usage) = &run.usage {
         usage.validate().map_err(|_| Error::InvalidResponse)?;
+    }
+    if let Some(coverage) = &run.accounting_coverage
+        && (coverage.schema_version != 1
+            || Some(&coverage.frontier) != run.last_confirmed_frontier.as_ref()
+            || (coverage.unsettled_requests == 0) != (coverage.unsettled_allowance == 0)
+            || coverage.unsettled_requests > coverage.unsettled_allowance)
+    {
+        return Err(Error::InvalidResponse);
     }
     match (&run.last_confirmed_frontier, &run.event_anchors) {
         (Some(frontier), Some(anchors)) => {

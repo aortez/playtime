@@ -3,6 +3,7 @@
 import fcntl
 import json
 import re
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -107,6 +108,19 @@ def active_directory(root):
 def ensure_idle(root, backend=None):
     # Caller holds RunLock. A detached unit may be starting before its worker
     # acquires that lock, so its service state also reserves the slot.
+    # Rust admissions are durable before worker startup and remain reserved on
+    # uncertain termination. Read only while holding the shared RunLock; neither
+    # a missing worker nor an inactive unit authorizes ignoring this reservation.
+    ledger = Path(root) / ".playtime/service.sqlite3"
+    if ledger.exists() or ledger.is_symlink():
+        try:
+            if ledger.is_symlink() or not ledger.is_file():
+                raise PlaytimeError("Invalid Rust service admission ledger")
+            with sqlite3.connect(ledger.resolve().as_uri() + "?mode=ro", uri=True, timeout=1) as db:
+                if db.execute("SELECT EXISTS(SELECT 1 FROM runs WHERE active=1)").fetchone()[0]:
+                    raise PlaytimeError("The Rust service has a reserved run")
+        except sqlite3.Error as error:
+            raise PlaytimeError("Rust service admission ownership is unresolved") from error
     directory = active_directory(root)
     if directory:
         job = read_json(directory / "job.json", {})

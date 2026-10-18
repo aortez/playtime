@@ -4,6 +4,7 @@
 
 pub mod application;
 pub mod auth;
+pub mod daemon;
 pub mod fixture;
 pub mod http;
 pub mod lifecycle;

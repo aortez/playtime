@@ -26,8 +26,8 @@ mod systemd_live;
 struct Root(PathBuf);
 impl Root {
     fn new() -> Self {
-        let path = PathBuf::from(format!(
-            "/tmp/pt34-{}-{}",
+        let path = std::env::temp_dir().join(format!(
+            "pt34-{}-{}",
             std::process::id(),
             &random_id().unwrap().as_str()[..8]
         ));

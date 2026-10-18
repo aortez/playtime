@@ -1,6 +1,7 @@
 //! Reusable native-client test support: owned processes, port-zero discovery,
 //! isolated client state, bounded output, and credential-free failure evidence.
 pub mod fixture;
+pub mod service;
 pub mod suite;
 use playtime_client::Client;
 use playtime_local::{Token, read_connection};
