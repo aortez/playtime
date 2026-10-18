@@ -51,6 +51,11 @@ impl FixtureArchive {
             },
         })
     }
+    /// Freeze a shorter wall allocation for CPU-only deadline conformance.
+    pub fn with_wall_ms(mut self, wall_ms: u64) -> Self {
+        self.selection.wall_ms = wall_ms;
+        self
+    }
     pub fn selection(&self) -> &Selection {
         &self.selection
     }
@@ -88,10 +93,11 @@ impl ArchivePort for FixtureArchive {
             write_once(&executable, &bytes)?;
             fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))?;
             File::open(&executable)?.sync_all()?;
+            let invocation_id = random_id()?;
             let binding = Binding { service_id: admission.service_id.clone(), run_id: admission.run_id.clone(),
                 manifest_sha256: digest(&manifest), executable_sha256: admission.selection.executable_sha256.clone(),
-                grant_id: random_id()?, worker_id: random_id()?, invocation_id: random_id()?, boot_id: boot_id()?,
-                unit: format!("playtime-{}.service", admission.run_id), kind: WorkerKind::SupervisionFixture };
+                grant_id: random_id()?, worker_id: random_id()?, invocation_id: invocation_id.clone(), boot_id: boot_id()?,
+                unit: format!("playtime-{}.service", invocation_id.as_str()), kind: WorkerKind::SupervisionFixture };
             let socket = directory.join("control.sock");
             // Linux sockaddr_un is short. Refuse rather than truncate identity.
             if socket.as_os_str().len() >= 108 { return Err(Error::Invalid("fixture root too long for private socket")); }
@@ -207,7 +213,7 @@ impl Supervisor for FixtureSupervisor {
         }
         Ok(())
     }
-    async fn start(&self, launch: &PreparedLaunch) -> Result<Endpoint> {
+    async fn start(&self, launch: &PreparedLaunch) -> Result<Option<Endpoint>> {
         let launch = launch.clone();
         let children = self.children.clone();
         let lose = self.lose_next_start_reply.swap(false, Ordering::SeqCst);
@@ -249,7 +255,7 @@ impl Supervisor for FixtureSupervisor {
             if lose {
                 Err(Error::Uncertain)
             } else {
-                Ok(endpoint)
+                Ok(Some(endpoint))
             }
         })
         .await
@@ -336,9 +342,22 @@ impl PreparedExecution for FixtureExecution {
 /// Call only in an explicitly selected fixture child process. The parent passes
 /// a private bootstrap pathname, never a credential, in the environment.
 pub async fn run_worker(bootstrap_path: &Path) -> Result<()> {
+    if playtime_worker_control::systemd::record_exit_if_requested(bootstrap_path)? {
+        return Ok(());
+    }
+    let supervised = std::env::var_os("PLAYTIME_SYSTEMD_WORKER").is_some();
+    // Install before any await or startup filesystem work; systemd may stop a
+    // prepared worker at any time. The fixture records the reason before exit.
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let path = bootstrap_path.to_owned();
     let (bootstrap, owner) = tokio::task::spawn_blocking(move || -> Result<_> {
         let bootstrap = Bootstrap::read(&path)?;
+        if supervised {
+            write_once(
+                &bootstrap.private_dir.join("argv.fixture.json"),
+                &serde_json::to_vec(&std::env::args().collect::<Vec<_>>())?,
+            )?;
+        }
         let reservation: Binding = serde_json::from_slice(&read_private(
             &bootstrap.private_dir.join("reservation.json"),
             65_536,
@@ -387,13 +406,35 @@ pub async fn run_worker(bootstrap_path: &Path) -> Result<()> {
             directory: bootstrap.private_dir.clone(),
             _writer: FileLock::acquire(&bootstrap.private_dir.join("writer.fixture.lock"))?,
         };
-        let owner = Worker::prepared(bootstrap.clone(), execution, run_lock)?;
+        let notify = if supervised {
+            Some(playtime_worker_control::systemd::Notify::attach(
+                &bootstrap,
+            )?)
+        } else {
+            None
+        };
+        let mut owner = Worker::prepared(bootstrap.clone(), execution, run_lock)?;
+        if let Some(notify) = notify {
+            owner = owner.with_systemd(notify);
+        }
         Ok((bootstrap, Arc::new(tokio::sync::Mutex::new(owner))))
     })
     .await
     .map_err(|_| Error::Uncertain)??;
     let listener = tokio::net::UnixListener::bind(&bootstrap.socket)?;
     fs::set_permissions(&bootstrap.socket, fs::Permissions::from_mode(0o600))?;
+    // Fault fixtures deliberately leave a descendant alive and ignore SIGTERM;
+    // only the service manager can finish this cgroup. Never used by production.
+    let _descendant = if bootstrap.private_dir.join("ignore-stop.fixture").exists() {
+        let child = ProcessCommand::new("/usr/bin/sleep").arg("300").spawn()?;
+        write_once(
+            &bootstrap.private_dir.join("descendant.fixture"),
+            child.id().to_string().as_bytes(),
+        )?;
+        Some(child)
+    } else {
+        None
+    };
     let uid = fs::metadata(&bootstrap.private_dir)?.uid();
     let mut connections = tokio::task::JoinSet::new();
     let mut deadline = bootstrap.startup_deadline_boot_ms;
@@ -405,10 +446,20 @@ pub async fn run_worker(bootstrap_path: &Path) -> Result<()> {
                 .map(|start| start + bootstrap.wall_ms)
                 .unwrap_or(bootstrap.startup_deadline_boot_ms);
         }
-        if boot_ms() >= deadline {
+        if !supervised && boot_ms() >= deadline {
             return Ok(());
         }
         tokio::select! {
+            _ = terminate.recv(), if supervised => {
+                // This is synthetic policy only. Production maps the signal
+                // to its controller using the original clock/stop decision.
+                let reason = if boot_ms() >= deadline { "deadline" }
+                    else if bootstrap.private_dir.join("revoked.json").exists() { "cancel" }
+                    else { "supervisor_stop" };
+                let signal_record = bootstrap.private_dir.join("signal.fixture.json");
+                if !signal_record.exists() { write_once(&signal_record, reason.as_bytes())?; }
+                if !bootstrap.private_dir.join("ignore-stop.fixture").exists() { return Ok(()); }
+            }
             connected = listener.accept() => {
                 let (stream, _) = connected?;
                 if connections.len() == 8 { continue; }
@@ -424,4 +475,43 @@ pub async fn run_worker(bootstrap_path: &Path) -> Result<()> {
             _ = tokio::time::sleep(Duration::from_millis(100)) => (),
         }
     }
+}
+
+/// Bounded harness cleanup for an already-owned nonce unit. Production uses the
+/// authenticated supervisor port; this is only a last resort after fixture failure.
+pub fn cleanup_systemd_unit(unit: &str, reset_failed: bool) {
+    let Some(nonce) = unit
+        .strip_prefix("playtime-")
+        .and_then(|s| s.strip_suffix(".service"))
+    else {
+        return;
+    };
+    if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return;
+    }
+    let mut command = ProcessCommand::new("systemctl");
+    command
+        .args([
+            "--user",
+            "--no-block",
+            if reset_failed { "reset-failed" } else { "stop" },
+            unit,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let Ok(mut child) = command.spawn() else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => (),
+            Err(_) => break,
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }

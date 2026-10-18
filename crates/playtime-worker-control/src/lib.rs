@@ -1,6 +1,7 @@
 //! Bounded authenticated private control. No server, HTTP, SQLite or controller dependency.
 
 mod files;
+pub mod systemd;
 mod transport;
 mod worker;
 

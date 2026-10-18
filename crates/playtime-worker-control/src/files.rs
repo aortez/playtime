@@ -141,10 +141,33 @@ impl FileLock {
         Ok(Self { _file: file })
     }
 }
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        // Closing alone releases flock only at the last descriptor referencing
+        // its open file description. Concurrent forks can retain CLOEXEC copies
+        // briefly; those copies must not extend this guard's ownership lifetime.
+        let _ = flock(&self._file, FlockOperation::Unlock);
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn guard_release_is_not_delayed_by_an_inherited_descriptor() {
+        // A concurrent process spawn temporarily inherits other threads' file
+        // descriptions until exec closes CLOEXEC descriptors. That descriptor
+        // is not a second owner of this RAII guard.
+        let path = std::env::temp_dir().join(format!("pt-lock-{}", random_id().unwrap().as_str()));
+        let owner = FileLock::acquire(&path).unwrap();
+        let inherited = owner._file.try_clone().unwrap();
+        assert!(FileLock::acquire(&path).is_err());
+        drop(owner);
+        let successor = FileLock::acquire(&path)
+            .expect("guard drop must release exclusion before exec closes inherited copies");
+        drop((successor, inherited));
+        fs::remove_file(path).unwrap();
+    }
     use std::{
         os::unix::fs::{PermissionsExt, symlink},
         path::PathBuf,

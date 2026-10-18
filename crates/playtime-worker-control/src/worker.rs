@@ -132,6 +132,7 @@ pub struct Worker<E> {
     status: Status,
     // Ownership is retained even when control publication fails.
     _run_lock: FileLock,
+    notify: Option<crate::systemd::Notify>,
 }
 impl<E: PreparedExecution> Worker<E> {
     pub fn status(&self) -> &Status {
@@ -156,7 +157,13 @@ impl<E: PreparedExecution> Worker<E> {
             execution,
             status,
             _run_lock: run_lock,
+            notify: None,
         })
+    }
+    /// Keep the same prepared owner; notification cannot precede initial commit.
+    pub fn with_systemd(mut self, notify: crate::systemd::Notify) -> Self {
+        self.notify = Some(notify);
+        self
     }
     pub fn handle(&mut self, request: Request) -> Result<Reply> {
         if request.version != worker::VERSION || request.binding != self.bootstrap.binding {
@@ -182,6 +189,9 @@ impl<E: PreparedExecution> Worker<E> {
                 let receipt = self.execution.begin(started)?;
                 self.status.latest_receipt = Some(receipt);
                 self.status.publication_pending = false;
+                if let Some(notify) = &self.notify {
+                    notify.ready()?;
+                }
                 self.status.state = WorkerState::Running;
             }
             Command::Begin => (), // Duplicate Begin never repeats consumption or work.

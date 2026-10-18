@@ -14,7 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 utoipa.workspace = true
 axum.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 tokio-util.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true
@@ -25,6 +25,9 @@ serde_urlencoded.workspace = true
 http-body-util.workspace = true
 rusqlite.workspace = true
 time.workspace = true
+# Match the workbench's AccessKit D-Bus backend. Enabling zbus/tokio here
+# would also switch its runtime through workspace feature unification.
+zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

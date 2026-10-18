@@ -41,7 +41,19 @@ pub trait Supervisor: Send + Sync + 'static {
     async fn ensure_legacy_idle(&self, root: &std::path::Path) -> Result<()>;
     /// Exactly one submission after the ledger's start intent. Errors are
     /// ambiguous; the coordinator must query this same invocation, never retry.
-    async fn start(&self, launch: &PreparedLaunch) -> Result<Endpoint>;
+    /// Ok(None) acknowledges submission while fork/exec or preparation is pending.
+    async fn start(&self, launch: &PreparedLaunch) -> Result<Option<Endpoint>>;
     /// Evidence comes from the supervisor, not self-reported worker JSON.
     async fn locate(&self, launch: &PreparedLaunch) -> Result<Endpoint>;
+    /// None explicitly means this fixture port has no independent enforcement.
+    async fn observe(
+        &self,
+        _launch: &PreparedLaunch,
+    ) -> Result<Option<super::SupervisorObservation>> {
+        Ok(None)
+    }
+    /// Submit or recover the same stop job; never reset an accepted grace.
+    async fn stop(&self, _launch: &PreparedLaunch) -> Result<Option<super::SupervisorObservation>> {
+        Ok(None)
+    }
 }

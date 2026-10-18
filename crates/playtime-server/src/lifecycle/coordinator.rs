@@ -21,6 +21,7 @@ pub(super) struct Inner {
     pub(super) status_io: Arc<Semaphore>,
     pub(super) begin_io: Arc<Semaphore>,
     pub(super) cancel_io: Arc<Semaphore>,
+    revocation_io: Arc<Semaphore>,
 }
 #[derive(Clone)]
 pub struct Coordinator {
@@ -46,6 +47,7 @@ impl Coordinator {
                 status_io: Arc::new(Semaphore::new(1)),
                 begin_io: Arc::new(Semaphore::new(1)),
                 cancel_io: Arc::new(Semaphore::new(1)),
+                revocation_io: Arc::new(Semaphore::new(1)),
             }),
         }
     }
@@ -208,7 +210,7 @@ impl Coordinator {
             // Start submission never waits for preparedness while holding this.
             drop(run_lock);
             match submitted {
-                Ok(endpoint) if endpoint.binding == prepared.binding => inner
+                Ok(Some(endpoint)) if endpoint.binding == prepared.binding => inner
                     .ledger
                     .compare_update(&latest, "start_acknowledged", move |record| {
                         record.endpoint = Some(endpoint);
@@ -216,6 +218,7 @@ impl Coordinator {
                     })
                     .await
                     .map(|(record, _)| record),
+                Ok(None) => inner.ledger.get(&run).await,
                 _ => inner.uncertain(&latest, Reason::StartUncertain).await,
             }
         })
@@ -283,25 +286,38 @@ impl Coordinator {
                         }
                         record.cancel_requested = Some(now);
                         record.cancel_delivery = Some(CancelDelivery::Requested);
+                        record.stop_delivery = Some(StopDelivery::Requested);
                         record.phase = Phase::Cancelling;
                         record.reason = Some(Reason::CancelRequested);
                         Ok(())
                     })
                     .await?;
-                if admission.phase == Phase::Terminal
-                    || admission.cancel_delivery == Some(CancelDelivery::WorkerAcknowledged)
-                {
+                if admission.phase == Phase::Terminal {
                     return Ok(admission);
+                }
+                if admission.cancel_delivery == Some(CancelDelivery::WorkerAcknowledged) {
+                    return inner.stop_supervisor(admission).await;
                 }
                 let Some(prepared) = admission.prepared.clone() else {
                     return Ok(admission);
                 };
-                let revoked = tokio::task::spawn_blocking(move || {
-                    Grant::new(prepared.private_dir, prepared.binding).revoke()
-                })
-                .await
-                .map_err(|_| Error::Uncertain)?;
-                let delivered = if revoked.is_ok() {
+                // A stuck private filesystem cannot indefinitely delay the
+                // independent manager stop. Unsettled revocation retains both
+                // service ownership and its single I/O slot after timeout.
+                let revoked = if let Ok(permit) = inner.revocation_io.clone().try_acquire_owned() {
+                    let retained = inner.clone();
+                    let task = tokio::task::spawn_blocking(move || {
+                        let (_permit, _owner) = (permit, retained);
+                        Grant::new(prepared.private_dir, prepared.binding).revoke()
+                    });
+                    matches!(
+                        tokio::time::timeout(std::time::Duration::from_secs(5), task).await,
+                        Ok(Ok(Ok(())))
+                    )
+                } else {
+                    false
+                };
+                let delivered = if revoked {
                     inner
                         .exchange(&admission, Command::Cancel)
                         .await
@@ -317,7 +333,7 @@ impl Coordinator {
                 };
                 // A Cancel acknowledgment is control evidence, not an archive
                 // confirmation. Never wait for verification or advance its receipt.
-                inner
+                let recorded = inner
                     .ledger
                     .update(&id, "cancel_delivery", move |record| {
                         if record.owner_generation != admission.owner_generation
@@ -339,7 +355,8 @@ impl Coordinator {
                         });
                         Ok(())
                     })
-                    .await
+                    .await?;
+                inner.stop_supervisor(recorded).await
             })
             .await?;
         match result {

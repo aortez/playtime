@@ -82,7 +82,7 @@ impl Supervisor for SupervisorGate {
     async fn ensure_legacy_idle(&self, root: &Path) -> Result<()> {
         self.inner.ensure_legacy_idle(root).await
     }
-    async fn start(&self, launch: &PreparedLaunch) -> Result<Endpoint> {
+    async fn start(&self, launch: &PreparedLaunch) -> Result<Option<Endpoint>> {
         self.starts.fetch_add(1, Ordering::SeqCst);
         self.inner.start(launch).await
     }
@@ -177,7 +177,7 @@ async fn fifo_cancellation_process() {
         async fn ensure_legacy_idle(&self, _: &Path) -> Result<()> {
             Ok(())
         }
-        async fn start(&self, _: &PreparedLaunch) -> Result<Endpoint> {
+        async fn start(&self, _: &PreparedLaunch) -> Result<Option<Endpoint>> {
             Err(Error::Uncertain)
         }
         async fn locate(&self, _: &PreparedLaunch) -> Result<Endpoint> {
@@ -567,7 +567,7 @@ async fn v1_ledger_migration_preserves_identity_and_canonical_request() {
     assert_eq!(
         db.query_row::<u32, _, _>("PRAGMA user_version", [], |row| row.get(0))
             .unwrap(),
-        2
+        3
     );
 }
 

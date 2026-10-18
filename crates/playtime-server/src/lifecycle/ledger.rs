@@ -82,14 +82,14 @@ impl Ledger {
             tx.execute_batch("CREATE TABLE service (singleton INTEGER PRIMARY KEY CHECK(singleton=1), id TEXT NOT NULL);
                 CREATE TABLE runs (id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, active INTEGER UNIQUE CHECK(active=1 OR active IS NULL), record TEXT NOT NULL);
                 CREATE TABLE trace (seq INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), transition TEXT NOT NULL);
-                PRAGMA user_version=2;")?;
+                PRAGMA user_version=3;")?;
             tx.execute(
                 "INSERT INTO service VALUES (1, ?1)",
                 [random_id()?.as_str()],
             )?;
             tx.commit()?;
             File::open(&private)?.sync_all()?;
-        } else if version == 1 {
+        } else if version == 1 || version == 2 {
             // Preserve service/admission history while adding explicit ownership
             // and record revisions. A v1 binary must refuse the upgraded ledger.
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -109,13 +109,18 @@ impl Ledger {
                 let fields = value
                     .as_object_mut()
                     .ok_or(Error::Invalid("invalid legacy ledger record"))?;
-                fields
-                    .entry("owner_generation")
-                    .or_insert(serde_json::json!(1));
-                fields.entry("revision").or_insert(serde_json::json!(0));
-                fields
-                    .entry("cancel_delivery")
-                    .or_insert(serde_json::Value::Null);
+                if version == 1 {
+                    fields
+                        .entry("owner_generation")
+                        .or_insert(serde_json::json!(1));
+                    fields.entry("revision").or_insert(serde_json::json!(0));
+                    fields
+                        .entry("cancel_delivery")
+                        .or_insert(serde_json::Value::Null);
+                }
+                for name in ["stop_delivery", "stop_accepted", "supervisor"] {
+                    fields.entry(name).or_insert(serde_json::Value::Null);
+                }
                 let record: Admission = serde_json::from_value(value)?;
                 tx.execute(
                     "UPDATE runs SET record=?2 WHERE id=?1",
@@ -123,9 +128,9 @@ impl Ledger {
                 )?;
                 after = id;
             }
-            tx.execute_batch("PRAGMA user_version=2;")?;
+            tx.execute_batch("PRAGMA user_version=3;")?;
             tx.commit()?;
-        } else if version != 2 {
+        } else if version != 3 {
             return Err(Error::Invalid(
                 "unsupported or incomplete service ledger; refusing to replace admission history",
             ));
@@ -277,6 +282,9 @@ impl Ledger {
                 begin_authorized: false,
                 cancel_requested: None,
                 cancel_delivery: None,
+                stop_delivery: None,
+                stop_accepted: None,
+                supervisor: None,
                 owner_generation: 1,
                 revision: 0,
                 last_status: None,
