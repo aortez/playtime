@@ -1,0 +1,1 @@
+{"content":"final","role":"assistant","thinking":"first \u00e9\ud83d\ude00","tool_calls":[{"extra":"retained","function":{"arguments":{"text":"\u00e9\ud83d\ude00"},"index":0,"name":"fixture"},"id":"fixture-call"},{"extra":"retained","function":{"arguments":{"text":"\u00e9\ud83d\ude00"},"index":0,"name":"fixture"},"id":"fixture-call"}]}
