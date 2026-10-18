@@ -446,7 +446,12 @@ pub fn prepare_run(value: RunView) -> RunViewData {
         "Known usage unavailable · uncertain usage unavailable".into(),
         |u| {
             format!(
-                "Known {} · uncertain charge {} across {} requests · charged {} · complete {}",
+                "{} {} · uncertain charge {} across {} requests · charged {} · complete {}",
+                if value.accounting_coverage.is_some() {
+                    "Settled known"
+                } else {
+                    "Known"
+                },
                 u.known_generated_tokens,
                 u.unknown_reserved_tokens,
                 u.unknown_requests,
@@ -455,7 +460,15 @@ pub fn prepare_run(value: RunView) -> RunViewData {
             )
         },
     ));
-    summary.push("Pending allowance and allocation: unavailable from this API projection".into());
+    summary.push(value.accounting_coverage.as_ref().map_or_else(
+        || "Pending allowance and allocation: unavailable from this API projection".into(),
+        |coverage| {
+            format!(
+                "Pending allowance {} across {} unsettled requests · coverage {:?}",
+                coverage.unsettled_allowance, coverage.unsettled_requests, coverage.availability
+            )
+        },
+    ));
     if let Some(cancel) = &value.cancellation {
         summary.push(format!(
             "Cancellation: {:?} · {}",
@@ -621,10 +634,38 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
             let incoming = memory(client, &run, &checkpoint.incoming_memory).await;
             let outgoing = memory(client, &run, &checkpoint.outgoing_memory).await;
             let evidence = memory(client, &run, &checkpoint.evidence).await;
-            let (diff, notice) = match (&incoming, &outgoing) {
+            let (diff, mut notice) = match (&incoming, &outgoing) {
                 (Ok(left), Ok(right)) => media::memory_diff(left, right),
                 _ => (String::new(), "Memory comparison unavailable: both exact sources are required. Saved means published, not verified claims.".into()),
             };
+            if checkpoint.index.is_some() {
+                let detail = match client
+                    .checkpoint_index(&run, &checkpoint, &CancellationToken::new())
+                    .await
+                {
+                    Ok(playtime_client::CheckpointIndexRead::Supported { index, .. }) => format!(
+                        "Index v{} verified · incoming {} · outgoing {} · {} file changes · incoming evidence {} · outgoing evidence {}",
+                        index.schema_version,
+                        index.incoming_memory.status,
+                        index.outgoing_memory.status,
+                        index.changes.len(),
+                        index.incoming_evidence.is_some(),
+                        index.outgoing_evidence.is_some()
+                    ),
+                    Ok(playtime_client::CheckpointIndexRead::UnsupportedSchema {
+                        received,
+                        ..
+                    }) => format!(
+                        "Unsupported index schema {received}; exact bytes available in artifacts"
+                    ),
+                    Ok(playtime_client::CheckpointIndexRead::Unavailable { reason }) => {
+                        format!("Index unavailable: {reason}")
+                    }
+                    Err(error) => format!("Index unavailable: {}", safe(error)),
+                };
+                notice.push_str(" · ");
+                notice.push_str(&detail);
+            }
             let incoming = transcript::excerpt(&incoming.unwrap_or_else(|e| e), 8192);
             let outgoing = transcript::excerpt(&outgoing.unwrap_or_else(|e| e), 8192);
             let evidence = transcript::excerpt(&evidence.unwrap_or_else(|e| e), 8192);

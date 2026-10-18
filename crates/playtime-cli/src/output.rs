@@ -118,17 +118,30 @@ fn word(value: &Value) -> String {
     )
 }
 fn run_summary(view: &Value) -> String {
-    let usage = if view["usage"].is_null() {
+    let mut usage = if view["usage"].is_null() {
         "Usage: unavailable".into()
     } else {
         format!(
-            "Usage: {} known + {} unknown reserved = {} charged; complete: {}",
+            "{}: {} known + {} unknown reserved = {} charged; complete: {}",
+            if view["accounting_coverage"].is_null() {
+                "Usage"
+            } else {
+                "Settled usage"
+            },
             word(&view["usage"]["known_generated_tokens"]),
             word(&view["usage"]["unknown_reserved_tokens"]),
             word(&view["usage"]["budget_charged_tokens"]),
             word(&view["usage"]["usage_complete"])
         )
     };
+    if !view["accounting_coverage"].is_null() {
+        usage.push_str(&format!(
+            "\nPending allowance: {} across {} unsettled requests; coverage: {}",
+            word(&view["accounting_coverage"]["unsettled_allowance"]),
+            word(&view["accounting_coverage"]["unsettled_requests"]),
+            word(&view["accounting_coverage"]["availability"]["status"])
+        ));
+    }
     format!(
         "Run {}: {} | backend {} | mode {}\nRecipe {} @ {} | phase {} | outcome {}\nCleanup: {} | evidence: {} | checkpoint: {}\n{}\nCancellation: {}",
         word(&view["run_id"]),

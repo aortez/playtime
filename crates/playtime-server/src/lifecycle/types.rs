@@ -131,6 +131,22 @@ pub struct Admission {
     pub revision: u64,
     /// Saved authenticated worker evidence, not a new liveness assertion.
     pub last_status: Option<Status>,
+    /// The published read boundary is separate from the last worker reply so
+    /// future recovery cannot silently relabel recovered bytes as confirmation.
+    #[serde(default)]
+    pub confirmed_read: Option<ConfirmedRead>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ConfirmedRead {
+    pub frontier: playtime_protocol::storage::EventFrontier,
+    pub owner_generation: u64,
+    pub source: ConfirmationSource,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmationSource {
+    Worker,
 }
 
 #[derive(Clone, Debug, Serialize)]

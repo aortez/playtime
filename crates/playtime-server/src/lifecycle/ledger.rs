@@ -82,16 +82,16 @@ impl Ledger {
             tx.execute_batch("CREATE TABLE service (singleton INTEGER PRIMARY KEY CHECK(singleton=1), id TEXT NOT NULL);
                 CREATE TABLE runs (id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, active INTEGER UNIQUE CHECK(active=1 OR active IS NULL), record TEXT NOT NULL);
                 CREATE TABLE trace (seq INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), transition TEXT NOT NULL);
-                PRAGMA user_version=3;")?;
+                PRAGMA user_version=4;")?;
             tx.execute(
                 "INSERT INTO service VALUES (1, ?1)",
                 [random_id()?.as_str()],
             )?;
             tx.commit()?;
             File::open(&private)?.sync_all()?;
-        } else if version == 1 || version == 2 {
-            // Preserve service/admission history while adding explicit ownership
-            // and record revisions. A v1 binary must refuse the upgraded ledger.
+        } else if (1..=3).contains(&version) {
+            // Preserve service/admission history, ownership and saved read
+            // provenance. Older binaries must refuse the upgraded ledger.
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let mut after = String::new();
             loop {
@@ -128,9 +128,9 @@ impl Ledger {
                 )?;
                 after = id;
             }
-            tx.execute_batch("PRAGMA user_version=3;")?;
+            tx.execute_batch("PRAGMA user_version=4;")?;
             tx.commit()?;
-        } else if version != 3 {
+        } else if version != 4 {
             return Err(Error::Invalid(
                 "unsupported or incomplete service ledger; refusing to replace admission history",
             ));
@@ -288,6 +288,7 @@ impl Ledger {
                 owner_generation: 1,
                 revision: 0,
                 last_status: None,
+                confirmed_read: None,
             };
             tx.execute(
                 "INSERT INTO runs VALUES (?1, ?2, 1, ?3)",
@@ -367,6 +368,23 @@ impl Ledger {
         })
         .await
     }
+
+    pub async fn list(&self) -> Result<Vec<Admission>> {
+        self.call(|db| {
+            let mut statement = db.prepare("SELECT record FROM runs ORDER BY id LIMIT 10001")?;
+            let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+            let records: Vec<Admission> = rows
+                .map(|row| Ok(serde_json::from_str(&row?)?))
+                .collect::<Result<_>>()?;
+            if records.len() > 10000 {
+                return Err(Error::Invalid(
+                    "service inventory exceeds startup read bound",
+                ));
+            }
+            Ok(records)
+        })
+        .await
+    }
 }
 fn load(db: &Connection, id: &RunId) -> Result<Admission> {
     let json: String = db.query_row(
@@ -387,8 +405,12 @@ fn save(db: &mut Connection, admission: &mut Admission, transition: &str) -> Res
     }
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute(
-        "UPDATE runs SET record=?2 WHERE id=?1",
-        params![admission.run_id.as_str(), json],
+        "UPDATE runs SET record=?2, active=?3 WHERE id=?1",
+        params![
+            admission.run_id.as_str(),
+            json,
+            (admission.phase != Phase::Terminal).then_some(1)
+        ],
     )?;
     tx.execute(
         "INSERT INTO trace(run_id,transition) VALUES (?1,?2)",

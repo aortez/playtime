@@ -10,6 +10,11 @@ playtime-core.workspace = true
 playtime-protocol.workspace = true
 playtime-local.workspace = true
 playtime-worker-control.workspace = true
+playtime-worker.workspace = true
+playtime-runner.workspace = true
+playtime-storage.workspace = true
+playtime-engine.workspace = true
+rustix = { workspace = true, features = ["process"] }
 serde.workspace = true
 serde_json.workspace = true
 utoipa.workspace = true

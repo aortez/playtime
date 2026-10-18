@@ -32,6 +32,24 @@ pub trait ArchivePort: Send + Sync + 'static {
         previous: Option<&Receipt>,
         status: &Status,
     ) -> Result<()>;
+
+    /// Authenticated-reply validation, before a guarded ledger commit. A
+    /// returned frontier may be published only after that transaction succeeds.
+    async fn confirmed_read(
+        &self,
+        prepared: &PreparedLaunch,
+        previous: Option<&Receipt>,
+        status: &Status,
+    ) -> Result<Option<playtime_protocol::storage::EventFrontier>> {
+        self.verify_status(prepared, previous, status).await?;
+        Ok(None)
+    }
+
+    /// Normal completion only. Must validate the saved confirmed boundary,
+    /// terminal record, settled publication and successful resource cleanup.
+    async fn normal_completion(&self, _admission: &Admission) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 #[async_trait]

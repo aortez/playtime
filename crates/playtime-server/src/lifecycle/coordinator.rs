@@ -227,6 +227,47 @@ impl Coordinator {
     pub async fn refresh(&self, run: RunId) -> Result<Admission> {
         self.inner.shared_refresh(run).await
     }
+    /// Normal execution can release admission only after a persisted terminal
+    /// confirmation, settled publication, successful cleanup and original-owner
+    /// termination. Worker loss and interrupted evidence remain reserved.
+    pub async fn finish_normal(&self, run: RunId) -> Result<Admission> {
+        let expected = self.inner.ledger.get(&run).await?;
+        if expected.phase == Phase::Terminal
+            || expected.confirmed_read.is_none()
+            || expected.last_status.as_ref().is_none_or(|s| {
+                s.publication_pending
+                    || !matches!(s.state, WorkerState::Running | WorkerState::Cancelling)
+            })
+            || !self.inner.archive.normal_completion(&expected).await?
+        {
+            return Ok(expected);
+        }
+        let stopped = self.inner.stop_supervisor(expected.clone()).await?;
+        // Stop/verification did not hold a transaction. A later recovery owner
+        // or different boundary must run its own finalization protocol.
+        if stopped.owner_generation != expected.owner_generation
+            || stopped.prepared != expected.prepared
+            || stopped.confirmed_read != expected.confirmed_read
+            || stopped.last_status != expected.last_status
+        {
+            return Ok(stopped);
+        }
+        if !stopped.supervisor.as_ref().is_some_and(|s| s.stopped)
+            || stopped.stop_accepted.is_none()
+        {
+            return Ok(stopped);
+        }
+        self.inner
+            .ledger
+            .compare_update(&stopped, "normal_completed", |record| {
+                record.phase = Phase::Terminal;
+                record.reason = None;
+                record.stop_delivery = Some(StopDelivery::Stopped);
+                Ok(())
+            })
+            .await
+            .map(|(record, _)| record)
+    }
     pub async fn begin(&self, run: RunId) -> Result<Admission> {
         self.owned_launch(move |inner| async move {
             let before = inner.ledger.get(&run).await?;

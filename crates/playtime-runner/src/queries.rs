@@ -21,6 +21,14 @@ pub struct ArchiveQueries {
 }
 
 impl ArchiveQueries {
+    /// Reuse a storage-verified read authority without reconstructing a writer
+    /// receipt. A snapshot cannot be constructed from public DTOs.
+    pub fn from_snapshot(reader: ArchiveReader, snapshot: Snapshot) -> Result<Self> {
+        if reader.identity() != &snapshot.frontier().archive {
+            return Err(Error::Invalid("query snapshot archive mismatch".into()));
+        }
+        Ok(Self { reader, snapshot })
+    }
     pub fn offline(path: impl AsRef<Path>, limits: StorageLimits) -> Result<Self> {
         let reader = ArchiveReader::open(path, limits)?;
         let snapshot = reader.offline_snapshot()?;

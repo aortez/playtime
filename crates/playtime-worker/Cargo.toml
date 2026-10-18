@@ -15,7 +15,7 @@ playtime-worker-control.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rustix = { workspace = true, features = ["process", "time"] }
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 time.workspace = true
 
 [lints]

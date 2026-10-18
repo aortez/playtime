@@ -41,7 +41,11 @@ does not replace #34 supervision or the #20/#43 CLI/UI production gates.
 provenance explicit, and do not treat serializable API frontiers as writer
 receipts. See `docs/rust-http-api.md` for the application boundary and conformance
 tests. HTTP fixture tests use temporary roots and port zero, and must not launch
-experimental workers.
+experimental workers. `playtimed` supplies normal production simulation through
+the same handlers; see `docs/rust-daemon.md` and run
+`./scripts/test-rust-service-e2e.sh --case normal` for daemon integration changes.
+Its CPU test supervisor is explicitly separate from real systemd enforcement;
+restart/recovery and the full CLI/UI simulation gates remain subsequent work.
 `playtime-cli` owns clap parsing/presentation. Shared connection resolution,
 durable launch receipts, cursor files and verified downloads belong in
 `playtime-client`; keep these independent of clap/egui. Local I/O stays outside

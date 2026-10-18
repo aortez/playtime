@@ -113,6 +113,7 @@ impl Run {
             content: artifacts[n].0.content.clone(),
         };
         let checkpoint = Checkpoint {
+            index: None,
             checkpoint: CheckpointSummary {
                 session_id: session,
                 published_sequence: 3,
@@ -199,6 +200,7 @@ impl Run {
             records.clear();
         }
         let view = RunView {
+            accounting_coverage: None,
             run_id: id,
             mode: request.mode,
             accepted_at: time(),

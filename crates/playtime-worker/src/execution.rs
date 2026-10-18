@@ -11,7 +11,7 @@ use std::{
     path::Path,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -23,6 +23,8 @@ pub struct Execution {
     finished: Arc<AtomicBool>,
     failed: Arc<AtomicBool>,
     pending: Arc<AtomicBool>,
+    wall_ms: u64,
+    work_deadline: Arc<AtomicU64>,
 }
 impl Execution {
     pub fn acquire(bootstrap: &Bootstrap) -> Result<Self> {
@@ -78,6 +80,8 @@ impl Execution {
             finished: Arc::default(),
             failed: Arc::default(),
             pending: Arc::default(),
+            wall_ms: bootstrap.wall_ms,
+            work_deadline: Arc::default(),
         })
     }
 }
@@ -97,6 +101,10 @@ impl ControlExecution for Execution {
             .or_else(|| self.latest.latest().as_ref().map(receipt))
     }
     fn begin(&mut self, started_boot_ms: u64) -> playtime_worker_control::Result<Receipt> {
+        self.work_deadline.store(
+            started_boot_ms.saturating_add(self.wall_ms),
+            Ordering::Release,
+        );
         let owned = self
             .prepared
             .take()
@@ -207,6 +215,13 @@ impl DriverClock for WorkClock {
 }
 
 pub async fn serve(path: &Path) -> Result<()> {
+    if playtime_worker_control::systemd::record_exit_if_requested(path)? {
+        return Ok(());
+    }
+    // Install before preparation. SIGTERM requests controller cancellation; it
+    // cannot drop a pending storage owner. systemd independently bounds grace.
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let supervised = std::env::var_os("PLAYTIME_SYSTEMD_WORKER").is_some();
     let bootstrap = Bootstrap::read(path)?;
     let reservation: playtime_protocol::worker::Binding =
         serde_json::from_slice(&playtime_worker_control::read_private(
@@ -230,24 +245,52 @@ pub async fn serve(path: &Path) -> Result<()> {
         }
     };
     let execution = Execution::acquire(&bootstrap)?;
-    let owner = Arc::new(tokio::sync::Mutex::new(
-        playtime_worker_control::Worker::prepared(bootstrap.clone(), execution, run_lock)?,
-    ));
+    let cancellation = execution.cancel.clone();
+    let finished = execution.finished.clone();
+    let work_deadline = execution.work_deadline.clone();
+    let notify = if supervised {
+        Some(playtime_worker_control::systemd::Notify::attach(
+            &bootstrap,
+        )?)
+    } else {
+        None
+    };
+    let mut worker =
+        playtime_worker_control::Worker::prepared(bootstrap.clone(), execution, run_lock)?;
+    if let Some(notify) = notify {
+        worker = worker.with_systemd(notify);
+    }
+    let owner = Arc::new(tokio::sync::Mutex::new(worker));
     let listener = tokio::net::UnixListener::bind(&bootstrap.socket)?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&bootstrap.socket, std::fs::Permissions::from_mode(0o600))?;
     let mut connections = tokio::task::JoinSet::new();
+    let mut stopping = false;
     loop {
         // The #34 independent supervisor owns startup/hard-stop enforcement.
         // This process keeps control/receipts available through finalization.
         tokio::select! {
-            connected = listener.accept() => {
+            _ = terminate.recv() => {
+                stopping = true;
+                // At the original hard wall let the controller's next clock
+                // observation establish WallLimit. A manager signal must not
+                // manufacture an earlier cancellation or rewrite a first stop.
+                let deadline = work_deadline.load(Ordering::Acquire);
+                if deadline == 0 || boot_ms() < deadline { cancellation.cancel(); }
+            }
+            connected = listener.accept(), if !stopping => {
                 let (stream, _) = connected?;
                 if connections.len() >= 8 { continue; }
                 let (owner, credential) = (owner.clone(), bootstrap.credential.clone());
                 connections.spawn(async move { let _ = playtime_worker_control::serve_connection(stream, owner, &credential, rustix::process::getuid().as_raw()).await; });
             }
             _ = connections.join_next(), if !connections.is_empty() => (),
+            _ = tokio::time::sleep(Duration::from_millis(20)), if stopping => {
+                if finished.load(Ordering::Acquire)
+                    || owner.try_lock().is_ok_and(|w| w.status().work_started_boot_ms.is_none()) {
+                    return Ok(());
+                }
+            }
         }
     }
 }
