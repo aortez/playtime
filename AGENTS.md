@@ -21,7 +21,15 @@ invariants. Keep the Python parity fixtures and independent oracle tests intact.
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`
 for publication, file/link policy, limits, and failure-test contracts.
-Retain the Python launcher during migration. Commit `Cargo.lock`; ignore
+Retain the Python launcher during migration.
+`playtime-server` owns HTTP/auth in modules separate from future lifecycle work;
+`playtime-client` owns native transport and acknowledged event reconnect.
+`playtime-local` shares credential/discovery file policy. Keep HTTP fixture
+provenance explicit, and do not treat serializable API frontiers as writer
+receipts. See `docs/rust-http-api.md` for the application boundary and conformance
+tests. HTTP fixture tests use temporary roots and port zero, and must not launch
+experimental workers.
+Commit `Cargo.lock`; ignore
 `target/`. Validate Rust changes with `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, and
 `cargo test --workspace --locked`, plus the Python suite below. See

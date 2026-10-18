@@ -1,0 +1,363 @@
+{
+  "artifacts": {
+    "frontier": {
+      "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+      "prefix": {
+        "byte_offset": 1017,
+        "sequence": 4,
+        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+      },
+      "run_id": "fixture-run-00000001"
+    },
+    "items": [
+      {
+        "artifact_id": "evidence",
+        "content": {
+          "path": "objects/evidence.txt",
+          "sha256": "5014334b4bef3340fde8787480a27d3ae7843a8ea873629d28a8296cf42bf2ec",
+          "size_bytes": 32
+        },
+        "frozen_input": false,
+        "kind": "controller_evidence",
+        "name": "evidence.txt",
+        "published_sequence": 3,
+        "session_id": "s1"
+      },
+      {
+        "artifact_id": "frozen-prompt",
+        "content": {
+          "path": "inputs/prompt.txt",
+          "sha256": "346eff2937b38dc090c43831a5291b9508c632ec021c66f04ff4f04ee6a2be4a",
+          "size_bytes": 46
+        },
+        "frozen_input": true,
+        "kind": "prompt",
+        "name": "prompt.txt",
+        "published_sequence": 0,
+        "session_id": null
+      },
+      {
+        "artifact_id": "incoming-memory",
+        "content": {
+          "path": "objects/incoming.txt",
+          "sha256": "6b8c4edaedfcd1358abcd72de82d021ba5259e9ca038ca47b0213254cd24145d",
+          "size_bytes": 24
+        },
+        "frozen_input": false,
+        "kind": "incoming_memory",
+        "name": "incoming.txt",
+        "published_sequence": 3,
+        "session_id": "s1"
+      },
+      {
+        "artifact_id": "outgoing-memory",
+        "content": {
+          "path": "objects/memento.txt",
+          "sha256": "7d4a98a5f78c4346bf5e0e7a97be7ddb63a9f8ad418965db0d059a130247f56b",
+          "size_bytes": 21
+        },
+        "frozen_input": false,
+        "kind": "outgoing_memory",
+        "name": "memento.txt",
+        "published_sequence": 3,
+        "session_id": "s1"
+      },
+      {
+        "artifact_id": "saved-image",
+        "content": {
+          "path": "objects/image.png",
+          "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+          "size_bytes": 68
+        },
+        "frozen_input": false,
+        "kind": "file_version",
+        "name": "image.png",
+        "published_sequence": 3,
+        "session_id": "s1"
+      },
+      {
+        "artifact_id": "workspace",
+        "content": {
+          "path": "objects/workspace.json",
+          "sha256": "cb8daed7b30399a1c3c8b83b3b7bee4b774a30fc389afc1d375e4c23a3cc4ae8",
+          "size_bytes": 19
+        },
+        "frozen_input": false,
+        "kind": "workspace",
+        "name": "workspace.json",
+        "published_sequence": 3,
+        "session_id": "s1"
+      }
+    ],
+    "next_cursor": null
+  },
+  "checkpoints": {
+    "frontier": {
+      "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+      "prefix": {
+        "byte_offset": 1017,
+        "sequence": 4,
+        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+      },
+      "run_id": "fixture-run-00000001"
+    },
+    "items": [
+      {
+        "checkpoint": {
+          "published_sequence": 3,
+          "session_id": "s1"
+        },
+        "evidence": {
+          "artifact_id": "evidence",
+          "content": {
+            "path": "objects/evidence.txt",
+            "sha256": "5014334b4bef3340fde8787480a27d3ae7843a8ea873629d28a8296cf42bf2ec",
+            "size_bytes": 32
+          },
+          "status": "available"
+        },
+        "files": [
+          {
+            "content": {
+              "artifact_id": "saved-image",
+              "content": {
+                "path": "objects/image.png",
+                "sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                "size_bytes": 68
+              },
+              "status": "available"
+            },
+            "kind": "regular",
+            "name": "saved <image>.png"
+          },
+          {
+            "content": {
+              "reason": "not retained in this fixture",
+              "status": "unavailable"
+            },
+            "kind": "regular",
+            "name": "unretained.txt"
+          }
+        ],
+        "incoming_memory": {
+          "artifact_id": "incoming-memory",
+          "content": {
+            "path": "objects/incoming.txt",
+            "sha256": "6b8c4edaedfcd1358abcd72de82d021ba5259e9ca038ca47b0213254cd24145d",
+            "size_bytes": 24
+          },
+          "status": "available"
+        },
+        "outgoing_memory": {
+          "artifact_id": "outgoing-memory",
+          "content": {
+            "path": "objects/memento.txt",
+            "sha256": "7d4a98a5f78c4346bf5e0e7a97be7ddb63a9f8ad418965db0d059a130247f56b",
+            "size_bytes": 21
+          },
+          "status": "available"
+        },
+        "workspace": {
+          "artifact_id": "workspace",
+          "content": {
+            "path": "objects/workspace.json",
+            "sha256": "cb8daed7b30399a1c3c8b83b3b7bee4b774a30fc389afc1d375e4c23a3cc4ae8",
+            "size_bytes": 19
+          },
+          "status": "available"
+        }
+      }
+    ],
+    "next_cursor": null
+  },
+  "completed_run": {
+    "accepted_at": "2026-10-17T12:00:00Z",
+    "backend": {
+      "description": "Scripted HTTP fixture; no experimental execution or durable admission",
+      "kind": "fixture"
+    },
+    "cancellation": null,
+    "checkpoint": {
+      "published_sequence": 3,
+      "session_id": "s1"
+    },
+    "cleanup": {
+      "status": "unknown"
+    },
+    "controller_phase": null,
+    "event_anchors": {
+      "frontier": {
+        "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+        "prefix": {
+          "byte_offset": 1017,
+          "sequence": 4,
+          "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+        },
+        "run_id": "fixture-run-00000001"
+      },
+      "history_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjB9",
+      "live_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjR9"
+    },
+    "evidence": {
+      "status": "available"
+    },
+    "input_manifest": {
+      "path": "inputs/manifest.json",
+      "sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+      "size_bytes": 32
+    },
+    "last_confirmed_frontier": {
+      "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+      "prefix": {
+        "byte_offset": 1017,
+        "sequence": 4,
+        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+      },
+      "run_id": "fixture-run-00000001"
+    },
+    "mode": "simulation",
+    "orchestration": {
+      "reason": null,
+      "state": "terminal"
+    },
+    "outcome": {
+      "event_sequence": 4,
+      "reason": "agent_finished"
+    },
+    "preview_revision": "fixture-v1",
+    "recipe_id": "fixture-example",
+    "run_id": "fixture-run-00000001",
+    "updated_at": "2026-10-17T12:00:00Z",
+    "usage": {
+      "budget_charged_tokens": 100,
+      "known_generated_tokens": 0,
+      "unknown_requests": 1,
+      "unknown_reserved_tokens": 100,
+      "usage_complete": false
+    },
+    "worker": null
+  },
+  "cursor_encoded": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjF9",
+  "cursor_json": {
+    "after_sequence": 1,
+    "frontier": {
+      "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+      "prefix": {
+        "byte_offset": 1017,
+        "sequence": 4,
+        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+      },
+      "run_id": "fixture-run-00000001"
+    },
+    "schema_version": 1
+  },
+  "empty_anchors": {
+    "frontier": {
+      "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+      "prefix": {
+        "byte_offset": 0,
+        "sequence": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "run_id": "fixture-run-00000001"
+    },
+    "history_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjowLCJieXRlX29mZnNldCI6MCwic2hhMjU2IjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjB9",
+    "live_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjowLCJieXRlX29mZnNldCI6MCwic2hhMjU2IjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjB9"
+  },
+  "event_page": {
+    "events": [
+      {
+        "data": {
+          "input_manifest": {
+            "path": "inputs/manifest.json",
+            "sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+            "size_bytes": 32
+          },
+          "mode": "simulation"
+        },
+        "kind": "run_started",
+        "run_id": "fixture-run-00000001",
+        "schema_version": 1,
+        "sequence": 1,
+        "time": "2026-10-17T12:00:00Z"
+      }
+    ],
+    "frontier": {
+      "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+      "prefix": {
+        "byte_offset": 1017,
+        "sequence": 4,
+        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+      },
+      "run_id": "fixture-run-00000001"
+    },
+    "has_more": true,
+    "next_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjF9",
+    "resume_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjF9"
+  },
+  "launch_request": {
+    "mode": "simulation",
+    "preview_revision": "fixture-v1",
+    "recipe_id": "fixture-example"
+  },
+  "launch_response": {
+    "accepted_at": "2026-10-17T12:00:00Z",
+    "replayed": false,
+    "run": {
+      "accepted_at": "2026-10-17T12:00:00Z",
+      "backend": {
+        "description": "Scripted HTTP fixture; no experimental execution or durable admission",
+        "kind": "fixture"
+      },
+      "cancellation": null,
+      "checkpoint": null,
+      "cleanup": {
+        "status": "unknown"
+      },
+      "controller_phase": null,
+      "event_anchors": {
+        "frontier": {
+          "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+          "prefix": {
+            "byte_offset": 0,
+            "sequence": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "run_id": "fixture-run-00000001"
+        },
+        "history_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjowLCJieXRlX29mZnNldCI6MCwic2hhMjU2IjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjB9",
+        "live_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjowLCJieXRlX29mZnNldCI6MCwic2hhMjU2IjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjB9"
+      },
+      "evidence": {
+        "status": "available"
+      },
+      "input_manifest": {
+        "path": "inputs/manifest.json",
+        "sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+        "size_bytes": 32
+      },
+      "last_confirmed_frontier": {
+        "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
+        "prefix": {
+          "byte_offset": 0,
+          "sequence": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "run_id": "fixture-run-00000001"
+      },
+      "mode": "simulation",
+      "orchestration": {
+        "reason": null,
+        "state": "running"
+      },
+      "outcome": null,
+      "preview_revision": "fixture-v1",
+      "recipe_id": "fixture-example",
+      "run_id": "fixture-run-00000001",
+      "updated_at": "2026-10-17T12:00:00Z",
+      "usage": null,
+      "worker": null
+    },
+    "run_id": "fixture-run-00000001"
+  }
+}

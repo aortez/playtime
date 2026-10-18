@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64.workspace = true
 playtime-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
