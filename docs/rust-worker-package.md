@@ -1,9 +1,14 @@
 # Frozen controller worker (#20, slice A)
 
+The Docker/scripted-model production composition is now available through
+[#66 run-and-view](rust-docker-run-and-view.md). The scope below describes its
+underlying slice; live inference and automatic recovery remain separate work.
+
 `playtime-worker` composes the real runner/archive writer with the authenticated
-private control library. Its only execution capability is a controller
-simulation with scripted model/workshop effects. It has no server, HTTP, SQLite,
-UI, real model adapter, or host command executor dependency.
+private control library. It supports controller simulation and the explicit
+Docker/scripted-model profile described above. It has no server, HTTP, SQLite,
+UI or real model adapter. Native tool text travels only to the fixed in-container
+bridge; it never reaches a host shell.
 
 This slice supplies the package and prepared-writer handoff. It does not supply
 `playtimed`, public admission/catalog adapters, systemd enforcement, recovery, or

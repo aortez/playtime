@@ -439,6 +439,7 @@ fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
         serde_json::from_slice(&fs::read(path.join("bundle.json"))?)?;
     let mut build: BuildRecord = serde_json::from_slice(&fs::read(path.join(wire::BUILD))?)?;
     build.capabilities.recovery_profile = None;
+    build.capabilities.real_workshop = false;
     descriptor.capabilities = build.capabilities.clone();
     let bytes = serde_json::to_vec(&build)?;
     descriptor.build_record = reference(wire::BUILD, &bytes);
@@ -455,7 +456,134 @@ fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
             .is_err()
     );
     assert!(!archive.exists());
-    println!("PASS unadvertised bundle cannot opt in to recovery");
+    assert!(
+        VerifiedBundle::open(&path)?
+            .prepare_docker(&archive, RunId::new("older")?, &docker_profile()?)
+            .is_err()
+    );
+    assert!(!archive.exists());
+    // The older capability set remains usable for ordinary simulation.
+    VerifiedBundle::open(&path)?.prepare(
+        &archive,
+        RunId::new("older")?,
+        include_bytes!("../../playtime-engine/tests/fixtures/two-session.json"),
+    )?;
+    println!("PASS older simulation bundle cannot opt in to recovery or Docker");
+    Ok(())
+}
+
+fn docker_profile() -> Result<playtime_runner::docker::Profile> {
+    Ok(playtime_runner::docker::Profile::freeze(
+        playtime_docker::transport::Selection {
+            executable: "/nonexistent/package-gate/docker".into(),
+            executable_sha256: "a".repeat(64),
+            socket: "/nonexistent/package-gate/docker.sock".into(),
+        },
+        playtime_docker::DaemonIdentity {
+            id: "synthetic".into(),
+            name: "synthetic".into(),
+            cli_version: "28".into(),
+            server_version: "28".into(),
+            api_version: "1.51".into(),
+            kernel: "synthetic".into(),
+        },
+    )?)
+}
+
+async fn docker_startup_rejections(bundle: &Path) -> Result<()> {
+    use playtime_protocol::storage::ArchiveDescriptor;
+    use playtime_storage::FrozenInput;
+    for mutation in ["version", "limits", "mode", "systemd"] {
+        let mut case = Case::new(bundle, false)?;
+        let mut profile = docker_profile()?;
+        match mutation {
+            "version" => profile.version += 1,
+            "limits" => profile.storage.events += 1,
+            "mode" => profile.mode = playtime_core::RunMode::Simulation,
+            _ => (),
+        }
+        if mutation != "systemd" {
+            let rejected = case.root.join("rejected");
+            assert!(
+                VerifiedBundle::open(bundle)?
+                    .prepare_docker(&rejected, RunId::new("rejected")?, &profile)
+                    .is_err()
+            );
+            assert!(!rejected.exists());
+        }
+        // Rebuild a digest-consistent archive without the producer validator,
+        // proving the executing packaged worker independently refuses it.
+        let reader = ArchiveReader::open(&case.archive, case.prepared.limits.clone())?;
+        let snapshot = reader.offline_snapshot()?;
+        let mut manifest = reader.manifest().clone();
+        let mut inputs = manifest
+            .references()
+            .map(|r| {
+                Ok(FrozenInput {
+                    reference: r.clone(),
+                    bytes: reader.read_content(&snapshot, r)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        drop(reader);
+        let input = inputs
+            .iter_mut()
+            .find(|i| i.reference == manifest.configuration)
+            .unwrap();
+        input.bytes = serde_json::to_vec(&profile)?;
+        input.reference = reference(input.reference.path.as_str(), &input.bytes);
+        manifest.configuration = input.reference.clone();
+        let bytes = serde_json::to_vec(&manifest)?;
+        let descriptor = ArchiveDescriptor {
+            schema_version: 1,
+            run_id: manifest.run_id.clone(),
+            mode: playtime_core::RunMode::ScriptedSmoke,
+            input_manifest: reference("inputs/manifest.json", &bytes),
+        };
+        fs::remove_dir_all(&case.archive)?;
+        let writer = ArchiveWriter::create(
+            &case.archive,
+            descriptor,
+            &bytes,
+            &inputs,
+            case.prepared.limits.clone(),
+        )?;
+        case.bootstrap.binding.manifest_sha256 = writer
+            .confirmed_frontier()
+            .frontier()
+            .archive
+            .input_manifest
+            .sha256
+            .clone();
+        drop(writer);
+        case.bootstrap.binding.kind = WorkerKind::DockerScripted;
+        case.bootstrap.wall_ms = 120_000;
+        overwrite(
+            &case.bootstrap.private_dir.join("reservation.json"),
+            &serde_json::to_vec(&case.bootstrap.binding)?,
+        )?;
+        overwrite(
+            &case.bootstrap.private_dir.join("bootstrap.json"),
+            &serde_json::to_vec(&case.bootstrap)?,
+        )?;
+        case.start()?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = case.child.as_mut().unwrap().try_wait()? {
+                assert!(!status.success());
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("unsupported Docker preparation reached readiness".into());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        case.zero();
+        assert!(!case.bootstrap.socket.exists());
+        assert!(!case.bootstrap.private_dir.join("docker-config").exists());
+        assert!(!case.bootstrap.private_dir.join("consumed.json").exists());
+        println!("PASS Docker {mutation} rejection before metadata/effects");
+    }
     Ok(())
 }
 fn tamper(bundle: &Path) -> Result<()> {
@@ -532,5 +660,6 @@ async fn main() -> Result<()> {
     forged_embedded_identity(bundle).await?;
     older_bundle_cannot_opt_in(bundle)?;
     forged_execution_contract(bundle).await?;
+    docker_startup_rejections(bundle).await?;
     Ok(())
 }

@@ -12,6 +12,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut root = None;
     let mut bundle = None;
     let mut cpu_test = false;
+    let mut docker = false;
+    let mut docker_executable = PathBuf::from("/usr/bin/docker");
+    let mut docker_socket = PathBuf::from("/var/run/docker.sock");
     let mut listen: SocketAddr = "127.0.0.1:8766".parse()?;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -20,6 +23,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--bundle" => bundle = args.next().map(PathBuf::from),
             "--listen" => listen = args.next().ok_or("--listen needs an address")?.parse()?,
             "--cpu-test-supervisor" => cpu_test = true,
+            "--docker-scripted" => docker = true,
+            "--docker-executable" => docker_executable = args.next().ok_or("missing Docker executable")?.into(),
+            "--docker-socket" => docker_socket = args.next().ok_or("missing Docker socket")?.into(),
             _ => return Err("usage: playtimed --root <existing-private-root> --bundle <frozen-bundle> [--listen 127.0.0.1:8766] [--cpu-test-supervisor]".into()),
         }
     }
@@ -34,7 +40,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Arc::new(SystemdSupervisor::connect().await?)
     };
-    let daemon = Arc::new(Daemon::open(&root, &bundle, supervisor, cpu_test).await?);
+    let daemon = Arc::new(
+        Daemon::open_with_docker(
+            &root,
+            &bundle,
+            supervisor,
+            cpu_test,
+            docker.then_some((docker_executable.as_path(), docker_socket.as_path())),
+        )
+        .await?,
+    );
     let credentials = Credentials::initialize(&root)?;
     let server = Server::new(daemon.clone(), credentials.token.clone())?
         .listen(listen)

@@ -51,6 +51,7 @@ fn main() {
         "playtime-engine",
         "playtime-storage",
         "playtime-runner",
+        "playtime-docker",
     ] {
         collect(root, &root.join("crates").join(name), &mut files);
     }

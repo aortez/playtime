@@ -17,12 +17,15 @@ use playtime_worker_control::{
 };
 use std::{path::PathBuf, sync::Arc};
 
+#[derive(Clone)]
 pub(super) struct Archive {
     pub root: PathBuf,
     pub bundle: Arc<VerifiedBundle>,
     pub scenario: Scenario,
     bytes: Vec<u8>,
     pub revision: PreviewRevision,
+    pub docker: Option<playtime_runner::docker::Profile>,
+    docker_engine: Option<playtime_docker::Engine>,
 }
 impl Archive {
     pub fn new(root: PathBuf, bundle: VerifiedBundle) -> life::Result<Self> {
@@ -31,11 +34,78 @@ impl Archive {
         let revision = digest(&serde_json::to_vec(&(digest(&bytes), bundle.id()))?);
         Ok(Self {
             root,
+            docker: None,
+            docker_engine: None,
             bundle: Arc::new(bundle),
             scenario,
             bytes,
             revision: PreviewRevision::new(revision.as_str()).map_err(|_| Error::Uncertain)?,
         })
+    }
+    pub async fn enable_docker(
+        &mut self,
+        executable: &std::path::Path,
+        socket: &std::path::Path,
+    ) -> life::Result<()> {
+        use playtime_docker::{CancellationToken, Engine, transport::Cli};
+        if !self.bundle.descriptor().capabilities.real_workshop
+            || self.bundle.descriptor().capabilities.real_model
+        {
+            return Err(Error::Invalid(
+                "bundle does not support Docker scripted execution",
+            ));
+        }
+        let cli = Cli::resolve(
+            executable,
+            socket,
+            &self.root.join(format!(
+                ".playtime/docker-catalog-{}",
+                random_id()?.as_str()
+            )),
+        )
+        .map_err(|_| Error::Invalid("invalid Docker executable/socket selection"))?;
+        let selection = cli.selection().clone();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
+        let engine = Engine::connect(Arc::new(cli), deadline, CancellationToken::new())
+            .await
+            .map_err(|_| Error::Invalid("Docker readiness unavailable"))?;
+        engine
+            .readiness(
+                playtime_runner::docker::IMAGE_LOCK,
+                deadline,
+                CancellationToken::new(),
+            )
+            .await
+            .map_err(|_| Error::Invalid("locked Docker image unavailable"))?;
+        let profile =
+            playtime_runner::docker::Profile::freeze(selection, engine.identity().clone())
+                .map_err(|_| Error::Invalid("invalid Docker profile"))?;
+        self.docker = Some(profile);
+        self.docker_engine = Some(engine);
+        Ok(())
+    }
+    pub fn docker_preview(&self) -> Option<Preview> {
+        let profile = self.docker.as_ref()?;
+        let mut preview = self.preview();
+        preview.recipe_id = RecipeId::new(playtime_runner::docker::RECIPE).unwrap();
+        preview.mode = RunMode::ScriptedSmoke;
+        preview.preview_revision = PreviewRevision::new(
+            digest(&serde_json::to_vec(&(profile, self.bundle.id())).unwrap()).as_str(),
+        )
+        .unwrap();
+        preview.effective_configuration = serde_json::to_value(profile).unwrap();
+        preview.parameters = profile.scenario.parameters.clone();
+        preview.prompt = profile.scenario.prompt.clone();
+        preview.protocol = profile.scenario.protocol.clone();
+        preview.workshop_identity = serde_json::json!({"adapter":"docker","image":profile.image_lock,"daemon":profile.daemon,"helpers":profile.helpers});
+        preview.seeds = SeedSummary {
+            files: 0,
+            bytes: 0,
+            digests: vec![],
+        };
+        preview.warnings = vec!["Scripted model responses and synthetic token counts; tools execute in the real locked Docker workshop.".into()];
+        preview.backend = projection::docker_backend();
+        Some(preview)
     }
     pub fn preview(&self) -> Preview {
         Preview {
@@ -183,24 +253,48 @@ impl ConfirmationAuthority for Authority {
 #[async_trait]
 impl ArchivePort for Archive {
     async fn validate_preview(&self, request: &AdmissionRequest) -> life::Result<Selection> {
-        if request.recipe_id != "two-session" || request.mode != RunMode::Simulation {
+        let preview = if request.recipe_id == playtime_runner::docker::RECIPE
+            && request.mode == RunMode::ScriptedSmoke
+        {
+            let preview = self
+                .docker_preview()
+                .ok_or(Error::Invalid("unsupported recipe or mode"))?;
+            self.docker_engine
+                .as_ref()
+                .ok_or(Error::Uncertain)?
+                .readiness(
+                    playtime_runner::docker::IMAGE_LOCK,
+                    tokio::time::Instant::now() + std::time::Duration::from_secs(20),
+                    playtime_docker::CancellationToken::new(),
+                )
+                .await
+                .map_err(|_| Error::Invalid("locked Docker readiness changed"))?;
+            preview
+        } else if request.recipe_id == "two-session" && request.mode == RunMode::Simulation {
+            self.preview()
+        } else {
             return Err(Error::Invalid("unsupported recipe or mode"));
-        }
-        if request.preview_revision != self.revision.as_str() {
+        };
+        if request.preview_revision != preview.preview_revision.as_str() {
             return Err(Error::Invalid("stale preview"));
         }
         Ok(Selection {
             executable_sha256: self.bundle.descriptor().worker.executable.sha256.clone(),
-            wall_ms: self.scenario.parameters.limits.wall_seconds.get() * 1000,
-            token_limit: self.scenario.parameters.limits.generated_tokens.get(),
+            wall_ms: preview.parameters.limits.wall_seconds.get() * 1000,
+            token_limit: preview.parameters.limits.generated_tokens.get(),
         })
     }
     async fn prepare(&self, admission: &Admission) -> life::Result<PreparedLaunch> {
-        let (root, bundle, bytes, admission) = (
+        let (root, bundle, bytes, admission, docker) = (
             self.root.clone(),
             self.bundle.clone(),
             self.bytes.clone(),
             admission.clone(),
+            if admission.request.mode == RunMode::ScriptedSmoke {
+                self.docker.clone()
+            } else {
+                None
+            },
         );
         tokio::task::spawn_blocking(move || {
             create_private_dir(&root.join("runs"))?;
@@ -210,14 +304,22 @@ impl ArchivePort for Archive {
                 .materialize(&private, &admission.run_id)
                 .map_err(|_| Error::Invalid("worker materialization failed"))?;
             let directory = executable.parent().ok_or(Error::Uncertain)?.to_path_buf();
-            let prepared = (*bundle)
-                .clone()
-                .prepare(
-                    &root.join("runs").join(admission.run_id.as_str()),
-                    admission.run_id.clone(),
-                    &bytes,
-                )
-                .map_err(|_| Error::Invalid("archive preparation failed"))?;
+            let path = root.join("runs").join(admission.run_id.as_str());
+            let kind = if docker.is_some() {
+                WorkerKind::DockerScripted
+            } else {
+                WorkerKind::ControllerSimulation
+            };
+            let prepared = if let Some(profile) = &docker {
+                (*bundle)
+                    .clone()
+                    .prepare_docker(&path, admission.run_id.clone(), profile)
+            } else {
+                (*bundle)
+                    .clone()
+                    .prepare(&path, admission.run_id.clone(), &bytes)
+            }
+            .map_err(|_| Error::Invalid("archive preparation failed"))?;
             let invocation_id = random_id()?;
             let binding = Binding {
                 service_id: admission.service_id,
@@ -229,7 +331,7 @@ impl ArchivePort for Archive {
                 unit: format!("playtime-{}.service", invocation_id.as_str()),
                 invocation_id,
                 boot_id: boot_id()?,
-                kind: WorkerKind::ControllerSimulation,
+                kind,
             };
             let socket = directory.join("control.sock");
             if socket.as_os_str().len() >= 108 {
@@ -293,19 +395,12 @@ impl ArchivePort for Archive {
     ) -> life::Result<Option<EventFrontier>> {
         // This port is called in a coordinator-owned lane. Blocking archive work
         // stays off Tokio threads and outside ledger transactions.
-        let (root, prepared, previous, status) = (
-            self.root.clone(),
+        let (archive, prepared, previous, status) = (
+            self.clone(),
             prepared.clone(),
             previous.cloned(),
             status.clone(),
         );
-        let archive = Self {
-            root,
-            bundle: self.bundle.clone(),
-            scenario: self.scenario.clone(),
-            bytes: vec![],
-            revision: self.revision.clone(),
-        };
         tokio::task::spawn_blocking(move || {
             archive
                 .verify(&prepared, previous.as_ref(), &status)
@@ -315,21 +410,8 @@ impl ArchivePort for Archive {
         .map_err(|_| Error::Uncertain)?
     }
     async fn normal_completion(&self, admission: &Admission) -> life::Result<bool> {
-        let (root, bundle, scenario, revision, admission) = (
-            self.root.clone(),
-            self.bundle.clone(),
-            self.scenario.clone(),
-            self.revision.clone(),
-            admission.clone(),
-        );
+        let (archive, admission) = (self.clone(), admission.clone());
         tokio::task::spawn_blocking(move || {
-            let archive = Self {
-                root,
-                bundle,
-                scenario,
-                bytes: vec![],
-                revision,
-            };
             let Some((reader, snapshot)) = archive.saved_snapshot(&admission)? else {
                 return Ok(false);
             };

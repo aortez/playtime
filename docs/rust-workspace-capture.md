@@ -1,5 +1,9 @@
 # Stopped-workspace capture (D2, #54)
 
+The Docker/scripted-model production composition is now available through
+[#66 run-and-view](rust-docker-run-and-view.md). The scope below describes its
+underlying slice; live inference and automatic recovery remain separate work.
+
 `playtime-docker::capture` turns an owned, stopped workshop into a bounded
 `SnapshotCandidate`. It does not publish a checkpoint or enable production Docker
 execution. #24 D3 still supplies the controller effect adapter, durable dispatch

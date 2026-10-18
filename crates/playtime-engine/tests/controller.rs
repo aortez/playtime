@@ -1019,3 +1019,106 @@ proptest! {
         prop_assert!(simulation.result.model_calls <= u64::from(sessions) * u64::from(turns + 2));
     }
 }
+
+fn external_tool_controller() -> Controller<SequentialIds> {
+    let adapters = ScriptedAdapters::new(&fixture()).unwrap();
+    let mut c = Controller::with_tool_policy(
+        adapters.config().clone(),
+        RunId::new("external").unwrap(),
+        RunMode::ScriptedSmoke,
+        SequentialIds,
+        0,
+        ToolPolicy::ConfirmedExternal {
+            return_overhead_ms: 1000,
+        },
+    )
+    .unwrap();
+    let id = c.pending().unwrap().id;
+    c.advance(0, Input::Dispatched { effect_id: id }).unwrap();
+    c.advance(
+        0,
+        Input::Complete {
+            effect_id: id,
+            outcome: Outcome::Started(Memory::loaded(String::new())),
+        },
+    )
+    .unwrap();
+    let id = c.pending().unwrap().id;
+    c.advance(0, Input::Dispatched { effect_id: id }).unwrap();
+    c.advance(0, Input::Complete { effect_id: id, outcome: Outcome::Model(ModelResponse {
+        done: true, generated_tokens: Some(32), prompt_tokens: None,
+        message: json!({"role":"assistant","content":"","tool_calls":[tool("exec",json!({"command":"data-only","timeout_seconds":0.1}))]}),
+    }) }).unwrap();
+    c
+}
+#[test]
+fn confirmed_bridge_timeout_continues_but_transport_expiry_never_fabricates_a_result() {
+    let mut confirmed = external_tool_controller();
+    let effect = confirmed.pending().unwrap().clone();
+    assert_eq!(effect.deadline_ms, 5000);
+    confirmed
+        .advance(
+            0,
+            Input::Dispatched {
+                effect_id: effect.id,
+            },
+        )
+        .unwrap();
+    confirmed
+        .advance(
+            200,
+            Input::Complete {
+                effect_id: effect.id,
+                outcome: Outcome::Tool(
+                    json!({"exit_code":-9,"timed_out":true,"stdout":"","stderr":""}),
+                ),
+            },
+        )
+        .unwrap();
+    assert!(confirmed.terminal_decision().is_none());
+    assert!(matches!(
+        confirmed.pending().unwrap().kind,
+        EffectKind::Model(_)
+    ));
+
+    for late_reply in [false, true] {
+        let mut expired = external_tool_controller();
+        let effect = expired.pending().unwrap().clone();
+        expired
+            .advance(
+                0,
+                Input::Dispatched {
+                    effect_id: effect.id,
+                },
+            )
+            .unwrap();
+        expired.take_records();
+        expired
+            .advance(
+                effect.deadline_ms,
+                if late_reply {
+                    Input::Complete {
+                        effect_id: effect.id,
+                        outcome: Outcome::Tool(json!({"exit_code":0,"timed_out":false})),
+                    }
+                } else {
+                    Input::Tick
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            expired.terminal_decision(),
+            Some(StopReason::InfrastructureFailure)
+        );
+        assert!(matches!(
+            expired.pending().unwrap().kind,
+            EffectKind::Snapshot { .. }
+        ));
+        assert!(
+            !expired
+                .take_records()
+                .iter()
+                .any(|r| r.kind == "tool_result" && r.data["result"]["timed_out"] == true)
+        );
+    }
+}

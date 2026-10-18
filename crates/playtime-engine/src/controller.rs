@@ -52,6 +52,7 @@ struct ActiveTool {
 /// never decisions to retry, increase an allocation, or start another session.
 pub struct Controller<I: IdSource> {
     config: ControllerConfig,
+    tool_policy: ToolPolicy,
     run_id: RunId,
     mode: RunMode,
     ids: I,
@@ -107,7 +108,30 @@ impl<I: IdSource> Controller<I> {
         ids: I,
         now_ms: u64,
     ) -> Result<Self, InvalidValue> {
+        Self::with_tool_policy(config, run_id, mode, ids, now_ms, ToolPolicy::Simulation)
+    }
+
+    pub fn with_tool_policy(
+        config: ControllerConfig,
+        run_id: RunId,
+        mode: RunMode,
+        ids: I,
+        now_ms: u64,
+        tool_policy: ToolPolicy,
+    ) -> Result<Self, InvalidValue> {
         config.parameters.validate()?;
+        if let ToolPolicy::ConfirmedExternal { return_overhead_ms } = tool_policy
+            && (return_overhead_ms == 0
+                || return_overhead_ms
+                    >= config
+                        .parameters
+                        .limits
+                        .command_seconds
+                        .get()
+                        .saturating_mul(1000))
+        {
+            return Err(InvalidValue("invalid external command return allowance"));
+        }
         let limits = &config.parameters.limits;
         let deadline_ms = limits
             .wall_seconds
@@ -123,6 +147,7 @@ impl<I: IdSource> Controller<I> {
         }
         let mut controller = Self {
             config,
+            tool_policy,
             run_id,
             mode,
             ids,
@@ -1047,6 +1072,13 @@ impl<I: IdSource> Controller<I> {
         {
             timeout_ms = timeout_ms.min((seconds * 1000.0).ceil() as u64).max(1);
         }
+        if matches!(self.tool_policy, ToolPolicy::ConfirmedExternal { .. }) {
+            // timeout_seconds limits the command INSIDE the bridge. Transport
+            // and return use the frozen command cap, still clipped by the work
+            // deadline. A 100ms request must not consume its return allowance
+            // while the committed intent is being published.
+            timeout_ms = self.config.parameters.limits.command_seconds.get() * 1000;
+        }
         self.tool = Some(active);
         self.effect(EffectKind::Tool(request), timeout_ms, true);
     }
@@ -1263,8 +1295,15 @@ impl<I: IdSource> Controller<I> {
             EffectKind::Model(_) => {
                 self.model_error(ModelFailure::Timeout("model deadline expired".into()))
             }
-            EffectKind::Tool(_) => {
+            EffectKind::Tool(request) => {
                 self.undispatched_tool();
+                if matches!(self.tool_policy, ToolPolicy::ConfirmedExternal { .. }) {
+                    self.failed(
+                        EffectKind::Tool(request),
+                        "external tool deadline expired without confirmed termination".into(),
+                    );
+                    return;
+                }
                 self.tool_result(
                     json!({"error": "workshop command deadline expired", "timed_out": true}),
                 );

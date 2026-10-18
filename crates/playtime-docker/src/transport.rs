@@ -336,7 +336,8 @@ pub trait Transport: Send + Sync {
     ) -> Outcome;
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Selection {
     pub executable: PathBuf,
     pub executable_sha256: String,

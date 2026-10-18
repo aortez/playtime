@@ -113,3 +113,17 @@ capacity preparation and independent reference fixture. Earlier archives remain
 inspectable. Worker build records add an optional `capture_helpers` digest map;
 new executing bundles verify it against embedded literals without advertising a
 real-workshop execution capability.
+
+### Docker/scripted-model composition v1
+
+The optional daemon catalog now supports `docker-two-session` in `scripted_smoke`
+mode using real Docker and a packaged systemd worker. See
+[run-and-view](rust-docker-run-and-view.md). No Python recipe, prompt, workshop
+source or lock is modified. The native tool policy distinguishes a confirmed
+bridge timeout from transport uncertainty; only the former can continue work.
+Its five-second effect cap includes bounded transport/return time, while a model's
+shorter requested timeout bounds the command inside the bridge. Simulation timer
+behavior and historical oracle/golden bytes are unchanged. This frozen scripted
+profile uses a 32K conservative context budget and does not claim compatibility
+with the later 8K live profile. Interrupted runs have no automatic recovery or
+admission release in this slice.

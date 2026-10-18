@@ -18,6 +18,14 @@ use std::collections::BTreeMap;
 pub(super) fn backend() -> BackendIdentity {
     BackendIdentity { kind: BackendKind::Controller, description: "Durable controller simulation with a frozen detached worker; scripted model/workshop effects".into() }
 }
+pub(super) fn docker_backend() -> BackendIdentity {
+    BackendIdentity {
+        kind: BackendKind::Controller,
+        description:
+            "Frozen detached worker with real Docker tools and explicitly scripted model responses"
+                .into(),
+    }
+}
 pub(super) fn frontier(f: &EventFrontier) -> Frontier {
     Frontier {
         run_id: f.archive.run_id.clone(),
@@ -71,7 +79,11 @@ fn base(record: &Admission) -> RunView {
         updated_at: record.accepted.utc.clone(),
         recipe_id: RecipeId::new(&record.request.recipe_id).unwrap(),
         preview_revision: PreviewRevision::new(&record.request.preview_revision).unwrap(),
-        backend: backend(),
+        backend: if record.request.mode == playtime_core::RunMode::ScriptedSmoke {
+            docker_backend()
+        } else {
+            backend()
+        },
         orchestration: Orchestration {
             state: match record.phase {
                 Phase::Preparing => OrchestrationState::Preparing,

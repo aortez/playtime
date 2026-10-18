@@ -37,6 +37,7 @@ impl Default for Capabilities {
 impl Capabilities {
     pub fn current() -> Self {
         Self {
+            real_workshop: true,
             recovery_profile: Some(crate::recovery::RULE_SET.into()),
             ..Self::default()
         }
@@ -44,6 +45,7 @@ impl Capabilities {
     pub fn supported(&self) -> bool {
         let mut ordinary = self.clone();
         ordinary.recovery_profile = None;
+        ordinary.real_workshop = false;
         ordinary == Self::default()
             && self
                 .recovery_profile

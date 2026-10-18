@@ -19,7 +19,8 @@ pub fn helper_digests() -> BTreeMap<String, String> {
     .collect()
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct CaptureLimits {
     pub entries: u64,
     pub tar_bytes: u64,
