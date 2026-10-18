@@ -197,9 +197,10 @@ PLAYTIME_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 The second command includes Docker integration checks. Use `smoke --live` with
 a recipe when checking the real model's tool use and handoff behavior.
 
-The Rust foundation contains `playtime-core` and `playtime-protocol` library
-crates with typed contracts and synthetic fixtures. The Python command remains
-the runnable implementation. See the [architecture decision](docs/rust-foundation.md)
+The Rust workspace contains `playtime-core`, `playtime-protocol`, and
+`playtime-storage`: typed contracts, synthetic fixtures, and portable archive
+I/O. The Python command remains the operational runner. See the
+[storage contract](docs/rust-storage.md), [architecture decision](docs/rust-foundation.md)
 and [compatibility matrix](docs/rust-compatibility.md) for scope and remaining work.
 With rustup installed, Cargo selects the pinned toolchain:
 
@@ -208,3 +209,13 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
+
+To publish and verify the synthetic two-session archive in a **new** directory:
+
+```sh
+cargo run --locked -p playtime-storage --example archive_fixture -- --output /tmp/playtime-archive-fixture
+```
+
+This is a fixture replay; it executes no controller, worker, model, or workshop.
+The resulting folder contains all inputs and evidence and can be copied and
+inspected without a service database. Controller integration follows in #19.

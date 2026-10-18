@@ -3,6 +3,7 @@
 pub mod archive;
 pub mod events;
 mod read;
+pub mod storage;
 pub mod v1;
 
 pub use read::ReadError;
