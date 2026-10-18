@@ -1,0 +1,190 @@
+{
+  "Id": "1111111111111111111111111111111111111111111111111111111111111111",
+  "Name": "/synthetic-holder",
+  "Image": "sha256:797d27ef63ead176997892c6f2bbcd7fa4fad34eb52047011842a99eddd65093",
+  "Config": {
+    "Hostname": "playtime-workshop",
+    "Domainname": "",
+    "User": "0:0",
+    "AttachStdin": false,
+    "AttachStdout": true,
+    "AttachStderr": true,
+    "Tty": false,
+    "OpenStdin": false,
+    "StdinOnce": false,
+    "Env": [
+      "PLAYTIME_SEED=1042",
+      "PYTHONHASHSEED=1042",
+      "PATH=/usr/local/bin:/usr/bin:/bin",
+      "HOME=/work"
+    ],
+    "Cmd": [
+      "-I",
+      "-S",
+      "-B",
+      "-c",
+      "SYNTHETIC_TIMER",
+      "0"
+    ],
+    "Healthcheck": {
+      "Test": [
+        "NONE"
+      ]
+    },
+    "Image": "sha256:797d27ef63ead176997892c6f2bbcd7fa4fad34eb52047011842a99eddd65093",
+    "Volumes": null,
+    "WorkingDir": "/",
+    "Entrypoint": [
+      "/usr/local/bin/python3.12"
+    ],
+    "OnBuild": null,
+    "Labels": {}
+  },
+  "HostConfig": {
+    "Binds": null,
+    "ContainerIDFile": "",
+    "LogConfig": {
+      "Type": "none",
+      "Config": {}
+    },
+    "NetworkMode": "none",
+    "PortBindings": {},
+    "RestartPolicy": {
+      "Name": "no",
+      "MaximumRetryCount": 0
+    },
+    "AutoRemove": false,
+    "VolumeDriver": "",
+    "VolumesFrom": null,
+    "ConsoleSize": [
+      0,
+      0
+    ],
+    "CapAdd": null,
+    "CapDrop": [
+      "ALL"
+    ],
+    "CgroupnsMode": "private",
+    "Dns": [],
+    "DnsOptions": [],
+    "DnsSearch": [],
+    "ExtraHosts": null,
+    "GroupAdd": null,
+    "IpcMode": "private",
+    "Cgroup": "",
+    "Links": null,
+    "OomScoreAdj": 0,
+    "PidMode": "",
+    "Privileged": false,
+    "PublishAllPorts": false,
+    "ReadonlyRootfs": true,
+    "SecurityOpt": [
+      "no-new-privileges"
+    ],
+    "Tmpfs": {
+      "/tmp": "rw,nosuid,nodev,size=16777216,mode=1777,nr_inodes=16384"
+    },
+    "UTSMode": "",
+    "UsernsMode": "",
+    "ShmSize": 16777216,
+    "Runtime": "runc",
+    "Isolation": "",
+    "CpuShares": 0,
+    "Memory": 67108864,
+    "NanoCpus": 1000000000,
+    "CgroupParent": "",
+    "BlkioWeight": 0,
+    "BlkioWeightDevice": [],
+    "BlkioDeviceReadBps": [],
+    "BlkioDeviceWriteBps": [],
+    "BlkioDeviceReadIOps": [],
+    "BlkioDeviceWriteIOps": [],
+    "CpuPeriod": 0,
+    "CpuQuota": 0,
+    "CpuRealtimePeriod": 0,
+    "CpuRealtimeRuntime": 0,
+    "CpusetCpus": "",
+    "CpusetMems": "",
+    "Devices": [],
+    "DeviceCgroupRules": null,
+    "DeviceRequests": null,
+    "MemoryReservation": 0,
+    "MemorySwap": 67108864,
+    "MemorySwappiness": null,
+    "OomKillDisable": false,
+    "PidsLimit": 64,
+    "Ulimits": [],
+    "CpuCount": 0,
+    "CpuPercent": 0,
+    "IOMaximumIOps": 0,
+    "IOMaximumBandwidth": 0,
+    "Mounts": [
+      {
+        "Type": "volume",
+        "Source": "synthetic-volume",
+        "Target": "/work",
+        "VolumeOptions": {
+          "NoCopy": true,
+          "DriverConfig": {}
+        }
+      }
+    ],
+    "MaskedPaths": [
+      "/proc/asound",
+      "/proc/acpi",
+      "/proc/interrupts",
+      "/proc/kcore",
+      "/proc/keys",
+      "/proc/latency_stats",
+      "/proc/timer_list",
+      "/proc/timer_stats",
+      "/proc/sched_debug",
+      "/proc/scsi",
+      "/sys/firmware",
+      "/sys/devices/virtual/powercap"
+    ],
+    "ReadonlyPaths": [
+      "/proc/bus",
+      "/proc/fs",
+      "/proc/irq",
+      "/proc/sys",
+      "/proc/sysrq-trigger"
+    ]
+  },
+  "Mounts": [
+    {
+      "Type": "volume",
+      "Name": "synthetic-volume",
+      "Source": "/synthetic/docker/volumes/synthetic-volume/_data",
+      "Destination": "/work",
+      "Driver": "local",
+      "Mode": "z",
+      "RW": true,
+      "Propagation": ""
+    }
+  ],
+  "State": {
+    "Status": "created",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "0001-01-01T00:00:00Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "NetworkSettings": {
+    "Networks": {
+      "none": {
+        "Gateway": "",
+        "IPAddress": "",
+        "IPv6Gateway": "",
+        "GlobalIPv6Address": ""
+      }
+    },
+    "Ports": {}
+  }
+}

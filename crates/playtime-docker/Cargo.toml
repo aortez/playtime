@@ -1,0 +1,19 @@
+[package]
+name = "playtime-docker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["process"] }
+tokio-util.workspace = true
+rustix = { workspace = true, features = ["process", "time"] }
+getrandom.workspace = true
+
+[lints]
+workspace = true
