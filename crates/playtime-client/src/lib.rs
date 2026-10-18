@@ -378,13 +378,18 @@ impl Client {
         Ok(value)
     }
     pub async fn cancel(&self, id: &RunId) -> Result<CancelResponse> {
-        ambiguous(
+        let reply: CancelResponse = ambiguous(
             self.json(
                 self.request(Method::POST, &format!("runs/{id}/cancel"))
                     .json(&CancelRequest {}),
             )
             .await,
-        )
+        )?;
+        ambiguous(validate_run(&reply.run))?;
+        if reply.run.run_id != *id || reply.intent != reply.run.cancellation {
+            return Err(Error::AmbiguousMutation(Box::new(Error::InvalidResponse)));
+        }
+        Ok(reply)
     }
     pub async fn history(&self, id: &RunId, query: &PageQuery) -> Result<EventPage> {
         let page: EventPage = self

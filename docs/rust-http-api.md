@@ -35,6 +35,10 @@ The demo reveals four canned records at 150 ms intervals. `fixture-example`
 includes an unknown event payload, a checkpoint, incoming/outgoing memory,
 separate evidence, a saved image, an unretained file, a frozen prompt and unknown
 inference usage. `fixture-empty` ends with explicitly incomplete, empty evidence.
+The unknown observation includes a synthetic retained JSON ContentRef. Its
+opaque artifact appears at the referencing event's frontier and downloads through
+the ordinary content route. Payload strings resembling paths remain inert data;
+this synthetic wrapper is not #42's observation schema.
 These are transport fixtures, not two-session engine simulations or portable
 archives. Their manifests and publication receipts are labeled synthetic.
 

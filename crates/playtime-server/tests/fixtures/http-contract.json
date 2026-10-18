@@ -3,9 +3,9 @@
     "frontier": {
       "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
       "prefix": {
-        "byte_offset": 1017,
+        "byte_offset": 1170,
         "sequence": 4,
-        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+        "sha256": "5d9f833cb0569dd503efc94a20e1d80b21086b7c35194d130b72548518954bf1"
       },
       "run_id": "fixture-run-00000001"
     },
@@ -47,6 +47,19 @@
         "kind": "incoming_memory",
         "name": "incoming.txt",
         "published_sequence": 3,
+        "session_id": "s1"
+      },
+      {
+        "artifact_id": "observation-payload",
+        "content": {
+          "path": "observations/fixture.json",
+          "sha256": "fd3fff779e5ec8307956740405cbe602ecdf1953ac9731ccaade739482f9d611",
+          "size_bytes": 97
+        },
+        "frozen_input": false,
+        "kind": "observation_payload",
+        "name": "fixture.json",
+        "published_sequence": 2,
         "session_id": "s1"
       },
       {
@@ -95,9 +108,9 @@
     "frontier": {
       "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
       "prefix": {
-        "byte_offset": 1017,
+        "byte_offset": 1170,
         "sequence": 4,
-        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+        "sha256": "5d9f833cb0569dd503efc94a20e1d80b21086b7c35194d130b72548518954bf1"
       },
       "run_id": "fixture-run-00000001"
     },
@@ -189,14 +202,14 @@
       "frontier": {
         "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
         "prefix": {
-          "byte_offset": 1017,
+          "byte_offset": 1170,
           "sequence": 4,
-          "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+          "sha256": "5d9f833cb0569dd503efc94a20e1d80b21086b7c35194d130b72548518954bf1"
         },
         "run_id": "fixture-run-00000001"
       },
-      "history_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjB9",
-      "live_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjR9"
+      "history_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTE3MCwic2hhMjU2IjoiNWQ5ZjgzM2NiMDU2OWRkNTAzZWZjOTRhMjBlMWQ4MGIyMTA4NmI3YzM1MTk0ZDEzMGI3MjU0ODUxODk1NGJmMSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjB9",
+      "live_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTE3MCwic2hhMjU2IjoiNWQ5ZjgzM2NiMDU2OWRkNTAzZWZjOTRhMjBlMWQ4MGIyMTA4NmI3YzM1MTk0ZDEzMGI3MjU0ODUxODk1NGJmMSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjR9"
     },
     "evidence": {
       "status": "available"
@@ -209,9 +222,9 @@
     "last_confirmed_frontier": {
       "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
       "prefix": {
-        "byte_offset": 1017,
+        "byte_offset": 1170,
         "sequence": 4,
-        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+        "sha256": "5d9f833cb0569dd503efc94a20e1d80b21086b7c35194d130b72548518954bf1"
       },
       "run_id": "fixture-run-00000001"
     },
@@ -237,15 +250,15 @@
     },
     "worker": null
   },
-  "cursor_encoded": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjF9",
+  "cursor_encoded": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTE3MCwic2hhMjU2IjoiNWQ5ZjgzM2NiMDU2OWRkNTAzZWZjOTRhMjBlMWQ4MGIyMTA4NmI3YzM1MTk0ZDEzMGI3MjU0ODUxODk1NGJmMSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjF9",
   "cursor_json": {
     "after_sequence": 1,
     "frontier": {
       "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
       "prefix": {
-        "byte_offset": 1017,
+        "byte_offset": 1170,
         "sequence": 4,
-        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+        "sha256": "5d9f833cb0569dd503efc94a20e1d80b21086b7c35194d130b72548518954bf1"
       },
       "run_id": "fixture-run-00000001"
     },
@@ -285,15 +298,15 @@
     "frontier": {
       "manifest_sha256": "8a67658b050ebce701ba99cfaae4c355db22d58d010e0c7fe314fef6989445b5",
       "prefix": {
-        "byte_offset": 1017,
+        "byte_offset": 1170,
         "sequence": 4,
-        "sha256": "12a61c20536813f9e1de7aa5acda386db8d3547d97038652b3dbcd44724e84d5"
+        "sha256": "5d9f833cb0569dd503efc94a20e1d80b21086b7c35194d130b72548518954bf1"
       },
       "run_id": "fixture-run-00000001"
     },
     "has_more": true,
-    "next_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjF9",
-    "resume_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTAxNywic2hhMjU2IjoiMTJhNjFjMjA1MzY4MTNmOWUxZGU3YWE1YWNkYTM4NmRiOGQzNTQ3ZDk3MDM4NjUyYjNkYmNkNDQ3MjRlODRkNSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjF9"
+    "next_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTE3MCwic2hhMjU2IjoiNWQ5ZjgzM2NiMDU2OWRkNTAzZWZjOTRhMjBlMWQ4MGIyMTA4NmI3YzM1MTk0ZDEzMGI3MjU0ODUxODk1NGJmMSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjF9",
+    "resume_cursor": "eyJzY2hlbWFfdmVyc2lvbiI6MSwiZnJvbnRpZXIiOnsicnVuX2lkIjoiZml4dHVyZS1ydW4tMDAwMDAwMDEiLCJtYW5pZmVzdF9zaGEyNTYiOiI4YTY3NjU4YjA1MGViY2U3MDFiYTk5Y2ZhYWU0YzM1NWRiMjJkNThkMDEwZTBjN2ZlMzE0ZmVmNjk4OTQ0NWI1IiwicHJlZml4Ijp7InNlcXVlbmNlIjo0LCJieXRlX29mZnNldCI6MTE3MCwic2hhMjU2IjoiNWQ5ZjgzM2NiMDU2OWRkNTAzZWZjOTRhMjBlMWQ4MGIyMTA4NmI3YzM1MTk0ZDEzMGI3MjU0ODUxODk1NGJmMSJ9fSwiYWZ0ZXJfc2VxdWVuY2UiOjF9"
   },
   "launch_request": {
     "mode": "simulation",

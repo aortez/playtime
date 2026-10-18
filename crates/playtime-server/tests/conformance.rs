@@ -8,6 +8,57 @@ use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
+async fn retained_observation_content_joins_the_catalog_at_its_publication_frontier() {
+    let h = Harness::new().await;
+    let run = h
+        .client
+        .launch(&h.pending("retained-payload").await)
+        .await
+        .unwrap();
+    h.fixture.reveal(&run.run_id, 1, None);
+    let older = h
+        .client
+        .artifacts(&run.run_id, &PageQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(older.frontier.unwrap().prefix.sequence, 1);
+    assert!(!older.items.iter().any(|a| a.kind == "observation_payload"));
+    h.fixture.reveal(&run.run_id, 2, None);
+    let page = h
+        .client
+        .history(&run.run_id, &PageQuery::default())
+        .await
+        .unwrap();
+    let reference: playtime_protocol::archive::ContentRef =
+        serde_json::from_value(page.events[1].data["synthetic_payload_ref"].clone()).unwrap();
+    let catalog = h
+        .client
+        .artifacts(&run.run_id, &PageQuery::default())
+        .await
+        .unwrap();
+    assert_eq!(catalog.frontier, Some(page.frontier));
+    let artifact = catalog
+        .items
+        .iter()
+        .find(|a| a.content == reference)
+        .unwrap();
+    assert_eq!(artifact.published_sequence, 2);
+    let mut bytes = Vec::new();
+    h.client
+        .download(&run.run_id, artifact, &mut bytes, &CancellationToken::new())
+        .await
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(payload["unknown"]["path"], "/not/a/fetch/permission");
+    assert!(
+        !catalog
+            .items
+            .iter()
+            .any(|a| a.content.path.as_str() == "/not/a/fetch/permission")
+    );
+}
+
+#[tokio::test]
 async fn real_http_preview_launch_inspect_stream_download_and_schema() {
     let h = Harness::new().await;
     assert_eq!(h.client.capabilities().backend.kind, BackendKind::Fixture);

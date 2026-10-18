@@ -149,6 +149,22 @@ impl Run {
             },
             prompt.to_vec(),
         ));
+        // Deliberately synthetic, not #42's observation wrapper. Only this
+        // explicit ContentRef is catalogued; path-shaped payload strings are data.
+        let payload = br#"{"synthetic":true,"text":"fixture retained payload","unknown":{"path":"/not/a/fetch/permission"}}"#;
+        let payload_ref = reference("observations/fixture.json", payload);
+        artifacts.push((
+            Artifact {
+                artifact_id: ArtifactId::new("observation-payload").unwrap(),
+                name: "fixture.json".into(),
+                kind: "observation_payload".into(),
+                content: payload_ref.clone(),
+                session_id: Some(SessionId::new("s1").unwrap()),
+                published_sequence: 2,
+                frozen_input: false,
+            },
+            payload.to_vec(),
+        ));
         let raw = [
             (
                 "run_started",
@@ -156,7 +172,7 @@ impl Run {
             ),
             (
                 "future_fixture_observation",
-                serde_json::json!({"text":"scripted output", "unknown_field":{"retained":true}}),
+                serde_json::json!({"text":"scripted output", "unknown_field":{"retained":true}, "synthetic_payload_ref":payload_ref}),
             ),
             (
                 "fixture_checkpoint_published",

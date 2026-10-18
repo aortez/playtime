@@ -31,6 +31,7 @@ enum Behavior {
     LostLaunch,
     EmptySse,
     CutDownload,
+    WrongCancel,
 }
 struct StateData {
     behavior: Behavior,
@@ -122,6 +123,22 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
     }
     let call = state.calls.fetch_add(1, Ordering::SeqCst);
     match state.behavior {
+        Behavior::WrongCancel => {
+            let fixture = Fixture::new(state.caps.service_id.clone());
+            let launch = fixture
+                .admit(
+                    IdempotencyKey::new("wrong-run").unwrap(),
+                    LaunchRequest {
+                        recipe_id: RecipeId::new("fixture-example").unwrap(),
+                        mode: playtime_core::RunMode::Simulation,
+                        preview_revision: PreviewRevision::new("fixture-v1").unwrap(),
+                    },
+                )
+                .await
+                .unwrap();
+            let reply = fixture.cancel(launch.run_id).await.unwrap();
+            json_response(202, serde_json::to_vec(&reply).unwrap())
+        }
         Behavior::EmptySse => Response::builder()
             .header(SERVICE_HEADER, "peer-fixture")
             .header("content-type", "text/event-stream")
@@ -236,6 +253,19 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
                 .unwrap()
         }
     }
+}
+
+#[tokio::test]
+async fn cancellation_reply_for_another_run_remains_unresolved() {
+    let peer = Peer::start(Behavior::WrongCancel).await;
+    assert!(matches!(
+        peer.client()
+            .await
+            .cancel(&RunId::new("run-peer").unwrap())
+            .await,
+        Err(Error::AmbiguousMutation(_))
+    ));
+    assert_eq!(peer.state.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
