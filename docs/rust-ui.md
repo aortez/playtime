@@ -41,12 +41,23 @@ are explicitly unavailable where the current API does not project them.
 ## Ownership and bounded work
 
 - `model.rs` owns independent connection, selection, mutation and history states.
-  Replies carry connection/selection/preview/inspection generations and run IDs.
+  Replies carry connection/selection/preview/inspection/launch generations and run IDs.
   Late replies cannot move selection, roll back lifecycle, or install old previews.
+  Preview refreshes preserve pending and unresolved launches; their replies remain
+  applicable after preview changes without moving a newer run selection. Run
+  snapshots reject older `updated_at` values and preserve terminal/cancellation
+  facts even at equal timestamps. A cancellation reply installs a fully prepared
+  view so the status, summary and source agree; no lifecycle outcome is inferred.
 - `backend.rs` owns one cancellable client runtime, one selected observer and at
   most two preview/decoder jobs. Private files, HTTP, JSON, hashes, comparisons and
   image decode stay outside egui callbacks. Closing the client cancels/joins its
   tasks, never the remote experiment. Only explicit Cancel emits cancellation.
+  Initial attachment, fixed history pages, status polling and cold source reads
+  retry transient failures with exponential backoff for at most 60 seconds per
+  consecutive outage (including retry requests). Retries preserve the exact run
+  and cursor. Successful reads reset their own budget; other failing reads keep
+  the connection marked Reconnecting. Fatal errors require explicit Reconnect.
+  Poll retries run separately so they do not stall history/live application.
 - `transcript.rs` maintains the sequence index and payload working set. Live attach
   starts from the paired RunView anchor before independent earlier-history paging.
   Apply precedes acknowledgment. Repeated sequences must have identical content.

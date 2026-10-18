@@ -21,9 +21,9 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{Semaphore, mpsc, oneshot},
+    sync::{Mutex, Semaphore, mpsc, oneshot},
     task::JoinSet,
-    time::{Instant, interval},
+    time::interval,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -161,6 +161,76 @@ async fn local<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static
 }
 fn safe(error: Error) -> String {
     error.to_string()
+}
+
+fn observation_retry() -> RetryPolicy {
+    RetryPolicy {
+        max_elapsed: Duration::from_secs(60),
+        max_reconnects: 100,
+        ..Default::default()
+    }
+}
+
+/// One selected observation. Each read owns its outage budget; a successful
+/// status poll cannot reset a failing history page's deadline or connection state.
+#[derive(Clone)]
+struct Reads {
+    client: Client,
+    run: RunId,
+    tag: Tag,
+    out: Out,
+    outages: Arc<Mutex<usize>>,
+}
+impl Reads {
+    async fn retry<T, F, R>(&self, request: F) -> Result<T>
+    where
+        F: FnMut() -> R,
+        R: std::future::Future<Output = playtime_client::Result<T>>,
+    {
+        let mut recovering = false;
+        let result = crate::read_retry::read(observation_retry(), request, || {
+            recovering = true;
+            async {
+                let mut outages = self.outages.lock().await;
+                *outages += 1;
+                if *outages == 1 {
+                    self.out
+                        .send(
+                            self.tag,
+                            Some(self.run.clone()),
+                            Data::Connection(ConnectionState::Reconnecting),
+                        )
+                        .await;
+                }
+            }
+        })
+        .await;
+        if recovering {
+            let mut outages = self.outages.lock().await;
+            *outages -= 1;
+            let state = match &result {
+                Err(error) => Some(ConnectionState::Error(error.to_string())),
+                Ok(_) if *outages == 0 => Some(ConnectionState::Connected),
+                _ => None,
+            };
+            if let Some(state) = state {
+                self.out
+                    .send(self.tag, Some(self.run.clone()), Data::Connection(state))
+                    .await;
+            }
+        }
+        result.map_err(safe)
+    }
+    async fn run(&self) -> Result<RunView> {
+        self.retry(|| self.client.run(&self.run)).await
+    }
+    async fn history(&self, cursor: &str) -> Result<EventPage> {
+        let query = PageQuery {
+            cursor: Some(cursor.to_owned()),
+            limit: Some(64),
+        };
+        self.retry(|| self.client.history(&self.run, &query)).await
+    }
 }
 async fn connect(
     options: Options,
@@ -498,8 +568,12 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
         }
         Action::Cancel(run) => match client.cancel(&run).await {
             Ok(reply) => {
-                out.send(tag, Some(run), Data::Cancellation(Box::new(reply)))
-                    .await
+                out.send(
+                    tag,
+                    Some(run),
+                    Data::Cancellation(Box::new(prepare_run(reply.run))),
+                )
+                .await
             }
             Err(error) => {
                 out.send(
@@ -820,8 +894,15 @@ async fn observe(
     stop: CancellationToken,
 ) {
     let task = async {
+        let reads = Reads {
+            client: client.clone(),
+            run: run.clone(),
+            tag,
+            out: out.clone(),
+            outages: Arc::new(Mutex::new(0)),
+        };
         let anchors = loop {
-            let view = client.run(&run).await.map_err(safe)?;
+            let view = reads.run().await?;
             let anchors = view.event_anchors.clone();
             out.send(
                 tag,
@@ -844,15 +925,8 @@ async fn observe(
         let live_stop = stop.clone();
         jobs.spawn(async move {
             let result = async {
-                let mut follow = live_client.follow(
-                    &live_run,
-                    Some(anchors.live_cursor),
-                    RetryPolicy {
-                        max_elapsed: Duration::from_secs(60),
-                        max_reconnects: 100,
-                        ..Default::default()
-                    },
-                );
+                let mut follow =
+                    live_client.follow(&live_run, Some(anchors.live_cursor), observation_retry());
                 loop {
                     match follow.next(&live_stop).await.map_err(safe)? {
                         Observation::Record(record) => {
@@ -875,24 +949,39 @@ async fn observe(
                 let _ = live_tx.send(Input::Error(error)).await;
             }
         });
-        let history_client = client.clone();
-        let history_run = run.clone();
+        let status_reads = reads.clone();
+        let status_tx = tx.clone();
+        jobs.spawn(async move {
+            let mut poll = interval(Duration::from_secs(1));
+            poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                poll.tick().await;
+                match status_reads.run().await {
+                    Ok(view) => {
+                        status_reads
+                            .out
+                            .send(
+                                tag,
+                                Some(status_reads.run.clone()),
+                                Data::Run(Box::new(prepare_run(view))),
+                            )
+                            .await
+                    }
+                    Err(error) => {
+                        let _ = status_tx.send(Input::Error(error)).await;
+                        break;
+                    }
+                }
+            }
+        });
+        let history_reads = reads.clone();
         let history_tx = tx.clone();
         let reload_budget = budget.clone();
         jobs.spawn(async move {
             let result = async {
                 let mut cursor = anchors.history_cursor;
                 loop {
-                    let page = history_client
-                        .history(
-                            &history_run,
-                            &PageQuery {
-                                cursor: Some(cursor.clone()),
-                                limit: Some(64),
-                            },
-                        )
-                        .await
-                        .map_err(safe)?;
+                    let page = history_reads.history(&cursor).await?;
                     for event in page.events {
                         deliver(&history_tx, &budget, event, Some(cursor.clone()), false).await?;
                     }
@@ -918,8 +1007,6 @@ async fn observe(
         let mut history_done = false;
         let mut live = 0;
         let mut redraw = interval(Duration::from_millis(50));
-        let mut poll = interval(Duration::from_secs(1));
-        let mut outage: Option<Instant> = None;
         loop {
             tokio::select! {
                 _ = stop.cancelled() => break,
@@ -955,23 +1042,13 @@ async fn observe(
                 _ = redraw.tick(), if dirty => {
                     if !reloading && (!reload_failed || pending_source.is_some()) {
                         let request = pending_source.take().or_else(|| index.window(range.0, range.1).rows.iter().flat_map(|row| index.sources(row.id)).find(|seq| !index.contains(*seq)).map(|sequence| Reload { tag: None, sequence, offset: 0, cursor: index.cursor_for(sequence).map(str::to_owned) }));
-                        if let Some(request) = request { reloading = true; jobs.spawn(reload(client.clone(), run.clone(), tx.clone(), reload_budget.clone(), request)); }
+                        if let Some(request) = request { reloading = true; jobs.spawn(reload(reads.clone(), tx.clone(), reload_budget.clone(), request)); }
                     }
                     index.metrics.inbox_bytes_high_water = reload_budget.high_bytes.load(Ordering::Relaxed);
                     index.metrics.inbox_records_high_water = reload_budget.high_records.load(Ordering::Relaxed);
                     let status = format!("{} records indexed · {}", index.metrics.records, if history_done { "Earlier history loaded" } else { "Loading earlier history independently of live activity" });
                     out.send(tag, Some(run.clone()), Data::Window(index.window(range.0, range.1), status, live)).await; dirty = false;
                 }
-                _ = poll.tick() => match client.run(&run).await {
-                    Ok(view) => { if outage.take().is_some() { out.send(tag, Some(run.clone()), Data::Connection(ConnectionState::Connected)).await; } out.send(tag, Some(run.clone()), Data::Run(Box::new(prepare_run(view)))).await; }
-                    Err(error) => {
-                        let retryable = matches!(error, Error::Transport | Error::Timeout) || matches!(error.api_code(), Some("backend_unavailable" | "ownership_unresolved" | "request_timeout"));
-                        if !retryable { return Err(safe(error)); }
-                        let since = outage.get_or_insert_with(Instant::now);
-                        if since.elapsed() > Duration::from_secs(60) { return Err("Reconnect budget exhausted; use Reconnect".into()); }
-                        out.send(tag, Some(run.clone()), Data::Connection(ConnectionState::Reconnecting)).await;
-                    }
-                },
             }
         }
         jobs.abort_all();
@@ -1040,37 +1117,21 @@ struct Reload {
     offset: usize,
     cursor: Option<String>,
 }
-async fn reload(
-    client: Client,
-    run: RunId,
-    tx: mpsc::Sender<Input>,
-    budget: Arc<Inbox>,
-    request: Reload,
-) {
+async fn reload(reads: Reads, tx: mpsc::Sender<Input>, budget: Arc<Inbox>, request: Reload) {
     let result = async {
         let mut cursor = match &request.cursor {
             Some(cursor) => cursor.clone(),
             None => {
-                client
-                    .run(&run)
-                    .await
-                    .map_err(safe)?
+                reads
+                    .run()
+                    .await?
                     .event_anchors
                     .ok_or("Evidence is unavailable")?
                     .history_cursor
             }
         };
         loop {
-            let page = client
-                .history(
-                    &run,
-                    &PageQuery {
-                        cursor: Some(cursor.clone()),
-                        limit: Some(64),
-                    },
-                )
-                .await
-                .map_err(safe)?;
+            let page = reads.history(&cursor).await?;
             if page
                 .events
                 .iter()

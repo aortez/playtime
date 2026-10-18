@@ -291,7 +291,6 @@ impl Workbench {
                 }
             });
         if let Some(action) = action {
-            self.model.launch = Mutation::Submitting;
             self.model.command(action);
         }
         if self.model.receipts_next.is_some() && ui.button("More receipts").clicked() {
@@ -404,7 +403,6 @@ impl Workbench {
                     self.model.command(Action::Recover(key.clone(), false));
                 }
                 if ui.button("Retry saved launch").clicked() {
-                    self.model.launch = Mutation::Submitting;
                     self.model.command(Action::Recover(key, true));
                 }
             });

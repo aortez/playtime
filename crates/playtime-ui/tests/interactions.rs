@@ -126,6 +126,13 @@ async fn recover_cancel_reconnect_and_inspect_through_named_controls() {
             .any(|c| matches!(&c.action, Action::Recover(key, false) if key == &saved.key))
     );
     h.state_mut().model.commands.clear();
+    let tag = h.state().model.tag;
+    h.state_mut().model.apply(Reply {
+        tag,
+        run: None,
+        data: Data::LaunchProgress(Mutation::Unresolved("Lookup reply lost".into()), None),
+    });
+    h.run();
     h.get_by_label("Retry saved launch").click();
     h.run();
     assert!(

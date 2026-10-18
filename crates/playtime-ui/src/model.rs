@@ -12,6 +12,7 @@ pub struct Tag {
     pub selection: u64,
     pub preview: u64,
     pub inspection: u64,
+    pub launch: u64,
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Disclosure {
@@ -148,7 +149,7 @@ pub enum Data {
     LaunchProgress(Mutation, Option<LaunchReceipt>),
     Accepted(Box<LaunchResponse>, LaunchReceipt),
     Run(Box<RunViewData>),
-    Cancellation(Box<CancelResponse>),
+    Cancellation(Box<RunViewData>),
     CancellationUnresolved(String),
     Window(Window, String, u64),
     Checkpoints(Page<Checkpoint>),
@@ -283,14 +284,21 @@ impl Model {
             self.notice =
                 "Client work queue is full; retry this action after current work finishes".into();
             match action {
-                Action::Launch(_) | Action::Recover(..) => {
-                    self.launch = Mutation::Rejected(self.notice.clone())
-                }
+                Action::Launch(_) => self.launch = Mutation::Rejected(self.notice.clone()),
+                Action::Recover(..) => self.launch = Mutation::Unresolved(self.notice.clone()),
                 Action::Cancel(_) => self.cancellation = Mutation::Unresolved(self.notice.clone()),
                 Action::Preview(..) => self.previewing = false,
                 _ => (),
             }
             return;
+        }
+        if matches!(action, Action::Launch(_) | Action::Recover(..)) {
+            self.tag.launch += 1;
+            self.launch = if matches!(action, Action::Launch(_)) {
+                Mutation::Recording
+            } else {
+                Mutation::Submitting
+            };
         }
         self.commands.push_back(Command {
             tag: self.tag,
@@ -298,6 +306,12 @@ impl Model {
         });
     }
     pub fn connect(&mut self, options: Options) {
+        if matches!(self.launch, Mutation::Recording | Mutation::Submitting) {
+            self.launch = Mutation::Unresolved(
+                "Connection changed while launching; look up the saved request before retrying"
+                    .into(),
+            );
+        }
         self.tag.connection += 1;
         self.tag.selection += 1;
         self.tag.preview += 1;
@@ -312,7 +326,12 @@ impl Model {
         self.preview = None;
         self.previewing = true;
         self.tag.preview += 1;
-        self.launch = Mutation::Idle;
+        if !matches!(
+            self.launch,
+            Mutation::Recording | Mutation::Submitting | Mutation::Unresolved(_)
+        ) {
+            self.launch = Mutation::Idle;
+        }
         self.command(Action::Preview(recipe, mode));
     }
     pub fn can_launch(&self) -> bool {
@@ -415,12 +434,15 @@ impl Model {
         }
         if matches!(
             &reply.data,
-            Data::Preview(_)
-                | Data::PreviewError(_)
-                | Data::PreviewPage(_)
-                | Data::LaunchProgress(..)
-                | Data::Accepted(..)
+            Data::Preview(_) | Data::PreviewError(_) | Data::PreviewPage(_)
         ) && (reply.tag.selection != self.tag.selection || reply.tag.preview != self.tag.preview)
+        {
+            return;
+        }
+        // A preview refresh or navigation does not resolve a submitted launch.
+        // Only another explicit launch/recovery operation supersedes its replies.
+        if matches!(&reply.data, Data::LaunchProgress(..) | Data::Accepted(..))
+            && reply.tag.launch != self.tag.launch
         {
             return;
         }
@@ -514,27 +536,20 @@ impl Model {
             Data::Accepted(accepted, saved) => {
                 self.launch = Mutation::Accepted;
                 self.saved = Some(saved);
-                self.select_run(accepted.run_id);
+                if reply.tag.selection == self.tag.selection {
+                    self.select_run(accepted.run_id);
+                }
                 self.command(Action::Receipts(None));
             }
             Data::Run(run) => {
-                if run.value.checkpoint.as_ref()
-                    != self.run.as_ref().and_then(|r| r.value.checkpoint.as_ref())
-                {
-                    self.command(Action::Checkpoints(run.value.run_id.clone(), None));
-                }
-                self.run = Some(*run);
-                self.stale = self.connection != ConnectionState::Connected;
-                self.last_update = self.clock;
+                self.apply_run(*run);
             }
             Data::Cancellation(cancel) => {
                 self.cancellation = Mutation::Accepted;
                 self.notice =
                     "Cancellation intent acknowledged; inspect enforcement and cleanup below"
                         .into();
-                if let Some(run) = &mut self.run {
-                    run.value = cancel.run;
-                }
+                self.apply_run(*cancel);
             }
             Data::CancellationUnresolved(error) => {
                 self.cancellation = Mutation::Unresolved(error.clone());
@@ -647,6 +662,36 @@ impl Model {
             self.command(Action::StopGif);
         }
     }
+    fn apply_run(&mut self, run: RunViewData) {
+        if let Some(current) = &self.run {
+            let old = &current.value;
+            let next = &run.value;
+            // Status GET and Cancel run concurrently. updated_at is not a unique
+            // revision: ties (and clock changes) must not erase durable facts.
+            if snapshot_time(&next.updated_at) < snapshot_time(&old.updated_at)
+                || (old.orchestration.state == OrchestrationState::Terminal
+                    && next.orchestration.state != OrchestrationState::Terminal)
+                || (old.cancellation.is_some() && next.cancellation.is_none())
+                || old.cancellation.as_ref().is_some_and(|ack| {
+                    next.cancellation.as_ref().is_some_and(|next| {
+                        (ack.stop_accepted_at.is_some() && next.stop_accepted_at.is_none())
+                            || (ack.enforcement == Enforcement::Stopped
+                                && next.enforcement != Enforcement::Stopped)
+                    })
+                })
+            {
+                return;
+            }
+        }
+        if run.value.checkpoint.as_ref()
+            != self.run.as_ref().and_then(|r| r.value.checkpoint.as_ref())
+        {
+            self.command(Action::Checkpoints(run.value.run_id.clone(), None));
+        }
+        self.run = Some(run);
+        self.stale = self.connection != ConnectionState::Connected;
+        self.last_update = self.clock;
+    }
     pub fn inspect_action(&mut self, action: Action) {
         self.stop_animation();
         self.tag.inspection += 1;
@@ -659,4 +704,16 @@ impl Model {
         }
         self.command(action);
     }
+}
+
+fn snapshot_time(time: &playtime_core::UtcTime) -> (&str, [u8; 9]) {
+    // UtcTime validates UTC seconds and up to nine fractional digits. Its string
+    // ordering alone would put a whole second after that second's fractions.
+    let text = time.as_str();
+    let mut fraction = [b'0'; 9];
+    if text.as_bytes()[19] == b'.' {
+        let digits = &text.as_bytes()[20..text.len() - 1];
+        fraction[..digits.len()].copy_from_slice(digits);
+    }
+    (&text[..19], fraction)
 }

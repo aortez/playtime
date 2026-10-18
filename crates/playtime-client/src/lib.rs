@@ -50,7 +50,10 @@ impl Error {
             _ => None,
         }
     }
-    fn retryable(&self) -> bool {
+    /// Whether a read/observation may retry this failure. Mutations still require
+    /// their original identity and ambiguity handling; this is not permission to
+    /// resubmit a launch or cancellation.
+    pub fn retryable(&self) -> bool {
         matches!(self, Self::Transport | Self::Timeout)
             || matches!(
                 self.api_code(),
