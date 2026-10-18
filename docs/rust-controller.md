@@ -66,7 +66,12 @@ Docker/network work until those adapters exist.
    effects remain legal. Successful zero-token responses still consume turns.
 
 Parser recovery consumes an ordinary work turn or one of two handoff attempts.
-Its consecutive and whole-run ceilings never reset the allocation. Partial tools
+More than `tool_parse_retries` consecutive parse errors stop the run. The error
+ceiling, `tool_parse_error_limit` (default `tool_parse_retries + 1`), counts per
+session: reaching it ends that session through the normal handoff, recorded as
+`early_handoff` with reason `tool_parse_error_limit`, and the next session counts
+from zero. Before 2026-10-18 this ceiling covered the whole run and stopped it.
+Neither ceiling resets the allocation or the charge for a failed request. Partial tools
 are observations only. A fresh session retains workspace/memento and optionally
 bounded evidence, but no prior messages, measured context, processes, or `/tmp`.
 Tool arguments and memento UTF-8 sizes are checked before dispatch.

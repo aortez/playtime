@@ -550,23 +550,40 @@ fn oversized_utf8_memento_cannot_finish_and_does_not_get_written() {
 }
 
 #[test]
-fn parser_streak_resets_on_success_but_whole_run_ceiling_and_charges_do_not() {
+fn parse_error_ceiling_ends_only_the_session_and_keeps_its_charges() {
     let mut scenario = base();
-    scenario.parameters.limits.work_turns_per_session = 3.try_into().unwrap();
+    scenario.parameters.limits.work_turns_per_session = 5.try_into().unwrap();
     scenario.parameters.limits.tool_parse_retries = 2;
     scenario.parameters.limits.tool_parse_error_limit = Some(2.try_into().unwrap());
     scenario.models = vec![
         error(ModelFailure::Parse("first".into())),
         response(5, vec![]),
+        // The streak reset, but this session's second error hands off.
         error(ModelFailure::Parse("second".into())),
+        ending(false),
+        // The next session starts with a fresh ceiling.
+        error(ModelFailure::Parse("third".into())),
+        ending(true),
     ];
     let simulation = run(scenario).unwrap();
-    assert_eq!(simulation.result.reason, StopReason::ToolParseErrorLimit);
-    assert_eq!(simulation.result.usage.unknown_reserved_tokens, 200);
-    assert_eq!(simulation.result.usage.known_generated_tokens, 5);
+    assert_eq!(simulation.result.reason, StopReason::AgentFinished);
+    assert_eq!(simulation.result.tool_parse_errors, 3);
+    assert_eq!(simulation.result.usage.unknown_reserved_tokens, 300);
+    assert_eq!(simulation.result.usage.known_generated_tokens, 15);
+    assert_eq!(simulation.checkpoints.len(), 2);
+    let handoffs: Vec<_> = records(&simulation, "early_handoff").collect();
+    assert_eq!(handoffs.len(), 1);
     assert_eq!(
-        records(&simulation, "model_error").last().unwrap().data["consecutive_errors"],
-        1
+        handoffs[0].data,
+        json!({"reason": "tool_parse_error_limit", "session_tool_parse_errors": 2})
+    );
+    let errors: Vec<_> = records(&simulation, "model_error").collect();
+    assert_eq!(errors[1].data["consecutive_errors"], 1);
+    assert_eq!(errors[2].data["tool_parse_errors"], 3);
+    assert!(errors.iter().all(|e| e.data["recovery_allowed"] == true));
+    assert!(
+        requests(&simulation)[3].handoff,
+        "the request after the ceiling is the handoff"
     );
 
     let mut scenario = base();

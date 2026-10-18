@@ -77,6 +77,7 @@ pub struct Controller<I: IdSource> {
     reservation: Option<NonZeroU64>,
     model_calls: u64,
     parse_errors: u32,
+    session_parse_errors: u32,
     parse_streak: u32,
     response_bytes: u64,
     session: u32,
@@ -172,6 +173,7 @@ impl<I: IdSource> Controller<I> {
             reservation: None,
             model_calls: 0,
             parse_errors: 0,
+            session_parse_errors: 0,
             parse_streak: 0,
             response_bytes: 0,
             session: 0,
@@ -654,6 +656,7 @@ impl<I: IdSource> Controller<I> {
         self.request_context = None;
         self.turns = 0;
         self.handoff_attempts = 0;
+        self.session_parse_errors = 0;
         self.ended = false;
         self.finished = false;
         self.context = ContextWindow::default();
@@ -937,26 +940,21 @@ impl<I: IdSource> Controller<I> {
         let charge = self.reserved_tokens();
         self.settle_unknown();
         let mut recovery = false;
+        let mut session_ceiling = false;
         let reason = match &error {
             ModelFailure::Parse(_) => {
                 self.parse_errors += 1;
+                self.session_parse_errors += 1;
                 self.parse_streak += 1;
                 let limits = &self.config.parameters.limits;
+                // The error ceiling applies per session. Reaching it ends this
+                // session through the normal handoff instead of the whole run.
                 let ceiling = limits
                     .tool_parse_error_limit
                     .map_or(limits.tool_parse_retries + 1, |value| value.get());
-                if self.parse_streak > limits.tool_parse_retries {
-                    StopReason::ToolParseRetryLimit
-                } else if self.parse_errors >= ceiling {
-                    if limits.tool_parse_error_limit.is_some() {
-                        StopReason::ToolParseErrorLimit
-                    } else {
-                        StopReason::ToolParseRetryLimit
-                    }
-                } else {
-                    recovery = true;
-                    StopReason::ToolParseRetryLimit
-                }
+                recovery = self.parse_streak <= limits.tool_parse_retries;
+                session_ceiling = recovery && self.session_parse_errors >= ceiling;
+                StopReason::ToolParseRetryLimit
             }
             ModelFailure::Connection(_) => StopReason::ModelConnectionError,
             ModelFailure::Incomplete(_) => StopReason::IncompleteModelResponse,
@@ -974,7 +972,16 @@ impl<I: IdSource> Controller<I> {
         if recovery {
             self.messages.push(message("user", format!(
                 "The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments. The failed request's full generation allowance was charged to the budget; its actual usage is unknown. Budget: {}", canonical(&self.budget()))));
-            self.after_response(false);
+            if session_ceiling && !self.current_handoff {
+                self.emit(
+                    "early_handoff",
+                    json!({"reason": "tool_parse_error_limit",
+                    "session_tool_parse_errors": self.session_parse_errors}),
+                );
+                self.begin_handoff();
+            } else {
+                self.after_response(false);
+            }
         } else {
             self.diagnostic(&format!("{error:?}"));
             self.stop(reason);

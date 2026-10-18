@@ -41,8 +41,11 @@ pub struct ResourceLimits {
     pub output_bytes: NonZeroU64,
     pub memento_bytes: NonZeroU64,
     pub log_bytes: NonZeroU64,
+    /// Consecutive parse errors allowed; one more stops the run.
     #[serde(default)]
     pub tool_parse_retries: u32,
+    /// Parse errors allowed in one session; reaching it ends that session
+    /// through the normal handoff. Omitted means `tool_parse_retries + 1`.
     #[serde(
         default,
         deserialize_with = "present_error_limit",
