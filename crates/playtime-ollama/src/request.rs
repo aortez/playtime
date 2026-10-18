@@ -9,6 +9,9 @@ pub enum Thinking {
     Level(String),
     Boolean(bool),
 }
+/// The reasoning levels gpt-oss accepts. Booleans and "off" are refused rather
+/// than equated with a level.
+pub const THINKING_LEVELS: [&str; 3] = ["low", "medium", "high"];
 /// `None` is genuine model default/omission, never an invented zero or false.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -57,10 +60,9 @@ pub fn encode_request(
             .repeat_penalty
             .is_some_and(|n| !n.is_finite() || n < 0.0)
         || settings.keep_alive != "5m"
-        || settings
-            .thinking
-            .as_ref()
-            .is_some_and(|t| !matches!(t,Thinking::Level(level) if level=="low"))
+        || settings.thinking.as_ref().is_some_and(
+            |t| !matches!(t, Thinking::Level(level) if THINKING_LEVELS.contains(&level.as_str())),
+        )
     {
         return Err(Failure::new(
             FailureKind::Request,

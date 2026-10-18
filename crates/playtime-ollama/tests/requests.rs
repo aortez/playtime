@@ -39,6 +39,18 @@ fn exact_admitted_payload_zero_false_and_omission() {
     );
 }
 #[test]
+fn every_gpt_oss_reasoning_level_is_sent_exactly() {
+    for level in THINKING_LEVELS {
+        let settings = EffectiveSettings {
+            thinking: Some(Thinking::Level(level.into())),
+            ..Default::default()
+        };
+        let body = encode_request(&request(), &settings, 1 << 20).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["think"], level);
+    }
+}
+#[test]
 fn unsupported_settings_are_refused_not_clamped() {
     let mut req = request();
     for settings in [
@@ -48,6 +60,10 @@ fn unsupported_settings_are_refused_not_clamped() {
         },
         EffectiveSettings {
             thinking: Some(Thinking::Level("off".into())),
+            ..Default::default()
+        },
+        EffectiveSettings {
+            thinking: Some(Thinking::Level("maximum".into())),
             ..Default::default()
         },
         EffectiveSettings {

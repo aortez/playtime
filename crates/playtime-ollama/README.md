@@ -10,9 +10,9 @@ The only supported profile is Ollama **0.32.3**, **gpt-oss:20b**, digest
 SHA-256 `5968b9af1d86b0583a95912df186c2c8ec6dc1a70a7e2bc612a294908402d912`.
 The committed lock is never regenerated. Additional backend versions or models
 need a reviewed profile. The pinned [upstream API types][types] have no modern
-`show.thinking.values/default` requirement. `think: "low"` is supported;
-`None` omits it. Boolean false and `"off"` are rejected rather than equated with
-low/default. Expanded reasoning controls remain #5/#7.
+`show.thinking.values/default` requirement. `think` accepts gpt-oss's `"low"`,
+`"medium"` and `"high"`; `None` omits it. Boolean false, `"off"` and other values
+are rejected rather than mapped to a level. Other reasoning controls remain #5/#7.
 
 ## Interface and ownership
 
