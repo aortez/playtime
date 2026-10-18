@@ -26,9 +26,13 @@ connection descriptor after its worker/archive adapter is implemented.
 
 Choose a recipe, review the frozen preview, then launch. The left pane contains
 recent runs and unresolved launch receipts. Lookup/retry retains the original
-request and key. The default Readable timeline groups #42 observations by stable
-session/request/tool identities. Full and individual expansion reveal recorded
-sections; source inspection pages exact JSON. Follow controls scrolling only.
+request and key. Failed recovery stays unresolved, including lookup 404/503,
+invalid replies, rejected retries and local receipt errors. These failures do not
+authorize a fresh launch; resolution requires a validated response for the
+original request and a saved acknowledgment. The default Readable timeline groups
+#42 observations by stable session/request/tool identities. Full and individual
+expansion reveal recorded sections; source inspection pages exact JSON. Follow
+controls scrolling only.
 Memory compares delivered/published sources; publication does not verify model
 claims. Files are saved versions, addressed only by opaque content IDs. Downloads
 require an explicit destination and use the shared verified, atomic download path.

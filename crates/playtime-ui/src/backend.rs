@@ -336,7 +336,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     if let Some((_, tx, _)) = &observer { tokio::select! { _ = stop.cancelled() => break, _ = tx.send(command) => () } }
                     continue;
                 }
-                let Some(s) = &session else { out.send(tag, None, Data::Error("Connect to a service first".into())).await; continue; };
+                let Some(s) = &session else { out.send(tag, None, action_error(&command.action, "Connect to a service first".into())).await; continue; };
                 if jobs.len() >= 16 { out.send(tag, None, action_error(&command.action, "Client work limit reached; retry the explicit action".into())).await; continue; }
                 let session = s.clone(); let out = out.clone(); let previews = previews.clone();
                 jobs.spawn(async move {
@@ -361,9 +361,8 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
 fn action_error(action: &Action, error: String) -> Data {
     match action {
         Action::Preview(..) => Data::PreviewError(error),
-        Action::Launch(..) | Action::Recover(..) => {
-            Data::LaunchProgress(Mutation::Rejected(error), None)
-        }
+        Action::Launch(..) => Data::LaunchProgress(Mutation::Rejected(error), None),
+        Action::Recover(..) => Data::LaunchProgress(recovery_unresolved(error), None),
         Action::Cancel(..) => Data::CancellationUnresolved(error),
         _ => Data::Error(error),
     }
@@ -546,7 +545,7 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 Data::LaunchProgress(Mutation::Submitting, Some(saved.clone())),
             )
             .await;
-            admission(s, out, tag, saved, true).await?;
+            admission(s, out, tag, saved, LaunchAttempt::New).await?;
         }
         Action::Recover(key, retry) => {
             let store = ReceiptStore::new(&s.resolved.state_dir);
@@ -557,6 +556,12 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                     .ok_or_else(|| "Saved launch not found".into())
             })
             .await?;
+            out.send(
+                tag,
+                None,
+                Data::LaunchProgress(Mutation::Submitting, Some(saved.clone())),
+            )
+            .await;
             saved
                 .check_target(
                     client.service_id(),
@@ -564,7 +569,18 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                     s.resolved.explicit_connection,
                 )
                 .map_err(|e| e.to_string())?;
-            admission(s, out, tag, saved, retry).await?;
+            admission(
+                s,
+                out,
+                tag,
+                saved,
+                if retry {
+                    LaunchAttempt::Retry
+                } else {
+                    LaunchAttempt::Lookup
+                },
+            )
+            .await?;
         }
         Action::Cancel(run) => match client.cancel(&run).await {
             Ok(reply) => {
@@ -732,17 +748,28 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
     }
     Ok(())
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LaunchAttempt {
+    New,
+    Lookup,
+    Retry,
+}
+fn recovery_unresolved(error: impl std::fmt::Display) -> Mutation {
+    Mutation::Unresolved(format!(
+        "Recovery unresolved: {error}. Look up or retry the original saved request."
+    ))
+}
 async fn admission(
     s: &Session,
     out: &Out,
     tag: Tag,
     saved: LaunchReceipt,
-    retry: bool,
+    attempt: LaunchAttempt,
 ) -> Result<()> {
-    let result = if retry {
-        s.client.launch(&saved.pending()).await
-    } else {
+    let result = if attempt == LaunchAttempt::Lookup {
         s.client.lookup(&saved.pending()).await
+    } else {
+        s.client.launch(&saved.pending()).await
     };
     match result {
         Ok(accepted) => {
@@ -776,10 +803,16 @@ async fn admission(
             }
         }
         Err(error) => {
-            if error.api_code() == Some("stale_preview") {
+            if attempt == LaunchAttempt::New && error.api_code() == Some("stale_preview") {
                 out.send(tag, None, Data::PreviewError("Frozen inputs changed; refresh and review the displayed preview before launching".into())).await;
             }
-            let state = if matches!(
+            // A recovery failure describes this lookup/retry, not the original
+            // admission. Even 404, a rejected retry or a validation failure cannot
+            // prove that the earlier request was never accepted. Only a validated
+            // successful response plus its saved acknowledgment resolves recovery.
+            let state = if attempt != LaunchAttempt::New {
+                recovery_unresolved(error)
+            } else if matches!(
                 error,
                 Error::AmbiguousMutation(_) | Error::Transport | Error::Timeout
             ) {
