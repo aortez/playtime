@@ -10,7 +10,7 @@ cd -- "$playtime_repo"
 playtime_artifacts=$(mktemp)
 trap 'rm -f -- "$playtime_artifacts"' EXIT
 # One build before the driver; tests never invoke Cargo recursively.
-cargo build --locked -p playtime-ui -p playtime-cli -p playtime-test-support --bins --examples --message-format=json-render-diagnostics > "$playtime_artifacts"
+cargo build --locked -p playtime-ui -p playtime-cli -p playtime-test-support --bin playtime --example ui-e2e --example cli_fixture --message-format=json-render-diagnostics > "$playtime_artifacts"
 python3 - "$playtime_artifacts" "$playtime_backend" <<'PY'
 import json
 import subprocess

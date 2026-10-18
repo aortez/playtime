@@ -15,6 +15,11 @@ jobs:
     timeout-minutes: 20
     env:
       PLAYTIME_DOCKER_TESTS: "0"
+      # Keep the GUI dependency graph and repeated fixture links within hosted
+      # runner disk/memory limits. Local development retains its debug profiles.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -30,6 +35,12 @@ jobs:
       - run: ./scripts/test-rust-cli-e2e.sh --backend fixture
       - run: ./scripts/test-rust-ui-e2e.sh --backend fixture
       - run: python3 -m unittest discover -s tests -v
+      - name: Report runner resources
+        if: always()
+        run: |
+          df -h .
+          du -sh target
+          free -h
 
   ui-snapshots:
     runs-on: ubuntu-24.04
