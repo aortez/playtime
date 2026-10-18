@@ -181,3 +181,30 @@ CC_x86_64_unknown_linux_musl=musl-gcc cargo build --locked \
 O2 must record the C compiler/crypto build inputs in worker provenance when this
 adapter is actually added to the packaged worker; this PR leaves that package
 and its runtime capabilities unchanged.
+
+## Validation recorded for this slice (2026-10-18)
+
+- Formatting and locked all-target workspace Clippy passed. Locked workspace
+  tests: **333 passed, 14 explicitly ignored**; 33 tests belong to this adapter.
+  Python suite: **96 tests, 6 skipped**. Existing CLI (12 cases), UI (2 cases),
+  and worker-package wrappers passed. Validation used a private `TMPDIR` on the
+  workspace disk after the host's shared `/tmp` quota caused lifecycle fixture
+  I/O errors; no lifecycle/storage code was changed to bypass them.
+- The musl build and all 11 native HTTP(S) transport tests passed using a musl
+  C toolchain (Ubuntu musl 1.2.5 headers/specs, extracted locally for this check).
+  ELF inspection confirmed static PIE with no interpreter or NEEDED libraries.
+  The default musl resolver could not resolve this host's `.local` endpoint;
+  explicit pinned resolution verified the same configured hostname successfully.
+- One explicitly invoked **static executable** compatibility request to
+  `oldman-bird.local` passed after exact identity verification and read-only
+  availability checks. It produced **13 native chunks / 2,161 bytes**, one
+  complete tool object, **36 generated / 149 prompt tokens**, and a terminal
+  observation. An independent stdlib inspection matched raw chunk hashes,
+  byte count, terminal usage and the exact preserved tool object. No returned
+  tool was executed; no retries or service changes occurred. Source revision,
+  executable hash and JSONL diagnostics are retained locally, not in fixtures.
+
+These are adapter and fixture results. The remaining production/live gates
+listed above, including real Docker sessions, archive/UI inspection of those
+sessions, and backend cancellation/restart/worker-loss enforcement, are unrun
+by this slice.
