@@ -1,0 +1,378 @@
+[
+  {
+    "sequence": 1,
+    "elapsed_ms": 0,
+    "session_id": null,
+    "kind": "controller_started",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 2,
+    "elapsed_ms": 0,
+    "session_id": "s1",
+    "kind": "phase_changed",
+    "phase": "starting_session",
+    "reason": null
+  },
+  {
+    "sequence": 3,
+    "elapsed_ms": 0,
+    "session_id": "s1",
+    "kind": "memory_received",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 4,
+    "elapsed_ms": 0,
+    "session_id": "s1",
+    "kind": "phase_changed",
+    "phase": "working",
+    "reason": null
+  },
+  {
+    "sequence": 5,
+    "elapsed_ms": 0,
+    "session_id": "s1",
+    "kind": "model_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 6,
+    "elapsed_ms": 100,
+    "session_id": "s1",
+    "kind": "model_chunk",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 7,
+    "elapsed_ms": 200,
+    "session_id": "s1",
+    "kind": "model_chunk",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 8,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "request_settled",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 9,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "model_response",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 10,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "tool_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 11,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "tool_dispatch",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 12,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "tool_result",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 13,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "tool_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 14,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "tool_dispatch",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 15,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "tool_result",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 16,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "model_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 17,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "request_settled",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 18,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "model_response",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 19,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "tool_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 20,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "memento_write",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 21,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "tool_result",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 22,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "phase_changed",
+    "phase": "checkpointing",
+    "reason": null
+  },
+  {
+    "sequence": 23,
+    "elapsed_ms": 300,
+    "session_id": "s1",
+    "kind": "controller_checkpoint",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 24,
+    "elapsed_ms": 300,
+    "session_id": "s2",
+    "kind": "phase_changed",
+    "phase": "starting_session",
+    "reason": null
+  },
+  {
+    "sequence": 25,
+    "elapsed_ms": 300,
+    "session_id": "s2",
+    "kind": "memory_received",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 26,
+    "elapsed_ms": 300,
+    "session_id": "s2",
+    "kind": "phase_changed",
+    "phase": "working",
+    "reason": null
+  },
+  {
+    "sequence": 27,
+    "elapsed_ms": 300,
+    "session_id": "s2",
+    "kind": "model_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 28,
+    "elapsed_ms": 350,
+    "session_id": "s2",
+    "kind": "request_settled",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 29,
+    "elapsed_ms": 350,
+    "session_id": "s2",
+    "kind": "model_response",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 30,
+    "elapsed_ms": 350,
+    "session_id": "s2",
+    "kind": "tool_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 31,
+    "elapsed_ms": 350,
+    "session_id": "s2",
+    "kind": "tool_dispatch",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 32,
+    "elapsed_ms": 350,
+    "session_id": "s2",
+    "kind": "tool_result",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 33,
+    "elapsed_ms": 350,
+    "session_id": "s2",
+    "kind": "tool_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 34,
+    "elapsed_ms": 350,
+    "session_id": "s2",
+    "kind": "tool_dispatch",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 35,
+    "elapsed_ms": 350,
+    "session_id": "s2",
+    "kind": "tool_result",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 36,
+    "elapsed_ms": 350,
+    "session_id": "s2",
+    "kind": "model_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 37,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "request_settled",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 38,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "model_response",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 39,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "tool_request",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 40,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "memento_write",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 41,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "tool_result",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 42,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "phase_changed",
+    "phase": "checkpointing",
+    "reason": null
+  },
+  {
+    "sequence": 43,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "controller_checkpoint",
+    "phase": null,
+    "reason": null
+  },
+  {
+    "sequence": 44,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "controller_stop",
+    "phase": null,
+    "reason": "agent_finished"
+  },
+  {
+    "sequence": 45,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "phase_changed",
+    "phase": "cleaning_up",
+    "reason": null
+  },
+  {
+    "sequence": 46,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "phase_changed",
+    "phase": "terminal",
+    "reason": null
+  },
+  {
+    "sequence": 47,
+    "elapsed_ms": 400,
+    "session_id": "s2",
+    "kind": "controller_finished",
+    "phase": null,
+    "reason": "agent_finished"
+  }
+]

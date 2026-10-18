@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "mode": "simulation",
+  "parameters": {
+    "sampling_seed": 1042,
+    "memory_condition": "self_plus_evidence",
+    "limits": {
+      "sessions": 3,
+      "work_turns_per_session": 2,
+      "wall_seconds": 300,
+      "generated_tokens": 1000,
+      "tokens_per_call": 100,
+      "handoff_tokens": 50,
+      "context_tokens": 32768,
+      "model_seconds": 30,
+      "command_seconds": 5,
+      "output_bytes": 16384,
+      "memento_bytes": 8192,
+      "log_bytes": 1048576,
+      "tool_parse_retries": 2,
+      "tool_parse_error_limit": 8
+    },
+    "workshop": {
+      "cpu_cores": 1.0,
+      "memory_bytes": 536870912,
+      "workspace_bytes": 67108864,
+      "tmp_bytes": 67108864,
+      "pids": 64
+    }
+  },
+  "prompt": "Explore the workshop.",
+  "protocol": "Explore the workshop.",
+  "inventory": "Explore the workshop.",
+  "initial_files": {
+    "MEMENTO.md": "",
+    "seed.txt": "seed"
+  },
+  "models": [
+    {
+      "chunks": [
+        {
+          "after_ms": 100,
+          "chunk": {
+            "message": {
+              "thinking": "First-session private thinking"
+            }
+          }
+        },
+        {
+          "after_ms": 100,
+          "chunk": {
+            "message": {
+              "content": "Working"
+            }
+          }
+        }
+      ],
+      "completion": {
+        "after_ms": 100,
+        "outcome": {
+          "kind": "response",
+          "data": {
+            "done": true,
+            "generated_tokens": 8,
+            "message": {
+              "role": "assistant",
+              "content": "Working",
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "write_file",
+                    "arguments": {
+                      "path": "/work/persistent.txt",
+                      "content": "survives"
+                    }
+                  }
+                },
+                {
+                  "function": {
+                    "name": "exec",
+                    "arguments": {
+                      "command": "fixture:start transient"
+                    }
+                  }
+                }
+              ],
+              "thinking": "First-session private thinking"
+            }
+          }
+        }
+      }
+    },
+    {
+      "chunks": [],
+      "completion": {
+        "after_ms": 0,
+        "outcome": {
+          "kind": "response",
+          "data": {
+            "done": true,
+            "generated_tokens": 5,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "end_session",
+                    "arguments": {
+                      "memento": "Read persistent.txt in the next session.",
+                      "finish_run": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "chunks": [],
+      "completion": {
+        "after_ms": 50,
+        "outcome": {
+          "kind": "response",
+          "data": {
+            "done": true,
+            "generated_tokens": 8,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "read_file",
+                    "arguments": {
+                      "path": "/work/persistent.txt"
+                    }
+                  }
+                },
+                {
+                  "function": {
+                    "name": "exec",
+                    "arguments": {
+                      "command": "fixture:second session"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "chunks": [],
+      "completion": {
+        "after_ms": 50,
+        "outcome": {
+          "kind": "response",
+          "data": {
+            "done": true,
+            "generated_tokens": 5,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "end_session",
+                    "arguments": {
+                      "memento": "The two-session fixture is complete.",
+                      "finish_run": true
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "execs": [
+    {
+      "command": "fixture:start transient",
+      "result": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "started"
+      },
+      "workspace_changes": {
+        "partial.txt": "kept"
+      },
+      "tmp_changes": {
+        "transient": "temporary"
+      },
+      "processes": [
+        "fixture-background-worker"
+      ]
+    },
+    {
+      "command": "fixture:second session",
+      "result": {
+        "exit_code": 0,
+        "timed_out": false,
+        "stdout": "scripted observation"
+      }
+    }
+  ]
+}
