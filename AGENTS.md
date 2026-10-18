@@ -44,6 +44,14 @@ isolated roots, readiness deadlines and owned-process cleanup. See
 `docs/rust-cli.md`; run `./scripts/test-rust-cli-e2e.sh --backend fixture` for CLI
 changes. The simulation gate must fail clearly until #20/#42/#43 are available;
 never substitute fixtures or claim this completes #21.
+`playtime-ui` owns egui presentation and a separate view model. Keep network,
+private files, JSON parsing, hashing, image decoding and memory diffs outside
+render callbacks. Use shared client receipts/downloads; closing or detaching the
+UI never cancels a run. Preserve generation/run identity checks and bounded
+history/image work. See `docs/rust-ui.md`; run the UI fixture wrapper for UI
+changes. Review screenshot differences using the pinned software Vulkan renderer;
+never silently skip or regenerate baselines. The UI simulation gate remains an
+explicit failure until #20/#43 are connected; do not close #22 from fixture tests.
 Commit `Cargo.lock`; ignore
 `target/`. Validate Rust changes with `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, and

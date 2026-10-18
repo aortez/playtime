@@ -1,0 +1,33 @@
+[package]
+name = "playtime-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+ui-snapshots = ["egui_kittest/wgpu", "egui_kittest/snapshot"]
+
+[dependencies]
+playtime-core.workspace = true
+playtime-protocol.workspace = true
+playtime-client.workspace = true
+playtime-local.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+clap.workspace = true
+sha2.workspace = true
+egui = { version = "=0.34.3", default-features = false, features = ["default_fonts"] }
+eframe = { version = "=0.34.3", default-features = false, features = ["accesskit", "default_fonts", "wgpu", "wayland", "x11"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+
+[dev-dependencies]
+egui_kittest = { version = "=0.34.3", default-features = false }
+playtime-test-support.workspace = true
+playtime-server = { path = "../playtime-server" }
+async-trait.workspace = true
+
+[lints]
+workspace = true

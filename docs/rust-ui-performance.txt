@@ -1,0 +1,20 @@
+Prepared-view release measurement, 2026-10-17
+Ubuntu 26.04 x86_64; Rust 1.94.1; egui/eframe/egui_kittest 0.34.3
+Command: cargo run --release --locked -p playtime-ui --example ui-perf
+60 seconds; preindexed synthetic transcript; 100 generated live records/s.
+Includes egui prepared-view work, disclosure and window/selection changes.
+Excludes initial generation, network/disk, production service switching and GPU rendering.
+Zero inbox high-water values here mean no HTTP inbox was used; HTTP tests measure that path.
+
+cpu=model name	: AMD Ryzen 7 9800X3D 8-Core Processor
+seconds=60.007
+frames=5427
+live_records=5999
+serialized_initial_bytes=46991015
+p50_ms=0.213
+p95_ms=0.418
+p99_ms=0.677
+peak_rss_kib=51476
+max_laid_out_rows=7
+max_text_bytes=294
+metrics=Metrics { inbox_bytes_high_water: 0, inbox_records_high_water: 0, records: 105999, rows: 10707, payload_bytes: 16777106, payload_high_water: 16777216, index_bytes: 29428355, index_high_water: 29428355 }
