@@ -29,6 +29,12 @@ Its demo must explicitly capture the actual executing image through `/proc/self/
 preparation accepts an explicit worker bundle. Latest-receipt observers never
 promote a discovered marker or wait on filesystem work.
 Retain the Python launcher during migration.
+`playtime-worker` composes the real runner and private worker control; `xtask`
+builds verified static bundles from a staged source snapshot. Preserve the same
+owned prepared writer through Begin, and never invoke Cargo during admission or
+worker execution. See `docs/rust-worker-package.md`; run
+`./scripts/test-rust-worker-package.sh` for worker/package changes. This CPU gate
+does not replace #34 supervision or the #20/#43 CLI/UI production gates.
 `playtime-server` owns HTTP/auth in modules separate from lifecycle coordination;
 `playtime-client` owns native transport and acknowledged event reconnect.
 `playtime-local` shares credential/discovery file policy. Keep HTTP fixture

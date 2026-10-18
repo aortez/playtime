@@ -123,6 +123,9 @@ pub trait PreparedExecution: Send + 'static {
     fn prepared_receipt(&self) -> Option<Receipt>;
     fn begin(&mut self, started_boot_ms: u64) -> Result<Receipt>;
     fn cancel(&mut self, before_begin: bool) -> Result<()>;
+    /// Coalesced in-memory observations only. Must not wait on filesystem work.
+    /// Default preserves existing synchronous fixture implementations.
+    fn refresh_status(&self, _status: &mut Status) {}
 }
 
 pub struct Worker<E> {
@@ -162,6 +165,7 @@ impl<E: PreparedExecution> Worker<E> {
         if request.version != worker::VERSION || request.binding != self.bootstrap.binding {
             return Err(Error::Unauthenticated);
         }
+        self.execution.refresh_status(&mut self.status);
         match request.command {
             Command::Status => (),
             Command::Begin if self.status.state == WorkerState::Prepared => {
@@ -201,6 +205,7 @@ impl<E: PreparedExecution> Worker<E> {
                 }
             }
         }
+        self.execution.refresh_status(&mut self.status);
         Ok(Reply {
             version: worker::VERSION,
             nonce: request.nonce,

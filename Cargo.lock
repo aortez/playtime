@@ -3303,6 +3303,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "playtime-worker"
+version = "0.1.0"
+dependencies = [
+ "playtime-core",
+ "playtime-engine",
+ "playtime-protocol",
+ "playtime-runner",
+ "playtime-storage",
+ "playtime-worker-control",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "playtime-worker-control"
 version = "0.1.0"
 dependencies = [
@@ -5399,6 +5416,20 @@ name = "xml-rs"
 version = "0.8.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "playtime-core",
+ "playtime-protocol",
+ "playtime-storage",
+ "playtime-worker",
+ "playtime-worker-control",
+ "serde",
+ "serde_json",
+ "toml",
+]
 
 [[package]]
 name = "yoke"

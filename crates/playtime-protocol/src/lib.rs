@@ -10,6 +10,7 @@ mod read;
 pub mod storage;
 pub mod v1;
 pub mod worker;
+pub mod worker_bundle;
 
 pub use read::ReadError;
 

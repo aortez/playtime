@@ -10,6 +10,7 @@ use playtime_engine::{
     Controller, EffectKind, Input, Outcome, RunResult,
     simulation::{Dispatch, Scenario, ScriptedAdapters, SequentialIds},
 };
+use playtime_protocol::archive::WorkerIdentity;
 use playtime_storage::{ArchiveReader, ArchiveWriter, CommittedFrontier};
 
 use crate::{
@@ -56,45 +57,101 @@ struct InFlight {
     started: Instant,
 }
 
-/// Execute the frozen scripted scenario incrementally. The caller authorizes
-/// this prepared identity to run; finding a folder is never authorization.
+/// Verified, exclusively owned preparation. This value is deliberately neither
+/// Clone nor serializable, and confers no permission to Begin. The private
+/// control owner must consume its durable grant before calling `execute`.
+pub struct PreparedExecution {
+    writer: ArchiveWriter,
+    prepared: PreparedSimulation,
+    scenario: Scenario,
+    adapters: ScriptedAdapters,
+    image: WorkerIdentity,
+}
+
+impl PreparedExecution {
+    /// Acquire the writer first, then verify through its returned zero receipt.
+    /// No controller, work clock, event or adapter dispatch exists yet.
+    pub fn acquire(path: impl AsRef<Path>, prepared: &PreparedSimulation) -> Result<Self> {
+        let path = path.as_ref();
+        let writer =
+            ArchiveWriter::open_prepared(path, &prepared.identity, prepared.limits.clone())?;
+        let reader = ArchiveReader::open(path, prepared.limits.clone())?;
+        if reader.identity() != &prepared.identity {
+            return Err(Error::Invalid(
+                "prepared identity changed before worker handoff".into(),
+            ));
+        }
+        let snapshot = reader.live_snapshot(writer.confirmed_frontier())?;
+        let scenario_bytes = reader.read_content(&snapshot, &reader.manifest().configuration)?;
+        let scenario: Scenario = serde_json::from_slice(&scenario_bytes)?;
+        if prepared.limits.event_log_bytes != scenario.parameters.limits.log_bytes.get() {
+            return Err(Error::Invalid(
+                "writer allowance differs from frozen scenario".into(),
+            ));
+        }
+        let current = reference(
+            reader.manifest().worker.executable.path.as_str(),
+            &executable(prepared.limits.content_bytes)?,
+        );
+        if current != reader.manifest().worker.executable {
+            return Err(Error::Invalid(
+                "executing worker bytes differ from frozen identity".into(),
+            ));
+        }
+        let adapters = ScriptedAdapters::new(&scenario)?;
+        if adapters.config().initial_workspace != reader.manifest().initial_workspace {
+            return Err(Error::Invalid(
+                "initial simulation workspace differs from frozen input".into(),
+            ));
+        }
+        Ok(Self {
+            writer,
+            prepared: prepared.clone(),
+            scenario,
+            adapters,
+            image: reader.manifest().worker.clone(),
+        })
+    }
+
+    pub fn confirmed(&self) -> &CommittedFrontier {
+        self.writer.confirmed_frontier()
+    }
+    pub fn image(&self) -> &WorkerIdentity {
+        &self.image
+    }
+
+    /// Consume the exact prepared writer after externally authorized Begin.
+    pub fn execute(
+        self,
+        clock: &mut impl DriverClock,
+        options: DriverOptions,
+    ) -> Result<RunReport> {
+        execute(self, clock, options)
+    }
+}
+
+/// Standalone convenience wrapper; the caller supplies execution authorization.
 pub fn run_prepared(
     path: impl AsRef<Path>,
     prepared: &PreparedSimulation,
     clock: &mut impl DriverClock,
     options: DriverOptions,
 ) -> Result<RunReport> {
-    let path = path.as_ref();
-    let reader = ArchiveReader::open(path, prepared.limits.clone())?;
-    if reader.identity() != &prepared.identity {
-        return Err(Error::Invalid(
-            "prepared identity changed before worker handoff".into(),
-        ));
-    }
-    let snapshot = reader.offline_snapshot()?;
-    let scenario_bytes = reader.read_content(&snapshot, &reader.manifest().configuration)?;
-    let scenario: Scenario = serde_json::from_slice(&scenario_bytes)?;
-    if prepared.limits.event_log_bytes != scenario.parameters.limits.log_bytes.get() {
-        return Err(Error::Invalid(
-            "writer allowance differs from frozen scenario".into(),
-        ));
-    }
-    let current = reference(
-        reader.manifest().worker.executable.path.as_str(),
-        &executable(prepared.limits.content_bytes)?,
-    );
-    if current != reader.manifest().worker.executable {
-        return Err(Error::Invalid(
-            "executing worker bytes differ from frozen identity".into(),
-        ));
-    }
-    let mut adapters = ScriptedAdapters::new(&scenario)?;
-    if adapters.config().initial_workspace != reader.manifest().initial_workspace {
-        return Err(Error::Invalid(
-            "initial simulation workspace differs from frozen input".into(),
-        ));
-    }
-    let writer = ArchiveWriter::open_prepared(path, &prepared.identity, prepared.limits.clone())?;
+    PreparedExecution::acquire(path, prepared)?.execute(clock, options)
+}
+
+fn execute(
+    owned: PreparedExecution,
+    clock: &mut impl DriverClock,
+    options: DriverOptions,
+) -> Result<RunReport> {
+    let PreparedExecution {
+        writer,
+        prepared,
+        scenario,
+        mut adapters,
+        ..
+    } = owned;
     let mut confirmed = writer.confirmed_frontier().clone();
     options.confirmed.publish(&confirmed)?;
     let worker = StorageThread::spawn(writer, options.writer_hooks);
