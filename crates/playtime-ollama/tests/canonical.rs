@@ -85,3 +85,25 @@ fn numeric_types_escaping_and_unsupported_identity_values() {
     assert!(json::parse(supported.as_bytes(), 1024, true).is_ok());
     assert!(json::parse(format!("[{supported}]").as_bytes(), 1024, true).is_err());
 }
+
+#[test]
+fn independent_halfway_floats_neighbors_and_notation_boundaries() {
+    for row in include_str!("fixtures/float-ties.jsonl").lines() {
+        let case: Value = serde_json::from_str(row).unwrap();
+        let bits = u64::from_str_radix(case["bits"].as_str().unwrap(), 16).unwrap();
+        let expected = case["canonical"].as_str().unwrap().as_bytes();
+        // Check binary64 formatting independently from decimal parsing, then
+        // exercise the public identity parse/canonical path used in the review.
+        let native = json::canonical(&serde_json::json!({"x": f64::from_bits(bits)}), 256).unwrap();
+        assert_eq!(native, expected, "binary64 case {}", case["label"]);
+        let parsed = json::parse(expected, 256, true).unwrap();
+        assert_eq!(parsed["x"].as_f64().unwrap().to_bits(), bits);
+        assert_eq!(
+            json::canonical(&parsed, 256).unwrap(),
+            expected,
+            "parsed case {}",
+            case["label"]
+        );
+        assert_eq!(json::hash(&native), case["sha256"]);
+    }
+}

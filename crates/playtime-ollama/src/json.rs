@@ -268,18 +268,38 @@ fn python_float(f: f64) -> Result<String> {
             "non-finite identity float",
         ));
     }
-    let scientific = format!("{f:e}");
-    let (mantissa, exponent) = scientific.split_once('e').unwrap();
-    let exponent: i32 = exponent.parse().unwrap();
+    let sign = if f.is_sign_negative() { "-" } else { "" };
+    if f == 0.0 {
+        return Ok(format!("{sign}0.0"));
+    }
+    // Rust's LowerExp can pick the other equally near shortest decimal at a
+    // halfway value. Ryū selects the nearest shortest decimal with ties to
+    // even, as Python repr does. Apply Python's notation rules separately;
+    // Ryū's pretty formatter has different fixed/scientific cutoffs.
+    let mut buffer = ryu::Buffer::new();
+    let shortest = buffer.format_finite(f.abs());
+    let (mantissa, scale) = match shortest.split_once('e') {
+        Some((mantissa, exponent)) => (mantissa, exponent.parse::<i32>().unwrap()),
+        None => (shortest, 0),
+    };
+    let point = mantissa.find('.').unwrap_or(mantissa.len());
+    let all_digits = mantissa.replace('.', "");
+    let significant = all_digits.trim_start_matches('0');
+    let leading_zeros = all_digits.len() - significant.len();
+    let exponent = point as i32 - leading_zeros as i32 - 1 + scale;
+    let digits = significant.trim_end_matches('0');
     if !(-4..16).contains(&exponent) {
+        let mantissa = if digits.len() == 1 {
+            digits.to_owned()
+        } else {
+            format!("{}.{}", &digits[..1], &digits[1..])
+        };
         return Ok(format!(
-            "{mantissa}e{}{exponent:02}",
+            "{sign}{mantissa}e{}{exponent:02}",
             if exponent < 0 { "-" } else { "+" },
             exponent = exponent.abs()
         ));
     }
-    let sign = if f.is_sign_negative() { "-" } else { "" };
-    let digits = mantissa.trim_start_matches('-').replace('.', "");
     let point = exponent + 1;
     let result = if point <= 0 {
         format!("0.{}{}", "0".repeat((-point) as usize), digits)

@@ -10,6 +10,7 @@ playtime-core.workspace = true
 playtime-engine.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
+ryu = "=1.0.23"
 sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

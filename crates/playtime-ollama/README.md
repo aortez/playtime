@@ -109,8 +109,14 @@ oracle**, not runtime code or a test-time regeneration step. Checked-in canonica
 bytes cover the existing 8,845-byte definition, all three #23 vectors, Unicode
 surrogates/escapes, integer and float boundaries, and 256 deterministic finite
 binary64 values. Native Rust reproduces Python sorted compact ASCII encoding,
-including float versus integer and negative zero. Identity integers outside
-i64/u64, float overflow/underflow and unpaired surrogate strings are explicitly
+including float versus integer and negative zero. Pinned [Ryū](https://docs.rs/ryu/1.0.23/ryu/)
+selects the shortest decimal digits with ties to even; a separate formatter
+applies Python's fixed/scientific notation boundaries. `generate_float_ties.py`
+adds 32 independent bit-pattern/byte/hash cases for the review's positive and
+negative halfway values, neighboring floats, signed zero and notation boundaries.
+A separate local comparison against the Python oracle checked 130,000 finite
+binary64 values with no mismatches. Identity integers outside i64/u64, float
+overflow/underflow and unpaired surrogate strings are explicitly
 unsupported; they are rejected instead of coerced. `serde_json/float_roundtrip`
 preserves supported binary64 input values before canonical rendering.
 
@@ -185,7 +191,7 @@ and its runtime capabilities unchanged.
 ## Validation recorded for this slice (2026-10-18)
 
 - Formatting and locked all-target workspace Clippy passed. Locked workspace
-  tests: **333 passed, 14 explicitly ignored**; 33 tests belong to this adapter.
+  tests: **334 passed, 14 explicitly ignored**; 34 tests belong to this adapter.
   Python suite: **96 tests, 6 skipped**. Existing CLI (12 cases), UI (2 cases),
   and worker-package wrappers passed. Validation used a private `TMPDIR` on the
   workspace disk after the host's shared `/tmp` quota caused lifecycle fixture
