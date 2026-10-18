@@ -1,5 +1,6 @@
 //! Versioned, intentionally narrow frozen Docker profiles: scripted model
-//! responses, or the live locked model reached directly over plain HTTP.
+//! responses, the live locked model reached directly over plain HTTP, or a
+//! reviewed catalog recipe on the live model.
 use crate::{Error, Result};
 use playtime_core::{RunMode, Sha256Digest};
 use playtime_docker::{DaemonIdentity, Limits, capture::CaptureLimits, transport::Selection};
@@ -7,6 +8,9 @@ use playtime_engine::{ControllerConfig, simulation::Scenario};
 use playtime_storage::StorageLimits;
 use serde::{Deserialize, Serialize};
 use std::{net::IpAddr, path::PathBuf};
+
+mod recipe;
+pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
 pub const LIVE_PROFILE: &str = "docker_live_no_seed_self_v1";
@@ -41,7 +45,9 @@ pub fn digest() -> Result<Sha256Digest> {
     };
     let templates = [
         Profile::freeze(selection.clone(), daemon.clone())?.template()?,
-        Profile::freeze_live(selection, daemon, host)?.template()?,
+        Profile::freeze_live(selection.clone(), daemon.clone(), host.clone())?.template()?,
+        Profile::freeze_recipe(Recipe::reference()?, selection, daemon, host)?.template()?,
+        serde_json::to_value(&BOUNDS)?,
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))
 }
@@ -95,6 +101,9 @@ pub struct Profile {
     /// Absent for scripted model responses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<LiveModel>,
+    /// The catalog recipe this profile was frozen from, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<Recipe>,
 }
 impl Profile {
     pub fn freeze(selection: Selection, daemon: DaemonIdentity) -> Result<Self> {
@@ -120,6 +129,7 @@ impl Profile {
             },
             command_return_ms: RETURN_OVERHEAD_MS,
             model: None,
+            recipe: None,
         })
     }
     /// The same workshop and limits with the live model and its smoke prompt.
@@ -129,16 +139,14 @@ impl Profile {
         host: LiveHost,
     ) -> Result<Self> {
         let scenario: Scenario = serde_json::from_slice(LIVE_SCENARIO)?;
-        let settings = serde_json::json!({
-            "context_tokens": scenario.parameters.limits.context_tokens,
-            "temperature": 0.8,
-            "top_p": 0.95,
-            "top_k": 40,
-            "repeat_penalty": 1.0,
-            "thinking": "low",
-            "use_mmap": null,
-            "keep_alive": "5m",
-        });
+        let sampling = Sampling {
+            thinking: "low".into(),
+            temperature: 0.8,
+            top_p: 0.95,
+            top_k: 40,
+            repeat_penalty: 1.0,
+        };
+        let settings = recipe::settings(scenario.parameters.limits.context_tokens.get(), &sampling);
         Ok(Self {
             profile: LIVE_PROFILE.into(),
             mode: RunMode::LiveSmoke,
@@ -153,9 +161,17 @@ impl Profile {
     }
     pub fn validate(&self) -> Result<()> {
         let (selection, daemon) = (self.selection.clone(), self.daemon.clone());
-        let expected = match &self.model {
-            None => Self::freeze(selection, daemon)?,
-            Some(model) => Self::freeze_live(selection, daemon, model.host.clone())?,
+        let expected = match (&self.model, &self.recipe) {
+            (None, None) => Self::freeze(selection, daemon)?,
+            (Some(model), None) => Self::freeze_live(selection, daemon, model.host.clone())?,
+            (Some(model), Some(recipe)) => {
+                Self::freeze_recipe(recipe.clone(), selection, daemon, model.host.clone())?
+            }
+            (None, Some(_)) => {
+                return Err(Error::Invalid(
+                    "a recipe profile needs the live model".into(),
+                ));
+            }
         };
         if serde_json::to_value(self)? != serde_json::to_value(expected)?
             || !self.selection.executable.is_absolute()

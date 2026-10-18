@@ -32,6 +32,7 @@ serde_urlencoded.workspace = true
 http-body-util.workspace = true
 rusqlite.workspace = true
 time.workspace = true
+toml.workspace = true
 # Match the workbench's AccessKit D-Bus backend. Enabling zbus/tokio here
 # would also switch its runtime through workspace feature unification.
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] }

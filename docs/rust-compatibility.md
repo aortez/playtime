@@ -116,3 +116,14 @@ optional `contention` property on `RunView`, its only difference. A run without
 live timing omits the field, so recorded responses and the other goldens are
 unchanged. The flags come from the live worker's per-request timing chunks,
 which use the existing `model_chunk` observation.
+
+### Recipe profile v1
+
+Catalog recipes freeze as profile `docker_live_recipe_v1`, run mode `experiment`
+and worker kind `docker_live`. The profile carries the recipe, including its
+seeds, in a new optional `recipe` field. Older workers refuse that field.
+`docker_profile` now also digests a reference recipe's frozen template and the
+recipe bounds. A bundle from before this change can't run any Docker profile
+through a new daemon. The scripted and live smoke profiles are unchanged. The
+HTTP goldens are unchanged: catalog recipes use the existing recipe, preview and
+seed summary types. See [recipes](rust-recipes.md).

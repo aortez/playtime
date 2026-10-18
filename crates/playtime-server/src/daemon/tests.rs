@@ -303,3 +303,145 @@ async fn live_endpoints_resolve_to_frozen_addresses_and_pin_ip_literals() {
     let link_local = playtime_ollama::Endpoint::parse("http://[fe80::1]:11434").unwrap();
     assert!(super::archive::resolve(&link_local).await.is_err());
 }
+
+fn repository() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+#[test]
+fn the_reviewed_catalog_loads_the_owner_confirmed_curiosity_recipe() {
+    let recipes = super::catalog::load(&repository().join("recipes")).unwrap();
+    assert_eq!(recipes.len(), 1);
+    let recipe = &recipes[0];
+    assert_eq!(recipe.id, "curiosity");
+    let (limits, workshop) = (&recipe.parameters.limits, &recipe.parameters.workshop);
+    assert_eq!(
+        (
+            limits.sessions.get(),
+            limits.work_turns_per_session.get(),
+            limits.wall_seconds.get(),
+            limits.generated_tokens.get(),
+            limits.tokens_per_call.get(),
+            limits.handoff_tokens.get(),
+            limits.context_tokens.get(),
+        ),
+        (10, 10, 1800, 300_000, 8192, 8192, 65_536)
+    );
+    assert_eq!(
+        (
+            limits.model_seconds.get(),
+            limits.command_seconds.get(),
+            limits.output_bytes.get(),
+            limits.memento_bytes.get(),
+            limits.log_bytes.get(),
+            limits.tool_parse_retries,
+            limits.tool_parse_error_limit.map(|n| n.get()),
+        ),
+        (180, 60, 16_384, 8192, 64 << 20, 5, Some(8))
+    );
+    assert_eq!(
+        (
+            workshop.cpu_cores,
+            workshop.memory_bytes.get(),
+            workshop.workspace_bytes.get(),
+            workshop.tmp_bytes.get(),
+            workshop.pids.get(),
+            recipe.workspace_entries,
+        ),
+        (8.0, 10_000 << 20, 16 << 20, 1 << 30, 256, 900)
+    );
+    assert_eq!(recipe.parameters.sampling_seed, 1042);
+    assert_eq!(recipe.model.thinking, "high");
+    // The seed pack is frozen exactly, by path under /work/seeds.
+    let pack = repository().join("seeds/assortment-01");
+    let mut names: Vec<_> = std::fs::read_dir(&pack)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(recipe.seeds.keys().cloned().collect::<Vec<_>>(), names);
+    for (name, content) in &recipe.seeds {
+        assert_eq!(content.as_bytes(), std::fs::read(pack.join(name)).unwrap());
+    }
+    assert_eq!(
+        recipe.prompt,
+        std::fs::read_to_string(repository().join("prompts/inspiration.txt")).unwrap()
+    );
+    assert!(recipe.protocol.starts_with("You woke up one day"));
+    assert!(recipe.protocol.contains("Max memento size is 8k."));
+    assert!(
+        recipe.inventory.starts_with(
+            "Installed collections: core, computation, browser, systems\n\n# Workshop\n"
+        )
+    );
+    assert!(recipe.inventory.ends_with(
+        "\nYour workspace /work holds 16 MiB and 900 files and directories, and persists \
+         between sessions; /tmp holds 1 GiB and is cleared.\n"
+    ));
+}
+#[test]
+fn invalid_catalogs_fail_before_launch_with_the_file_and_reason() {
+    let reviewed = std::fs::read_to_string(repository().join("recipes/curiosity.toml")).unwrap();
+    let load = |name: &str, text: &str, seeds: &[(&str, &[u8])]| {
+        let root = Root::new();
+        std::fs::create_dir(root.0.join("recipes")).unwrap();
+        std::fs::write(root.0.join("recipes").join(name), text).unwrap();
+        for (path, bytes) in seeds {
+            let path = root.0.join("seeds/assortment-01").join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+        super::catalog::load(&root.0.join("recipes"))
+    };
+    let seed: &[(&str, &[u8])] = &[("ABOUT.txt", b"About.\n")];
+    load("curiosity.toml", &reviewed, seed).unwrap();
+    for (name, text, seeds, reason) in [
+        ("other.toml", reviewed.clone(), seed, "match its file name"),
+        (
+            "curiosity.toml",
+            reviewed.replace("sessions = 10\n", "sessions = 21\n"),
+            seed,
+            "exceeds its bound",
+        ),
+        (
+            "curiosity.toml",
+            reviewed.replace("workspace_bytes = 16777216", "workspace_bytes = 1073741824"),
+            seed,
+            "exceeds its bound",
+        ),
+        (
+            "curiosity.toml",
+            reviewed.replace("pids = 256", "pids = 256\ninodes = 900"),
+            seed,
+            "unknown field",
+        ),
+        (
+            "curiosity.toml",
+            reviewed.replace("\"seeds/assortment-01\"", "\"../seeds\""),
+            seed,
+            "plain path",
+        ),
+        ("curiosity.toml", reviewed.clone(), &[], "No such file"),
+        (
+            "curiosity.toml",
+            reviewed.clone(),
+            &[("binary.dat", b"\xff\xfe")],
+            "not UTF-8",
+        ),
+    ] {
+        let error = load(name, &text, seeds).unwrap_err();
+        assert!(
+            error.contains(name) || error.contains("assortment-01"),
+            "{error}"
+        );
+        assert!(error.contains(reason), "{reason}: {error}");
+    }
+    // Links and other non-regular entries are refused, not followed.
+    let root = Root::new();
+    std::fs::create_dir(root.0.join("recipes")).unwrap();
+    std::fs::write(root.0.join("recipes/curiosity.toml"), &reviewed).unwrap();
+    std::fs::create_dir_all(root.0.join("seeds/assortment-01")).unwrap();
+    std::os::unix::fs::symlink("/etc/hostname", root.0.join("seeds/assortment-01/link")).unwrap();
+    let error = super::catalog::load(&root.0.join("recipes")).unwrap_err();
+    assert!(error.contains("without links"), "{error}");
+    assert!(super::catalog::load(&root.0.join("seeds")).is_err());
+}

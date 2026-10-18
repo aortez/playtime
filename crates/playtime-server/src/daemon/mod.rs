@@ -1,6 +1,7 @@
 //! Production application: ordinary HTTP routes over the admission coordinator,
 //! detached packaged worker and verified archive queries. No fixture responses.
 mod archive;
+pub mod catalog;
 mod paging;
 mod projection;
 pub mod test_supervisor;
@@ -47,9 +48,19 @@ impl Daemon {
         supervisor: Arc<dyn Supervisor>,
         test_supervision: bool,
     ) -> life::Result<Self> {
-        Self::open_with_docker(root, bundle, supervisor, test_supervision, None, None).await
+        Self::open_with_docker(
+            root,
+            bundle,
+            supervisor,
+            test_supervision,
+            None,
+            None,
+            vec![],
+        )
+        .await
     }
     /// `live` names the Ollama endpoint for live runs, which also need `docker`.
+    /// Catalog `recipes` run on the live model.
     pub async fn open_with_docker(
         root: &Path,
         bundle: &Path,
@@ -57,6 +68,7 @@ impl Daemon {
         test_supervision: bool,
         docker: Option<(&Path, &Path)>,
         live: Option<&str>,
+        recipes: Vec<playtime_runner::docker::Recipe>,
     ) -> life::Result<Self> {
         if test_supervision && (docker.is_some() || live.is_some()) {
             return Err(life::Error::Invalid(
@@ -79,6 +91,7 @@ impl Daemon {
         if let Some(endpoint) = live {
             archive.enable_live(endpoint).await?;
         }
+        archive.enable_recipes(recipes)?;
         let archive = Arc::new(archive);
         let coordinator =
             Coordinator::new(ledger, archive.clone(), supervisor, Arc::new(SystemClock));
@@ -362,6 +375,7 @@ impl Application for Daemon {
                     .live
                     .is_some()
                     .then_some(RunMode::LiveSmoke),
+                (!self.inner.archive.recipes.is_empty()).then_some(RunMode::Experiment),
             ]
             .into_iter()
             .flatten()
@@ -419,6 +433,16 @@ impl Application for Daemon {
                 },
             ));
         }
+        for (id, recipe) in &self.inner.archive.recipes {
+            recipes.push((
+                id.clone(),
+                Recipe {
+                    recipe_id: RecipeId::new(id.as_str()).unwrap(),
+                    name: recipe.name.clone(),
+                    modes: vec![RunMode::Experiment],
+                },
+            ));
+        }
         paging::page(recipes, &query, "recipes", "catalog", None)
     }
     async fn preview(&self, recipe: RecipeId, request: PreviewRequest) -> Result<Preview> {
@@ -439,6 +463,16 @@ impl Application for Daemon {
                 .archive
                 .live_preview()
                 .ok_or_else(|| ApiError::new("unsupported_capability"));
+        }
+        if self.inner.archive.recipes.contains_key(recipe.as_str()) {
+            return if request.mode == RunMode::Experiment {
+                self.inner
+                    .archive
+                    .recipe_preview(recipe.as_str())
+                    .ok_or_else(|| ApiError::new("unsupported_capability"))
+            } else {
+                Err(ApiError::new("unsupported_capability"))
+            };
         }
         if recipe.as_str() != "two-session" {
             return Err(ApiError::new("not_found"));

@@ -51,7 +51,9 @@ crypto toolchain. HTTPS endpoints are refused without it.
 
 Request settings are frozen with the profile: context 32,768, `think: "low"`,
 seed 1042 (advanced per request by the controller), temperature 0.8, top-p 0.95,
-top-k 40, repeat penalty 1.0 and `keep_alive: "5m"`. Streamed records reach the
+top-k 40, repeat penalty 1.0 and `keep_alive: "5m"`. Catalog recipes choose their
+own settings, including `think` levels `low`, `medium` and `high`; see
+[recipes](rust-recipes.md). Streamed records reach the
 controller as chunks while the request runs, so the workbench shows partial
 thinking and content live, and a failed request keeps what arrived. Native
 records arrive about once per token, so the worker coalesces their message deltas

@@ -155,6 +155,15 @@ fn execute_with(
     hooks: Option<Box<dyn playtime_runner::WriterHooks>>,
     live: Option<ollama::Fake>,
 ) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
+    run(case, hooks, live, None)
+}
+/// With `recipe`, a live run freezes that catalog recipe instead of the smoke.
+fn run(
+    case: FaultCase,
+    hooks: Option<Box<dyn playtime_runner::WriterHooks>>,
+    live: Option<ollama::Fake>,
+    recipe: Option<playtime_runner::docker::Recipe>,
+) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
     let is_live = live.is_some();
     let root = std::env::temp_dir().join(format!(
         "pt66-native-{}",
@@ -199,15 +208,16 @@ fn execute_with(
         socket: "/synthetic/socket".into(),
         executable_sha256: "a".repeat(64),
     };
-    let profile = if live.is_some() {
-        let host = playtime_runner::docker::LiveHost {
-            endpoint: "http://model-host.local:11434".into(),
-            addresses: vec!["192.0.2.10".parse().unwrap()],
-            live_lock: root.join("live-model.lock"),
-        };
-        Profile::freeze_live(selection, engine.identity().clone(), host)
-    } else {
-        Profile::freeze(selection, engine.identity().clone())
+    let host = playtime_runner::docker::LiveHost {
+        endpoint: "http://model-host.local:11434".into(),
+        addresses: vec!["192.0.2.10".parse().unwrap()],
+        live_lock: root.join("live-model.lock"),
+    };
+    let daemon = engine.identity().clone();
+    let profile = match (live.is_some(), recipe) {
+        (true, Some(recipe)) => Profile::freeze_recipe(recipe, selection, daemon, host),
+        (true, None) => Profile::freeze_live(selection, daemon, host),
+        (false, _) => Profile::freeze(selection, daemon),
     }
     .unwrap();
     let prepared = playtime_runner::prepare_docker_with_inputs(
@@ -733,6 +743,94 @@ fn live_port_checks_identity_per_session_and_archives_raw_records_as_chunks() {
             .len(),
         2
     );
+}
+/// The live smoke's limits and texts as a catalog recipe, with two seeds.
+fn seeded_recipe() -> playtime_runner::docker::Recipe {
+    let scenario: playtime_engine::simulation::Scenario =
+        serde_json::from_slice(playtime_runner::docker::LIVE_SCENARIO).unwrap();
+    playtime_runner::docker::Recipe {
+        id: "seeded".into(),
+        name: "Seeded".into(),
+        prompt: scenario.prompt,
+        protocol: scenario.protocol,
+        inventory: scenario.inventory,
+        parameters: scenario.parameters,
+        workspace_entries: 512,
+        model: playtime_runner::docker::Sampling {
+            thinking: "high".into(),
+            temperature: 0.8,
+            top_p: 0.95,
+            top_k: 40,
+            repeat_penalty: 1.0,
+        },
+        seeds: BTreeMap::from([
+            ("ABOUT.txt".into(), "About these seeds.\n".into()),
+            ("data/palette.json".into(), "[\"#205080\"]\n".into()),
+        ]),
+    }
+}
+#[test]
+fn recipe_seeds_are_written_before_session_one_and_frozen_as_inputs() {
+    let mut session_one = native_replies();
+    let session_two = session_one.split_off(3);
+    let fake = ollama::Fake::new(
+        identity()
+            .into_iter()
+            .chain(session_one)
+            .chain(identity())
+            .chain(session_two),
+    );
+    let (temp, port, report) = run(FaultCase::None, None, Some(fake), Some(seeded_recipe()));
+    assert!(report.terminal_committed, "{:?}", report.diagnostics);
+    let result = report.result.unwrap();
+    assert_eq!(result.reason, playtime_core::StopReason::AgentFinished);
+    assert_eq!(result.usage.known_generated_tokens, 160);
+    assert_eq!(port.bridges.load(Ordering::SeqCst), 5 + 2);
+    // The first bridge calls write the seeds, once session 1's agent runs and
+    // before the model's first tool call.
+    let seen = port.fake.state.lock().unwrap().seen.clone();
+    let agent = seen
+        .iter()
+        .position(|op| {
+            matches!(op, Operation::CreateContainer(p)
+                if p.role == playtime_docker::Role::Agent && p.session == Some(1))
+        })
+        .unwrap();
+    let bridges: Vec<_> = seen
+        .iter()
+        .enumerate()
+        .filter_map(|(index, op)| match op {
+            Operation::Bridge { payload, .. } => Some((
+                index,
+                serde_json::from_slice::<serde_json::Value>(payload).unwrap(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert!(bridges[0].0 > agent);
+    for ((_, request), (path, content)) in bridges.iter().zip(&seeded_recipe().seeds) {
+        assert_eq!(request["name"], "write_file");
+        assert_eq!(request["arguments"]["path"], format!("seeds/{path}"));
+        assert_eq!(request["arguments"]["content"], content.as_str());
+        assert_eq!(request["arguments"]["append"], false);
+    }
+    let seeded = bridges.iter().filter(|(_, request)| {
+        request["arguments"]["path"]
+            .as_str()
+            .is_some_and(|path| path.starts_with("seeds/"))
+    });
+    assert_eq!(seeded.count(), 2);
+    // The archive's frozen configuration holds the recipe, seeds included.
+    let archive = temp.0.join("archive");
+    let reader =
+        playtime_storage::ArchiveReader::open(&archive, playtime_storage::StorageLimits::default())
+            .unwrap();
+    let configuration = &reader.manifest().configuration;
+    let frozen: Profile =
+        serde_json::from_slice(&std::fs::read(archive.join(configuration.path.as_str())).unwrap())
+            .unwrap();
+    assert_eq!(frozen.recipe, Some(seeded_recipe()));
+    assert_eq!(frozen.mode, playtime_core::RunMode::Experiment);
 }
 #[test]
 fn live_identity_change_at_session_start_stops_before_another_request() {

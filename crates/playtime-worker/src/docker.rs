@@ -2,7 +2,7 @@
 //! or ownership-journal I/O, and a cancelled request cannot create another owner.
 use playtime_docker::{
     CancellationToken, Engine, Ownership, OwnershipJournal, Proposal, ReadyImage, Sandbox, Tool,
-    ToolLimits, WorkDeadline,
+    ToolLimits, ToolReply, WorkDeadline,
     capture::{ArchiveUsage, CaptureProfile, SnapshotCandidate},
     transport::Cli,
 };
@@ -303,6 +303,36 @@ fn outcome(result: ChatResult) -> Outcome {
     }
 }
 impl Actor {
+    /// Writes a recipe's frozen seeds into `/work/seeds` through the fixed
+    /// bridge, as uid 1000, before session 1's first request. Any failure stops
+    /// the run before the model is asked anything.
+    async fn seed(&mut self, deadline: Instant, cancel: &CancellationToken) -> Result<()> {
+        let Some(recipe) = &self.profile.recipe else {
+            return Ok(());
+        };
+        let limits = ToolLimits {
+            command_seconds: 10.0,
+            output_bytes: self.profile.scenario.parameters.limits.output_bytes.get() as u32,
+        };
+        for (path, content) in &recipe.seeds {
+            let write = Tool::WriteFile {
+                path: format!("seeds/{path}"),
+                content: content.clone(),
+                append: false,
+            };
+            match self
+                .sandbox
+                .tool(write, limits, deadline, cancel.clone())
+                .await
+                .map_err(|e| Error::Uncertain(e.to_string()))?
+            {
+                ToolReply::Write { bytes_written, .. } if bytes_written == content.len() as u64 => {
+                }
+                _ => return Err(Error::Invalid("seed import refused".into())),
+            }
+        }
+        Ok(())
+    }
     async fn execute(&mut self, task: &Task) -> Result<(Outcome, Option<SnapshotCandidate>)> {
         let effect = &task.effect;
         let deadline =
@@ -334,9 +364,12 @@ impl Actor {
                         .map_err(map)?;
                 }
                 self.sandbox
-                    .start_session(*ordinal, deadline, cancel)
+                    .start_session(*ordinal, deadline, cancel.clone())
                     .await
                     .map_err(map)?;
+                if *ordinal == 1 {
+                    self.seed(deadline, &cancel).await?;
+                }
                 Outcome::Started(self.memory.clone())
             }
             EffectKind::Model(request) => match &mut self.model {
