@@ -203,6 +203,30 @@ impl Drop for FixtureSupervisor {
         }
     }
 }
+
+fn spawn_fixture(command: &mut ProcessCommand, startup_deadline_boot_ms: u64) -> Result<Child> {
+    let deadline = boot_ms()
+        .saturating_add(5_000)
+        .min(startup_deadline_boot_ms);
+    loop {
+        if boot_ms() >= deadline {
+            return Err(Error::Invalid(
+                "fixture startup deadline expired before exec",
+            ));
+        }
+        match command.spawn() {
+            Ok(child) => return Ok(child),
+            // Parallel forks may briefly inherit a writer of the freshly
+            // frozen fixture executable until CLOEXEC closes it. ETXTBSY is a
+            // definite pre-exec rejection, not an ambiguous start submission.
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 #[async_trait]
 impl Supervisor for FixtureSupervisor {
     async fn ensure_legacy_idle(&self, root: &Path) -> Result<()> {
@@ -218,13 +242,14 @@ impl Supervisor for FixtureSupervisor {
         let children = self.children.clone();
         let lose = self.lose_next_start_reply.swap(false, Ordering::SeqCst);
         tokio::task::spawn_blocking(move || {
-            let mut child = ProcessCommand::new(&launch.executable)
+            let mut command = ProcessCommand::new(&launch.executable);
+            command
                 .args(&launch.argv)
                 .env("PLAYTIME_LIFECYCLE_BOOTSTRAP", &launch.bootstrap)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()?;
+                .stderr(Stdio::null());
+            let mut child = spawn_fixture(&mut command, launch.startup_deadline_boot_ms)?;
             let pid = child.id();
             let endpoint = Endpoint {
                 socket: launch.socket.clone(),
@@ -514,4 +539,37 @@ pub fn cleanup_systemd_unit(unit: &str, reset_failed: bool) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_busy_before_exec_retries_without_extending_startup() {
+        let path =
+            std::env::temp_dir().join(format!("pt-fixture-{}", random_id().unwrap().as_str()));
+        write_once(&path, &fs::read("/usr/bin/true").unwrap()).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        let writer = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let mut command = ProcessCommand::new(&path);
+        assert_eq!(
+            command.spawn().unwrap_err().kind(),
+            std::io::ErrorKind::ExecutableFileBusy
+        );
+        let deadline = boot_ms() + 25;
+        assert!(matches!(
+            spawn_fixture(&mut command, deadline),
+            Err(Error::Invalid(_))
+        ));
+        assert!(boot_ms() >= deadline);
+        let released = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(writer);
+        });
+        let mut child = spawn_fixture(&mut command, boot_ms() + 5_000).unwrap();
+        released.join().unwrap();
+        assert!(child.wait().unwrap().success());
+        fs::remove_file(path).unwrap();
+    }
 }
