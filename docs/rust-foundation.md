@@ -6,10 +6,10 @@ Branch `17-rust-foundation` starts at the specified Python baseline
 `ad7a2f2a5a6947d396f601a43fe622716e41200c`. Its tree is identical to the merged
 `main` revision `ca276261605632701b018bb0a3b879eecc80d107` inspected at startup.
 
-Status: implemented foundation for #17. The workspace contains domain and
-protocol libraries, synthetic contracts, and CPU-only checks. It has no Rust
-runner, service, storage engine, or desktop application. The Python launcher
-remains the operational entry point.
+Status: implemented foundation for #17, extended on this branch with #33's
+synchronous portable archive storage. See the [storage contract](rust-storage.md).
+The #18 controller is on its independent branch; #19 will integrate them.
+The Python launcher remains the operational entry point.
 
 ## Agreed boundaries
 
@@ -36,8 +36,9 @@ auto-restart.
 Portable run folders own frozen inputs, experimental events, checkpoints, and
 results. SQLite owns admission/idempotency and orchestration ledgers; query
 indexes and reports are derived. The lifecycle is preview → freeze verified
-inputs → admit worker → publish checkpoints → publish result. Publication and
-reconciliation details belong to #19; supervision and API behavior to #20.
+inputs → admit worker → publish checkpoints → publish result. #33 implements
+archive publication. Controller integration and reconciliation belong to #19;
+supervision, SQLite admission transactions, and API behavior belong to #20.
 Inputs are frozen before admission, and worker startup verifies the frozen
 identities again. Client disconnect does not cancel work. Cancellation, failed
 inference, and incomplete cleanup remain recorded outcomes. Operational tracing
@@ -77,8 +78,8 @@ Cleanup can be complete, failed with errors, or unknown. These are observations;
 the phase vocabulary does not yet implement transition or cancellation rules.
 
 Archive paths are lexical relative paths without empty, dot, parent, backslash,
-NUL, or colon components. This is not permission to open/extract them: #19 must
-also enforce root containment, symlink rules, file types, and size limits.
+NUL, or colon components. This is not permission to open/extract them: #33's
+storage layer also enforces root containment, link rules, types, and byte bounds.
 Event times are UTC RFC 3339 strings with `Z`, years 0001–9999, seconds 00–59,
 and optional 1–9 fractional digits. The parser rejects invalid dates and local
 offsets instead of normalizing evidence timestamps.
@@ -90,6 +91,8 @@ offsets instead of normalizing evidence timestamps.
 | HTTP DTOs | `/api/v1` | `v1`; endpoints belong to #20 |
 | Event envelope | `schema_version: 1` | `events::decode_event` |
 | Frozen input manifest | `schema_version: 1` | `archive::decode_input_manifest` |
+| Archive layout | `schema_version: 1` | `storage::decode_archive_descriptor` |
+| Event commit marker | `schema_version: 1` | `storage::decode_commit_marker` |
 
 Each format has an independent major version, unrelated to application release.
 The readers check the header before interpreting the body: an unsupported major
@@ -115,15 +118,17 @@ other frozen inputs, and independent worker artifacts. Each reference holds a
 relative path, SHA-256 of the exact stored bytes, and byte length. Paths must be
 unique and inside `inputs/`; the manifest excludes itself. The hash of the
 stored manifest bytes lives outside it, represented by the `run_started` input
-manifest reference. #19 defines its pre-start publication/admission record.
+manifest reference. #33 also binds it in immutable `archive.json`; #20 owns
+the independent admission transaction.
 Do not deserialize and reserialize bytes before verifying their digest.
 
 Executable, source artifact, and Cargo.lock references are distinct. Compiler,
 target, build profile, revision/dirty status, and platform requirements are
 separate provenance, not substitutes for executable identity. GUI/CLI/service
-rebuilds do not change worker identity. Concrete byte verification, compatible
-host checks, and archived execution routes belong to #19/#27. Existing Python
-hashes retain their own serializer and validation rules.
+rebuilds do not change worker identity. #33 verifies concrete bytes without
+executing them. Compatible host checks and archived execution routes belong to
+#27; #19 owns legacy readers. Existing Python hashes retain their own serializer
+and validation rules.
 
 ## Fixtures and checks
 
@@ -150,9 +155,9 @@ Docker skips. The GitHub workflow is provided but has not yet run remotely.
 ## Following work
 
 The [compatibility matrix](rust-compatibility.md) assigns operational parity
-to the later migration issues. Before #18, settle the transition/effect interface,
-request reservation/settlement, deterministic scenario grammar, and precedence
-between cancellation, checkpoints, and exhausted limits. Before #19, settle
-file/SQLite publication, durability, and restart reconciliation. Both build on
-these contracts. Real adapters, service supervision, authenticated remote access,
-portable reports, and strict repeat remain separate deliverables.
+to the later migration issues. #18 and #33 build independently on this foundation.
+#19 joins a reviewed controller revision to storage, including observation
+mapping, retained outboxes, durable effect dispatch, and legacy readers. #20
+settles worker ownership/takeover and SQLite admission transactions. Real
+adapters, service supervision, authenticated remote access, portable reports,
+and strict repeat remain separate deliverables.
