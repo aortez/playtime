@@ -33,6 +33,14 @@ pub(super) fn live_backend() -> BackendIdentity {
             .into(),
     }
 }
+pub(super) fn docker_and_live_backend() -> BackendIdentity {
+    BackendIdentity {
+        kind: BackendKind::Controller,
+        description:
+            "Frozen detached worker with real Docker tools and scripted or live locked model responses"
+                .into(),
+    }
+}
 pub(super) fn frontier(f: &EventFrontier) -> Frontier {
     Frontier {
         run_id: f.archive.run_id.clone(),

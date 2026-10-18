@@ -343,7 +343,9 @@ impl Application for Daemon {
             service_id: ServiceId::new(self.inner.coordinator.ledger().service_id().as_str())
                 .unwrap(),
             service_build: env!("CARGO_PKG_VERSION").into(),
-            backend: if self.inner.archive.docker.is_some() {
+            backend: if self.inner.archive.live.is_some() {
+                projection::docker_and_live_backend()
+            } else if self.inner.archive.docker.is_some() {
                 projection::docker_backend()
             } else {
                 projection::backend()
