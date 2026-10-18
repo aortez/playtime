@@ -1,0 +1,145 @@
+use std::{fs::File, io::Read, path::Path};
+
+use playtime_core::{ArchivePath, RunId, RunMode};
+use playtime_engine::simulation::{Scenario, ScriptedAdapters};
+use playtime_protocol::{
+    archive::{BuildProvenance, ContentRef, InputManifest, PlatformRequirements, WorkerIdentity},
+    storage::{ArchiveDescriptor, ArchiveIdentity},
+};
+use playtime_storage::{ArchiveWriter, FrozenInput, StorageLimits, content_ref};
+
+use crate::{Error, Result};
+
+const SOURCE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/source.json"));
+const LOCK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/Cargo.lock"));
+const BUILD: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/build.json"));
+
+#[derive(Clone, Debug)]
+pub struct PreparedSimulation {
+    pub identity: ArchiveIdentity,
+    pub limits: StorageLimits,
+}
+
+/// An explicitly supplied worker package. The preparing host validates its
+/// authority/provenance; this layer freezes and verifies the exact supplied
+/// bytes. It never substitutes the host executable for the designated worker.
+pub struct WorkerBundle {
+    pub executable: Vec<u8>,
+    pub source: Vec<u8>,
+    pub cargo_lock: Vec<u8>,
+    pub build: BuildProvenance,
+    pub platform: PlatformRequirements,
+}
+
+/// Demo-only self capture. Production preparation supplies an independently
+/// validated worker bundle built from an isolated source snapshot (#20).
+pub fn capture_demo_worker() -> Result<WorkerBundle> {
+    Ok(WorkerBundle {
+        executable: executable(StorageLimits::default().content_bytes)?,
+        source: SOURCE.to_vec(),
+        cargo_lock: LOCK.to_vec(),
+        build: serde_json::from_slice::<BuildProvenance>(BUILD)?,
+        platform: PlatformRequirements {
+            os: std::env::consts::OS.into(),
+            architecture: std::env::consts::ARCH.into(),
+            abi: env!("PLAYTIME_WORKER_TARGET").into(),
+            requirements: vec![
+                "CPU-only scripted simulation; Linux durable filesystem operations".into(),
+            ],
+        },
+    })
+}
+
+pub(crate) fn reference(path: &str, bytes: &[u8]) -> ContentRef {
+    content_ref(
+        ArchivePath::new(path).expect("driver-generated archive path"),
+        bytes,
+    )
+}
+
+pub(crate) fn executable(bound: u64) -> Result<Vec<u8>> {
+    // Reopening current_exe() can read a replacement pathname or fail after
+    // unlink. /proc/self/exe holds the actual executing image on Linux.
+    let file = File::open("/proc/self/exe")?;
+    if file.metadata()?.len() > bound {
+        return Err(Error::Capacity(
+            "executing binary exceeds frozen content bound".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(bound.saturating_add(1)).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > bound {
+        return Err(Error::Capacity(
+            "executing binary grew beyond content bound".into(),
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Freeze the scenario and explicitly supplied worker bundle. This prepares
+/// an empty archive and releases its lock; it does not authorize or launch work.
+pub fn prepare_simulation(
+    path: impl AsRef<Path>,
+    run_id: RunId,
+    scenario_bytes: &[u8],
+    bundle: WorkerBundle,
+) -> Result<PreparedSimulation> {
+    if scenario_bytes.len() as u64 > StorageLimits::default().content_bytes {
+        return Err(Error::Capacity(
+            "scenario exceeds frozen content bound".into(),
+        ));
+    }
+    if bundle.executable.is_empty() || bundle.source.is_empty() || bundle.cargo_lock.is_empty() {
+        return Err(Error::Invalid(
+            "worker bundle requires executable, source, and lock bytes".into(),
+        ));
+    }
+    let scenario: Scenario = serde_json::from_slice(scenario_bytes)?;
+    let adapters = ScriptedAdapters::new(&scenario)?;
+    let limits = StorageLimits {
+        event_log_bytes: scenario.parameters.limits.log_bytes.get(),
+        ..StorageLimits::default()
+    };
+    let mut inputs = Vec::new();
+    let mut freeze = |path: &str, bytes: Vec<u8>| {
+        let reference = reference(path, &bytes);
+        inputs.push(FrozenInput {
+            reference: reference.clone(),
+            bytes,
+        });
+        reference
+    };
+    let configuration = freeze("inputs/scenario.json", scenario_bytes.to_vec());
+    let initial_workspace = adapters.config().initial_workspace.clone();
+    freeze(
+        initial_workspace.path.as_str(),
+        adapters.artifacts()[initial_workspace.path.as_str()].clone(),
+    );
+    let worker = WorkerIdentity {
+        executable: freeze("inputs/worker/executable", bundle.executable),
+        source: freeze("inputs/worker/source.bundle", bundle.source),
+        cargo_lock: freeze("inputs/worker/Cargo.lock", bundle.cargo_lock),
+        build: bundle.build,
+        platform: bundle.platform,
+    };
+    let manifest = InputManifest {
+        schema_version: 1,
+        run_id: run_id.clone(),
+        worker,
+        configuration,
+        initial_workspace,
+        files: Vec::new(),
+    };
+    let manifest_bytes = serde_json::to_vec(&manifest)?;
+    let descriptor = ArchiveDescriptor {
+        schema_version: 1,
+        run_id,
+        mode: RunMode::Simulation,
+        input_manifest: reference("inputs/manifest.json", &manifest_bytes),
+    };
+    let writer = ArchiveWriter::create(path, descriptor, &manifest_bytes, &inputs, limits.clone())?;
+    Ok(PreparedSimulation {
+        identity: writer.confirmed_frontier().frontier().archive.clone(),
+        limits,
+    })
+}

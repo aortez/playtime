@@ -1,0 +1,405 @@
+[
+  {
+    "archive_sequence": 12,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 6,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "call": 1,
+          "chunk": {
+            "message": {
+              "content": "draft",
+              "thinking": ""
+            }
+          }
+        }
+      },
+      "elapsed_ms": 10,
+      "identity": {
+        "effect_id": 2,
+        "request_id": "r1",
+        "tool_request_sequence": null
+      },
+      "observation_kind": "model_chunk",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "6ba4f986cb68781f43d0569148b9a882dd98a31798778d8fa8237c2c1d0f99bc"
+  },
+  {
+    "archive_sequence": 14,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 8,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "call": 1,
+          "response": {
+            "done": true,
+            "generated_tokens": 0,
+            "message": {
+              "content": "final replaces draft",
+              "role": "assistant",
+              "tool_calls": [
+                {
+                  "function": {
+                    "arguments": {
+                      "value": "rejected"
+                    },
+                    "name": "made_up"
+                  }
+                },
+                {
+                  "function": {
+                    "arguments": {
+                      "command": "fixture:unknown exit"
+                    },
+                    "name": "exec"
+                  }
+                },
+                {
+                  "function": {
+                    "arguments": {
+                      "finish_run": true,
+                      "memento": "done"
+                    },
+                    "name": "end_session"
+                  }
+                },
+                {
+                  "function": {
+                    "arguments": {
+                      "command": "fixture:must not run"
+                    },
+                    "name": "exec"
+                  }
+                }
+              ]
+            },
+            "prompt_tokens": null
+          }
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": 2,
+        "request_id": "r1",
+        "tool_request_sequence": null
+      },
+      "observation_kind": "model_response",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "0dbc984817f7e045dbd6b0f731f378a364e678376f8ed6d29e9de3e0a6b0e3f7"
+  },
+  {
+    "archive_sequence": 15,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 9,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "arguments": {
+            "value": "rejected"
+          },
+          "name": "made_up"
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": null,
+        "request_id": "r1",
+        "tool_request_sequence": 9
+      },
+      "observation_kind": "tool_request",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "ee086e7fadb549989b02515073d55e84d1fc8fe15125ae1b0b93be5ab0b6a783"
+  },
+  {
+    "archive_sequence": 16,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 10,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "name": "made_up",
+          "request_sequence": 9,
+          "result": {
+            "error": "Unknown tool or invalid arguments object"
+          },
+          "unabridged_result": null
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": null,
+        "request_id": "r1",
+        "tool_request_sequence": 9
+      },
+      "observation_kind": "tool_result",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "e7cc428db5b29455a4b6425d6bfddcd2388bcd6c5e64bfa741c3b91c29df91fc"
+  },
+  {
+    "archive_sequence": 17,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 11,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "arguments": {
+            "command": "fixture:unknown exit"
+          },
+          "name": "exec"
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": 3,
+        "request_id": "r1",
+        "tool_request_sequence": 11
+      },
+      "observation_kind": "tool_request",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "4b95609157bca46c461cc197d88f0b932881e919d8d3c78e9fb10db1d778409e"
+  },
+  {
+    "archive_sequence": 18,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 12,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "name": "exec",
+          "request_sequence": 11
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": 3,
+        "request_id": "r1",
+        "tool_request_sequence": 11
+      },
+      "observation_kind": "tool_dispatch",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "9fb7dd6626801592dab56cc869da8f35589eb0aa7c3abeac03f17449629513bb"
+  },
+  {
+    "archive_sequence": 19,
+    "kind": "request_finished",
+    "data": {
+      "request_id": "r1",
+      "session_id": "s1",
+      "usage": {
+        "generated_tokens": 0,
+        "status": "known"
+      }
+    },
+    "record_sha256": "4974f05bd0d852d08087f492711abe811ba7156918f7c823f91080292b9d8983"
+  },
+  {
+    "archive_sequence": 21,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 13,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "name": "exec",
+          "request_sequence": 11,
+          "result": {
+            "stdout": "no exit status was observed"
+          },
+          "unabridged_result": null
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": 3,
+        "request_id": "r1",
+        "tool_request_sequence": 11
+      },
+      "observation_kind": "tool_result",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "dba0f1761cc8d0097363765b368028d81854648c6542125f4801decbfa727c17"
+  },
+  {
+    "archive_sequence": 22,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 14,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "arguments": {
+            "finish_run": true,
+            "memento": "done"
+          },
+          "name": "end_session"
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": 4,
+        "request_id": "r1",
+        "tool_request_sequence": 14
+      },
+      "observation_kind": "tool_request",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "91b9cca5c63e557bb8506be4382f9beb64f30403080ec0b8bbb67189609893fc"
+  },
+  {
+    "archive_sequence": 23,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 15,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "name": "end_session",
+          "request_sequence": 14
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": 4,
+        "request_id": "r1",
+        "tool_request_sequence": 14
+      },
+      "observation_kind": "memento_write",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "2db9b9d72db2e63fca29d1baf8a7c912877b12925d6247e390f42da50f2a8da4"
+  },
+  {
+    "archive_sequence": 24,
+    "kind": "command_finished",
+    "data": {
+      "origin": {
+        "effect_id": 3,
+        "request_id": "r1",
+        "tool_request_sequence": 11
+      },
+      "outcome": {
+        "reason": "workshop result did not record an exit status",
+        "status": "unknown"
+      },
+      "request_id": "r1",
+      "session_id": "s1"
+    },
+    "record_sha256": "12e634c434601e1f85dec7b621fa706b1636f036cb7cb6901346ecc628b9f0fe"
+  },
+  {
+    "archive_sequence": 26,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 16,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "name": "end_session",
+          "request_sequence": 14,
+          "result": {
+            "bytes_written": 4,
+            "path": "/work/MEMENTO.md"
+          },
+          "unabridged_result": null
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": 4,
+        "request_id": "r1",
+        "tool_request_sequence": 14
+      },
+      "observation_kind": "tool_result",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "7b3bac1748d448b514af2df11eac2d3e11dc7e95b1ab0fc47bcfb87c0074684a"
+  },
+  {
+    "archive_sequence": 27,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 17,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "arguments": {
+            "command": "fixture:must not run"
+          },
+          "name": "exec"
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": null,
+        "request_id": "r1",
+        "tool_request_sequence": 17
+      },
+      "observation_kind": "tool_request",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "f0986a99eb31e439c962a02b55a2767a52bcd1ef21a77f30313398c61e94885e"
+  },
+  {
+    "archive_sequence": 28,
+    "kind": "controller_observation",
+    "data": {
+      "controller_sequence": 18,
+      "data": {
+        "storage": "inline",
+        "value": {
+          "name": "exec",
+          "request_sequence": 17,
+          "result": {
+            "error": "The session has already ended"
+          },
+          "unabridged_result": null
+        }
+      },
+      "elapsed_ms": 20,
+      "identity": {
+        "effect_id": null,
+        "request_id": "r1",
+        "tool_request_sequence": 17
+      },
+      "observation_kind": "tool_result",
+      "schema_version": 1,
+      "session_id": "s1"
+    },
+    "record_sha256": "c0404825f01e5ea21e5e92081dd0cfd2ac02d24a96881e3e2ac8757e2890017b"
+  },
+  {
+    "archive_sequence": 38,
+    "kind": "stop_decided",
+    "data": {
+      "elapsed_ms": 20,
+      "reason": "agent_finished",
+      "schema_version": 1
+    },
+    "record_sha256": "f55dfaecd2e7aac42f6792a574ebd7366bd3e503f3110dac2942993418c3ff89"
+  }
+]

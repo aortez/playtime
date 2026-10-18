@@ -200,3 +200,22 @@ retained outboxes, dispatch barriers, actual checkpoint manifests/indexes,
 interrupted-run reconciliation and legacy readers. #20 owns admission SQLite
 transactions, worker ownership transfer and service transport. Neither can use
 an unconfirmed marker or an in-memory result as durable completion authority.
+
+## Durable driver integration (#42)
+
+`open_prepared` is a narrow empty-archive handoff: exclusive writer lock, exact
+expected identity, complete verified inputs, zero marker, empty event file, and
+durability confirmation before a receipt. It rejects nonempty logs and tails;
+it is not a resume or execution-admission API. `PublicationObserver` is `Send`
+so a storage owner can live on a dedicated writer thread.
+
+Known-reference traversal now verifies external controller-observation JSON and
+versioned checkpoint indexes/source maps with their individual content leaves.
+Only defined traversal roles are followed. Indexes and maps obey manifest bounds;
+all transitive contents obey reference/aggregate bounds. Maps must identify exact
+preceding committed observation lines including LF, never records newly staged
+in the same append. Existing synthetic fixtures and their bytes are unchanged.
+
+See [rust-archive-driver.md](rust-archive-driver.md) for executing simulations,
+late receipt handling, and normalized copied-folder queries. Recovery and legacy
+readers remain separate #43/#44 work.

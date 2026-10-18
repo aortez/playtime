@@ -200,6 +200,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "playtime-runner"
+version = "0.1.0"
+dependencies = [
+ "playtime-core",
+ "playtime-engine",
+ "playtime-protocol",
+ "playtime-storage",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "playtime-storage"
 version = "0.1.0"
 dependencies = [

@@ -1,11 +1,11 @@
-# Controller/archive bridge refinement
+# Controller/archive transcript contract
 
 Tracking: [#42](https://github.com/aortez/playtime/issues/42), under
-[#19](https://github.com/aortez/playtime/issues/19). This first slice
-implements protocol decoding, executable mapping fixtures, lossless controller
-facts, late checkpoint acknowledgments, and verified storage traversal. The
-incremental durable driver is the next part of this branch. Recovery and Python
-archive readers remain separate tickets.
+[#19](https://github.com/aortez/playtime/issues/19). This implements
+protocol decoding, executable mapping fixtures, lossless controller facts, late
+checkpoint acknowledgments, and verified storage traversal. The
+[incremental durable driver](rust-archive-driver.md) connects these contracts to
+real archive publication. Recovery and Python readers remain separate tickets.
 
 ## Pinned inputs
 
@@ -105,7 +105,7 @@ belongs to the caller. Storage validates checkpoint-index/source-map references
 and their content leaves; model JSON is never searched for paths. Source maps
 must name exact preceding committed observations, including their LF bytes.
 
-## Durable driver mapping to implement next
+## Durable driver mapping
 
 Canonical facts come from the lossless typed control-update drain required by
 #42, never by scraping the byte-limited raw outbox. The raw copies remain
@@ -123,7 +123,7 @@ controller through its external-log-budget input and stops with `log_limit`.
 | Model/tool pending effect | Commit intent, effect/request identity and allowance; recheck cancellation and current deadlines after I/O; acknowledge `Dispatched` with current time; recheck the pending ID; only then invoke the adapter. |
 | Typed request settlement | Emit one canonical `request_finished` for that request with the exact known or unknown charge. Raw `request_settled` is a copy, not another charge. No zero-token settlement stands in for non-dispatch. |
 | Session start | Publish the exact incoming memory and separate evidence, then emit `session_started` with the selected workspace and content references. Fresh conversation policy stays in the controller. |
-| `PublishCheckpoint` effect | Publish and verify full workspace, file index/changes, incoming/outgoing memory, evidence/provenance, and a checkpoint content manifest. Commit typed publication before acknowledging `Outcome::Published`. |
+| `PublishCheckpoint` effect | Publish and verify full workspace, file index/changes, incoming/outgoing memory, evidence/provenance, and a checkpoint content manifest. Commit typed publication before acknowledging `Input::PublicationCommitted`. |
 | `controller_checkpoint` | Preserve the internal observation; it is not a second publication transaction. Only the durable publication can advance archive availability. |
 | Cleanup / `controller_finished` | Derive canonical `run_finished` from the typed outcome with verified settlements and the last published checkpoint. If it cannot commit, the archive remains incomplete even if the in-memory controller finished. |
 
@@ -134,7 +134,7 @@ records commit individually. Only successful writer receipts feed live reads.
 Actual serialized envelopes and mapping metadata count against the frozen log
 allocation, including the 65,536-byte finalization reserve. Prewrite capacity refusal feeds `ExternalLogBudgetExhausted`; uncertain I/O
 failure feeds `PersistenceFailed` and retires the writer. Neither permits new
-experimental effects. The integration driver will service timers while a
+experimental effects. The integration driver services timers while a
 serialized writer thread owns pending I/O; #20 owns worker termination.
 
 The checkpoint content manifest must expose immutable file-version references,
@@ -158,7 +158,7 @@ header retains sequence, elapsed time, kind and identities, with
 returns an explicit referenced payload until exact bytes are fetched; `resolve`
 verifies length and SHA-256 before typed interpretation. Both representations
 yield the same source record. Clients fetch through the opaque artifact endpoint.
-Storage traversal must verify these known references; arbitrary model JSON does
+Storage traversal verifies these known references; arbitrary model JSON does
 not grant file access. Externalized payload bytes still consume the frozen log
 allocation. This representation neither truncates content nor raises event
 limits; it is not a claim that a reference has already been published.
@@ -171,29 +171,15 @@ unresolved operation can still commit; a timeout does not establish failure.
 
 ## Recovery handoff and subsequent gates
 
-Recovery is owned by sibling #43, outside #42's driver scope. Its intended entry
-point consumes a #34-owned exclusion guard, the
-exact admitted archive identity, and termination/cleanup evidence. The guard
-must hold both the shared legacy run exclusion and archive writer exclusion
-through reconciliation and publication. It is not a public boolean or a socket
-timeout. Ownership uncertainty blocks this entry point and competing admission.
+The [durable driver](rust-archive-driver.md) executes two sessions through the
+production controller with scripted adapters and real storage. Its acceptance
+test closes the writer, copies only the run folder, removes the source, and
+reads identical observations, accounting, memory, evidence, and individual files
+without a database. Failed or unresolved publication returns incomplete evidence
+and the last actual receipt; it never silently resumes work.
 
-After verified termination, the reconciler verifies the committed prefix,
-preserves any uncommitted suffix as a separate diagnostic artifact, restores the
-append boundary, and appends interruption/recovery with new archive sequence
-numbers. It preserves settlements, non-dispatch proofs, the last checkpoint,
-and observed cleanup status. A committed outcome stays authoritative even when
-cleanup is unresolved. Corruption inside the committed prefix is refused.
-No recovery action may restart a worker or reissue model/tool effects. The
-concrete guard/adapter is to be pinned against #34's reviewed implementation.
-
-First integration gate: execute two sessions through the production controller
-with scripted external adapters and real storage, close it, copy only the run
-folder, and read identical observations/accounting/content references without
-SQLite. Test commit/dispatch/acknowledgment failure boundaries and retained
-outboxes. Fixture replay does not meet this gate.
-
-Sibling #44 supplies complete synthetic Python-baseline archives, read-only
-legacy adapters and detached initial-input reconstruction. Sibling #43 provides
-controlled reconciliation tested with #34. #42 can execute its Rust-only gate
-independently of those siblings. This mapping change does not close #42 or #19.
+Worker supervision is #34. Exclusive reconciliation belongs to #43 after its
+ownership contract is refined, and Python archive readers belong to sibling #44.
+Those are separate completion gates for parent #19. Neither a discovered marker
+nor a timeout gives a service authority to execute or reconcile a worker. #20
+will connect authorized workers/archives to #35's independently developed API.
