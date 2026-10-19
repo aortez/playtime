@@ -127,3 +127,17 @@ recipe bounds. A bundle from before this change can't run any Docker profile
 through a new daemon. The scripted and live smoke profiles are unchanged. The
 HTTP goldens are unchanged: catalog recipes use the existing recipe, preview and
 seed summary types. See [recipes](rust-recipes.md).
+
+### Operator release
+
+Since 2026-10-18 (#71), `playtime runs release RUN_ID --reason TEXT` (`POST
+/api/v1/runs/{run_id}/release`) ends a run that isn't terminal once the daemon
+has verified that its original worker invocation is inactive with an empty
+cgroup and, for Docker runs, that every resource in the worker's ownership
+journal is absent. Otherwise it refuses with `release_refused` (409) and lists
+what remains; there is no force option. A release records its time, reason and
+evidence in the ledger (schema version 5) and marks the run terminal with reason
+`operator_released`. The archive is unchanged, and the event stream of a released
+run ends as incomplete. The OpenAPI golden gains the route, its request and
+response types, and `release_refused`; the daemon advertises the
+`operator_release` feature.
