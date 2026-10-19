@@ -27,6 +27,8 @@ pub(super) struct Archive {
     pub docker: Option<playtime_runner::docker::Profile>,
     docker_engine: Option<playtime_docker::Engine>,
     pub live: Option<Arc<Live>>,
+    /// Reviewed catalog recipes, by id. They run on the live model.
+    pub recipes: std::collections::BTreeMap<String, playtime_runner::docker::Recipe>,
 }
 /// The live model as the daemon reaches it: host bindings frozen at startup
 /// and an adapter for read-only identity checks at admission.
@@ -108,6 +110,7 @@ impl Archive {
             docker: None,
             docker_engine: None,
             live: None,
+            recipes: Default::default(),
             bundle: Arc::new(bundle),
             scenario,
             bytes,
@@ -220,6 +223,54 @@ impl Archive {
         self.live = Some(Arc::new(live));
         Ok(())
     }
+    /// Catalog recipes run on the live model, so this needs `enable_live` first.
+    pub fn enable_recipes(
+        &mut self,
+        recipes: Vec<playtime_runner::docker::Recipe>,
+    ) -> life::Result<()> {
+        if recipes.is_empty() {
+            return Ok(());
+        }
+        if self.live.is_none() {
+            return Err(Error::Invalid("catalog recipes need the live model"));
+        }
+        for recipe in recipes {
+            self.recipes.insert(recipe.id.clone(), recipe);
+        }
+        if self
+            .recipes
+            .keys()
+            .any(|id| self.recipe_profile(id).is_none())
+        {
+            return Err(Error::Invalid("invalid catalog recipe"));
+        }
+        Ok(())
+    }
+    fn recipe_profile(&self, id: &str) -> Option<playtime_runner::docker::Profile> {
+        let (docker, live) = (self.docker.as_ref()?, self.live.as_ref()?);
+        playtime_runner::docker::Profile::freeze_recipe(
+            self.recipes.get(id)?.clone(),
+            docker.selection.clone(),
+            docker.daemon.clone(),
+            live.host.clone(),
+        )
+        .ok()
+    }
+    /// The effective recipe: the profile frozen at admission, seeds included.
+    pub fn recipe_preview(&self, id: &str) -> Option<Preview> {
+        let profile = self.recipe_profile(id)?;
+        let mut preview = self.model_preview(&profile, id, RunMode::Experiment)?;
+        let seeds = &profile.recipe.as_ref()?.seeds;
+        preview.seeds = SeedSummary {
+            files: seeds.len() as u64,
+            bytes: seeds.values().map(|s| s.len() as u64).sum(),
+            digests: seeds
+                .values()
+                .map(|s| digest(s.as_bytes()).to_string())
+                .collect(),
+        };
+        Some(preview)
+    }
     fn live_profile(&self) -> Option<playtime_runner::docker::Profile> {
         let (docker, live) = (self.docker.as_ref()?, self.live.as_ref()?);
         playtime_runner::docker::Profile::freeze_live(
@@ -231,16 +282,29 @@ impl Archive {
     }
     pub fn live_preview(&self) -> Option<Preview> {
         let profile = self.live_profile()?;
+        self.model_preview(
+            &profile,
+            playtime_runner::docker::LIVE_RECIPE,
+            RunMode::LiveSmoke,
+        )
+    }
+    /// A live-model run's preview. The frozen profile is its effective
+    /// configuration, and the revision covers it.
+    fn model_preview(
+        &self,
+        profile: &playtime_runner::docker::Profile,
+        recipe: &str,
+        mode: RunMode,
+    ) -> Option<Preview> {
         let mut preview = self.docker_preview()?;
         let advertised = &self.bundle.descriptor().capabilities.docker_profile;
-        preview.recipe_id = RecipeId::new(playtime_runner::docker::LIVE_RECIPE).unwrap();
-        preview.mode = RunMode::LiveSmoke;
+        preview.recipe_id = RecipeId::new(recipe).ok()?;
+        preview.mode = mode;
         preview.preview_revision = PreviewRevision::new(
-            digest(&serde_json::to_vec(&(&profile, self.bundle.id(), advertised)).unwrap())
-                .as_str(),
+            digest(&serde_json::to_vec(&(profile, self.bundle.id(), advertised)).unwrap()).as_str(),
         )
         .unwrap();
-        preview.effective_configuration = serde_json::to_value(&profile).unwrap();
+        preview.effective_configuration = serde_json::to_value(profile).unwrap();
         preview.parameters = profile.scenario.parameters.clone();
         preview.prompt = profile.scenario.prompt.clone();
         preview.protocol = profile.scenario.protocol.clone();
@@ -434,6 +498,17 @@ impl ArchivePort for Archive {
                 .await
                 .map_err(|_| Error::Invalid("locked Docker readiness changed"))
         };
+        // Busy while another live run holds the lock; then the workshop and
+        // the model must still be what was frozen.
+        let live_ready = || async {
+            let live = self.live.as_ref().ok_or(Error::Uncertain)?;
+            let path = live.host.live_lock.clone();
+            tokio::task::spawn_blocking(move || probe_live_lock(&path))
+                .await
+                .map_err(|_| Error::Uncertain)??;
+            docker_ready().await?;
+            live.ready().await
+        };
         let preview = if request.recipe_id == playtime_runner::docker::RECIPE
             && request.mode == RunMode::ScriptedSmoke
         {
@@ -448,13 +523,15 @@ impl ArchivePort for Archive {
             let preview = self
                 .live_preview()
                 .ok_or(Error::Invalid("unsupported recipe or mode"))?;
-            let live = self.live.as_ref().ok_or(Error::Uncertain)?;
-            let path = live.host.live_lock.clone();
-            tokio::task::spawn_blocking(move || probe_live_lock(&path))
-                .await
-                .map_err(|_| Error::Uncertain)??;
-            docker_ready().await?;
-            live.ready().await?;
+            live_ready().await?;
+            preview
+        } else if request.mode == RunMode::Experiment
+            && self.recipes.contains_key(&request.recipe_id)
+        {
+            let preview = self
+                .recipe_preview(&request.recipe_id)
+                .ok_or(Error::Invalid("unsupported recipe or mode"))?;
+            live_ready().await?;
             preview
         } else if request.recipe_id == "two-session" && request.mode == RunMode::Simulation {
             self.preview()
@@ -475,7 +552,8 @@ impl ArchivePort for Archive {
         let docker = match admission.request.mode {
             RunMode::ScriptedSmoke => Some(self.docker.clone()),
             RunMode::LiveSmoke => Some(self.live_profile()),
-            _ => None,
+            RunMode::Experiment => Some(self.recipe_profile(&admission.request.recipe_id)),
+            RunMode::Simulation => None,
         }
         .map(|profile| profile.ok_or(Error::Invalid("unsupported recipe or mode")))
         .transpose()?;

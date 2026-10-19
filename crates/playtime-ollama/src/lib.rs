@@ -13,7 +13,7 @@ pub use identity::{Inspection, ModelLock, Profile};
 pub use observation::{
     Observation, ObservationKind, ObservationReceiver, ObservationSender, observations,
 };
-pub use request::{EffectiveSettings, Thinking, encode_request};
+pub use request::{EffectiveSettings, THINKING_LEVELS, Thinking, encode_request};
 use serde::{Deserialize, Serialize};
 pub use stream::{AssistantMessage, Decoder};
 pub use tokio_util::sync::CancellationToken;

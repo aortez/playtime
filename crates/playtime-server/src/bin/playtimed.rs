@@ -16,6 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut docker_executable = PathBuf::from("/usr/bin/docker");
     let mut docker_socket = PathBuf::from("/var/run/docker.sock");
     let mut ollama_endpoint = None;
+    let mut recipes = None;
     let mut listen: SocketAddr = "127.0.0.1:8766".parse()?;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -28,10 +29,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--docker-executable" => docker_executable = args.next().ok_or("missing Docker executable")?.into(),
             "--docker-socket" => docker_socket = args.next().ok_or("missing Docker socket")?.into(),
             "--ollama-endpoint" => ollama_endpoint = Some(args.next().ok_or("missing Ollama endpoint")?),
-            _ => return Err("usage: playtimed --root <existing-private-root> --bundle <frozen-bundle> [--listen 127.0.0.1:8766] [--cpu-test-supervisor] [--docker-scripted [--docker-executable <path>] [--docker-socket <path>] [--ollama-endpoint <http-url>]]".into()),
+            "--recipes" => recipes = Some(PathBuf::from(args.next().ok_or("missing recipe directory")?)),
+            _ => return Err("usage: playtimed --root <existing-private-root> --bundle <frozen-bundle> [--listen 127.0.0.1:8766] [--cpu-test-supervisor] [--docker-scripted [--docker-executable <path>] [--docker-socket <path>] [--ollama-endpoint <http-url> [--recipes <catalog-directory>]]]".into()),
         }
     }
     let root = root.ok_or("--root is required")?;
+    // Every catalog recipe is checked here, before the daemon opens.
+    let recipes = match &recipes {
+        Some(_) if ollama_endpoint.is_none() => {
+            return Err("--recipes needs --ollama-endpoint".into());
+        }
+        Some(directory) => playtime_server::daemon::catalog::load(directory)
+            .map_err(|e| format!("invalid recipe catalog: {e}"))?,
+        None => vec![],
+    };
     let bundle = bundle
         .ok_or("--bundle is required; build it explicitly with xtask before running the daemon")?;
     if !listen.ip().is_loopback() {
@@ -50,6 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cpu_test,
             docker.then_some((docker_executable.as_path(), docker_socket.as_path())),
             ollama_endpoint.as_deref(),
+            recipes,
         )
         .await?,
     );
