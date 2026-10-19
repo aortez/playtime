@@ -280,9 +280,10 @@ fn execute_with(
     if case == FaultCase::CancelPublication {
         options.writer_hooks = Box::new(CancelPublication(cancel));
     }
-    // Publication fault tests need a short wait; live tests only observe commits.
+    // The publication fault test's late write must outlast this wait, and an
+    // ordinary fsync on a busy runner must not. Live tests only observe commits.
     if hooks.is_some() && !is_live {
-        options.publication_wait = Duration::from_millis(50);
+        options.publication_wait = Duration::from_secs(1);
     }
     if let Some(hooks) = hooks {
         options.writer_hooks = hooks;
@@ -421,7 +422,7 @@ impl playtime_runner::WriterHooks for PublicationFault {
             self.count += 1;
             if self.count == 2 {
                 if self.late {
-                    std::thread::sleep(Duration::from_millis(500));
+                    std::thread::sleep(Duration::from_secs(3));
                 } else {
                     return Err(Error::Uncertain(
                         "injected second publication failure".into(),
@@ -452,7 +453,7 @@ fn native_publication_failure_and_late_receipt_keep_prior_frontier_and_original_
                 .pending_publication
                 .expect("late write owner retained");
             assert!(playtime_storage::WriterLock::try_acquire(temp.0.join("archive")).is_err());
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
             let receipt = loop {
                 if let Some(r) = pending.poll() {
                     break r.unwrap();
