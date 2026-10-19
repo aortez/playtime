@@ -22,6 +22,12 @@ cargo run --locked -p playtime-ui -- \
   --connection-file /absolute/service-root/.playtime/connection.json
 ```
 
+The service root and every directory above it must belong to you or root and
+must not be group- or world-writable; only a root-owned sticky directory such as
+`/tmp` may be. Otherwise `playtimed` exits at startup with `invalid or unsafe
+local credential/discovery file`. `mkdir -m 700` sets only the root's own mode,
+so a parent created under umask 002 still trips this; `chmod g-w` that parent.
+
 `--docker-scripted` enables the additional service-owned catalog entry. Default
 Docker selection is `/usr/bin/docker` and `/var/run/docker.sock`; an operator can
 supply `--docker-executable` and `--docker-socket` before service startup. Clients
@@ -145,6 +151,12 @@ the admission and private ownership evidence reserved. Restart can inspect saved
 confirmed prefixes but does not launch a replacement, finalize, recover, abandon
 or release these runs. Those joins remain #59/#43.
 
+The worker applies the same rule to controller simulation. A simulation run that
+ends interrupted, with an infrastructure failure or with incomplete cleanup shows
+`Reconciling`, not `Running`. Its admission stays reserved as before, because
+normal completion already refused such runs; `playtime runs release` (#80) frees
+it.
+
 ## Executable evidence
 
 ```sh
@@ -181,6 +193,9 @@ A separate explicit probe kills the original systemd worker after its first
 confirmed tool reply. It verifies no replacement/tool replay, a blocked new
 admission and retained `Reconciling` ownership, including after daemon restart.
 Its disposable admission ledger and private proposal records remain on disk.
+The killed worker also leaves a failed `playtime-<id>.service` user unit, so
+`systemctl --user is-system-running` reports `degraded`. Clear it with
+`systemctl --user reset-failed 'playtime-*'`, which leaves active units alone.
 Test-only teardown removes only its
 three independently verified resources after original-worker death; it neither
 writes recovery evidence into the archive nor releases admission. Default CPU CI
