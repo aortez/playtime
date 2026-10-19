@@ -20,7 +20,7 @@ fn hundred_thousand_records_use_bounded_cache_and_virtualized_layout() {
     let mut app = Workbench::default();
     app.model.launcher = false;
     app.model.following = false;
-    app.model.window = index.window(0, 64);
+    app.model.window = index.window(View::Readable, 0, 64);
     let mut h = Harness::builder()
         .with_size([900.0, 600.0])
         .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);

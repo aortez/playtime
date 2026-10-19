@@ -33,10 +33,19 @@ original request and a saved acknowledgment. A fresh launch that the service
 refuses before admission (`run_busy` or `stale_preview`) has nothing to recover,
 so its receipt is removed; a `run_busy` refusal names the run holding the slot.
 The default Readable timeline groups #42 observations by stable
-session/request/tool identities. Full and individual expansion reveal recorded
-sections; source inspection pages exact JSON. Follow controls scrolling only.
-Expanding, collapsing or changing disclosure keeps the toggled row, or else the
-top row, in place. The run header and list name the orchestration reason, so an
+session/request/tool identities. Compact and Readable show each step once: they
+leave out the archive records that repeat the observations (`run_started`,
+`phase_changed`, `effect_intent`, `request_finished`, `command_finished` and
+`session_ended`), and show `session_started`, `checkpoint_published` and
+`run_finished` as one-line markers. A session marker says whether the session
+received a memento, a checkpoint marker lists the files and images it saved and
+which are new or changed, and the run's marker gives the outcome, cleanup and
+tokens charged. Full lists every record as a card, as stored. Unknown records keep
+their source-retained card in every view. Full and individual expansion reveal
+recorded sections; source inspection pages exact JSON for every row, markers
+included. Follow controls scrolling only. Expanding, collapsing or changing
+disclosure keeps the toggled row, or else the top row, in place; moving between
+Full and the other views asks the backend where that row is in the new list. The run header and list name the orchestration reason, so an
 operator release reads "released by operator". A run the daemon stopped
 monitoring shows its `playtime runs release` command, and Cancel is off once the
 worker has stopped.

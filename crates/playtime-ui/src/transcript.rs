@@ -1,7 +1,7 @@
 //! Bounded transcript index and payload working set. Used only by background work.
 use playtime_protocol::{
     api::EventCursor,
-    events::{EventEnvelope, EventPayload, decode_event},
+    events::{CleanupOutcome, EventEnvelope, EventPayload, KnownEvent, MemoryRef, decode_event},
     observations::{KnownObservation, ObservationPayload},
 };
 use sha2::{Digest, Sha256};
@@ -31,7 +31,16 @@ pub struct Section {
     pub label: String,
     pub text: String,
 }
-#[derive(Clone, Debug)]
+/// Which records the timeline lists. Compact and Readable share `Readable`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum View {
+    /// Activity once, with one-line markers instead of archive bookkeeping.
+    #[default]
+    Readable,
+    /// Every record as a card.
+    Full,
+}
+#[derive(Clone, Debug, Default)]
 pub struct Row {
     pub id: usize,
     pub first_sequence: u64,
@@ -41,6 +50,10 @@ pub struct Row {
     pub sources: String,
     pub sections: Vec<Section>,
     pub needs_loading: bool,
+    /// A one-line marker in place of an archive record's card.
+    pub marker: bool,
+    /// The session whose checkpoint the marker announces.
+    pub checkpoint: Option<String>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Window {
@@ -48,6 +61,8 @@ pub struct Window {
     pub total: usize,
     pub rows: Vec<Row>,
     pub metrics: Metrics,
+    /// A requested row and its index in this view, to keep it in place.
+    pub anchor: Option<(usize, usize)>,
 }
 #[derive(Clone, Debug)]
 pub struct SourcePage {
@@ -75,6 +90,20 @@ struct Group {
     status: String,
     sources: Vec<u64>,
     final_sequence: Option<u64>,
+    role: Role,
+}
+/// How the readable view shows a group. Full shows every group as a card.
+#[derive(Clone, Debug, Default, PartialEq)]
+enum Role {
+    #[default]
+    Activity,
+    /// An archive record that repeats what the observations already show.
+    Bookkeeping,
+    /// A session start, a checkpoint or the run's end, as one line.
+    Marker {
+        text: String,
+        checkpoint: Option<String>,
+    },
 }
 #[derive(Default)]
 pub struct Transcript {
@@ -83,6 +112,7 @@ pub struct Transcript {
     groups: Vec<Group>,
     keys: BTreeMap<String, usize>,
     order: Vec<usize>,
+    readable: Vec<usize>,
     pages: Vec<String>,
     cache: BTreeMap<u64, Cached>,
     lru: VecDeque<u64>,
@@ -117,6 +147,91 @@ pub fn source_page(text: &str, offset: usize) -> SourcePage {
 fn json(value: &impl serde::Serialize) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "Unavailable source".into())
 }
+/// Formats a count with thousands separators, such as 300,000.
+pub fn thousands(value: u64) -> String {
+    let digits = value.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+/// Formats a byte count, such as 512 bytes or 1.5 KiB.
+pub fn size(bytes: u64) -> String {
+    match bytes {
+        0..1024 => format!("{bytes} bytes"),
+        1024..1_048_576 => format!("{:.1} KiB", bytes as f64 / 1024.0),
+        _ => format!("{:.1} MiB", bytes as f64 / 1_048_576.0),
+    }
+}
+/// A wire value such as `session_limit` as words.
+fn words(value: &impl serde::Serialize) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(|text| text.replace('_', " ")))
+        .unwrap_or_else(|| "unavailable".into())
+}
+/// Session starts, checkpoints and the run's end become markers; the other
+/// archive records repeat the observations.
+fn role(event: &KnownEvent) -> Role {
+    let (text, checkpoint) = match event {
+        KnownEvent::SessionStarted {
+            session_id,
+            ordinal,
+            memento,
+            ..
+        } => (
+            format!(
+                "{} · Session {ordinal} started {}",
+                session_id.as_str(),
+                match memento {
+                    MemoryRef::Available { content } =>
+                        format!("with a memento ({})", size(content.size_bytes)),
+                    MemoryRef::Missing => "without a memento".into(),
+                    MemoryRef::Unavailable { reason } =>
+                        format!("without its memento: {}", excerpt(reason, 120)),
+                }
+            ),
+            None,
+        ),
+        KnownEvent::CheckpointPublished { checkpoint } => (
+            format!(
+                "{} · Checkpoint saved {}",
+                checkpoint.session_id.as_str(),
+                match &checkpoint.memento {
+                    MemoryRef::Available { .. } => "with a memento",
+                    MemoryRef::Missing => "without a memento",
+                    MemoryRef::Unavailable { .. } => "with its memento unavailable",
+                }
+            ),
+            Some(checkpoint.session_id.as_str().to_owned()),
+        ),
+        KnownEvent::RunFinished {
+            reason,
+            usage,
+            cleanup,
+            ..
+        } => (
+            format!(
+                "Run finished: {} · cleanup {} · {} tokens charged",
+                words(reason),
+                match cleanup {
+                    CleanupOutcome::Complete => "complete".into(),
+                    CleanupOutcome::Failed { errors } =>
+                        format!("failed ({} errors)", errors.len()),
+                    CleanupOutcome::Unknown => "unknown".into(),
+                },
+                thousands(usage.budget_charged_tokens)
+            ),
+            None,
+        ),
+        _ => return Role::Bookkeeping,
+    };
+    Role::Marker { text, checkpoint }
+}
 struct Projection {
     key: String,
     title: String,
@@ -124,6 +239,7 @@ struct Projection {
     status: String,
     parts: Vec<Section>,
     final_response: bool,
+    role: Role,
 }
 fn project(event: &EventEnvelope) -> Result<Projection, String> {
     let decoded = decode_event(&serde_json::to_string(event).map_err(|e| e.to_string())?)
@@ -135,6 +251,7 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
         status: "Recorded".into(),
         parts: vec![],
         final_response: false,
+        role: Role::Activity,
     };
     if let EventPayload::Observation(observation) = decoded.payload() {
         let o = observation.observation();
@@ -302,8 +419,13 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
             label: "Source data".into(),
             text: json(&event.data),
         });
-        if matches!(decoded.payload(), EventPayload::Unknown { .. }) {
-            p.status = "Unknown event · source retained".into();
+        match decoded.payload() {
+            EventPayload::Known(known) => p.role = role(known),
+            EventPayload::Control(_) if event.kind == "effect_intent" => {
+                p.role = Role::Bookkeeping;
+            }
+            EventPayload::Unknown { .. } => p.status = "Unknown event · source retained".into(),
+            _ => (),
         }
     }
     if let Some(section) = p
@@ -363,11 +485,15 @@ impl Transcript {
         }
         let p = project(&event)?;
         let existing = self.keys.get(&p.key).copied();
+        let marker = match &p.role {
+            Role::Marker { text, .. } => text.len() + 64,
+            Role::Activity | Role::Bookkeeping => 0,
+        };
         // Conservative per-node overhead includes B-tree slots, source and order
         // indexes. Strings are counted separately; full source lives in the LRU.
         let cost = 192
             + if existing.is_none() {
-                384 + p.key.len() * 2 + p.title.len() + 256 + 160
+                384 + p.key.len() * 2 + p.title.len() + 256 + 176 + marker
             } else {
                 0
             };
@@ -383,11 +509,9 @@ impl Transcript {
                 status: String::new(),
                 sources: vec![],
                 final_sequence: None,
+                role: p.role.clone(),
             });
-            let slot = self
-                .order
-                .partition_point(|id| self.groups[*id].first < seq);
-            self.order.insert(slot, id);
+            self.place(id);
             id
         });
         let group = &mut self.groups[id];
@@ -407,10 +531,8 @@ impl Transcript {
         if seq < group.first {
             group.first = seq;
             self.order.retain(|old| *old != id);
-            let slot = self
-                .order
-                .partition_point(|id| self.groups[*id].first < seq);
-            self.order.insert(slot, id);
+            self.readable.retain(|old| *old != id);
+            self.place(id);
         }
         self.records.insert(
             seq,
@@ -424,6 +546,34 @@ impl Transcript {
         self.metrics.records = self.records.len();
         self.metrics.rows = self.groups.len();
         Ok(true)
+    }
+    /// Inserts a group by its first record into every order that lists it.
+    fn place(&mut self, id: usize) {
+        let first = self.groups[id].first;
+        let slot = self
+            .order
+            .partition_point(|old| self.groups[*old].first < first);
+        self.order.insert(slot, id);
+        if self.groups[id].role != Role::Bookkeeping {
+            let slot = self
+                .readable
+                .partition_point(|old| self.groups[*old].first < first);
+            self.readable.insert(slot, id);
+        }
+    }
+    fn order(&self, view: View) -> &[usize] {
+        match view {
+            View::Readable => &self.readable,
+            View::Full => &self.order,
+        }
+    }
+    /// The index of a row in `view`, or of the next row listed there when the
+    /// view leaves it out.
+    pub fn position(&self, view: View, id: usize) -> Option<usize> {
+        let first = self.groups.get(id)?.first;
+        let order = self.order(view);
+        let index = order.partition_point(|old| self.groups[*old].first < first);
+        (!order.is_empty()).then(|| index.min(order.len() - 1))
     }
     fn put(&mut self, seq: u64, raw: Arc<str>, parts: Vec<Section>) {
         if let Some(old) = self.cache.remove(&seq) {
@@ -452,16 +602,20 @@ impl Transcript {
         self.cache.insert(seq, Cached { raw, parts, bytes });
         self.lru.push_back(seq);
     }
-    pub fn window(&self, start: usize, count: usize) -> Window {
-        let start = start.min(self.order.len());
+    pub fn window(&self, view: View, start: usize, count: usize) -> Window {
+        let order = self.order(view);
+        let start = start.min(order.len());
         let mut budget = TEXT_BYTES;
-        let rows = self
-            .order
+        let rows = order
             .iter()
             .skip(start)
             .take(count.min(WINDOW_ROWS))
             .map(|id| {
                 let g = &self.groups[*id];
+                let marker = match (&g.role, view) {
+                    (Role::Marker { text, checkpoint }, View::Readable) => Some((text, checkpoint)),
+                    _ => None,
+                };
                 let mut sections: Vec<Section> = vec![];
                 let mut missing = false;
                 for seq in &g.sources {
@@ -497,12 +651,16 @@ impl Transcript {
                         }
                     }
                 }
+                let (title, excerpt, status) = match marker {
+                    Some((text, _)) => (text.clone(), String::new(), String::new()),
+                    None => (g.title.clone(), g.excerpt.clone(), g.status.clone()),
+                };
                 Row {
                     id: *id,
                     first_sequence: g.first,
-                    title: g.title.clone(),
-                    excerpt: g.excerpt.clone(),
-                    status: g.status.clone(),
+                    title,
+                    excerpt,
+                    status,
                     sources: format!(
                         "{} source records · first {} · last {}",
                         g.sources.len(),
@@ -511,14 +669,17 @@ impl Transcript {
                     ),
                     sections,
                     needs_loading: missing,
+                    marker: marker.is_some(),
+                    checkpoint: marker.and_then(|(_, checkpoint)| checkpoint.clone()),
                 }
             })
             .collect();
         Window {
             start,
-            total: self.order.len(),
+            total: order.len(),
             rows,
             metrics: self.metrics.clone(),
+            anchor: None,
         }
     }
     pub fn sources(&self, id: usize) -> Vec<u64> {
