@@ -147,6 +147,9 @@ pub enum Data {
     PreviewError(String),
     PreviewPage(SourcePage),
     LaunchProgress(Mutation, Option<LaunchReceipt>),
+    /// A fresh key's request was refused before admission and its receipt
+    /// discarded. The flag marks `run_busy`.
+    LaunchRefused(String, bool),
     Accepted(Box<LaunchResponse>, LaunchReceipt),
     Run(Box<RunViewData>),
     Cancellation(Box<RunViewData>),
@@ -441,8 +444,10 @@ impl Model {
         }
         // A preview refresh or navigation does not resolve a submitted launch.
         // Only another explicit launch/recovery operation supersedes its replies.
-        if matches!(&reply.data, Data::LaunchProgress(..) | Data::Accepted(..))
-            && reply.tag.launch != self.tag.launch
+        if matches!(
+            &reply.data,
+            Data::LaunchProgress(..) | Data::LaunchRefused(..) | Data::Accepted(..)
+        ) && reply.tag.launch != self.tag.launch
         {
             return;
         }
@@ -532,6 +537,14 @@ impl Model {
                 if saved.is_some() {
                     self.saved = saved;
                 }
+            }
+            Data::LaunchRefused(error, busy) => {
+                // Nothing was admitted, so a fresh launch stays available and
+                // there is no saved request left to look up or retry.
+                self.launch = Mutation::Rejected(self.refusal(&error, busy));
+                self.saved = None;
+                self.command(Action::Receipts(None));
+                self.command(Action::Runs(None));
             }
             Data::Accepted(accepted, saved) => {
                 self.launch = Mutation::Accepted;
@@ -656,6 +669,31 @@ impl Model {
             }
         }
     }
+    fn refusal(&self, error: &str, busy: bool) -> String {
+        let mut text = format!(
+            "Launch refused ({error}). The service admitted nothing, so the saved request was discarded."
+        );
+        if busy {
+            match self
+                .runs
+                .iter()
+                .find(|run| run.orchestration.state != OrchestrationState::Terminal)
+            {
+                Some(run) if awaiting_release(run) => text.push_str(&format!(
+                    " Run {0} holds the slot until `playtime runs release {0} --reason TEXT`.",
+                    run.run_id
+                )),
+                Some(run) => text.push_str(&format!(
+                    " Run {} holds the slot while it is {:?}.",
+                    run.run_id, run.orchestration.state
+                )),
+                None => {
+                    text.push_str(" Another run holds the slot, possibly from another checkout.")
+                }
+            }
+        }
+        text
+    }
     pub fn stop_animation(&mut self) {
         if self.playing {
             self.playing = false;
@@ -704,6 +742,16 @@ impl Model {
         }
         self.command(action);
     }
+}
+
+/// The daemon stopped monitoring a run that isn't Terminal, so it keeps the slot
+/// until `playtime runs release`. This matches the CLI's `awaiting_release`.
+pub fn awaiting_release(view: &RunView) -> bool {
+    view.orchestration.state == OrchestrationState::Reconciling
+        && matches!(
+            view.orchestration.reason.as_deref(),
+            Some("worker_unavailable" | "coordinator_restarted")
+        )
 }
 
 fn snapshot_time(time: &playtime_core::UtcTime) -> (&str, [u8; 9]) {

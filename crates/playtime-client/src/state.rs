@@ -159,6 +159,21 @@ impl ReceiptStore {
         )?;
         Ok(receipt)
     }
+    /// Removes a receipt whose request the service definitively refused. Only a
+    /// refusal of a fresh key's first request qualifies: a failed lookup or retry
+    /// never proves that the original request was not admitted.
+    pub fn discard(&self, saved: &LaunchReceipt) -> Result<()> {
+        let directory = self.open(false)?;
+        let _lock = directory.lock()?;
+        let Some(receipt) = read_receipt(&directory, &saved.key)? else {
+            return Ok(());
+        };
+        if receipt.pending() != saved.pending() || receipt.run_id.is_some() {
+            return Err(StateError::Conflict);
+        }
+        directory.remove(&format!("{}.json", saved.key))?;
+        Ok(())
+    }
     pub fn list(&self, after: Option<&IdempotencyKey>, limit: usize) -> Result<ReceiptPage> {
         if !(1..=1000).contains(&limit) {
             return Err(StateError::Invalid);

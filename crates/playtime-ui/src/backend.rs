@@ -427,8 +427,20 @@ pub fn prepare_preview(value: Preview) -> PreviewView {
 pub fn prepare_run(value: RunView) -> RunViewData {
     let mut summary = vec![
         format!(
-            "Mode {:?} · orchestration {:?} · controller {:?}",
-            value.mode, value.orchestration.state, value.controller_phase
+            "Mode {:?} · orchestration {:?}{} · controller {}",
+            value.mode,
+            value.orchestration.state,
+            value
+                .orchestration
+                .reason
+                .as_deref()
+                .map_or(String::new(), |reason| format!(
+                    " · {}",
+                    orchestration_reason(reason)
+                )),
+            value
+                .controller_phase
+                .map_or("unavailable".into(), |phase| format!("{phase:?}"))
         ),
         format!(
             "Outcome: {}",
@@ -497,6 +509,15 @@ pub fn prepare_run(value: RunView) -> RunViewData {
         value,
         summary,
         source,
+    }
+}
+/// Reasons are snake_case API words. A released run must read differently from
+/// a completed one.
+pub fn orchestration_reason(reason: &str) -> String {
+    if reason == "operator_released" {
+        "released by operator".into()
+    } else {
+        reason.replace('_', " ")
     }
 }
 async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semaphore>) -> Result<()> {
@@ -629,7 +650,7 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
             }
         },
         Action::Checkpoints(run, cursor) => {
-            let page = client
+            let page = match client
                 .checkpoints(
                     &run,
                     &PageQuery {
@@ -638,7 +659,16 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                     },
                 )
                 .await
-                .map_err(safe)?;
+            {
+                // A just-admitted run has no archive identity yet. Its first
+                // published checkpoint changes the run view, which reloads this list.
+                Err(error) if error.api_code() == Some("evidence_not_ready") => Page {
+                    items: vec![],
+                    next_cursor: None,
+                    frontier: None,
+                },
+                result => result.map_err(safe)?,
+            };
             out.send(tag, Some(run), Data::Checkpoints(page)).await;
         }
         Action::Checkpoint(run, session) => {
@@ -859,6 +889,30 @@ async fn admission(
         Err(error) => {
             if attempt == LaunchAttempt::New && error.api_code() == Some("stale_preview") {
                 out.send(tag, None, Data::PreviewError("Frozen inputs changed; refresh and review the displayed preview before launching".into())).await;
+            }
+            // A fresh key has carried no other request, so refusing its only request
+            // before admission proves that nothing was admitted. Drop its receipt so
+            // it never reads as an unresolved launch that could be retried later.
+            if attempt == LaunchAttempt::New
+                && matches!(error.api_code(), Some("run_busy" | "stale_preview"))
+            {
+                let store = ReceiptStore::new(&s.resolved.state_dir);
+                let refused = saved.clone();
+                let data = match local(move || store.discard(&refused).map_err(|e| e.to_string()))
+                    .await
+                {
+                    Ok(()) => {
+                        Data::LaunchRefused(error.to_string(), error.api_code() == Some("run_busy"))
+                    }
+                    Err(local_error) => Data::LaunchProgress(
+                        Mutation::Rejected(format!(
+                            "{error}; its saved request remains because discarding it failed: {local_error}"
+                        )),
+                        Some(saved),
+                    ),
+                };
+                out.send(tag, None, data).await;
+                return Ok(());
             }
             // A recovery failure describes this lookup/retry, not the original
             // admission. Even 404, a rejected retry or a validation failure cannot

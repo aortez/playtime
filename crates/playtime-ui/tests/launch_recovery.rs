@@ -14,6 +14,8 @@ use tokio::sync::watch;
 enum Failure {
     Lookup(&'static str),
     Retry(&'static str),
+    /// Refuses every launch POST, including a fresh key's first.
+    Refuse(&'static str),
     InvalidLookup,
     MissingReceipt,
 }
@@ -33,7 +35,7 @@ impl Application for RecoveryFixture {
         self.inner.preview(id, q).await
     }
     async fn admit(&self, key: IdempotencyKey, request: LaunchRequest) -> Result<LaunchResponse> {
-        if let Some(Failure::Retry(code)) = *self.failure.lock().unwrap() {
+        if let Some(Failure::Retry(code) | Failure::Refuse(code)) = *self.failure.lock().unwrap() {
             return Err(ApiError::new(code));
         }
         self.inner.admit(key, request).await
@@ -101,7 +103,15 @@ async fn until(model: &mut Model, backend: &mut Backend, predicate: impl Fn(&Mod
     .await
     .unwrap();
 }
-async fn failed_recovery(failure: Failure, resolve_by_retry: bool) {
+struct Started {
+    root: TestRoot,
+    app: Arc<RecoveryFixture>,
+    server: playtime_server::http::RunningServer,
+    backend: Backend,
+    model: Model,
+}
+/// Connects a workbench model to a fresh fixture and waits until it may launch.
+async fn start() -> Started {
     let root = TestRoot::new().unwrap();
     let credentials = playtime_local::Credentials::initialize(&root.join("service")).unwrap();
     let service = ServiceId::new("review-lookup-outage").unwrap();
@@ -148,6 +158,22 @@ async fn failed_recovery(failure: Failure, resolve_by_retry: bool) {
         RunMode::Simulation,
     );
     until(&mut model, &mut backend, |m| m.can_launch()).await;
+    Started {
+        root,
+        app,
+        server,
+        backend,
+        model,
+    }
+}
+async fn failed_recovery(failure: Failure, resolve_by_retry: bool) {
+    let Started {
+        root,
+        app,
+        server,
+        mut backend,
+        mut model,
+    } = start().await;
     model.launch();
     until(&mut model, &mut backend, |m| {
         matches!(m.launch, Mutation::Unresolved(_))
@@ -249,4 +275,40 @@ async fn rejected_retry_does_not_reject_the_original_launch() {
 #[tokio::test]
 async fn local_recovery_failure_preserves_original_receipt_and_ambiguity() {
     failed_recovery(Failure::MissingReceipt, false).await;
+}
+#[tokio::test]
+async fn a_refused_new_launch_discards_its_receipt() {
+    for code in ["run_busy", "stale_preview"] {
+        let Started {
+            root,
+            app,
+            server,
+            mut backend,
+            mut model,
+        } = start().await;
+        *app.failure.lock().unwrap() = Some(Failure::Refuse(code));
+        model.launch();
+        until(&mut model, &mut backend, |m| {
+            matches!(m.launch, Mutation::Rejected(_))
+        })
+        .await;
+        let store = ReceiptStore::new(&root.join("state"));
+        assert!(
+            store.list(None, 10).unwrap().items.is_empty(),
+            "{code} left a receipt to look up or retry"
+        );
+        assert!(model.saved.is_none(), "{code} kept a saved request");
+        let Mutation::Rejected(message) = &model.launch else {
+            unreachable!()
+        };
+        assert!(message.contains(code), "{message}");
+        if code == "run_busy" {
+            assert!(
+                model.can_launch(),
+                "nothing was admitted, so launch stays open"
+            );
+        }
+        drop(backend);
+        server.stop().await.unwrap();
+    }
 }

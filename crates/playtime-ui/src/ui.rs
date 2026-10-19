@@ -6,8 +6,8 @@ use crate::{
 };
 use egui::{Color32, RichText, Vec2};
 use playtime_client::config::Options;
-use playtime_core::RunMode;
-use playtime_protocol::api::{ContentAvailability, OrchestrationState};
+use playtime_core::{RunId, RunMode};
+use playtime_protocol::api::{ContentAvailability, Enforcement, OrchestrationState, RunView};
 use std::{path::PathBuf, sync::Arc};
 
 const ACCENT: Color32 = Color32::from_rgb(96, 214, 185);
@@ -26,6 +26,14 @@ pub struct Workbench {
     requested_range: Option<(usize, usize)>,
     pub options: Options,
     previous_narrow: Option<bool>,
+    timeline: Option<TimelineView>,
+    timeline_anchor: Option<usize>,
+}
+/// The last timeline layout, so a row-height change can keep a row in place.
+struct TimelineView {
+    run: Option<RunId>,
+    row_height: f32,
+    offset: f32,
 }
 
 impl Workbench {
@@ -232,7 +240,7 @@ impl Workbench {
                     if ui
                         .selectable_label(
                             self.model.selected.as_ref() == Some(&run.run_id),
-                            format!("Run {} · {:?}", run.run_id, run.orchestration.state),
+                            format!("Run {} · {}", run.run_id, run_state(run)),
                         )
                         .clicked()
                     {
@@ -261,28 +269,24 @@ impl Workbench {
                     .filter(|r| r.run_id.is_none())
                     .take(200)
                 {
-                    ui.label(brief(receipt.key.as_str(), 44));
-                    ui.horizontal(|ui| {
+                    // A full key is wider than the panel, and an overflowing row widens
+                    // the panel's allocation past what it paints. The key prefix keeps
+                    // each control's name distinct.
+                    ui.add(egui::Label::new(receipt.key.as_str()).truncate());
+                    let prefix = brief(receipt.key.as_str(), 8);
+                    let enabled = !matches!(
+                        self.model.launch,
+                        Mutation::Submitting | Mutation::Recording
+                    );
+                    ui.horizontal_wrapped(|ui| {
                         if ui
-                            .add_enabled(
-                                !matches!(
-                                    self.model.launch,
-                                    Mutation::Submitting | Mutation::Recording
-                                ),
-                                egui::Button::new(format!("Lookup {}", receipt.key)),
-                            )
+                            .add_enabled(enabled, egui::Button::new(format!("Look up {prefix}")))
                             .clicked()
                         {
                             action = Some(Action::Recover(receipt.key.clone(), false));
                         }
                         if ui
-                            .add_enabled(
-                                !matches!(
-                                    self.model.launch,
-                                    Mutation::Submitting | Mutation::Recording
-                                ),
-                                egui::Button::new(format!("Retry {}", receipt.key)),
-                            )
+                            .add_enabled(enabled, egui::Button::new(format!("Retry {prefix}")))
                             .clicked()
                         {
                             action = Some(Action::Recover(receipt.key.clone(), true));
@@ -381,15 +385,19 @@ impl Workbench {
                 Mutation::Submitting => {
                     ui.label("Submitting saved request…");
                 }
-                Mutation::Unresolved(message) => {
-                    ui.colored_label(Color32::YELLOW, brief(message, 180));
-                }
-                Mutation::Rejected(message) => {
-                    ui.colored_label(Color32::LIGHT_RED, brief(message, 180));
-                }
                 _ => (),
             }
         });
+        // Outside the button row, so long messages wrap instead of being clipped.
+        match &self.model.launch {
+            Mutation::Unresolved(message) => {
+                ui.colored_label(Color32::YELLOW, brief(message, 500));
+            }
+            Mutation::Rejected(message) => {
+                ui.colored_label(Color32::LIGHT_RED, brief(message, 500));
+            }
+            _ => (),
+        }
         if let Some(saved) = &self.model.saved
             && matches!(
                 self.model.launch,
@@ -476,13 +484,26 @@ impl Workbench {
             for line in &run.summary {
                 ui.small(brief(line, 1000));
             }
+            if awaiting_release(&run.value) {
+                ui.colored_label(
+                    Color32::YELLOW,
+                    format!(
+                        "The daemon stopped monitoring this run, so it holds the slot until released: playtime runs release {} --reason TEXT",
+                        run.value.run_id
+                    ),
+                );
+            }
         }
+        // A stopped worker has nothing left to cancel.
         let can_cancel = self.model.connection == ConnectionState::Connected
-            && self
-                .model
-                .run
-                .as_ref()
-                .is_some_and(|r| r.value.orchestration.state != OrchestrationState::Terminal)
+            && self.model.run.as_ref().is_some_and(|r| {
+                r.value.orchestration.state != OrchestrationState::Terminal
+                    && !awaiting_release(&r.value)
+                    && r.value
+                        .cancellation
+                        .as_ref()
+                        .is_none_or(|c| c.enforcement != Enforcement::Stopped)
+            })
             && !matches!(self.model.cancellation, Mutation::Submitting);
         ui.horizontal(|ui| {
             for (label, mode) in [
@@ -546,7 +567,23 @@ impl Workbench {
         let mut range = (0, 32);
         let mut selection = None;
         let mut expansion = None;
-        let response = egui::ScrollArea::vertical().id_salt(("timeline", self.model.selected.clone())).stick_to_bottom(self.model.following).show_rows(ui, row_height, total, |ui, visible| {
+        let mut area = egui::ScrollArea::vertical()
+            .id_salt(("timeline", self.model.selected.clone()))
+            .stick_to_bottom(self.model.following);
+        // Every row shares one height, so changing it moves every row below the
+        // top of the list. Keep the toggled row, or else the top row, in place.
+        let anchor = self.timeline_anchor.take();
+        let spacing = ui.spacing().item_spacing.y;
+        if let Some(last) = &self.timeline
+            && !self.model.following
+            && last.run == self.model.selected
+            && last.row_height != row_height
+        {
+            let (old, new) = (last.row_height + spacing, row_height + spacing);
+            let row = anchor.unwrap_or((last.offset / old) as usize);
+            area = area.vertical_scroll_offset((last.offset + row as f32 * (new - old)).max(0.0));
+        }
+        let response = area.show_rows(ui, row_height, total, |ui, visible| {
             let start = visible.start.saturating_sub(2); range = (start, (visible.end - start + 2).min(WINDOW_ROWS));
             for i in visible {
                 self.metrics.laid_out_rows += 1;
@@ -556,7 +593,7 @@ impl Workbench {
                         egui::Frame::new().inner_margin(10).corner_radius(5).fill(if self.model.selected_row == Some(row.id) { Color32::from_rgb(31, 57, 57) } else { Color32::from_rgb(29, 34, 42) }).show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             ui.set_min_height(row_height - 28.0);
-                            ui.horizontal_wrapped(|ui| { ui.label(RichText::new(&row.title).color(ACCENT)); if ui.button(format!("{} activity {}", if self.model.expanded.contains(&row.id) { "Collapse" } else { "Expand" }, row.first_sequence)).clicked() { expansion = Some(row.id); }
+                            ui.horizontal_wrapped(|ui| { ui.label(RichText::new(&row.title).color(ACCENT)); if ui.button(format!("{} activity {}", if self.model.expanded.contains(&row.id) { "Collapse" } else { "Expand" }, row.first_sequence)).clicked() { expansion = Some((row.id, i)); }
                             if ui.button(format!("Inspect source {}", row.first_sequence)).clicked() { selection = Some((row.id, row.first_sequence)); } });
                             ui.small(&row.status);
                             if self.model.preferences.disclosure != Disclosure::Compact { text(ui, &row.excerpt, &mut self.metrics); }
@@ -572,6 +609,11 @@ impl Workbench {
                 });
             }
         });
+        self.timeline = Some(TimelineView {
+            run: self.model.selected.clone(),
+            row_height,
+            offset: response.state.offset.y,
+        });
         if ui.rect_contains_pointer(response.inner_rect)
             && ui.input(|i| i.smooth_scroll_delta.y != 0.0 || i.pointer.any_pressed())
         {
@@ -581,7 +623,8 @@ impl Workbench {
             self.requested_range = Some(range);
             self.model.command(Action::Window(range.0, range.1));
         }
-        if let Some(id) = expansion {
+        if let Some((id, index)) = expansion {
+            self.timeline_anchor = Some(index);
             self.model.following = false;
             if !self.model.expanded.remove(&id) {
                 if self.model.expanded.len() < 64 {
@@ -669,7 +712,7 @@ impl Workbench {
                             if ui.add_enabled(self.model.file_page + 20 < checkpoint.files.len(), egui::Button::new("Next files")).clicked() { self.model.file_page += 20; }
                         });
                         for file in checkpoint.files.iter().skip(self.model.file_page).take(20) {
-                            ui.separator(); ui.strong(brief(&file.name, 120)); ui.small(brief(&file.kind, 120));
+                            ui.separator(); ui.strong(brief(&file.name, 120)); ui.small(file_kind(&file.kind));
                             match &file.content {
                                 ContentAvailability::Available { artifact_id, content } => {
                                     ui.small(format!("{} bytes · session {}", content.size_bytes, checkpoint.checkpoint.session_id)); ui.small(content.sha256.to_string());
@@ -770,6 +813,26 @@ impl Workbench {
                 self.model.following = false;
             }
         }
+    }
+}
+/// The run list is narrow; the header shows the full orchestration reason.
+fn run_state(run: &RunView) -> String {
+    if awaiting_release(run) {
+        format!("{:?} · needs release", run.orchestration.state)
+    } else if run.orchestration.reason.as_deref() == Some("operator_released") {
+        format!("{:?} · released", run.orchestration.state)
+    } else {
+        format!("{:?}", run.orchestration.state)
+    }
+}
+/// Captured workspace entries carry their tar type flag.
+fn file_kind(kind: &str) -> &str {
+    match kind {
+        "0" | "\0" => "regular",
+        "1" => "hard link",
+        "2" => "symbolic link",
+        "5" => "directory",
+        other => brief(other, 120),
     }
 }
 fn brief(text: &str, max: usize) -> &str {

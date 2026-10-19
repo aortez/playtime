@@ -29,10 +29,17 @@ recent runs and unresolved launch receipts. Lookup/retry retains the original
 request and key. Failed recovery stays unresolved, including lookup 404/503,
 invalid replies, rejected retries and local receipt errors. These failures do not
 authorize a fresh launch; resolution requires a validated response for the
-original request and a saved acknowledgment. The default Readable timeline groups
-#42 observations by stable session/request/tool identities. Full and individual
-expansion reveal recorded sections; source inspection pages exact JSON. Follow
-controls scrolling only.
+original request and a saved acknowledgment. A fresh launch that the service
+refuses before admission (`run_busy` or `stale_preview`) has nothing to recover,
+so its receipt is removed; a `run_busy` refusal names the run holding the slot.
+The default Readable timeline groups #42 observations by stable
+session/request/tool identities. Full and individual expansion reveal recorded
+sections; source inspection pages exact JSON. Follow controls scrolling only.
+Expanding, collapsing or changing disclosure keeps the toggled row, or else the
+top row, in place. The run header and list name the orchestration reason, so an
+operator release reads "released by operator". A run the daemon stopped
+monitoring shows its `playtime runs release` command, and Cancel is off once the
+worker has stopped.
 Memory compares delivered/published sources; publication does not verify model
 claims. Files are saved versions, addressed only by opaque content IDs. Downloads
 require an explicit destination and use the shared verified, atomic download path.

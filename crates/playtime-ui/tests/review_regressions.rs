@@ -505,3 +505,211 @@ async fn one_transient_initial_run_failure_must_reconnect() {
 async fn later_history_failure_retries_the_same_page_after_progress() {
     transient_attachment_failure(2).await;
 }
+
+fn unresolved_receipt(
+    app: &playtime_ui::ui::Workbench,
+    key: &str,
+) -> playtime_client::state::LaunchReceipt {
+    let preview = &app.model.preview.as_ref().unwrap().value;
+    playtime_client::state::LaunchReceipt {
+        schema_version: 1,
+        service_id: app.model.service.clone().unwrap(),
+        endpoint: app.model.endpoint.clone(),
+        key: IdempotencyKey::new(key).unwrap(),
+        request: LaunchRequest {
+            recipe_id: preview.recipe_id.clone(),
+            mode: preview.mode,
+            preview_revision: preview.preview_revision.clone(),
+        },
+        created_at_unix_ms: 0,
+        run_id: None,
+    }
+}
+
+#[tokio::test]
+async fn an_unresolved_receipt_never_widens_the_run_panel() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    let mut app = common::demo(true).await;
+    // Workbench keys have 48 characters, wider than the panel at any width.
+    let key = "6dfc3079e9a7ee01e4920ada02397e59818d43e06f10b6fb";
+    app.model.receipts = vec![unresolved_receipt(&app, key)];
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut playtime_ui::ui::Workbench| app.draw(ui), app);
+    h.run();
+    let panel = h.state().model.preferences.left_width;
+    let retry = h.get_by_label_contains("Retry 6dfc3079").rect();
+    let launch = h.get_by_label("Launch experiment").rect();
+    assert!(
+        panel <= 360.0 && retry.right() <= panel && launch.left() < panel + 24.0,
+        "panel {panel}, retry {retry:?}, launcher {launch:?}"
+    );
+    h.get_by_label_contains("Retry 6dfc3079").click();
+    h.run();
+    assert!(
+        h.state()
+            .model
+            .commands
+            .iter()
+            .any(|c| matches!(&c.action, Action::Recover(saved, true) if saved.as_str() == key))
+    );
+}
+
+#[test]
+fn expanding_an_activity_keeps_it_in_place() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    use playtime_ui::transcript::{Row, Section, Window};
+    let mut app = playtime_ui::ui::Workbench::default();
+    app.model.launcher = false;
+    app.model.following = false;
+    app.model.window = Window {
+        total: 40,
+        rows: (0..40)
+            .map(|i| Row {
+                id: i,
+                first_sequence: i as u64 + 1,
+                title: format!("s1 · Model r{i}"),
+                excerpt: "Final response recorded".into(),
+                status: "Recorded".into(),
+                sources: "1 source record".into(),
+                sections: vec![Section {
+                    label: "Recorded model request".into(),
+                    text: "{}".into(),
+                }],
+                needs_loading: false,
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut playtime_ui::ui::Workbench| app.draw(ui), app);
+    h.run();
+    h.hover_at(egui::pos2(670.0, 600.0));
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -2400.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    // Wheel scrolling animates over several frames.
+    h.run_steps(8);
+    // Every row shares one height, so the lowest visible row moves furthest.
+    let (sequence, before) = (1..=40)
+        .filter_map(|n| {
+            h.query_by_label(&format!("Expand activity {n}"))
+                .map(|node| (n, node.rect()))
+        })
+        .filter(|(_, rect)| rect.top() > 300.0 && rect.bottom() < 850.0)
+        .last()
+        .expect("a visible row after scrolling");
+    assert!(sequence > 5, "the wheel did not scroll the timeline");
+    for (from, to) in [("Expand", "Collapse"), ("Collapse", "Expand")] {
+        h.get_by_label(&format!("{from} activity {sequence}"))
+            .click();
+        h.run();
+        let after = h.get_by_label(&format!("{to} activity {sequence}")).rect();
+        assert!(
+            (after.top() - before.top()).abs() < 2.0,
+            "{from} moved activity {sequence} from {} to {}",
+            before.top(),
+            after.top()
+        );
+    }
+}
+
+#[tokio::test]
+async fn released_and_stranded_runs_say_so_and_offer_no_cancel() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    let mut app = common::demo(false).await;
+    app.model.content = None;
+    let mut stranded = app.model.run.as_ref().unwrap().value.clone();
+    stranded.orchestration = Orchestration {
+        state: OrchestrationState::Reconciling,
+        reason: Some("worker_unavailable".into()),
+    };
+    let prepared = prepare_run(stranded.clone());
+    assert!(
+        prepared.summary[0].contains("orchestration Reconciling · worker unavailable")
+            && !prepared.summary[0].contains("Some("),
+        "{}",
+        prepared.summary[0]
+    );
+    app.model.runs = vec![stranded.clone()];
+    app.model.run = Some(prepared);
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut playtime_ui::ui::Workbench| app.draw(ui), app);
+    h.run();
+    let run = stranded.run_id.as_str().to_owned();
+    h.get_by_label(&format!("Run {run} · Reconciling · needs release"));
+    h.get_by_label_contains(&format!("playtime runs release {run} --reason TEXT"));
+    h.get_by_label("Cancel run").click();
+    h.run();
+
+    // A cancel the worker already obeyed leaves nothing to cancel either.
+    let mut stopped = cancelled(stranded.clone());
+    stopped.cancellation.as_mut().unwrap().enforcement = Enforcement::Stopped;
+    h.state_mut().model.run = Some(prepare_run(stopped));
+    h.run();
+    h.get_by_label("Cancel run").click();
+    h.run();
+    assert!(
+        !h.state()
+            .model
+            .commands
+            .iter()
+            .any(|c| matches!(c.action, Action::Cancel(_)))
+    );
+
+    let mut released = stranded;
+    released.orchestration = Orchestration {
+        state: OrchestrationState::Terminal,
+        reason: Some("operator_released".into()),
+    };
+    let summary = prepare_run(released.clone()).summary;
+    assert!(
+        summary[0].contains("orchestration Terminal · released by operator"),
+        "{}",
+        summary[0]
+    );
+    h.state_mut().model.runs = vec![released];
+    h.run();
+    h.get_by_label(&format!("Run {run} · Terminal · released"));
+}
+
+#[tokio::test]
+async fn a_busy_refusal_names_the_run_holding_the_slot() {
+    let mut app = common::demo(true).await;
+    let mut holder = app.model.run.as_ref().unwrap().value.clone();
+    holder.orchestration = Orchestration {
+        state: OrchestrationState::Reconciling,
+        reason: Some("worker_unavailable".into()),
+    };
+    app.model.runs = vec![holder.clone()];
+    app.model.saved = Some(unresolved_receipt(&app, "refused-busy"));
+    app.model.launch();
+    app.model.commands.clear();
+    app.model.apply(Reply {
+        tag: app.model.tag,
+        run: None,
+        data: Data::LaunchRefused("HTTP 409: run_busy".into(), true),
+    });
+    let Mutation::Rejected(message) = &app.model.launch else {
+        panic!("{:?}", app.model.launch);
+    };
+    assert!(
+        message.contains(&format!(
+            "playtime runs release {} --reason TEXT",
+            holder.run_id
+        )),
+        "{message}"
+    );
+    assert!(app.model.saved.is_none() && app.model.can_launch());
+    assert!(
+        app.model
+            .commands
+            .iter()
+            .any(|c| matches!(c.action, Action::Receipts(None)))
+    );
+}

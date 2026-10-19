@@ -119,7 +119,10 @@ finds its supplied key, it uses the saved request before requesting a preview.
 A failed acknowledgment write cannot undo server acceptance: diagnostics include
 the key, receipt path, and known run ID. `launches show` can resolve an unresolved
 receipt; a 404 never permits generating a fresh key. `launches retry` requires
-that original saved request. An endpoint move requires explicit connection flags
+that original saved request. The workbench removes the receipt of a key it just
+generated when the service refuses that first request with `run_busy` or
+`stale_preview`, since nothing was admitted; the CLI keeps such receipts for now.
+An endpoint move requires explicit connection flags
 and the same persistent service identity. Every mutation still sends the expected
 service ID to protect the handshake/request interval.
 
