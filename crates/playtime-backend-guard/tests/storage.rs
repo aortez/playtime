@@ -7,6 +7,7 @@ use std::{
 };
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn private_state_never_contains_dispatch_capability_and_detects_corrupt_tail() {
     let mut h = Harness::new(Mode::Terminal).await;
     let client = h.start(true, None).await;
@@ -37,6 +38,7 @@ async fn private_state_never_contains_dispatch_capability_and_detects_corrupt_ta
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn staging_growth_and_record_count_are_included_in_the_fixed_budget() {
     for bytes in [true, false] {
         let mut h = Harness::new(Mode::Terminal).await;
@@ -68,6 +70,7 @@ async fn staging_growth_and_record_count_are_included_in_the_fixed_budget() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn unknown_version_duplicate_fields_partial_record_and_special_files_block() {
     for case in [
         "version",

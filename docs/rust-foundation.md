@@ -146,9 +146,10 @@ extended alongside #18's additional event kinds. The generic `data` schema
 allows arbitrary JSON so future kinds remain inspectable.
 
 `.github/workflows/foundation.yml` runs formatting, Clippy, Rust tests, and the
-Python suite on Linux with the pinned toolchain and Python 3.12. Tests require
-no model, GPU, Docker daemon, display server, service manager, or secrets.
-Docker tests remain explicitly opt-in. See README for the exact local commands.
+Python suite on Linux with the pinned toolchain and Python 3.12, once per pull
+request and on each push to `main`. Tests require no model, GPU, Docker daemon,
+display server, service manager, or secrets. Docker tests remain explicitly
+opt-in. See README for the exact local commands.
 
 Local validation on the foundation branch: formatting and Clippy with warnings
 denied passed; 25 Rust tests passed; the Python suite ran 91 tests with 6 explicit

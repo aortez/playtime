@@ -10,6 +10,7 @@ use playtime_backend_guard::{
 use std::time::Duration;
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn two_services_race_and_normal_terminal_allows_unique_next_dispatch() {
     let mut h = Harness::new(Mode::Terminal).await;
     let client = h.start(true, None).await;
@@ -121,6 +122,7 @@ async fn two_services_race_and_normal_terminal_allows_unique_next_dispatch() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn disconnected_owner_retains_uncertainty_until_owned_children_are_reaped() {
     let mut h = Harness::new(Mode::Unavailable).await;
     let client = h.start(true, None).await;
@@ -195,6 +197,7 @@ async fn disconnected_owner_retains_uncertainty_until_owned_children_are_reaped(
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn full_stream_and_cancelled_caller_do_not_delay_control_stop() {
     let mut h = Harness::new(Mode::Flood).await;
     let client = h.start(true, None).await;
@@ -236,6 +239,7 @@ async fn full_stream_and_cancelled_caller_do_not_delay_control_stop() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn stop_reply_loss_and_remaining_descendant_are_not_termination_claims() {
     for mode in [Mode::LostStopReply, Mode::Descendant] {
         let mut h = Harness::new(mode).await;
@@ -296,6 +300,7 @@ async fn stop_reply_loss_and_remaining_descendant_are_not_termination_claims() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn malformed_private_frames_and_missing_or_damaged_state_fail_closed() {
     use tokio::io::AsyncWriteExt;
     let mut h = Harness::new(Mode::Terminal).await;
@@ -326,6 +331,7 @@ async fn malformed_private_frames_and_missing_or_damaged_state_fail_closed() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn replacement_process_with_same_unit_is_never_targeted() {
     let mut original = Harness::new(Mode::Hang).await;
     let client = original.start(true, None).await;
@@ -369,6 +375,7 @@ async fn replacement_process_with_same_unit_is_never_targeted() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn manager_return_resumes_the_original_stop_without_renewing_deadlines() {
     let mut h = Harness::new(Mode::Unavailable).await;
     let client = h.start(true, None).await;

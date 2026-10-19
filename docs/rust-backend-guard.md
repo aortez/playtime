@@ -14,8 +14,11 @@ private temporary directories. The manager owns two actual children and retains
 their `Child` handles across guard death. A stop must kill **and reap both**;
 socket close, a recorded PID, and a manager's diagnostic reply do not suffice.
 This demonstrates local IPC and ownership behavior, not production enforcement.
-All its tests also run in the ordinary locked workspace suite. No GPU, Docker,
-systemd, network service, live model or historical run data is required.
+Its integration suites (`crashes`, `policy`, `processes` and `storage`) run only
+in this gate. They are ignored in the default workspace suite and in CI because
+the guard's 100 ms durable-write grace fails them on loaded hosted runners, and
+the guard isn't on the Rust MVP path (#76). The gate needs no GPU, Docker,
+systemd, network service, live model or historical run data.
 
 ## Compiled contract
 

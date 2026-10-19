@@ -1,7 +1,9 @@
 name: Foundation checks
 
 on:
+  # Pull requests run once through pull_request; pushes run only on main.
   push:
+    branches: [main]
   pull_request:
 
 permissions:

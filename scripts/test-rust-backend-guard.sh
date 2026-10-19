@@ -5,4 +5,5 @@ playtime_guard_root="$(mktemp -d "${TMPDIR:-/tmp}/pt-guard.XXXXXXXX")"
 trap 'rm -rf "$playtime_guard_root"' EXIT
 export TMPDIR="$playtime_guard_root"
 cargo test --locked -p playtime-protocol --test backend_guard
-cargo test --locked -p playtime-backend-guard -- --nocapture
+# The guard's integration suites are ignored in the default workspace run.
+cargo test --locked -p playtime-backend-guard -- --include-ignored --nocapture
