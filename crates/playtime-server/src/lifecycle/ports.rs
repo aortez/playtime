@@ -1,4 +1,6 @@
-use super::{Admission, AdmissionRequest, PreparedLaunch, Result, Selection, Stamp};
+use super::{
+    Admission, AdmissionRequest, ExternalResources, PreparedLaunch, Result, Selection, Stamp,
+};
 use async_trait::async_trait;
 use playtime_core::UtcTime;
 use playtime_protocol::worker::{Receipt, Status};
@@ -49,6 +51,14 @@ pub trait ArchivePort: Send + Sync + 'static {
     /// terminal record, settled publication and successful resource cleanup.
     async fn normal_completion(&self, _admission: &Admission) -> Result<bool> {
         Ok(false)
+    }
+
+    /// Operator release only: check every external resource the run's worker
+    /// may own, by exact identity. An error means the check was not possible.
+    async fn external_resources(&self, _admission: &Admission) -> Result<ExternalResources> {
+        Err(super::Error::Invalid(
+            "external resource verification is unsupported",
+        ))
     }
 }
 

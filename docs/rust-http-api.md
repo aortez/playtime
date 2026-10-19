@@ -73,6 +73,9 @@ The application adapter must implement these authority boundaries:
 - `cancel` returns the original saved intent and its current enforcement state.
   A request acknowledgment does not mean that a process stopped. HTTP never
   extends grace or infers an experimental outcome.
+- `release` is an explicit operator resolution. The adapter itself verifies the
+  worker and resources; a refusal is `release_refused` with `details.remaining`.
+  Adapters without it return `unsupported_capability`.
 - `run` supplies status separately from evidence and obtains the frontier and
   both anchors as one read. Unknown usage remains `None` or a typed unknown
   reservation; it is never synthesized as zero.
@@ -110,6 +113,7 @@ different identity with 409, before any application call.
 | `POST /runs`, `GET /launches/{idempotency_key}` | Keyed launch and recovery lookup |
 | `GET /runs`, `GET /runs/{run_id}` | Paged run views and detailed inspection |
 | `POST /runs/{run_id}/cancel` | Empty object; original intent and current enforcement |
+| `POST /runs/{run_id}/release` | `{"reason"}`; operator release after verification, or `release_refused` |
 | `GET /runs/{run_id}/events` | Fixed-frontier event page |
 | `GET /runs/{run_id}/events/stream` | Catch-up/follow SSE |
 | `GET /runs/{run_id}/checkpoints[/{session_id}]` | Published checkpoints and downloadable content references |

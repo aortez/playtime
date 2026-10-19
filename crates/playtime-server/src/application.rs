@@ -42,6 +42,7 @@ impl ApiError {
             "backend_unavailable" => "Application backend is unavailable",
             "evidence_limit_exceeded" => "Evidence exceeds the advertised transport limit",
             "request_timeout" => "Request deadline exceeded",
+            "release_refused" => "The run still owns a worker or resources; see details",
             _ => "Internal service error",
         };
         Self(ErrorResponse {
@@ -65,7 +66,8 @@ impl ApiError {
             | "service_identity_mismatch"
             | "run_busy"
             | "cursor_ahead"
-            | "evidence_not_ready" => 409,
+            | "evidence_not_ready"
+            | "release_refused" => 409,
             "limit_exceeded" => 413,
             "unsupported_media_type" => 415,
             "unsupported_capability" | "invalid_parameters" => 422,
@@ -124,6 +126,12 @@ pub trait Application: Send + Sync + 'static {
     /// Save the first intent before acknowledgment; only the lifecycle owner
     /// can change enforcement state or declare the operation terminal.
     async fn cancel(&self, run: RunId) -> Result<CancelResponse>;
+    /// Operator release of a non-terminal run. The adapter itself verifies that
+    /// the worker stopped and its external resources are absent; the archive is
+    /// never modified.
+    async fn release(&self, _run: RunId, _request: ReleaseRequest) -> Result<ReleaseResponse> {
+        Err(ApiError::new("unsupported_capability"))
+    }
     /// Validate run/manifest identity AND the claimed historical prefix against
     /// trusted committed evidence, including old frontiers whose marker was
     /// overwritten. `follow` advances the frontier after validating the cursor;

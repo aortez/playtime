@@ -167,6 +167,54 @@ async fn manager_outage_does_not_upgrade_cancel_ack_to_enforced_stop() {
 }
 
 #[tokio::test]
+async fn release_requires_the_original_invocation_to_be_stopped() {
+    let root = Root::new();
+    let supervisor = Arc::new(ManagerFixture::new());
+    let c = coordinator(&root.0, archive(&root.0), supervisor.clone()).await;
+    let accepted = admit(&c).await;
+    let ready = prepared(&c, &accepted).await;
+    c.begin(ready.run_id.clone()).await.unwrap();
+    let release = || c.release(ready.run_id.clone(), "operator test".into());
+    let refused = release().await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if remaining.len() == 1 && remaining[0].ends_with("is active with main PID 1")),
+        "a running unit keeps the slot: {refused:?}"
+    );
+    let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
+    assert_eq!(cancelled.stop_delivery, Some(StopDelivery::Accepted));
+    assert!(
+        matches!(release().await, Err(Error::Refused(_))),
+        "a deactivating unit keeps the slot"
+    );
+    supervisor
+        .child
+        .terminate(ready.prepared.as_ref().unwrap())
+        .unwrap();
+    {
+        let mut observation = supervisor.observation.lock().unwrap();
+        observation.active_state = "unloaded".into();
+        observation.main_pid = 0;
+        observation.stopped = true;
+        observation.cgroup = "/replacement".into();
+    }
+    let refused = release().await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if remaining[0].ends_with("no longer matches its saved identity")),
+        "a stopped replacement is not the original invocation: {refused:?}"
+    );
+    supervisor.observation.lock().unwrap().cgroup = "/synthetic-manager".into();
+    let released = release().await.unwrap();
+    assert_eq!(released.phase, Phase::Terminal);
+    assert_eq!(released.reason, Some(Reason::OperatorReleased));
+    assert_eq!(released.stop_accepted, cancelled.stop_accepted);
+    let evidence = released.operator_release.unwrap().supervisor.unwrap();
+    assert!(evidence.stopped);
+    assert_eq!(evidence.active_state, "unloaded");
+}
+
+#[tokio::test]
 async fn diagnostic_failure_preserves_stop_acceptance_across_restart() {
     let root = Root::new();
     let archive = archive(&root.0);

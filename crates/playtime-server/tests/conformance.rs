@@ -169,7 +169,7 @@ async fn real_http_preview_launch_inspect_stream_download_and_schema() {
     );
     let document = h.client.schema().await.unwrap();
     assert_eq!(document["security"][0]["bearerAuth"], serde_json::json!([]));
-    assert_eq!(document["paths"].as_object().unwrap().len(), 15);
+    assert_eq!(document["paths"].as_object().unwrap().len(), 16);
     for (route, value) in [
         (
             "capabilities",

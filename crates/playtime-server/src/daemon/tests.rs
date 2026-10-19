@@ -57,6 +57,7 @@ fn admission(fixture: &fixture::Fixture) -> Admission {
         revision: 0,
         last_status: None,
         confirmed_read: None,
+        operator_release: None,
     }
 }
 fn record(f: &fixture::Fixture, seq: u64, kind: &str, data: serde_json::Value) -> Vec<u8> {
@@ -457,4 +458,98 @@ fn run_views_name_the_backend_each_mode_runs_on() {
         record.request.mode = mode;
         assert_eq!(projection::unprepared(&record).backend, backend, "{mode:?}");
     }
+}
+
+#[test]
+fn docker_ownership_journal_binds_records_to_the_exact_launch() {
+    use playtime_docker::{DaemonIdentity, Limits, Ownership, Proposal, Role};
+    use playtime_protocol::worker::{Binding, WorkerKind};
+    use playtime_worker_control::{create_private_dir, write_once};
+    let root = Root::new();
+    let private = root.0.join("worker");
+    create_private_dir(&private).unwrap();
+    let id = || ControlId::new("0123456789abcdef0123456789abcdef".into()).unwrap();
+    let binding = Binding {
+        service_id: id(),
+        run_id: playtime_core::RunId::new("synthetic-docker").unwrap(),
+        manifest_sha256: playtime_storage::sha256(b"manifest"),
+        executable_sha256: playtime_storage::sha256(b"worker"),
+        grant_id: id(),
+        worker_id: id(),
+        invocation_id: id(),
+        boot_id: id(),
+        unit: "synthetic.service".into(),
+        kind: WorkerKind::DockerScripted,
+    };
+    let launch = PreparedLaunch {
+        binding: binding.clone(),
+        executable: "/must-not-be-opened/worker".into(),
+        argv: vec![],
+        bootstrap: "/must-not-be-opened/bootstrap".into(),
+        private_dir: private.clone(),
+        socket: "/must-not-be-opened/control.sock".into(),
+        startup_deadline_boot_ms: 1,
+    };
+    let proposal = |role: Role, session: Option<u32>, name: &str| Proposal {
+        schema: 1,
+        ownership: Ownership {
+            service: "service".into(),
+            run: "synthetic-docker".into(),
+            grant: "grant".into(),
+            invocation: "invocation".into(),
+            nonce: "0".repeat(32),
+            daemon: DaemonIdentity {
+                id: "synthetic-daemon".into(),
+                name: "synthetic-host".into(),
+                cli_version: "28.4.0".into(),
+                server_version: "28.4.0".into(),
+                api_version: "1.51".into(),
+                kernel: "synthetic-linux".into(),
+            },
+        },
+        role,
+        session,
+        name: name.into(),
+        image: format!("sha256:{}", "a".repeat(64)),
+        volume: "playtime-synthetic-volume-0".into(),
+        limits: Limits::smoke(),
+        deadline_monotonic_ns: 1,
+    };
+    let write = |file: &str, binding: &Binding, proposal: &Proposal| {
+        let record =
+            json!({"version":1,"binding":binding,"intent":{"effect":1},"proposal":proposal});
+        write_once(&private.join(file), &serde_json::to_vec(&record).unwrap()).unwrap();
+    };
+    write(
+        "docker-volume-0.json",
+        &binding,
+        &proposal(Role::Volume, None, "playtime-synthetic-volume-0"),
+    );
+    write(
+        "docker-agent-1.json",
+        &binding,
+        &proposal(Role::Agent, Some(1), "playtime-synthetic-agent-1"),
+    );
+    // Cleanup diagnostics and other names are not ownership records.
+    write_once(&private.join("docker-cleanup.json"), b"{}").unwrap();
+    write_once(&private.join("docker-agent-x.json"), b"{}").unwrap();
+    let mut names: Vec<_> = super::archive::ownership_journal(&launch)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["playtime-synthetic-agent-1", "playtime-synthetic-volume-0"]
+    );
+    // A record naming another launch fails the whole check; it is never skipped.
+    let mut other = binding.clone();
+    other.invocation_id = ControlId::new("fedcba9876543210fedcba9876543210".into()).unwrap();
+    write(
+        "docker-holder-0.json",
+        &other,
+        &proposal(Role::Holder, None, "playtime-synthetic-holder-0"),
+    );
+    assert!(super::archive::ownership_journal(&launch).is_err());
 }

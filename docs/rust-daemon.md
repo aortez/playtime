@@ -107,7 +107,8 @@ Publication order is explicit:
 4. The application constructs and swaps a verified projection from that saved
    boundary, then wakes shared observers. No handler publishes candidate reads.
 
-Ledger version 4 preserves admission/service identity and migrates versions 1–3.
+Ledger version 5 preserves admission/service identity and migrates versions 1–4.
+Version 5 adds the optional operator release; older binaries refuse it.
 `confirmed_read` records the exact archive frontier, generation and `worker`
 source; `last_status` remains the last worker confirmation. Later recovery must
 add its own provenance rather than overwrite this origin. Equal confirmations
@@ -153,7 +154,18 @@ intent, successful committed cleanup, a non-interrupted/non-infrastructure
 outcome, accepted supervisor stop and proven original-worker termination. The
 final guarded transaction rechecks the original owner and confirmed boundary,
 then releases the active slot. Pending, uncertain and interrupted runs remain
-reserved for later recovery. Private images/evidence are retained rather than
+reserved until automatic recovery exists or the operator releases them.
+
+`playtime runs release RUN_ID --reason TEXT` is that explicit operator path. The
+daemon refuses unless the run is not Terminal and, if a worker start was ever
+submitted, a fresh supervisor observation shows the original invocation stopped
+with an empty cgroup and every resource in the worker's Docker ownership journal
+is absent by exact name. Simulation workers own no external resources. It lists
+what remains and has no force option. Success records the time, reason and
+evidence, then sets Terminal with reason `operator_released`, which frees the
+slot. The archive is not modified: the last published checkpoint stays
+authoritative, unknown usage stays unknown, and the live stream ends as
+`incomplete` rather than committed completion. Private images/evidence are retained rather than
 removed underneath an uncertain invocation. The Python launcher checks the
 Rust ledger while holding the common flock, preserving exclusion during the
 reservation-to-worker handoff and after uncertain worker loss.
@@ -169,7 +181,9 @@ reservation-to-worker handoff and after uncertain worker loss.
 
 The normal gate explicitly builds its bundle and binaries, launches `playtimed`
 on port zero with the CPU test supervisor and removes Cargo from its runtime
-PATH. A normal CLI launch executes two actual controller sessions. The shared
+PATH. It first launches a run, cancels it at once and releases it through
+`playtime runs release`; the slot must then admit the normal run. A normal CLI
+launch executes two actual controller sessions. The shared
 client checks history/SSE coverage, fixed historical anchors, idempotent replay,
 26 known tokens, two checkpoints, exact memory, all artifact downloads and
 source-map byte hashes. The existing workbench backend opens that run, verifies

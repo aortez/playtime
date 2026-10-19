@@ -49,7 +49,7 @@
             }
           }
         },
-        "description": "stale_preview, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready"
+        "description": "stale_preview, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready, release_refused"
       },
       "Error413": {
         "content": {
@@ -1637,6 +1637,31 @@
         "minLength": 1,
         "pattern": "^[A-Za-z0-9_-]+$",
         "type": "string"
+      },
+      "ReleaseRequest": {
+        "additionalProperties": false,
+        "description": "Operator release of an interrupted or failed run. The service first verifies\nthat its worker stopped and that its external resources are absent.",
+        "properties": {
+          "reason": {
+            "description": "Recorded with the release: 1 to 512 printable bytes.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ReleaseResponse": {
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/RunView"
+          }
+        },
+        "required": [
+          "run"
+        ],
+        "type": "object"
       },
       "ResourceLimits": {
         "properties": {
@@ -3667,6 +3692,108 @@
               }
             },
             "description": "record frames carry an EventEnvelope and cursor ID. stream_end/stream_error and 15-second heartbeat comments have no ID.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Playtime-Service-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/release": {
+      "post": {
+        "operationId": "release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Playtime-Service-ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ServiceId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseResponse"
+                }
+              }
+            },
+            "description": "Successful response",
             "headers": {
               "Cache-Control": {
                 "schema": {

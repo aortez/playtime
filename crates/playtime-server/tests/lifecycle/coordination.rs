@@ -567,7 +567,7 @@ async fn v1_ledger_migration_preserves_identity_and_canonical_request() {
     assert_eq!(
         db.query_row::<u32, _, _>("PRAGMA user_version", [], |row| row.get(0))
             .unwrap(),
-        4
+        5
     );
 }
 

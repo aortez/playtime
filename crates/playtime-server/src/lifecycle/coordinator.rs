@@ -405,6 +405,92 @@ impl Coordinator {
             None => self.inner.ledger.get(&run).await,
         }
     }
+    /// Explicit operator release of a run that cannot reach normal completion.
+    /// The daemon verifies that the original invocation stopped and that every
+    /// external resource is absent. It never modifies the archive: the last
+    /// published checkpoint stays authoritative and unknown usage stays unknown.
+    pub async fn release(&self, run: RunId, reason: String) -> Result<Admission> {
+        if reason.trim().is_empty() || reason.len() > 512 || reason.chars().any(char::is_control) {
+            return Err(Error::Invalid(
+                "release reason must be 1 to 512 printable bytes",
+            ));
+        }
+        self.owned_launch(move |inner| async move {
+            let admission = inner.ledger.get(&run).await?;
+            if admission.phase == Phase::Terminal {
+                return Err(Error::Refused(vec!["run is already terminal".into()]));
+            }
+            let mut present = Vec::new();
+            // Start intent is durable before any submission, so without it no
+            // worker or worker-owned resource can exist for this run.
+            let (supervisor, absent_resources) = if admission.start_attempted {
+                let prepared = admission.prepared.as_ref().ok_or(Error::Uncertain)?;
+                let unit = &prepared.binding.unit;
+                let observation = match inner.supervisor.observe(prepared).await {
+                    Ok(Some(observation)) => {
+                        if admission.supervisor.as_ref().is_some_and(|saved| {
+                            saved.manager_id != observation.manager_id
+                                || saved.cgroup != observation.cgroup
+                        }) {
+                            present.push(format!("{unit} no longer matches its saved identity"));
+                        } else if !observation.stopped {
+                            present.push(format!(
+                                "{unit} is {} with main PID {}",
+                                observation.active_state, observation.main_pid
+                            ));
+                        }
+                        Some(observation)
+                    }
+                    Ok(None) => {
+                        present.push(format!("the supervisor cannot verify that {unit} stopped"));
+                        None
+                    }
+                    Err(error) => {
+                        present.push(format!("{unit} could not be observed: {error}"));
+                        None
+                    }
+                };
+                let resources = match inner.archive.external_resources(&admission).await {
+                    Ok(resources) => {
+                        present.extend(resources.present);
+                        resources.absent
+                    }
+                    Err(error) => {
+                        present.push(format!("external resources could not be verified: {error}"));
+                        Vec::new()
+                    }
+                };
+                (observation, resources)
+            } else {
+                (None, Vec::new())
+            };
+            if !present.is_empty() {
+                return Err(Error::Refused(present));
+            }
+            let release = OperatorRelease {
+                released: inner.clock.now(),
+                reason,
+                supervisor,
+                absent_resources,
+            };
+            let (record, applied) = inner
+                .ledger
+                .compare_update(&admission, "operator_released", move |record| {
+                    record.phase = Phase::Terminal;
+                    record.reason = Some(Reason::OperatorReleased);
+                    record.operator_release = Some(release);
+                    Ok(())
+                })
+                .await?;
+            if !applied {
+                return Err(Error::Refused(vec![
+                    "the run changed during verification; retry".into(),
+                ]));
+            }
+            Ok(record)
+        })
+        .await
+    }
 }
 
 impl Inner {

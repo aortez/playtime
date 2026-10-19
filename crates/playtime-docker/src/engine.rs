@@ -258,6 +258,25 @@ impl Engine {
             one(&result, "volume_inspect").map(Some)
         }
     }
+    /// Read-only check for an operator release. None means nothing has the
+    /// proposal's exact name; otherwise whether its labels still match.
+    pub async fn residual(
+        &self,
+        proposal: &Proposal,
+        deadline: Instant,
+        cancel: CancellationToken,
+    ) -> Result<Option<bool>> {
+        let labels = json!(proposal.labels());
+        Ok(if proposal.role == Role::Volume {
+            self.volume(&proposal.name, deadline, cancel)
+                .await?
+                .map(|volume| volume["Labels"] == labels)
+        } else {
+            self.container(&proposal.name, deadline, cancel)
+                .await?
+                .map(|container| container["Config"]["Labels"] == labels)
+        })
+    }
     pub(crate) async fn probe(
         &self,
         id: &str,

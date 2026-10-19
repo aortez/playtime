@@ -367,6 +367,11 @@ pub async fn execute(
             }
             output.emit("result", reply).await?;
         }
+        Command::Runs(Runs::Release { run_id, reason }) => {
+            output
+                .emit("result", ctx.client.release(run_id, reason).await?)
+                .await?
+        }
         Command::Events(events) => return ctx.events(events).await,
         Command::Checkpoints(Checkpoints::List { run_id, page }) => {
             output

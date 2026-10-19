@@ -61,6 +61,7 @@ pub enum Reason {
     BeginUncertain,
     CancelRequested,
     ControlUncertain,
+    OperatorReleased,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -135,6 +136,28 @@ pub struct Admission {
     /// future recovery cannot silently relabel recovered bytes as confirmation.
     #[serde(default)]
     pub confirmed_read: Option<ConfirmedRead>,
+    /// Explicit operator release of an interrupted or failed run. It is not
+    /// normal completion and never changes the archive or its accounting.
+    #[serde(default)]
+    pub operator_release: Option<OperatorRelease>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OperatorRelease {
+    pub released: Stamp,
+    pub reason: String,
+    /// Fresh evidence that the original invocation stopped. None only when no
+    /// worker start was ever submitted.
+    pub supervisor: Option<SupervisorObservation>,
+    /// Exact external resources verified absent before release.
+    pub absent_resources: Vec<String>,
+}
+
+/// External resources a run's worker may own, checked by exact identity.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ExternalResources {
+    pub absent: Vec<String>,
+    pub present: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

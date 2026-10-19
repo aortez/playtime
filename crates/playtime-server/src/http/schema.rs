@@ -11,7 +11,7 @@ use utoipa::{OpenApi, PartialSchema, ToSchema};
 pub fn openapi() -> Value {
     #[derive(OpenApi)]
     #[openapi(info(title = "Playtime native HTTP API", version = "1"), components(schemas(
-        Capabilities, Recipe, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse,
+        Capabilities, Recipe, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
         RunView, Page<Recipe>, Page<RunView>, Page<Checkpoint>, Page<Artifact>, EventPage, EventEnvelope,
         Checkpoint, Artifact, EventCursor, StreamEnd, ErrorResponse, UsageSummary, Connection
     )))]
@@ -30,7 +30,7 @@ pub fn openapi() -> Value {
         (404, "not_found, unsupported_version"),
         (
             409,
-            "stale_preview, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready",
+            "stale_preview, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready, release_refused",
         ),
         (413, "limit_exceeded"),
         (415, "unsupported_media_type"),
@@ -118,6 +118,14 @@ pub fn openapi() -> Value {
             "cancel",
             Some(CancelRequest::name().to_string()),
             CancelResponse::name().to_string(),
+            false,
+        ),
+        (
+            "post",
+            "/runs/{run_id}/release",
+            "release",
+            Some(ReleaseRequest::name().to_string()),
+            ReleaseResponse::name().to_string(),
             false,
         ),
         (

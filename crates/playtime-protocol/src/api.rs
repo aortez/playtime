@@ -206,6 +206,18 @@ pub struct CancelResponse {
     pub intent: Option<Cancellation>,
     pub run: RunView,
 }
+/// Operator release of an interrupted or failed run. The service first verifies
+/// that its worker stopped and that its external resources are absent.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseRequest {
+    /// Recorded with the release: 1 to 512 printable bytes.
+    pub reason: String,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
+pub struct ReleaseResponse {
+    pub run: RunView,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

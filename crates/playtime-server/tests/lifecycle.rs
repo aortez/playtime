@@ -336,11 +336,124 @@ async fn cancellation_before_begin_is_durable_and_never_creates_run_records() {
             .join("manifest.json")
             .exists()
     );
+    let launch = p.prepared.as_ref().unwrap();
+    let refused = c
+        .release(admitted.run_id.clone(), "operator test".into())
+        .await;
     assert!(
-        c.admit(c.ledger().service_id().clone(), "new-key".into(), request())
-            .await
-            .is_err(),
+        matches!(&refused, Err(Error::Refused(remaining)) if remaining.len() == 1),
+        "an unverified live worker keeps the slot: {refused:?}"
+    );
+    // With the worker reaped (releasing its run lock) and the fixture's legacy
+    // compatibility pointer removed, only the ledger slot can block admission.
+    supervisor.terminate(launch).unwrap();
+    fs::remove_file(root.0.join(".playtime/active.json")).unwrap();
+    assert!(
+        matches!(
+            c.admit(c.ledger().service_id().clone(), "new-key".into(), request())
+                .await,
+            Err(Error::Busy)
+        ),
         "cancellation alone does not release ownership"
+    );
+    let released = c
+        .release(admitted.run_id.clone(), "operator test".into())
+        .await
+        .unwrap();
+    assert_eq!(released.phase, Phase::Terminal);
+    assert_eq!(released.reason, Some(Reason::OperatorReleased));
+    assert_eq!(released.cancel_requested, cancelled.cancel_requested);
+    assert_eq!(
+        released.last_status, cancelled.last_status,
+        "release does not change archive evidence"
+    );
+    let release = released.operator_release.as_ref().unwrap();
+    assert_eq!(release.reason, "operator test");
+    assert!(release.supervisor.as_ref().unwrap().stopped);
+    assert!(release.absent_resources.is_empty());
+    assert!(matches!(
+        c.release(admitted.run_id.clone(), "again".into()).await,
+        Err(Error::Refused(_))
+    ));
+    let trace = c.ledger().trace(&admitted.run_id).await.unwrap();
+    assert_eq!(trace.last().map(String::as_str), Some("operator_released"));
+    let next = c
+        .admit(c.ledger().service_id().clone(), "new-key".into(), request())
+        .await
+        .unwrap();
+    assert!(!next.replayed);
+    assert_ne!(next.admission.run_id, admitted.run_id);
+}
+
+/// A fake external-resource port standing in for a Docker run's ownership
+/// journal check.
+struct ResidualArchive {
+    inner: Arc<FixtureArchive>,
+    present: std::sync::Mutex<Vec<String>>,
+}
+#[async_trait::async_trait]
+impl ArchivePort for ResidualArchive {
+    async fn validate_preview(&self, request: &AdmissionRequest) -> Result<Selection> {
+        self.inner.validate_preview(request).await
+    }
+    async fn prepare(&self, admission: &Admission) -> Result<PreparedLaunch> {
+        self.inner.prepare(admission).await
+    }
+    async fn verify_status(
+        &self,
+        prepared: &PreparedLaunch,
+        previous: Option<&playtime_protocol::worker::Receipt>,
+        status: &playtime_protocol::worker::Status,
+    ) -> Result<()> {
+        self.inner.verify_status(prepared, previous, status).await
+    }
+    async fn external_resources(&self, _admission: &Admission) -> Result<ExternalResources> {
+        let present = self.present.lock().unwrap().clone();
+        Ok(ExternalResources {
+            absent: if present.is_empty() {
+                vec!["container playtime-fake-agent-1".into()]
+            } else {
+                Vec::new()
+            },
+            present,
+        })
+    }
+}
+
+#[tokio::test]
+async fn release_is_refused_while_an_external_resource_remains() {
+    let root = Root::new();
+    let archive = Arc::new(ResidualArchive {
+        inner: archive(&root.0),
+        present: std::sync::Mutex::new(vec!["container playtime-fake-agent-1 is present".into()]),
+    });
+    let supervisor = Arc::new(FixtureSupervisor::default());
+    let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
+    let admitted = admit(&c).await;
+    let p = prepared(&c, &admitted).await;
+    c.cancel(admitted.run_id.clone()).await.unwrap();
+    supervisor.terminate(p.prepared.as_ref().unwrap()).unwrap();
+    let refused = c
+        .release(admitted.run_id.clone(), "operator test".into())
+        .await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if remaining == &vec!["container playtime-fake-agent-1 is present".to_string()]),
+        "a remaining resource keeps the slot: {refused:?}"
+    );
+    assert_ne!(
+        c.ledger().get(&admitted.run_id).await.unwrap().phase,
+        Phase::Terminal
+    );
+    archive.present.lock().unwrap().clear();
+    let released = c
+        .release(admitted.run_id.clone(), "operator test".into())
+        .await
+        .unwrap();
+    assert_eq!(released.phase, Phase::Terminal);
+    assert_eq!(
+        released.operator_release.unwrap().absent_resources,
+        vec!["container playtime-fake-agent-1".to_string()]
     );
 }
 

@@ -145,7 +145,15 @@ fn run_summary(view: &Value) -> String {
     format!(
         "Run {}: {} | backend {} | mode {}\nRecipe {} @ {} | phase {} | outcome {}\nCleanup: {} | evidence: {} | checkpoint: {}\n{}\nCancellation: {}",
         word(&view["run_id"]),
-        word(&view["orchestration"]["state"]),
+        if view["orchestration"]["reason"].is_null() {
+            word(&view["orchestration"]["state"])
+        } else {
+            format!(
+                "{} ({})",
+                word(&view["orchestration"]["state"]),
+                word(&view["orchestration"]["reason"])
+            )
+        },
         word(&view["backend"]["kind"]),
         word(&view["mode"]),
         word(&view["recipe_id"]),
@@ -183,14 +191,20 @@ fn text(value: &Value) -> String {
             word(&data["event"]["kind"]),
             word(&data["event"]["data"])
         ),
-        "error" => format!(
-            "{}: {}{}",
-            word(&data["code"]),
-            word(&data["message"]),
-            data.get("recovery")
-                .map(|r| format!(" (recovery: {})", word(r)))
-                .unwrap_or_default()
-        ),
+        "error" => {
+            let mut lines = vec![format!(
+                "{}: {}{}",
+                word(&data["code"]),
+                word(&data["message"]),
+                data.get("recovery")
+                    .map(|r| format!(" (recovery: {})", word(r)))
+                    .unwrap_or_default()
+            )];
+            if let Some(remaining) = data["details"]["remaining"].as_array() {
+                lines.extend(remaining.iter().map(|item| format!("  - {}", word(item))));
+            }
+            lines.join("\n")
+        }
         "notice" if data.get("backend").is_some() => format!(
             "Backend: {} | service {} | {}",
             word(&data["backend"]["kind"]),

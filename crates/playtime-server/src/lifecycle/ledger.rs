@@ -82,14 +82,14 @@ impl Ledger {
             tx.execute_batch("CREATE TABLE service (singleton INTEGER PRIMARY KEY CHECK(singleton=1), id TEXT NOT NULL);
                 CREATE TABLE runs (id TEXT PRIMARY KEY, key TEXT NOT NULL UNIQUE, active INTEGER UNIQUE CHECK(active=1 OR active IS NULL), record TEXT NOT NULL);
                 CREATE TABLE trace (seq INTEGER PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), transition TEXT NOT NULL);
-                PRAGMA user_version=4;")?;
+                PRAGMA user_version=5;")?;
             tx.execute(
                 "INSERT INTO service VALUES (1, ?1)",
                 [random_id()?.as_str()],
             )?;
             tx.commit()?;
             File::open(&private)?.sync_all()?;
-        } else if (1..=3).contains(&version) {
+        } else if (1..=4).contains(&version) {
             // Preserve service/admission history, ownership and saved read
             // provenance. Older binaries must refuse the upgraded ledger.
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -128,9 +128,9 @@ impl Ledger {
                 )?;
                 after = id;
             }
-            tx.execute_batch("PRAGMA user_version=4;")?;
+            tx.execute_batch("PRAGMA user_version=5;")?;
             tx.commit()?;
-        } else if version != 4 {
+        } else if version != 5 {
             return Err(Error::Invalid(
                 "unsupported or incomplete service ledger; refusing to replace admission history",
             ));
@@ -289,6 +289,7 @@ impl Ledger {
                 revision: 0,
                 last_status: None,
                 confirmed_read: None,
+                operator_release: None,
             };
             tx.execute(
                 "INSERT INTO runs VALUES (?1, ?2, 1, ?3)",
