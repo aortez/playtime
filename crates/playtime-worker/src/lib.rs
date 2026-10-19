@@ -1,5 +1,6 @@
 //! Production worker composition and frozen package validation. No HTTP/SQLite.
 pub mod bundle;
+mod docker;
 mod elf;
 pub mod execution;
 mod files;

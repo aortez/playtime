@@ -111,5 +111,27 @@ bytes are snapshot candidates, never continuation/extraction authorization. See
 [rust-workspace-capture.md](rust-workspace-capture.md) for the strict subset,
 capacity preparation and independent reference fixture. Earlier archives remain
 inspectable. Worker build records add an optional `capture_helpers` digest map;
-new executing bundles verify it against embedded literals without advertising a
-real-workshop execution capability.
+executing bundles verify it against embedded literals. That slice advertised no
+real-workshop execution capability; the Docker composition below adds one.
+
+### Docker/scripted-model composition v1
+
+The optional daemon catalog now supports `docker-two-session` in `scripted_smoke`
+mode using real Docker and a packaged systemd worker. See
+[run-and-view](rust-docker-run-and-view.md). No Python recipe, prompt, workshop
+source or lock is modified. The native tool policy distinguishes a confirmed
+bridge timeout from transport uncertainty; only the former can continue work.
+Its five-second effect cap includes bounded transport/return time, while a model's
+shorter requested timeout bounds the command inside the bridge. Simulation timer
+behavior and historical oracle/golden bytes are unchanged. This frozen scripted
+profile uses a 32K conservative context budget and does not claim compatibility
+with the later 8K live profile. Interrupted runs have no automatic recovery or
+admission release in this slice.
+
+Every new bundle, including one used only for simulation, now advertises
+`real_workshop` and an optional `docker_profile` capability: the digest of its
+compiled profile's version, recipe, image lock, helpers and limits. Host Docker
+selection and daemon identity are excluded. A `--docker-scripted` daemon refuses
+to start when that digest differs from its own, and the Docker preview revision
+includes it. Bundles without the field still decode and run simulation, but
+cannot prepare or execute Docker runs.

@@ -145,6 +145,66 @@ fn prepare(
         event_log_bytes: scenario.parameters.limits.log_bytes.get(),
         ..StorageLimits::default()
     };
+    freeze_archive(
+        path,
+        run_id,
+        scenario_bytes,
+        bundle,
+        extra,
+        recoverable,
+        &scenario,
+        RunMode::Simulation,
+        adapters.config().initial_workspace.clone(),
+        adapters.artifacts()[adapters.config().initial_workspace.path.as_str()].clone(),
+        limits,
+    )
+}
+
+pub fn prepare_docker_with_inputs(
+    path: &Path,
+    run_id: RunId,
+    profile: &crate::docker::Profile,
+    bundle: WorkerBundle,
+    extra: Vec<FrozenInput>,
+) -> Result<PreparedSimulation> {
+    profile.validate()?;
+    if extra
+        .iter()
+        .any(|i| i.reference.path.as_str() == playtime_protocol::recovery::EXECUTION_CONTRACT)
+    {
+        return Err(Error::Invalid(
+            "simulation recovery contract cannot authorize Docker".into(),
+        ));
+    }
+    freeze_archive(
+        path,
+        run_id,
+        &serde_json::to_vec(profile)?,
+        bundle,
+        extra,
+        false,
+        &profile.scenario,
+        RunMode::ScriptedSmoke,
+        profile.config().initial_workspace,
+        crate::docker::Profile::initial_bytes(),
+        profile.storage.clone(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn freeze_archive(
+    path: &Path,
+    run_id: RunId,
+    scenario_bytes: &[u8],
+    bundle: WorkerBundle,
+    extra: Vec<FrozenInput>,
+    recoverable: bool,
+    scenario: &Scenario,
+    mode: RunMode,
+    initial_workspace: ContentRef,
+    initial_bytes: Vec<u8>,
+    limits: StorageLimits,
+) -> Result<PreparedSimulation> {
     let mut inputs = Vec::new();
     let mut freeze = |path: &str, bytes: Vec<u8>| {
         let reference = reference(path, &bytes);
@@ -155,11 +215,7 @@ fn prepare(
         reference
     };
     let configuration = freeze("inputs/scenario.json", scenario_bytes.to_vec());
-    let initial_workspace = adapters.config().initial_workspace.clone();
-    freeze(
-        initial_workspace.path.as_str(),
-        adapters.artifacts()[initial_workspace.path.as_str()].clone(),
-    );
+    freeze(initial_workspace.path.as_str(), initial_bytes);
     let worker = WorkerIdentity {
         executable: freeze("inputs/worker/executable", bundle.executable),
         source: freeze("inputs/worker/source.bundle", bundle.source),
@@ -185,7 +241,7 @@ fn prepare(
                 .map(|i| i.bytes.clone())
                 .ok_or_else(|| Error::Invalid("missing recovery capability bytes".into()))
         })?;
-        let contract = crate::recovery::contract_for(&manifest, &scenario, &limits);
+        let contract = crate::recovery::contract_for(&manifest, scenario, &limits);
         use playtime_protocol::recovery::RecoveryRecord;
         contract.validate()?;
         let bytes = serde_json::to_vec(&contract)?;
@@ -197,7 +253,7 @@ fn prepare(
     let descriptor = ArchiveDescriptor {
         schema_version: 1,
         run_id,
-        mode: RunMode::Simulation,
+        mode,
         input_manifest: reference("inputs/manifest.json", &manifest_bytes),
     };
     let writer = ArchiveWriter::create(path, descriptor, &manifest_bytes, &inputs, limits.clone())?;

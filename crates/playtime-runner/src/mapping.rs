@@ -128,11 +128,20 @@ impl Encoder {
             last_checkpoint: None,
         }
     }
+    #[cfg(test)]
     pub fn start(&mut self, time: &UtcTime, manifest: ContentRef) -> Result<()> {
+        self.start_mode(time, manifest, RunMode::Simulation)
+    }
+    pub fn start_mode(
+        &mut self,
+        time: &UtcTime,
+        manifest: ContentRef,
+        mode: RunMode,
+    ) -> Result<()> {
         self.canonical(
             time,
             KnownEvent::RunStarted {
-                mode: RunMode::Simulation,
+                mode,
                 input_manifest: manifest,
             },
             Vec::new(),

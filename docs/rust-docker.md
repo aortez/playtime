@@ -1,5 +1,9 @@
 # Native Docker sandbox (D1, #53)
 
+The Docker/scripted-model production composition is now available through
+[#66 run-and-view](rust-docker-run-and-view.md). The scope below describes its
+underlying slice; live inference and automatic recovery remain separate work.
+
 `playtime-docker` owns native subprocess transport and the lifetime of an owned
 workshop. It does not dispatch the controller, publish checkpoints, grant recovery
 permission or enable a production worker capability. #54 supplies [stopped-workspace capture](rust-workspace-capture.md). #24 D3 composes Docker with the runner, committed-intent barriers, daemon,

@@ -303,6 +303,7 @@ fn launch_properties(launch: &PreparedLaunch) -> Result<Properties> {
             vec![
                 format!("PLAYTIME_LIFECYCLE_BOOTSTRAP={bootstrap_path}"),
                 "PLAYTIME_SYSTEMD_WORKER=1".into(),
+                "PATH=/no-runtime-cargo".into(),
             ],
         ),
         property("StandardInput", "null"),

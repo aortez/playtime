@@ -48,6 +48,8 @@ pub enum WorkerKind {
     SupervisionFixture,
     /// Real controller and archive writer with CPU-only scripted external effects.
     ControllerSimulation,
+    /// Scripted model and real Docker workshop; requires systemd supervision.
+    DockerScripted,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

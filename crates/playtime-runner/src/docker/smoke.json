@@ -1,0 +1,176 @@
+{
+  "schema_version": 1,
+  "mode": "scripted_smoke",
+  "parameters": {
+    "sampling_seed": 1042,
+    "memory_condition": "self",
+    "limits": {
+      "sessions": 2,
+      "work_turns_per_session": 6,
+      "wall_seconds": 120,
+      "generated_tokens": 4096,
+      "tokens_per_call": 512,
+      "handoff_tokens": 256,
+      "context_tokens": 32768,
+      "model_seconds": 30,
+      "command_seconds": 5,
+      "output_bytes": 4096,
+      "memento_bytes": 2048,
+      "log_bytes": 8388608,
+      "tool_parse_retries": 0,
+      "tool_parse_error_limit": 8
+    },
+    "workshop": {
+      "cpu_cores": 1.0,
+      "memory_bytes": 1073741824,
+      "workspace_bytes": 8388608,
+      "tmp_bytes": 16777216,
+      "pids": 64
+    }
+  },
+  "prompt": "Create and inspect the prescribed small persistent workspace across two fresh sessions.",
+  "protocol": "Use workshop tools. Save an explicit MEMENTO.md with end_session; only workspace files and the delivered memento persist between sessions.",
+  "inventory": "Locked Docker workshop, uid 1000, no network, no seed files.",
+  "initial_files": {},
+  "models": [
+    {
+      "chunks": [],
+      "completion": {
+        "after_ms": 0,
+        "outcome": {
+          "kind": "response",
+          "data": {
+            "done": true,
+            "generated_tokens": 32,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "exec",
+                    "arguments": {
+                      "command": "python3 - <<'PLAYTIME_IN_CONTAINER'\nimport os\nfrom pathlib import Path\nfrom PIL import Image\nassert os.getuid() == 1000\nPath('/work/probe.txt').write_text('playtime-persistent')\nImage.new('RGB', (32, 32), (32, 96, 160)).save('/work/probe.png', format='PNG')\nPath('/tmp/transient').write_text('session-one')\nPath('/work/counter.txt').write_text('0')\nPLAYTIME_IN_CONTAINER\npython3 -c 'import time; from pathlib import Path; p=Path(\"/work/counter.txt\"); n=0\nwhile True:\n n+=1; p.write_text(str(n)); time.sleep(0.05)' </dev/null >/dev/null 2>&1 &\n"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "chunks": [],
+      "completion": {
+        "after_ms": 0,
+        "outcome": {
+          "kind": "response",
+          "data": {
+            "done": true,
+            "generated_tokens": 32,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "exec",
+                    "arguments": {
+                      "command": "sleep 1",
+                      "timeout_seconds": 0.1
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "chunks": [],
+      "completion": {
+        "after_ms": 0,
+        "outcome": {
+          "kind": "response",
+          "data": {
+            "done": true,
+            "generated_tokens": 32,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "end_session",
+                    "arguments": {
+                      "memento": "Inspect probe.txt, probe.png and the stopped counter in session two.",
+                      "finish_run": false
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "chunks": [],
+      "completion": {
+        "after_ms": 0,
+        "outcome": {
+          "kind": "response",
+          "data": {
+            "done": true,
+            "generated_tokens": 32,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "exec",
+                    "arguments": {
+                      "command": "python3 - <<'PLAYTIME_IN_CONTAINER'\nimport os, time\nfrom pathlib import Path\nfrom PIL import Image\nassert os.getuid() == 1000\nassert Path('/work/probe.txt').read_text() == 'playtime-persistent'\nassert Image.open('/work/probe.png').size == (32, 32)\nassert not Path('/tmp/transient').exists()\np=Path('/work/counter.txt')\na=p.read_bytes()\ntime.sleep(0.2)\nassert p.read_bytes() == a, 'old session process survived'\nPath('/work/result.txt').write_text('persistence-ok')\nprint('persistence-ok; old process and tmp reset')\nPLAYTIME_IN_CONTAINER\n"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "chunks": [],
+      "completion": {
+        "after_ms": 0,
+        "outcome": {
+          "kind": "response",
+          "data": {
+            "done": true,
+            "generated_tokens": 32,
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "function": {
+                    "name": "end_session",
+                    "arguments": {
+                      "memento": "Two sessions complete: result.txt is persistence-ok; probe.png is the retained 32x32 image.",
+                      "finish_run": true
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "execs": []
+}

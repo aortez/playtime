@@ -233,3 +233,37 @@ fn exact_checkpoint_index_preserves_missing_empty_and_metadata_only_files() {
         index_bytes
     );
 }
+
+#[tokio::test]
+async fn cpu_supervisor_refuses_real_workshop_kind_before_any_files_or_processes() {
+    use crate::daemon::test_supervisor::CpuTestSupervisor;
+    use crate::lifecycle::ports::Supervisor;
+    use playtime_protocol::worker::{Binding, WorkerKind};
+    let id = || ControlId::new("0123456789abcdef0123456789abcdef".into()).unwrap();
+    let launch = PreparedLaunch {
+        binding: Binding {
+            service_id: id(),
+            run_id: playtime_core::RunId::new("synthetic-docker").unwrap(),
+            manifest_sha256: playtime_storage::sha256(b"manifest"),
+            executable_sha256: playtime_storage::sha256(b"worker"),
+            grant_id: id(),
+            worker_id: id(),
+            invocation_id: id(),
+            boot_id: id(),
+            unit: "synthetic.service".into(),
+            kind: WorkerKind::DockerScripted,
+        },
+        executable: "/must-not-be-opened/worker".into(),
+        argv: vec![],
+        bootstrap: "/must-not-be-opened/bootstrap".into(),
+        private_dir: "/must-not-be-opened".into(),
+        socket: "/must-not-be-opened/control.sock".into(),
+        startup_deadline_boot_ms: 1,
+    };
+    assert!(matches!(
+        CpuTestSupervisor::default().start(&launch).await,
+        Err(Error::Invalid(
+            "CPU test supervisor accepts only controller simulation"
+        ))
+    ));
+}

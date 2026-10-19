@@ -143,6 +143,44 @@ impl VerifiedBundle {
     ) -> Result<PreparedSimulation> {
         self.prepare_inner(path, run_id, scenario, false)
     }
+    pub fn prepare_docker(
+        self,
+        path: &Path,
+        run_id: RunId,
+        profile: &playtime_runner::docker::Profile,
+    ) -> Result<PreparedSimulation> {
+        profile.validate()?;
+        if !self
+            .descriptor
+            .capabilities
+            .implements_docker(&profile.digest()?)
+        {
+            return Err(Error::UnsupportedCapability);
+        }
+        let Self {
+            descriptor,
+            descriptor_bytes,
+            mut files,
+            ..
+        } = self;
+        let extra = vec![
+            frozen(wire::DESCRIPTOR, descriptor_bytes),
+            frozen(wire::BUILD, files.remove(wire::BUILD).unwrap()),
+        ];
+        Ok(playtime_runner::prepare_docker_with_inputs(
+            path,
+            run_id,
+            profile,
+            WorkerBundle {
+                executable: files.remove(EXECUTABLE).unwrap(),
+                source: files.remove(SOURCE).unwrap(),
+                cargo_lock: files.remove(LOCK).unwrap(),
+                build: descriptor.worker.build,
+                platform: descriptor.worker.platform,
+            },
+            extra,
+        )?)
+    }
     /// Advertise recovery only for this validated bundle's supported capability.
     pub fn prepare_recoverable(
         self,

@@ -64,7 +64,9 @@ pub struct PreparedExecution {
     writer: ArchiveWriter,
     prepared: PreparedSimulation,
     scenario: Scenario,
-    adapters: ScriptedAdapters,
+    mode: RunMode,
+    config: playtime_engine::ControllerConfig,
+    adapters: Box<dyn crate::Effects>,
     image: WorkerIdentity,
 }
 
@@ -72,6 +74,24 @@ impl PreparedExecution {
     /// Acquire the writer first, then verify through its returned zero receipt.
     /// No controller, work clock, event or adapter dispatch exists yet.
     pub fn acquire(path: impl AsRef<Path>, prepared: &PreparedSimulation) -> Result<Self> {
+        Self::acquire_effects(path, prepared, None)
+    }
+
+    /// Native composition supplies its owned effect port; the frozen profile is
+    /// independently verified while retaining the same prepared writer.
+    pub fn acquire_docker(
+        path: impl AsRef<Path>,
+        prepared: &PreparedSimulation,
+        effects: Box<dyn crate::Effects>,
+    ) -> Result<Self> {
+        Self::acquire_effects(path, prepared, Some(effects))
+    }
+
+    fn acquire_effects(
+        path: impl AsRef<Path>,
+        prepared: &PreparedSimulation,
+        native: Option<Box<dyn crate::Effects>>,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let writer =
             ArchiveWriter::open_prepared(path, &prepared.identity, prepared.limits.clone())?;
@@ -83,12 +103,6 @@ impl PreparedExecution {
         }
         let snapshot = reader.live_snapshot(writer.confirmed_frontier())?;
         let scenario_bytes = reader.read_content(&snapshot, &reader.manifest().configuration)?;
-        let scenario: Scenario = serde_json::from_slice(&scenario_bytes)?;
-        if prepared.limits.event_log_bytes != scenario.parameters.limits.log_bytes.get() {
-            return Err(Error::Invalid(
-                "writer allowance differs from frozen scenario".into(),
-            ));
-        }
         let current = reference(
             reader.manifest().worker.executable.path.as_str(),
             &executable(prepared.limits.content_bytes)?,
@@ -98,17 +112,49 @@ impl PreparedExecution {
                 "executing worker bytes differ from frozen identity".into(),
             ));
         }
-        crate::recovery::verify_worker_contract(&reader, &snapshot, &scenario, &prepared.limits)?;
-        let adapters = ScriptedAdapters::new(&scenario)?;
-        if adapters.config().initial_workspace != reader.manifest().initial_workspace {
+        let (scenario, mode, config, adapters): (_, _, _, Box<dyn crate::Effects>) =
+            if let Some(effects) = native {
+                let profile: crate::docker::Profile = serde_json::from_slice(&scenario_bytes)?;
+                profile.validate()?;
+                if reader
+                    .manifest()
+                    .files
+                    .iter()
+                    .any(|r| r.path.as_str() == playtime_protocol::recovery::EXECUTION_CONTRACT)
+                    || prepared.limits != profile.storage
+                    || reader.descriptor().mode != RunMode::ScriptedSmoke
+                {
+                    return Err(Error::Invalid(
+                        "invalid Docker profile or simulation recovery authorization".into(),
+                    ));
+                }
+                let config = profile.config();
+                (profile.scenario, RunMode::ScriptedSmoke, config, effects)
+            } else {
+                let scenario: Scenario = serde_json::from_slice(&scenario_bytes)?;
+                crate::recovery::verify_worker_contract(
+                    &reader,
+                    &snapshot,
+                    &scenario,
+                    &prepared.limits,
+                )?;
+                let adapters = ScriptedAdapters::new(&scenario)?;
+                let config = adapters.config().clone();
+                (scenario, RunMode::Simulation, config, Box::new(adapters))
+            };
+        if prepared.limits.event_log_bytes != scenario.parameters.limits.log_bytes.get()
+            || config.initial_workspace != reader.manifest().initial_workspace
+        {
             return Err(Error::Invalid(
-                "initial simulation workspace differs from frozen input".into(),
+                "frozen input/configuration allowance mismatch".into(),
             ));
         }
         Ok(Self {
             writer,
             prepared: prepared.clone(),
             scenario,
+            mode,
+            config,
             adapters,
             image: reader.manifest().worker.clone(),
         })
@@ -151,6 +197,8 @@ fn execute(
         prepared,
         scenario,
         mut adapters,
+        mode,
+        config,
         ..
     } = owned;
     let mut confirmed = writer.confirmed_frontier().clone();
@@ -158,17 +206,19 @@ fn execute(
     let worker = StorageThread::spawn(writer, options.writer_hooks);
     let mut worker = Some(worker);
     let start_ms = clock.now_ms();
-    let mut controller = Controller::new(
-        adapters.config().clone(),
+    adapters.begin(start_ms)?;
+    let mut controller = Controller::with_tool_policy(
+        config.clone(),
         prepared.identity.run_id.clone(),
-        RunMode::Simulation,
+        mode,
         SequentialIds,
         start_ms,
+        adapters.policy(),
     )?;
     let mut encoder = Encoder::new(
         prepared.identity.run_id.clone(),
         prepared.limits.clone(),
-        adapters.config().initial_files.clone(),
+        config.initial_files.clone(),
     );
     let mut diagnostics = Vec::new();
     let mut healthy = true;
@@ -185,7 +235,9 @@ fn execute(
     let mut committed_log_bytes = 0;
     let mut peak_queued_bytes = 0;
     let mut fail_record = scenario.fail_record_sequence;
-    if let Err(error) = encoder.start(&clock.utc(), prepared.identity.input_manifest.clone()) {
+    if let Err(error) =
+        encoder.start_mode(&clock.utc(), prepared.identity.input_manifest.clone(), mode)
+    {
         fail(
             &mut controller,
             &mut encoder,
@@ -197,6 +249,7 @@ fn execute(
     }
     loop {
         let now = clock.now_ms();
+        adapters.poll(now);
         let cancelled = options.cancellation.is_cancelled()
             || scenario
                 .cancel_at_ms
@@ -204,6 +257,7 @@ fn execute(
         if cancelled && !cancel_notified {
             cancel_notified = true;
             controller.advance(now, Input::Cancel)?;
+            adapters.signal_cancel();
         } else if controller.next_wakeup_ms().is_some_and(|time| now >= time) {
             controller.advance(now, Input::Tick)?;
         }
@@ -373,7 +427,7 @@ fn execute(
         if healthy && in_flight.is_some() {
             let wakeup = next_time(
                 &controller,
-                &adapters,
+                adapters.as_ref(),
                 queue_since,
                 &scenario,
                 start_ms,
@@ -411,6 +465,10 @@ fn execute(
         }
         if adapters.active() != Some(effect.id) {
             adapters.cancel();
+            if adapters.retiring() {
+                clock.idle(now.saturating_add(1), true);
+                continue;
+            }
             if !healthy && dispatched_ids.contains(&effect.id) {
                 controller.advance(
                     now,
@@ -467,7 +525,7 @@ fn execute(
                 )?;
                 continue;
             }
-            let dispatch_result = adapters.dispatch(dispatch_time, &effect);
+            let dispatch_result = adapters.dispatch(dispatch_time, &effect, &confirmed);
             dispatches.push(Dispatch {
                 at_ms: dispatch_time,
                 effect: effect.clone(),
@@ -495,14 +553,25 @@ fn execute(
                 let EffectKind::PublishCheckpoint(checkpoint) = &effect.kind else {
                     unreachable!()
                 };
-                let bytes = &adapters.artifacts()[checkpoint.snapshot.workspace.path.as_str()];
-                match encoder.checkpoint(
-                    &clock.utc(),
-                    effect.id,
-                    checkpoint,
-                    bytes,
-                    confirmed.frontier().committed_sequence,
-                ) {
+                let publication = match adapters.checkpoint(checkpoint)? {
+                    crate::CheckpointBytes::Scripted(bytes) => encoder.checkpoint(
+                        &clock.utc(),
+                        effect.id,
+                        checkpoint,
+                        bytes,
+                        confirmed.frontier().committed_sequence,
+                    ),
+                    crate::CheckpointBytes::Contents { workspace, files } => encoder
+                        .checkpoint_contents(
+                            &clock.utc(),
+                            effect.id,
+                            checkpoint,
+                            workspace,
+                            &files,
+                            confirmed.frontier().committed_sequence,
+                        ),
+                };
+                match publication {
                     Ok(publication) => {
                         if encoder.capacity_exhausted && !capacity_notified {
                             capacity_notified = true;
@@ -532,7 +601,7 @@ fn execute(
         }
         let next = next_time(
             &controller,
-            &adapters,
+            adapters.as_ref(),
             queue_since,
             &scenario,
             start_ms,
@@ -545,7 +614,7 @@ fn execute(
 
 fn next_time(
     controller: &Controller<SequentialIds>,
-    adapters: &ScriptedAdapters,
+    adapters: &dyn crate::Effects,
     queued_at: Option<u64>,
     scenario: &Scenario,
     start: u64,

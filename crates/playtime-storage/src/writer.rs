@@ -51,8 +51,22 @@ pub struct FrozenInput {
 #[derive(Clone, Debug)]
 pub struct CommittedFrontier {
     frontier: EventFrontier,
+    usage: CommittedUsage,
+}
+
+/// Cumulative counts from the same writer-confirmed state as the receipt.
+/// A receipt supplies these counts; constructing standalone counts grants no authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommittedUsage {
+    pub content_bytes: u64,
+    pub references: u64,
+    pub events: u64,
+    pub log_bytes: u64,
 }
 impl CommittedFrontier {
+    pub fn usage(&self) -> CommittedUsage {
+        self.usage
+    }
     pub fn frontier(&self) -> &EventFrontier {
         &self.frontier
     }
@@ -137,9 +151,9 @@ impl ArchiveWriter {
             events,
             descriptor,
             limits,
+            receipt: receipt(identity, &marker, &marker_bytes, &state),
             state,
             hash: Sha256::new(),
-            receipt: receipt(identity, &marker, &marker_bytes),
             temporary_counter: 0,
             stopped: false,
             observer,
@@ -274,7 +288,7 @@ impl ArchiveWriter {
                 ARTIFACT_STEPS,
             )?;
             let (_, identity, _) = prepared(&directory, &limits)?;
-            let receipt = receipt(identity, &marker, &marker_bytes);
+            let receipt = receipt(identity, &marker, &marker_bytes, &state);
             Ok(Self {
                 directory,
                 _lock: lock,
@@ -493,6 +507,7 @@ impl ArchiveWriter {
             self.receipt.frontier.archive.clone(),
             &marker,
             &marker_bytes,
+            &next,
         );
         self.state = next;
         self.hash = hash;
@@ -529,8 +544,15 @@ fn receipt(
     archive: ArchiveIdentity,
     marker: &CommitMarker,
     marker_bytes: &[u8],
+    state: &LogState,
 ) -> CommittedFrontier {
     CommittedFrontier {
+        usage: CommittedUsage {
+            content_bytes: state.referenced_bytes,
+            references: state.references.len() as u64,
+            events: marker.committed_sequence,
+            log_bytes: marker.committed_bytes,
+        },
         frontier: EventFrontier {
             archive,
             marker: reference("events.commit.json", marker_bytes),

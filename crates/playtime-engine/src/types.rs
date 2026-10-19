@@ -79,6 +79,18 @@ pub struct Checkpoint {
     pub interrupted: bool,
 }
 
+/// External tools need a confirmed bridge reply; expiration is infrastructure
+/// uncertainty, never synthetic process-termination evidence. Simulation retains
+/// its historical timer behavior. The owner freezes this policy with its profile.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToolPolicy {
+    #[default]
+    Simulation,
+    ConfirmedExternal {
+        return_overhead_ms: u64,
+    },
+}
+
 /// ID creation is injected; sampling randomness is solely the configured seed
 /// plus the admitted request ordinal (modulo 2^31).
 pub trait IdSource {

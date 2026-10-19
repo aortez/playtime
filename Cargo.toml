@@ -68,3 +68,11 @@ unsafe_code = "forbid"
 # request deadline. Keep hashing fast in debug/test builds under CI contention.
 [profile.dev.package.sha2]
 opt-level = 3
+
+# Native worker fixtures freeze their actual executing test image under the
+# production 64 MiB object bound. Keep line tables without full local-variable
+# debug metadata; do not increase archive limits to accommodate test symbols.
+[profile.test.package.playtime-worker]
+debug = 1
+[profile.test.package.playtime-runner]
+debug = 1

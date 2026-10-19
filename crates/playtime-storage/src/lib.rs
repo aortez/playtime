@@ -20,7 +20,7 @@ pub use reader::{
     ArchiveReader, ConfirmationAuthority, EventPage, Inspection, ReadPrefix, Snapshot, StoredEvent,
     WorkerAvailability,
 };
-pub use writer::{ArchiveWriter, BatchClass, CommittedFrontier, FrozenInput};
+pub use writer::{ArchiveWriter, BatchClass, CommittedFrontier, CommittedUsage, FrozenInput};
 
 pub(crate) fn validate_limits(limits: &StorageLimits) -> Result<()> {
     let positive = [

@@ -2,6 +2,7 @@
 //! isolated client state, bounded output, and credential-free failure evidence.
 pub mod fixture;
 pub mod service;
+pub mod service_loss;
 pub mod suite;
 use playtime_client::Client;
 use playtime_local::{Token, read_connection};
@@ -37,6 +38,13 @@ impl TestRoot {
 }
 impl Drop for TestRoot {
     fn drop(&mut self) {
+        if self.0.join(".retain-evidence").exists() {
+            eprintln!(
+                "Retained incomplete gate evidence and ownership: {}",
+                self.0.display()
+            );
+            return;
+        }
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }

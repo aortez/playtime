@@ -27,8 +27,11 @@ pub struct Execution {
     work_deadline: Arc<AtomicU64>,
 }
 impl Execution {
-    pub fn acquire(bootstrap: &Bootstrap) -> Result<Self> {
-        if bootstrap.binding.kind != WorkerKind::ControllerSimulation {
+    pub async fn acquire(bootstrap: &Bootstrap) -> Result<Self> {
+        if !matches!(
+            bootstrap.binding.kind,
+            WorkerKind::ControllerSimulation | WorkerKind::DockerScripted
+        ) {
             return Err(Error::UnsupportedCapability);
         }
         let path = bootstrap
@@ -49,7 +52,25 @@ impl Execution {
         if content_ref(configuration.path.clone(), &bytes) != *configuration {
             return Err(Error::Invalid("configuration changed"));
         }
-        let scenario: Scenario = serde_json::from_slice(&bytes)?;
+        let native = bootstrap.binding.kind == WorkerKind::DockerScripted;
+        let profile = if native {
+            Some(serde_json::from_slice::<playtime_runner::docker::Profile>(
+                &bytes,
+            )?)
+        } else {
+            None
+        };
+        let scenario: Scenario = if let Some(profile) = &profile {
+            profile.validate()?;
+            if std::env::var_os("PLAYTIME_SYSTEMD_WORKER").is_none() {
+                return Err(Error::Invalid(
+                    "real Docker effects require systemd supervision",
+                ));
+            }
+            profile.scenario.clone()
+        } else {
+            serde_json::from_slice(&bytes)?
+        };
         if scenario
             .parameters
             .limits
@@ -69,9 +90,24 @@ impl Execution {
                 ..limits
             },
         };
-        let owned = PreparedExecution::acquire(&path, &prepared)?;
+        let owned = if let Some(profile) = profile {
+            let effects = crate::docker::NativeEffects::prepare(profile, bootstrap).await?;
+            PreparedExecution::acquire_docker(&path, &prepared, Box::new(effects))?
+        } else {
+            PreparedExecution::acquire(&path, &prepared)?
+        };
         let snapshot = reader.live_snapshot(owned.confirmed())?;
-        VerifiedBundle::from_archive(&reader, &snapshot)?.verify_embedded(crate::EMBEDDED_BUILD)?;
+        let bundle = VerifiedBundle::from_archive(&reader, &snapshot)?;
+        bundle.verify_embedded(crate::EMBEDDED_BUILD)?;
+        // A bundle never advertises a profile its own worker does not implement.
+        if native
+            && !bundle
+                .descriptor()
+                .capabilities
+                .implements_docker(&playtime_runner::docker::digest()?)
+        {
+            return Err(Error::UnsupportedCapability);
+        }
         let latest = LatestReceipt::default();
         Ok(Self {
             prepared: Some(owned),
@@ -128,7 +164,15 @@ impl ControlExecution for Execution {
             let result = owned.execute(&mut WorkClock::new(started_boot_ms), options);
             let success = match result {
                 Ok(report) => {
-                    let mut terminal = report.terminal_committed;
+                    let mut terminal = report.terminal_committed
+                        && report.result.as_ref().is_some_and(|result| {
+                            !matches!(
+                                result.reason,
+                                playtime_core::StopReason::InfrastructureFailure
+                                    | playtime_core::StopReason::Interrupted
+                            ) && result.cleanup
+                                == playtime_protocol::events::CleanupOutcome::Complete
+                        });
                     if let Some(publication) = report.pending_publication {
                         loop {
                             if let Some(result) = publication.poll() {
@@ -244,7 +288,7 @@ pub async fn serve(path: &Path) -> Result<()> {
             Err(error) => return Err(error.into()),
         }
     };
-    let execution = Execution::acquire(&bootstrap)?;
+    let execution = Execution::acquire(&bootstrap).await?;
     let cancellation = execution.cancel.clone();
     let finished = execution.finished.clone();
     let work_deadline = execution.work_deadline.clone();

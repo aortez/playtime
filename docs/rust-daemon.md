@@ -1,5 +1,9 @@
 # Normal Rust daemon execution (#20, slice B)
 
+The Docker/scripted-model production composition is now available through
+[#66 run-and-view](rust-docker-run-and-view.md). The scope below describes its
+underlying slice; live inference and automatic recovery remain separate work.
+
 `playtimed` now runs the real bounded controller in a separately supervised,
 packaged worker. Model and workshop effects are scripted. The ordinary HTTP
 handlers, native client, CLI and workbench observe its actual portable archive.

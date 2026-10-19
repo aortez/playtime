@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 playtime-docker.workspace = true
 playtime-core.workspace = true
 playtime-protocol.workspace = true

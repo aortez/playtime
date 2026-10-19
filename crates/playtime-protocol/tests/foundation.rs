@@ -435,3 +435,36 @@ fn event_error_and_archive_schema_matches_the_reviewed_golden() {
     let restored: utoipa::openapi::OpenApi = serde_json::from_value(expected.clone()).unwrap();
     assert_eq!(serde_json::to_value(restored).unwrap(), expected);
 }
+
+#[test]
+fn docker_requires_the_exact_advertised_profile_and_older_bundles_stay_readable() {
+    use playtime_core::Sha256Digest;
+    use playtime_protocol::worker_bundle::Capabilities;
+    let profile = Sha256Digest::new("a".repeat(64)).unwrap();
+    let older: Capabilities = serde_json::from_value(json!({
+        "private_protocol": 1, "manifest_schema": 1, "event_schema": 1,
+        "controller_simulation": true, "real_model": false, "real_workshop": true
+    }))
+    .unwrap();
+    assert!(older.supported());
+    assert!(!older.implements_docker(&profile));
+    let current = Capabilities {
+        docker_profile: Some(profile.clone()),
+        ..Capabilities::current()
+    };
+    assert!(current.supported());
+    assert!(current.implements_docker(&profile));
+    assert!(!current.implements_docker(&Sha256Digest::new("b".repeat(64)).unwrap()));
+    for changed in [
+        Capabilities {
+            real_model: true,
+            ..current.clone()
+        },
+        Capabilities {
+            real_workshop: false,
+            ..current
+        },
+    ] {
+        assert!(!changed.implements_docker(&profile));
+    }
+}

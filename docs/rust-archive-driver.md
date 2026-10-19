@@ -34,7 +34,7 @@ scenario bytes and initial synthetic workspace. The demo deliberately calls
 `capture_demo_worker` to read its bounded executing image through `/proc/self/exe`,
 which remains correct after rename/unlink. It also supplies a build-time source bundle,
 Cargo.lock, rustc/target/profile, and truthful revision/dirty metadata. The source
-bundle contains the five compiling crates and root Cargo files, including their
+bundle contains the six compiling crates and root Cargo files, including their
 compile-time fixture inputs; it excludes runs, images, and unrelated files.
 The bundle records `demo_cargo_build_script_live_workspace_not_isolated` as its
 capture method; it makes no isolated-build/reproducibility claim. These are not

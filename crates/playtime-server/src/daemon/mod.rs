@@ -47,6 +47,20 @@ impl Daemon {
         supervisor: Arc<dyn Supervisor>,
         test_supervision: bool,
     ) -> life::Result<Self> {
+        Self::open_with_docker(root, bundle, supervisor, test_supervision, None).await
+    }
+    pub async fn open_with_docker(
+        root: &Path,
+        bundle: &Path,
+        supervisor: Arc<dyn Supervisor>,
+        test_supervision: bool,
+        docker: Option<(&Path, &Path)>,
+    ) -> life::Result<Self> {
+        if test_supervision && docker.is_some() {
+            return Err(life::Error::Invalid(
+                "CPU test supervisor rejects real Docker effects",
+            ));
+        }
         let ledger = Ledger::open(root).await?;
         let root = ledger.root().to_path_buf();
         let bundle = bundle.to_owned();
@@ -56,7 +70,11 @@ impl Daemon {
         })
         .await
         .map_err(|_| life::Error::Uncertain)??;
-        let archive = Arc::new(Archive::new(root, bundle)?);
+        let mut archive = Archive::new(root, bundle)?;
+        if let Some((executable, socket)) = docker {
+            archive.enable_docker(executable, socket).await?;
+        }
+        let archive = Arc::new(archive);
         let coordinator =
             Coordinator::new(ledger, archive.clone(), supervisor, Arc::new(SystemClock));
         let this = Self {
@@ -319,8 +337,16 @@ impl Application for Daemon {
             service_id: ServiceId::new(self.inner.coordinator.ledger().service_id().as_str())
                 .unwrap(),
             service_build: env!("CARGO_PKG_VERSION").into(),
-            backend: projection::backend(),
-            modes: vec![RunMode::Simulation],
+            backend: if self.inner.archive.docker.is_some() {
+                projection::docker_backend()
+            } else {
+                projection::backend()
+            },
+            modes: if self.inner.archive.docker.is_some() {
+                vec![RunMode::Simulation, RunMode::ScriptedSmoke]
+            } else {
+                vec![RunMode::Simulation]
+            },
             features: vec![
                 "keyed_launch".into(),
                 "event_stream".into(),
@@ -334,31 +360,48 @@ impl Application for Daemon {
                 }
                 .into(),
             ],
-            unsupported_adapters: vec![
-                "ollama".into(),
-                "docker".into(),
-                "restart_and_worker_loss_recovery".into(),
-            ],
+            unsupported_adapters: [
+                Some("ollama".into()),
+                self.inner.archive.docker.is_none().then(|| "docker".into()),
+                Some("restart_and_worker_loss_recovery".into()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
             limits: ApiLimits::default(),
         }
     }
     async fn recipes(&self, query: PageQuery) -> Result<Page<Recipe>> {
-        paging::page(
-            vec![(
-                "two-session".into(),
+        let mut recipes = vec![(
+            "two-session".into(),
+            Recipe {
+                recipe_id: RecipeId::new("two-session").unwrap(),
+                name: "Two-session controller simulation".into(),
+                modes: vec![RunMode::Simulation],
+            },
+        )];
+        if self.inner.archive.docker.is_some() {
+            recipes.push((
+                playtime_runner::docker::RECIPE.into(),
                 Recipe {
-                    recipe_id: RecipeId::new("two-session").unwrap(),
-                    name: "Two-session controller simulation".into(),
-                    modes: vec![RunMode::Simulation],
+                    recipe_id: RecipeId::new(playtime_runner::docker::RECIPE).unwrap(),
+                    name: "Two-session real Docker / scripted model".into(),
+                    modes: vec![RunMode::ScriptedSmoke],
                 },
-            )],
-            &query,
-            "recipes",
-            "catalog",
-            None,
-        )
+            ));
+        }
+        paging::page(recipes, &query, "recipes", "catalog", None)
     }
     async fn preview(&self, recipe: RecipeId, request: PreviewRequest) -> Result<Preview> {
+        if recipe.as_str() == playtime_runner::docker::RECIPE
+            && request.mode == RunMode::ScriptedSmoke
+        {
+            return self
+                .inner
+                .archive
+                .docker_preview()
+                .ok_or_else(|| ApiError::new("unsupported_capability"));
+        }
         if recipe.as_str() != "two-session" {
             return Err(ApiError::new("not_found"));
         }

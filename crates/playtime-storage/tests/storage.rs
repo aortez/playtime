@@ -970,3 +970,39 @@ fn publication_cannot_follow_destination_or_staging_symlinks() {
         assert_eq!(writer.confirmed_frontier().frontier().committed_sequence, 0);
     }
 }
+
+#[test]
+fn cumulative_receipt_usage_counts_inputs_and_committed_objects_not_staged_bytes() {
+    let temp = Temp::new();
+    let (mut writer, fixture) = writer(&temp, StorageLimits::default());
+    let before = writer.confirmed_frontier().clone();
+    let inputs: u64 = fixture
+        .inputs
+        .iter()
+        .map(|i| i.bytes.len() as u64)
+        .sum::<u64>()
+        + fixture.manifest.len() as u64;
+    assert_eq!(before.usage().content_bytes, inputs);
+    assert_eq!(before.usage().references, fixture.inputs.len() as u64 + 1);
+    artifacts(&mut writer, &fixture);
+    assert_eq!(writer.confirmed_frontier().usage(), before.usage());
+    let receipt = writer
+        .append(&fixture.events, BatchClass::Finalization)
+        .unwrap();
+    let retained: u64 = fixture.artifacts.iter().map(|i| i.bytes.len() as u64).sum();
+    assert_eq!(receipt.usage().content_bytes, inputs + retained);
+    assert_eq!(
+        receipt.usage().references,
+        (fixture.inputs.len() + fixture.artifacts.len()) as u64 + 1
+    );
+    assert_eq!(receipt.usage().events, fixture.events.len() as u64);
+    assert_eq!(
+        receipt.usage().log_bytes,
+        fixture.events.iter().map(|l| l.len() as u64).sum::<u64>()
+    );
+    assert_eq!(
+        before.usage().content_bytes,
+        inputs,
+        "old receipt remains immutable"
+    );
+}
