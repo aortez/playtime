@@ -46,7 +46,7 @@ this table.
 ## Parts
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph clients["Clients"]
         cli["playtime CLI"]
         ui["playtime-ui workbench"]
@@ -63,8 +63,8 @@ flowchart LR
         daemon --> ledger
     end
 
-    subgraph worker["Worker: one per run, a user systemd unit"]
-        engine["playtime-worker<br>runs the bounded controller"]
+    subgraph worker["Worker: one per run"]
+        engine["playtime-worker, a user systemd unit<br>runs the bounded controller"]
     end
 
     archive["Run archive folder<br>frozen inputs, event log, checkpoints, result"]
