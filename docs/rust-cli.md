@@ -182,11 +182,20 @@ fail.
 | 6 | Unsupported version/capability, invalid/corrupt evidence, integrity failure |
 | 7 | Receipt, cursor, download, or output I/O failure |
 | 8 | Observer deadline; run unchanged |
+| 9 | The run stopped and waits for an operator release (`playtime runs release`) |
 | 10 | Abnormal/missing committed outcome, failed start/interruption, or failed/unknown cleanup |
 | 130 / 143 | This observer received SIGINT / SIGTERM |
 
 Normal stops are agent_finished, session_limit, token_limit, wall_limit, and
 log_limit. A remotely interrupted run is exit 10 when waiting, not signal exit 130.
+
+A cancelled or failed run doesn't become terminal on its own. Once the daemon
+stops monitoring it (Reconciling with reason `worker_unavailable` or
+`coordinator_restarted`), `runs cancel --wait`, `runs wait` and `run --wait`
+return exit 9, and the result's `next` field gives the
+`playtime runs release RUN_ID --reason TEXT` command. A normal start passes
+through Reconciling (`control_uncertain`) and keeps waiting. `--follow` still
+waits for a terminal stream.
 Server error envelopes retain codes, safe details, and request IDs.
 
 `download_to_path_with_force` is reusable by the UI. It holds the selected parent
