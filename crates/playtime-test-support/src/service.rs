@@ -683,6 +683,29 @@ impl NormalService {
             fresh_second_session(&history)?;
             self.verify_docker_absence().await?;
         }
+        if self.backend == Backend::DockerScripted {
+            // Starting and finishing never look like a run that needs a
+            // release, so a waiting launch of a normal run returns 0 (#93).
+            run_command(
+                cli,
+                &self.root,
+                Some(&self.connection),
+                [
+                    "run",
+                    self.backend.recipe(),
+                    "--mode",
+                    self.backend.mode(),
+                    "--idempotency-key",
+                    "waiting-service-gate",
+                    "--wait",
+                    "--format",
+                    "json",
+                ],
+                records,
+            )
+            .await?
+            .expect(0)?;
+        }
         if let Backend::Live(_) = self.backend {
             live_streaming_and_timing(&history, &self.view)?;
         }

@@ -153,3 +153,14 @@ the run ends with `wall_limit` instead of `infrastructure_failure`. Recipes now
 need a `command_seconds` above 3. The frozen `command_return_ms` field is 3000, so
 `docker_profile` digests change and older bundles can't run Docker profiles
 through a new daemon. The goldens are unchanged.
+
+### Reconciling during normal runs
+
+Since 2026-10-18 (#93), a normal Docker or live run no longer passes through
+`reconciling`. Until its startup deadline, a worker whose unit is up but that
+hasn't answered yet keeps its phase instead of reporting `worker_unavailable`.
+Once the daemon confirms normal completion and stops the unit itself, the run
+stays `running` until it is terminal instead of briefly reporting
+`worker_unavailable`. Both had made `run --wait` and `runs wait` return exit 9 on
+normal runs. Cancels, failures, lost workers and daemon restarts still end in
+`reconciling` and need a release. The API's values and the goldens are unchanged.
