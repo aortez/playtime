@@ -141,3 +141,15 @@ evidence in the ledger (schema version 5) and marks the run terminal with reason
 run ends as incomplete. The OpenAPI golden gains the route, its request and
 response types, and `release_refused`; the daemon advertises the
 `operator_release` feature.
+
+### Command return allowance
+
+Since 2026-10-18 (#78 item 3), the Docker profiles reserve 3 s instead of 1 s
+inside each command's effect cap for the Docker calls around `docker exec` and
+the bridge's kill and reap. A command that runs to its bridge cap then ends with
+a confirmed timeout instead of an infrastructure failure. A tool call with less
+than the allowance left before the work deadline no longer reaches Docker, and
+the run ends with `wall_limit` instead of `infrastructure_failure`. Recipes now
+need a `command_seconds` above 3. The frozen `command_return_ms` field is 3000, so
+`docker_profile` digests change and older bundles can't run Docker profiles
+through a new daemon. The goldens are unchanged.

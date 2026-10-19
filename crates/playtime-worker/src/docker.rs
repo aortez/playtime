@@ -100,6 +100,8 @@ struct Actor {
     model: Model,
     chunks: mpsc::Sender<(u64, serde_json::Value)>,
     private: PathBuf,
+    /// The controller's work deadline in boot milliseconds.
+    work_end_ms: u64,
 }
 /// Scripted responses for the CPU and CI gates, or the live locked model.
 enum Model {
@@ -420,12 +422,26 @@ impl Actor {
                 // Reserve return overhead INSIDE the original frozen effect cap.
                 // The bridge's own timeout is authoritative only after its reply.
                 let remaining = effect.deadline_ms.saturating_sub(boot_ms());
-                let command_ms = remaining
+                let Some(command_ms) = remaining
                     .checked_sub(self.profile.command_return_ms)
                     .filter(|n| *n > 0)
-                    .ok_or_else(|| {
-                        Error::Uncertain("insufficient command return allowance".into())
-                    })?;
+                else {
+                    if effect.deadline_ms >= self.work_end_ms {
+                        // Too close to the work deadline to run and confirm a
+                        // command, so nothing reaches Docker. The controller's
+                        // wall limit retires this effect at that deadline.
+                        tokio::select! {
+                            _ = cancel.cancelled() => {}
+                            _ = tokio::time::sleep_until(deadline) => {}
+                        }
+                        return Err(Error::Uncertain(
+                            "work deadline left no time to run the command".into(),
+                        ));
+                    }
+                    return Err(Error::Uncertain(
+                        "insufficient command return allowance".into(),
+                    ));
+                };
                 let limits = ToolLimits {
                     command_seconds: command_ms as f64 / 1000.0,
                     output_bytes: self.profile.scenario.parameters.limits.output_bytes.get() as u32,
@@ -675,6 +691,7 @@ impl Effects for NativeEffects {
             model,
             chunks: chunk_sender,
             private,
+            work_end_ms: end,
         };
         let (sender, tasks) = mpsc::sync_channel::<Task>(1);
         let (replies, receiver) = mpsc::sync_channel(1);

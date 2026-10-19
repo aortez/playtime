@@ -150,6 +150,10 @@ impl Recipe {
         {
             return invalid("a run limit exceeds its bound");
         }
+        // The controller refuses a command cap that leaves no time to run.
+        if l.command_seconds.get().saturating_mul(1000) <= RETURN_OVERHEAD_MS {
+            return invalid("command_seconds must exceed the command return allowance");
+        }
         if w.cpu_cores > b.cpu_cores
             || !(64 << 20..=b.memory_bytes).contains(&w.memory_bytes.get())
             || w.workspace_bytes.get() > b.workspace_bytes
@@ -458,6 +462,9 @@ mod tests {
         assert!(refused(|r| r.model.thinking = "max".into()));
         assert!(refused(|r| r.model.temperature = f64::NAN));
         assert!(refused(|r| r.model.top_p = 0.0));
+        assert!(refused(|r| {
+            r.parameters.limits.command_seconds = NonZeroU64::new(3).unwrap()
+        }));
         // The controller's own checks still apply.
         assert!(refused(|r| {
             r.parameters.limits.handoff_tokens = NonZeroU64::new(300_000).unwrap()

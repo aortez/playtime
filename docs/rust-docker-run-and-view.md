@@ -100,9 +100,12 @@ These records survive worker loss and are not experimental writer receipts.
 
 `ToolPolicy::ConfirmedExternal` distinguishes bridge completion from transport
 expiry. The bridge's requested command timeout stays inside the frozen five-second
-effect cap, with a one-second return allowance deducted from the remaining
-transport budget. The work deadline still clips that cap. A valid bridge timeout
-can continue the script. A deadline/lost reply or late completion closes further
+effect cap, with a three-second return allowance deducted from the remaining
+transport budget. The allowance covers the Docker calls around `docker exec` and
+the bridge's own kill and reap, which can wait 2 s. The work deadline still clips
+that cap. When less than the allowance remains before the work deadline, the
+worker doesn't contact Docker and the run ends with `wall_limit`. A valid bridge
+timeout can continue the script. A deadline/lost reply or late completion closes further
 model/tool dispatch with infrastructure failure, without fabricating a timeout
 result or changing the first stop reason to user cancellation. Snapshot requires
 independent quiescence even after the local Docker CLI has exited.
