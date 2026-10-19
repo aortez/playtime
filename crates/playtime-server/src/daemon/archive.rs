@@ -703,7 +703,8 @@ impl ArchivePort for Archive {
         match admission.request.mode {
             // Controller simulation workers create no external resources.
             RunMode::Simulation => Ok(ExternalResources::default()),
-            RunMode::ScriptedSmoke => {
+            // Every Docker mode's worker keeps the same ownership journal.
+            RunMode::ScriptedSmoke | RunMode::LiveSmoke | RunMode::Experiment => {
                 let engine = self.docker_engine.clone().ok_or(Error::Invalid(
                     "Docker is not enabled, so its resources cannot be verified",
                 ))?;
@@ -734,9 +735,6 @@ impl ArchivePort for Archive {
                 }
                 Ok(resources)
             }
-            _ => Err(Error::Invalid(
-                "external resources cannot be verified for this run mode",
-            )),
         }
     }
 }
