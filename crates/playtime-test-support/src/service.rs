@@ -50,41 +50,49 @@ async fn cancel_and_release(
     .await?;
     launched.expect(0)?;
     let run = client.lookup_key(&IdempotencyKey::new(key)?).await?.run_id;
-    client.cancel(&run).await?;
-    // Release is refused until the CPU test supervisor has reaped the worker,
-    // and is busy while the daemon's own start still holds launch control.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let view = client.run(&run).await?;
-        if view.orchestration.state == OrchestrationState::Terminal {
-            return Err("the cancelled run reached Terminal before its release".into());
-        }
-        let released = run_command(
-            cli,
-            root,
-            Some(connection),
-            [
-                "runs",
-                "release",
-                run.as_str(),
-                "--reason",
-                "service gate: cancelled run",
-                "--format",
-                "json",
-            ],
-            records,
-        )
-        .await?;
-        if released.code == 0 {
-            break;
-        }
-        let stderr = String::from_utf8_lossy(&released.stderr);
-        let retryable = stderr.contains("release_refused") || stderr.contains("run_busy");
-        if !retryable || Instant::now() >= deadline {
-            return Err(format!("operator release failed: {stderr}").into());
-        }
-        sleep(Duration::from_millis(100)).await;
+    // A cancelled run stops but stays reserved. --wait returns once the daemon
+    // stops monitoring it, with exit 9 and the release command.
+    let cancelled = run_command(
+        cli,
+        root,
+        Some(connection),
+        [
+            "runs",
+            "cancel",
+            run.as_str(),
+            "--wait",
+            "--timeout",
+            "30s",
+            "--format",
+            "json",
+        ],
+        records,
+    )
+    .await?;
+    cancelled.expect(9)?;
+    let result = cancelled.json()?;
+    if result["data"]["next"].as_str()
+        != Some(format!("playtime runs release {run} --reason TEXT").as_str())
+    {
+        return Err(format!("cancel --wait did not name the release: {result}").into());
     }
+    let released = run_command(
+        cli,
+        root,
+        Some(connection),
+        [
+            "runs",
+            "release",
+            run.as_str(),
+            "--reason",
+            "service gate: cancelled run",
+            "--format",
+            "json",
+        ],
+        records,
+    )
+    .await?;
+    released.expect(0)?;
     let view = client.run(&run).await?;
     if view.orchestration.state != OrchestrationState::Terminal
         || view.orchestration.reason.as_deref() != Some("operator_released")

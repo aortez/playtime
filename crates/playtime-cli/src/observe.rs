@@ -13,7 +13,24 @@ use tokio_util::sync::CancellationToken;
 pub fn terminal(view: &RunView) -> bool {
     view.orchestration.state == OrchestrationState::Terminal
 }
+/// The daemon stopped monitoring a run that isn't Terminal, so nothing changes
+/// until `playtime runs release`. A normal start also passes through
+/// Reconciling (`control_uncertain`), which doesn't count.
+pub fn awaiting_release(view: &RunView) -> bool {
+    view.orchestration.state == OrchestrationState::Reconciling
+        && matches!(
+            view.orchestration.reason.as_deref(),
+            Some("worker_unavailable" | "coordinator_restarted")
+        )
+}
+/// What the operator has to do after an observer returns, if anything.
+pub fn next_step(view: &RunView) -> Option<String> {
+    awaiting_release(view).then(|| format!("playtime runs release {} --reason TEXT", view.run_id))
+}
 pub fn outcome_exit(view: &RunView, cancellation: bool) -> i32 {
+    if awaiting_release(view) {
+        return 9;
+    }
     if !terminal(view) || view.cleanup != Cleanup::Complete {
         return 10;
     }
@@ -90,7 +107,7 @@ pub async fn wait(client: &Client, run: &RunId, deadline: Instant) -> Result<Run
             match read {
                 Ok(view) => {
                     outage = None;
-                    if terminal(&view) {
+                    if terminal(&view) || awaiting_release(&view) {
                         return Ok(view);
                     }
                 }
@@ -240,5 +257,20 @@ mod tests {
         assert_eq!(outcome_exit(&view, false), 10);
         view.orchestration.state = OrchestrationState::Reconciling;
         assert_eq!(outcome_exit(&view, true), 10);
+        // Only a run the daemon stopped monitoring waits for a release. A
+        // normal start passes through Reconciling (control_uncertain).
+        assert!(next_step(&view).is_none());
+        view.orchestration.reason = Some("control_uncertain".into());
+        assert!(!awaiting_release(&view));
+        for reason in ["worker_unavailable", "coordinator_restarted"] {
+            view.orchestration.reason = Some(reason.into());
+            assert!(awaiting_release(&view));
+            assert_eq!(outcome_exit(&view, true), 9);
+            assert_eq!(outcome_exit(&view, false), 9);
+            assert_eq!(
+                next_step(&view).unwrap(),
+                "playtime runs release fixture-run-00000001 --reason TEXT"
+            );
+        }
     }
 }

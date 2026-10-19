@@ -318,6 +318,12 @@ fn text(value: &Value) -> String {
             if let Some(code) = data.get("exit_code") {
                 lines.push(format!("Observer result: {}", word(code)));
             }
+            if let Some(next) = data.get("next") {
+                lines.push(format!(
+                    "Stopped; needs an operator release: {}",
+                    word(next)
+                ));
+            }
             lines.join("\n")
         }
         _ if data.get("orchestration").is_some() => run_summary(data),

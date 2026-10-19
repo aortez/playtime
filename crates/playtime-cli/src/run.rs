@@ -84,12 +84,11 @@ impl Context {
             )
             .await?;
             let exit = observe::outcome_exit(&view, false);
-            self.output
-                .emit(
-                    "result",
-                    json!({"launch":result,"run":view,"exit_code":exit}),
-                )
-                .await?;
+            let mut result = json!({"launch":result,"run":view,"exit_code":exit});
+            if let Some(next) = observe::next_step(&view) {
+                result["next"] = json!(next);
+            }
+            self.output.emit("result", result).await?;
             Ok(exit)
         } else {
             self.output.emit("launch", result).await?;
@@ -152,9 +151,11 @@ impl Context {
     async fn wait(&self, id: &RunId, cancellation: bool) -> Result<i32, Failure> {
         let view = observe::wait(&self.client, id, Instant::now() + self.timeout).await?;
         let exit = observe::outcome_exit(&view, cancellation);
-        self.output
-            .emit("result", json!({"run":view,"exit_code":exit}))
-            .await?;
+        let mut result = json!({"run":view,"exit_code":exit});
+        if let Some(next) = observe::next_step(&view) {
+            result["next"] = json!(next);
+        }
+        self.output.emit("result", result).await?;
         Ok(exit)
     }
     async fn events(&self, args: &Events) -> Result<i32, Failure> {
