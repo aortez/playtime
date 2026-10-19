@@ -96,8 +96,11 @@ fn base(record: &Admission) -> RunView {
         preview_revision: PreviewRevision::new(&record.request.preview_revision).unwrap(),
         backend: match record.request.mode {
             playtime_core::RunMode::ScriptedSmoke => docker_backend(),
-            playtime_core::RunMode::LiveSmoke => live_backend(),
-            _ => backend(),
+            // Experiments are catalog recipes, which run on the live model.
+            playtime_core::RunMode::LiveSmoke | playtime_core::RunMode::Experiment => {
+                live_backend()
+            }
+            playtime_core::RunMode::Simulation => backend(),
         },
         orchestration: Orchestration {
             state: match record.phase {

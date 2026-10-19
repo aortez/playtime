@@ -139,3 +139,26 @@ leaves at least twice that, about 6,000 events against the 100,000 limit. Python
   - The protocol is the owner's 2026-10-18 edit of `prompts/protocol.txt`.
   - The inventory follows Python's format, the image's collections and
     `workshop/docs/INVENTORY.md`, plus one line on the workspace limits.
+
+## Evidence
+
+On 2026-10-18 a throwaway daemon loaded the catalog with `--recipes`. Its preview
+showed `curiosity` with four seeds (5,787 bytes), `thinking: high` and the
+confirmed limits. One live run, `20261018T235429Z-9911f51c` (evidence retained
+outside version control), showed:
+
+- **Seeds.** In session 1 the model's second command, `ls -R .` in `/work`, listed
+  the four seeds, and the model then read each one. Session 1's checkpoint holds
+  them with matching digests. The archive froze the recipe and its seeds in
+  `inputs/scenario.json`.
+- **Sessions.** Session 1 used its 10 turns in about 23 seconds of short, one-tool
+  turns and handed off a memento. Session 2 started a fresh conversation with
+  it.
+- **Contention.** 22 timed requests, with no reloads and no queue waits.
+- **Cancel.** A cancel after 45 seconds stopped the worker as `interrupted`.
+  Within a second it published session 2's interrupted checkpoint, removed its
+  Docker resources and finished the archive with cleanup complete.
+
+The daemon stops the worker's unit as soon as it delivers a cancel. It never
+confirms the final frontier, so it shows the run as `reconciling`
+(`worker_unavailable`) until an operator releases it (#71).

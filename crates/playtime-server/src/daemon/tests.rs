@@ -445,3 +445,16 @@ fn invalid_catalogs_fail_before_launch_with_the_file_and_reason() {
     assert!(error.contains("without links"), "{error}");
     assert!(super::catalog::load(&root.0.join("seeds")).is_err());
 }
+#[test]
+fn run_views_name_the_backend_each_mode_runs_on() {
+    let mut record = admission(&fixture::two_session().unwrap());
+    for (mode, backend) in [
+        (RunMode::Simulation, projection::backend()),
+        (RunMode::ScriptedSmoke, projection::docker_backend()),
+        (RunMode::LiveSmoke, projection::live_backend()),
+        (RunMode::Experiment, projection::live_backend()),
+    ] {
+        record.request.mode = mode;
+        assert_eq!(projection::unprepared(&record).backend, backend, "{mode:?}");
+    }
+}
