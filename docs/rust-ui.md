@@ -24,6 +24,12 @@ The `playtime-test-support` fixture used by the process gate also simulates an
 accepted launch whose HTTP reply is lost. A production demo must use #20's real
 connection descriptor after its worker/archive adapter is implemented.
 
+To run the real workbench headlessly against the daemon's scripted simulation,
+take screenshots and press controls by their accessible names, use
+`./scripts/workbench-sandbox.sh start` and `scripts/workbench-drive.py`. Both keep
+the display, D-Bus session and accessibility settings private to one directory.
+The playbook is `.claude/skills/run-workbench/SKILL.md`.
+
 Choose a recipe, review the frozen preview, then launch. The left pane contains
 recent runs and unresolved launch receipts. Lookup/retry retains the original
 request and key. Failed recovery stays unresolved, including lookup 404/503,
