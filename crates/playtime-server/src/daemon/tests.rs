@@ -305,6 +305,64 @@ async fn live_endpoints_resolve_to_frozen_addresses_and_pin_ip_literals() {
     assert!(super::archive::resolve(&link_local).await.is_err());
 }
 
+#[test]
+fn daemon_restarts_replace_one_docker_config_directory() {
+    let root = Root::new();
+    let private = root.0.join(".playtime");
+    playtime_worker_control::create_private_dir(&private).unwrap();
+    for _ in 0..3 {
+        // Each start's `Cli::resolve` creates the directory new.
+        let config = super::archive::docker_config(&root.0).unwrap();
+        playtime_worker_control::create_private_dir(&config).unwrap();
+    }
+    let names: Vec<_> = std::fs::read_dir(&private)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["docker-config"]);
+    let stray = private.join("docker-config/stray");
+    std::fs::write(&stray, b"").unwrap();
+    assert!(super::archive::docker_config(&root.0).is_err());
+    assert!(stray.exists());
+}
+
+#[test]
+fn preparation_is_keyed_on_the_recipe_as_well_as_the_mode() {
+    use super::archive::{Launch, launch};
+    use playtime_runner::docker::{LIVE_RECIPE, RECIPE};
+    let request = |recipe: &str, mode| AdmissionRequest {
+        recipe_id: recipe.into(),
+        mode,
+        preview_revision: "test".into(),
+    };
+    for (recipe, mode, expected) in [
+        ("two-session", RunMode::Simulation, Launch::Simulation),
+        (RECIPE, RunMode::ScriptedSmoke, Launch::ScriptedSmoke),
+        (LIVE_RECIPE, RunMode::LiveSmoke, Launch::LiveSmoke),
+        (
+            "curiosity",
+            RunMode::Experiment,
+            Launch::Catalog("curiosity"),
+        ),
+    ] {
+        assert_eq!(launch(&request(recipe, mode)).unwrap(), expected);
+    }
+    // A Docker recipe never prepares a simulation, and no mode takes another
+    // mode's recipe.
+    for (recipe, mode) in [
+        (RECIPE, RunMode::Simulation),
+        ("two-session", RunMode::ScriptedSmoke),
+        (LIVE_RECIPE, RunMode::ScriptedSmoke),
+        (RECIPE, RunMode::LiveSmoke),
+        ("curiosity", RunMode::LiveSmoke),
+    ] {
+        assert!(matches!(
+            launch(&request(recipe, mode)),
+            Err(Error::Invalid("unsupported recipe or mode"))
+        ));
+    }
+}
+
 fn repository() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }

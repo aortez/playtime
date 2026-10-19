@@ -100,6 +100,39 @@ pub(super) async fn resolve(
     }
     Ok(addresses)
 }
+/// The Docker CLI's `--config` directory. `Cli::resolve` creates it new and it
+/// stays empty. The service lock makes this daemon the root's only user, so the
+/// previous start's directory is removed instead of accumulating. Anything but
+/// an empty directory there is refused, never deleted.
+pub(super) fn docker_config(root: &std::path::Path) -> life::Result<PathBuf> {
+    let path = root.join(".playtime/docker-config");
+    match std::fs::remove_dir(&path) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(Error::Invalid(
+            "previous Docker config is not an empty directory",
+        )),
+        _ => Ok(path),
+    }
+}
+/// What an admission prepares, keyed on its recipe as well as its mode.
+#[derive(Debug, PartialEq)]
+pub(super) enum Launch<'a> {
+    Simulation,
+    ScriptedSmoke,
+    LiveSmoke,
+    Catalog(&'a str),
+}
+pub(super) fn launch(request: &AdmissionRequest) -> life::Result<Launch<'_>> {
+    let recipe = request.recipe_id.as_str();
+    Ok(match request.mode {
+        RunMode::Simulation if recipe == "two-session" => Launch::Simulation,
+        RunMode::ScriptedSmoke if recipe == playtime_runner::docker::RECIPE => {
+            Launch::ScriptedSmoke
+        }
+        RunMode::LiveSmoke if recipe == playtime_runner::docker::LIVE_RECIPE => Launch::LiveSmoke,
+        RunMode::Experiment => Launch::Catalog(recipe),
+        _ => return Err(Error::Invalid("unsupported recipe or mode")),
+    })
+}
 impl Archive {
     pub fn new(root: PathBuf, bundle: VerifiedBundle) -> life::Result<Self> {
         let bytes = include_bytes!("two-session.json").to_vec();
@@ -137,15 +170,8 @@ impl Archive {
                 "bundle does not implement this daemon's frozen Docker profile",
             ));
         }
-        let cli = Cli::resolve(
-            executable,
-            socket,
-            &self.root.join(format!(
-                ".playtime/docker-catalog-{}",
-                random_id()?.as_str()
-            )),
-        )
-        .map_err(|_| Error::Invalid("invalid Docker executable/socket selection"))?;
+        let cli = Cli::resolve(executable, socket, &docker_config(&self.root)?)
+            .map_err(|_| Error::Invalid("invalid Docker executable/socket selection"))?;
         let selection = cli.selection().clone();
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
         let engine = Engine::connect(Arc::new(cli), deadline, CancellationToken::new())
@@ -549,11 +575,11 @@ impl ArchivePort for Archive {
     }
     async fn prepare(&self, admission: &Admission) -> life::Result<PreparedLaunch> {
         // A Docker mode never falls back to simulation.
-        let docker = match admission.request.mode {
-            RunMode::ScriptedSmoke => Some(self.docker.clone()),
-            RunMode::LiveSmoke => Some(self.live_profile()),
-            RunMode::Experiment => Some(self.recipe_profile(&admission.request.recipe_id)),
-            RunMode::Simulation => None,
+        let docker = match launch(&admission.request)? {
+            Launch::Simulation => None,
+            Launch::ScriptedSmoke => Some(self.docker.clone()),
+            Launch::LiveSmoke => Some(self.live_profile()),
+            Launch::Catalog(id) => Some(self.recipe_profile(id)),
         }
         .map(|profile| profile.ok_or(Error::Invalid("unsupported recipe or mode")))
         .transpose()?;
