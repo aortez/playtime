@@ -5,6 +5,10 @@ development tools, and optional starting materials. Each session starts a fresh
 conversation; workspace files and the model's own `MEMENTO.md` carry work forward.
 Runs leave event logs, workspace snapshots, and an HTML report.
 
+Playtime is moving to Rust. The Rust daemon, CLI and workbench, what their MVP
+is and where it stands are in [docs/rust-mvp.md](docs/rust-mvp.md). The Python
+controller and the commands below are frozen.
+
 ## Start
 
 Requirements: Linux, Python 3.12+, Docker access, and an Ollama server with a

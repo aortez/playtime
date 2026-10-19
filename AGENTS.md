@@ -10,7 +10,8 @@ workshop. Keep the controller independent of third-party Python packages.
 - `models/` and `environments/`: small identity lock files; commit these.
 - `.playtime/` and `runs/`: local image archives and run records; never commit.
 
-The Rust MVP (#16) is the target. The Python controller is frozen: don't modify
+The Rust MVP (#16) is the target; `docs/rust-mvp.md` says what it is and where it
+stands. The Python controller is frozen: don't modify
 `src/playtime/` or `tests/*.py`, and don't run Python experiments. It is no
 longer a parity oracle, the legacy compatibility matrix is retired, and legacy
 archives and fixtures no longer constrain Rust. The committed Rust goldens are
