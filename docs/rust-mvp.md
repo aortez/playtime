@@ -9,19 +9,20 @@ out and the rest becomes the architecture document.
 
 ## Status on 2026-10-18
 
-Every slice's code is merged or in review:
+Every slice is merged, and the soak has run:
 
 | Slice | Issue | Pull requests | State |
 | --- | --- | --- | --- |
 | 1. Docker workshop with a scripted model | #66 | #69 | Merged. |
-| 2. Operator release for interrupted or failed runs | #71, #87 | #80, #88 | In review. |
+| 2. Operator release for interrupted or failed runs | #71, #87 | #80, #88 | Merged. #93: `--wait` can exit 9 on a normal run. |
 | 3. Live model called directly, with a live-run lock and contention flags | #72 | #83 | Merged. |
-| 4. Tool-call robustness | #73 | #81, #85 | #81 merged; #85 in review. |
-| 5. Recipes as data, seed import, long-run limits | #74 | #84 | Merged. The owner's review of the recipe text is pending. |
-| 6. One real 10-session soak run | #75 | | Prepared. Waits for the merges above and the owner's go. |
+| 4. Tool-call robustness | #73 | #81, #85 | Merged. |
+| 5. Recipes as data, seed import, long-run limits | #74 | #84 | Merged. The owner accepted the recipe text. |
+| 6. One real 10-session soak run | #75 | | The owner's run `20261019T040629Z-5766d327` completed all 10 sessions unattended. The report is on #75. |
 
-Also merged: #77 froze Python and retired the legacy matrix, and #79 and #86
-took the backend-guard flake out of CI. #89 fixes a worker test flake.
+Also merged: #77 froze Python and retired the legacy matrix, #79 and #86 took
+the backend-guard flake out of CI, and #89 fixed a worker test flake. The soak
+filed #93 and #94.
 
 ## Goal
 
@@ -33,15 +34,14 @@ memento, files and images.
 
 | # | Item | State | Evidence |
 | --- | --- | --- | --- |
-| 1 | The reviewed curiosity recipe can be launched from the CLI or the workbench. | Code merged (#84). The recipe text awaits the owner's review. | [Recipes](rust-recipes.md); run `20261018T235429Z-9911f51c`. |
-| 2 | It runs unattended to completion, with at most one live run across both checkouts. | The lock is merged (#83). Completion is shown by the soak (#75). | [Live model](rust-live-model.md). |
-| 3 | You can watch it live, and closing or reopening the workbench never affects the run. | Verified at two sessions. | #83's live gate, run `20261018T222321Z-4e0ce29b`. |
-| 4 | Cancel works. After a cancel or a failure, the owner can release the slot and launch again. | Cancel verified. Release is #80 with #88. | #84's live check, the same run as item 1. |
-| 5 | Afterwards, every session's transcript, memento, files and images can be browsed, including from a copied archive. | Verified at two sessions. The soak checks ten. | #83's live gate. |
-| 6 | Each run records the model and image identity and flags possible GPU contention. | Merged (#83). | [Live model](rust-live-model.md). |
+| 1 | The reviewed curiosity recipe can be launched from the CLI or the workbench. | Done. The owner launched the soak from the workbench, and #84's live check launched from the CLI. | Soak run `20261019T040629Z-5766d327`; run `20261018T235429Z-9911f51c`. |
+| 2 | It runs unattended to completion, with at most one live run across both checkouts. | Done. The soak ran 10 sessions to `agent_finished` with no intervention, and in #83's live gate the lock refused an admission from a second daemon root. | The #75 report; [Live model](rust-live-model.md). |
+| 3 | You can watch it live, and closing or reopening the workbench never affects the run. | The workbench stayed open on the soak from launch to the end. Closing and reopening was verified at two sessions, not during the soak. | The #75 report; #83's live gate, run `20261018T222321Z-4e0ce29b`. |
+| 4 | Cancel works. After a cancel or a failure, the owner can release the slot and launch again. | Cancel verified live. Release is merged (#80, #88), and the normal service gate cancels, releases and launches again; release hasn't run live. #93: `--wait` can exit 9 on a normal run. | #84's live check, the same run as item 1; `./scripts/test-rust-service-e2e.sh --case normal`. |
+| 5 | Afterwards, every session's transcript, memento, files and images can be browsed, including from a copied archive. | Done at ten sessions, including an offline read of a copied archive. | The #75 report. |
+| 6 | Each run records the model and image identity and flags possible GPU contention. | Done. The soak froze both identities, and its 111 timed requests flagged no contention. | The #75 report; [Live model](rust-live-model.md). |
 
-The soak (#75) reports each item with its evidence, and that report updates
-this table.
+The soak's report on #75 gives each item's evidence.
 
 ## Parts
 
@@ -165,13 +165,17 @@ Launch from the CLI, or from the workbench, and cancel or release from the CLI:
 
 ```sh
 target/debug/playtime --connection-file /absolute/service-root/.playtime/connection.json \
-  run curiosity --mode experiment --idempotency-key my-retained-key --wait
+  run curiosity --mode experiment --idempotency-key my-retained-key
 target/debug/playtime-ui --connection-file /absolute/service-root/.playtime/connection.json
 target/debug/playtime --connection-file /absolute/service-root/.playtime/connection.json \
   runs cancel RUN_ID --wait
 target/debug/playtime --connection-file /absolute/service-root/.playtime/connection.json \
   runs release RUN_ID --reason "why"
 ```
+
+Until #93 is fixed, `run --wait` and `runs wait` can return exit 9 and suggest
+a release while a normal run is starting or finishing. Launch without `--wait`,
+and follow the run in the workbench or with `runs show`.
 
 Rules for live runs:
 
