@@ -140,7 +140,13 @@ async fn disconnected_owner_retains_uncertainty_until_owned_children_are_reaped(
         .unwrap();
     h.wait_sends(1).await;
     drop(stream);
-    let stopped = status_until(&client, |s| s.stop.is_some()).await;
+    // Status shows the stop before it is durable. Wait for the stop and its
+    // first observation to be journaled: killing the guard mid-publication
+    // correctly blocks the restart instead of resuming this stop.
+    let stopped = status_until(&client, |s| {
+        s.observation.is_some() && s.durable_sequence == s.sequence
+    })
+    .await;
     assert_eq!(stopped.stop.as_ref().unwrap().reason, StopReason::OwnerLost);
     assert_eq!(
         h.stats().await.2,
