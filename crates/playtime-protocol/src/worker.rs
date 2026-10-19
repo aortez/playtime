@@ -50,6 +50,9 @@ pub enum WorkerKind {
     ControllerSimulation,
     /// Scripted model and real Docker workshop; requires systemd supervision.
     DockerScripted,
+    /// Live locked model and real Docker workshop; requires systemd supervision
+    /// and the machine-wide live-model lock.
+    DockerLive,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

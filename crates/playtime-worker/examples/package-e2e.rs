@@ -470,12 +470,14 @@ fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
             .is_err()
     );
     assert!(!archive.exists());
-    assert!(
-        VerifiedBundle::open(&path)?
-            .prepare_docker(&archive, RunId::new("older")?, &docker_profile()?)
-            .is_err()
-    );
-    assert!(!archive.exists());
+    for profile in [docker_profile()?, live_profile()?] {
+        assert!(
+            VerifiedBundle::open(&path)?
+                .prepare_docker(&archive, RunId::new("older")?, &profile)
+                .is_err()
+        );
+        assert!(!archive.exists());
+    }
     // The older capability set remains usable for ordinary simulation.
     VerifiedBundle::open(&path)?.prepare(
         &archive,
@@ -494,16 +496,47 @@ fn other_docker_profile_is_refused(bundle: &Path) -> Result<()> {
         capabilities.docker_profile = Some(playtime_storage::sha256(b"another frozen profile"));
     })?;
     let archive = case.root.join("other-profile-archive");
+    for profile in [docker_profile()?, live_profile()?] {
+        assert!(
+            VerifiedBundle::open(&path)?
+                .prepare_docker(&archive, RunId::new("other")?, &profile)
+                .is_err()
+        );
+        assert!(!archive.exists());
+    }
+    println!("PASS bundle advertising other Docker profiles cannot prepare Docker or live runs");
+    // Without the real-model capability, the same profiles allow only scripted runs.
+    let path = rewritten(&case, bundle, "scripted-only-bundle", |capabilities| {
+        capabilities.real_model = false;
+    })?;
+    let live = case.root.join("scripted-only-live");
     assert!(
         VerifiedBundle::open(&path)?
-            .prepare_docker(&archive, RunId::new("other")?, &docker_profile()?)
+            .prepare_docker(&live, RunId::new("live")?, &live_profile()?)
             .is_err()
     );
-    assert!(!archive.exists());
-    println!("PASS bundle advertising another Docker profile cannot prepare Docker");
+    assert!(!live.exists());
+    VerifiedBundle::open(&path)?.prepare_docker(
+        &case.root.join("scripted-only-scripted"),
+        RunId::new("scripted")?,
+        &docker_profile()?,
+    )?;
+    println!("PASS bundle without the real-model capability refuses only live runs");
     Ok(())
 }
 
+fn live_profile() -> Result<playtime_runner::docker::Profile> {
+    let scripted = docker_profile()?;
+    Ok(playtime_runner::docker::Profile::freeze_live(
+        scripted.selection,
+        scripted.daemon,
+        playtime_runner::docker::LiveHost {
+            endpoint: "http://model-host.local:11434".into(),
+            addresses: vec!["192.0.2.10".parse()?],
+            live_lock: "/nonexistent/package-gate/live-model.lock".into(),
+        },
+    )?)
+}
 fn docker_profile() -> Result<playtime_runner::docker::Profile> {
     Ok(playtime_runner::docker::Profile::freeze(
         playtime_docker::transport::Selection {

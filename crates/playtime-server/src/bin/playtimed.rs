@@ -15,6 +15,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut docker = false;
     let mut docker_executable = PathBuf::from("/usr/bin/docker");
     let mut docker_socket = PathBuf::from("/var/run/docker.sock");
+    let mut ollama_endpoint = None;
     let mut listen: SocketAddr = "127.0.0.1:8766".parse()?;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -26,7 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--docker-scripted" => docker = true,
             "--docker-executable" => docker_executable = args.next().ok_or("missing Docker executable")?.into(),
             "--docker-socket" => docker_socket = args.next().ok_or("missing Docker socket")?.into(),
-            _ => return Err("usage: playtimed --root <existing-private-root> --bundle <frozen-bundle> [--listen 127.0.0.1:8766] [--cpu-test-supervisor]".into()),
+            "--ollama-endpoint" => ollama_endpoint = Some(args.next().ok_or("missing Ollama endpoint")?),
+            _ => return Err("usage: playtimed --root <existing-private-root> --bundle <frozen-bundle> [--listen 127.0.0.1:8766] [--cpu-test-supervisor] [--docker-scripted [--docker-executable <path>] [--docker-socket <path>] [--ollama-endpoint <http-url>]]".into()),
         }
     }
     let root = root.ok_or("--root is required")?;
@@ -47,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             supervisor,
             cpu_test,
             docker.then_some((docker_executable.as_path(), docker_socket.as_path())),
+            ollama_endpoint.as_deref(),
         )
         .await?,
     );

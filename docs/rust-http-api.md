@@ -142,7 +142,9 @@ rereads after every observed change. Each `record` has an EventEnvelope and a
 resume-cursor ID. Heartbeat comments run every 15 seconds, including during
 subsequent backend reads. `stream_error` and reconciled `stream_end` have no ID.
 EOF is a disconnect, never proof of completion. Pending queues are bounded by
-both records and bytes; saturation closes the observer rather than blocking
+both records and bytes. Each backend read takes as many records as the queue can
+still hold, because every read rescans the archive prefix. A client that doesn't
+drain a full queue within one heartbeat interval is closed rather than blocking
 experimental work. A resumed client can receive an applied-but-unacknowledged
 record again.
 

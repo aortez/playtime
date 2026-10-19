@@ -74,7 +74,9 @@ restart/recovery and the full CLI/UI simulation gates remain subsequent work.
 packaged systemd worker with real Docker. See `docs/rust-docker-run-and-view.md`;
 run `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted`
 for native-effect, Docker-profile or run-and-view changes when user systemd and the
-locked image are available.
+locked image are available. `--ollama-endpoint` adds the live model, called
+directly; see `docs/rust-live-model.md`. Run `--backend live` for live-path changes,
+one live-model test at a time, after checking that no Playtime worker is active.
 `playtime-cli` owns clap parsing/presentation. Shared connection resolution,
 durable launch receipts, cursor files and verified downloads belong in
 `playtime-client`; keep these independent of clap/egui. Local I/O stays outside

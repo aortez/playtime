@@ -12,8 +12,8 @@ use playtime_protocol::{
 use playtime_storage::{ArchiveReader, ConfirmationAuthority, ReadPrefix, Snapshot, StorageLimits};
 use playtime_worker::bundle::VerifiedBundle;
 use playtime_worker_control::{
-    Bootstrap, Credential, boot_id, boot_ms, create_private_dir, digest, random_id, read_private,
-    write_once,
+    Bootstrap, Credential, FileLock, boot_id, boot_ms, create_private_dir, digest, random_id,
+    read_private, write_once,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -26,6 +26,77 @@ pub(super) struct Archive {
     pub revision: PreviewRevision,
     pub docker: Option<playtime_runner::docker::Profile>,
     docker_engine: Option<playtime_docker::Engine>,
+    pub live: Option<Arc<Live>>,
+}
+/// The live model as the daemon reaches it: host bindings frozen at startup
+/// and an adapter for read-only identity checks at admission.
+pub(super) struct Live {
+    pub host: playtime_runner::docker::LiveHost,
+    endpoint: playtime_ollama::Endpoint,
+    adapter: tokio::sync::Mutex<playtime_ollama::Adapter<playtime_ollama::NativeTransport>>,
+}
+impl Live {
+    /// Same addresses as at startup, and the locked model still identifies
+    /// itself exactly. Metadata only; never inference.
+    async fn ready(&self) -> life::Result<()> {
+        if resolve(&self.endpoint).await? != self.host.addresses {
+            return Err(Error::Invalid("live model unavailable"));
+        }
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        self.adapter
+            .lock()
+            .await
+            .inspect(false, deadline, &playtime_ollama::CancellationToken::new())
+            .await
+            .map(|_| ())
+            .map_err(|_| Error::Invalid("live model unavailable"))
+    }
+}
+/// Busy while any checkout's live worker holds the lock. This probe releases
+/// it at once; only the worker holds it, for its whole lifetime.
+pub(super) fn probe_live_lock(path: &std::path::Path) -> life::Result<()> {
+    FileLock::acquire(path)
+        .map(drop)
+        .map_err(|error| match error {
+            playtime_worker_control::Error::Io(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Error::Busy
+            }
+            _ => Error::Invalid("live model unavailable"),
+        })
+}
+/// The static worker can't resolve mDNS names, so the daemon does. An IP
+/// literal is pinned as it is, without a lookup. Link-local IPv6 addresses
+/// need a scope the worker can't carry.
+pub(super) async fn resolve(
+    endpoint: &playtime_ollama::Endpoint,
+) -> life::Result<Vec<std::net::IpAddr>> {
+    let found: Vec<_> = if let Some(ip) = endpoint.ip_literal() {
+        vec![ip]
+    } else {
+        let url = endpoint.url(playtime_ollama::Operation::Version);
+        let (Some(host), Some(port)) = (url.domain(), url.port_or_known_default()) else {
+            return Err(Error::Invalid("live endpoint needs a host"));
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio::net::lookup_host((host, port)),
+        )
+        .await
+        .map_err(|_| Error::Invalid("live model unavailable"))?
+        .map_err(|_| Error::Invalid("live model unavailable"))?
+        .map(|address| address.ip())
+        .collect()
+    };
+    let mut addresses: Vec<_> = found
+        .into_iter()
+        .filter(|ip| !matches!(ip, std::net::IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80))
+        .collect();
+    addresses.sort();
+    addresses.dedup();
+    if addresses.is_empty() || addresses.len() > 16 {
+        return Err(Error::Invalid("live model unavailable"));
+    }
+    Ok(addresses)
 }
 impl Archive {
     pub fn new(root: PathBuf, bundle: VerifiedBundle) -> life::Result<Self> {
@@ -36,6 +107,7 @@ impl Archive {
             root,
             docker: None,
             docker_engine: None,
+            live: None,
             bundle: Arc::new(bundle),
             scenario,
             bytes,
@@ -90,6 +162,95 @@ impl Archive {
         self.docker = Some(profile);
         self.docker_engine = Some(engine);
         Ok(())
+    }
+    /// Live runs reuse the Docker workshop, so this needs `enable_docker` first.
+    pub async fn enable_live(&mut self, endpoint: &str) -> life::Result<()> {
+        if self.docker.is_none() {
+            return Err(Error::Invalid("live runs need the Docker workshop"));
+        }
+        let profiles = playtime_runner::docker::digest()
+            .map_err(|_| Error::Invalid("invalid Docker profile"))?;
+        if !self
+            .bundle
+            .descriptor()
+            .capabilities
+            .implements_live(&profiles)
+        {
+            return Err(Error::Invalid(
+                "bundle does not implement this daemon's live model profile",
+            ));
+        }
+        // Every checkout's daemon and worker share this lock, so at most one
+        // live run uses the model at a time.
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .ok_or(Error::Invalid("live runs need XDG_RUNTIME_DIR"))?;
+        let directory = runtime.join("playtime");
+        create_private_dir(&directory)?;
+        let endpoint = playtime_ollama::Endpoint::parse(endpoint)
+            .ok()
+            .filter(|e| e.as_str().starts_with("http://"))
+            .ok_or(Error::Invalid("live endpoint must be a plain HTTP URL"))?;
+        let addresses = resolve(&endpoint).await?;
+        let limits = playtime_ollama::Limits::default();
+        let transport = playtime_ollama::NativeTransport::with_resolution(
+            endpoint.clone(),
+            playtime_ollama::Trust::BundledWebPki,
+            playtime_ollama::Resolution::Pinned {
+                addresses: addresses.clone(),
+            },
+            &limits,
+        )
+        .map_err(|_| Error::Invalid("live model unavailable"))?;
+        let lock = playtime_ollama::ModelLock::parse(playtime_runner::docker::MODEL_LOCK)
+            .map_err(|_| Error::Invalid("invalid model lock"))?;
+        let adapter = playtime_ollama::Adapter::new(transport, lock, limits)
+            .map_err(|_| Error::Invalid("live model unavailable"))?;
+        let live = Live {
+            host: playtime_runner::docker::LiveHost {
+                endpoint: endpoint.as_str().into(),
+                addresses,
+                live_lock: directory.join("live-model.lock"),
+            },
+            endpoint,
+            adapter: tokio::sync::Mutex::new(adapter),
+        };
+        live.ready().await?;
+        self.live = Some(Arc::new(live));
+        Ok(())
+    }
+    fn live_profile(&self) -> Option<playtime_runner::docker::Profile> {
+        let (docker, live) = (self.docker.as_ref()?, self.live.as_ref()?);
+        playtime_runner::docker::Profile::freeze_live(
+            docker.selection.clone(),
+            docker.daemon.clone(),
+            live.host.clone(),
+        )
+        .ok()
+    }
+    pub fn live_preview(&self) -> Option<Preview> {
+        let profile = self.live_profile()?;
+        let mut preview = self.docker_preview()?;
+        let advertised = &self.bundle.descriptor().capabilities.docker_profile;
+        preview.recipe_id = RecipeId::new(playtime_runner::docker::LIVE_RECIPE).unwrap();
+        preview.mode = RunMode::LiveSmoke;
+        preview.preview_revision = PreviewRevision::new(
+            digest(&serde_json::to_vec(&(&profile, self.bundle.id(), advertised)).unwrap())
+                .as_str(),
+        )
+        .unwrap();
+        preview.effective_configuration = serde_json::to_value(&profile).unwrap();
+        preview.parameters = profile.scenario.parameters.clone();
+        preview.prompt = profile.scenario.prompt.clone();
+        preview.protocol = profile.scenario.protocol.clone();
+        let model = profile.model.as_ref().unwrap();
+        preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"],
+            "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"],
+            "settings":model.settings,"endpoint":model.host.endpoint,"addresses":model.host.addresses});
+        preview.warnings = vec!["Live model: real inference on the locked model, and tools execute in the real locked Docker workshop. One live run at a time across checkouts.".into()];
+        preview.backend = projection::live_backend();
+        Some(preview)
     }
     pub fn docker_preview(&self) -> Option<Preview> {
         let profile = self.docker.as_ref()?;
@@ -261,12 +422,7 @@ impl ConfirmationAuthority for Authority {
 #[async_trait]
 impl ArchivePort for Archive {
     async fn validate_preview(&self, request: &AdmissionRequest) -> life::Result<Selection> {
-        let preview = if request.recipe_id == playtime_runner::docker::RECIPE
-            && request.mode == RunMode::ScriptedSmoke
-        {
-            let preview = self
-                .docker_preview()
-                .ok_or(Error::Invalid("unsupported recipe or mode"))?;
+        let docker_ready = || async {
             self.docker_engine
                 .as_ref()
                 .ok_or(Error::Uncertain)?
@@ -276,7 +432,29 @@ impl ArchivePort for Archive {
                     playtime_docker::CancellationToken::new(),
                 )
                 .await
-                .map_err(|_| Error::Invalid("locked Docker readiness changed"))?;
+                .map_err(|_| Error::Invalid("locked Docker readiness changed"))
+        };
+        let preview = if request.recipe_id == playtime_runner::docker::RECIPE
+            && request.mode == RunMode::ScriptedSmoke
+        {
+            let preview = self
+                .docker_preview()
+                .ok_or(Error::Invalid("unsupported recipe or mode"))?;
+            docker_ready().await?;
+            preview
+        } else if request.recipe_id == playtime_runner::docker::LIVE_RECIPE
+            && request.mode == RunMode::LiveSmoke
+        {
+            let preview = self
+                .live_preview()
+                .ok_or(Error::Invalid("unsupported recipe or mode"))?;
+            let live = self.live.as_ref().ok_or(Error::Uncertain)?;
+            let path = live.host.live_lock.clone();
+            tokio::task::spawn_blocking(move || probe_live_lock(&path))
+                .await
+                .map_err(|_| Error::Uncertain)??;
+            docker_ready().await?;
+            live.ready().await?;
             preview
         } else if request.recipe_id == "two-session" && request.mode == RunMode::Simulation {
             self.preview()
@@ -293,16 +471,19 @@ impl ArchivePort for Archive {
         })
     }
     async fn prepare(&self, admission: &Admission) -> life::Result<PreparedLaunch> {
-        let (root, bundle, bytes, admission, docker) = (
+        // A Docker mode never falls back to simulation.
+        let docker = match admission.request.mode {
+            RunMode::ScriptedSmoke => Some(self.docker.clone()),
+            RunMode::LiveSmoke => Some(self.live_profile()),
+            _ => None,
+        }
+        .map(|profile| profile.ok_or(Error::Invalid("unsupported recipe or mode")))
+        .transpose()?;
+        let (root, bundle, bytes, admission) = (
             self.root.clone(),
             self.bundle.clone(),
             self.bytes.clone(),
             admission.clone(),
-            if admission.request.mode == RunMode::ScriptedSmoke {
-                self.docker.clone()
-            } else {
-                None
-            },
         );
         tokio::task::spawn_blocking(move || {
             create_private_dir(&root.join("runs"))?;
@@ -313,10 +494,10 @@ impl ArchivePort for Archive {
                 .map_err(|_| Error::Invalid("worker materialization failed"))?;
             let directory = executable.parent().ok_or(Error::Uncertain)?.to_path_buf();
             let path = root.join("runs").join(admission.run_id.as_str());
-            let kind = if docker.is_some() {
-                WorkerKind::DockerScripted
-            } else {
-                WorkerKind::ControllerSimulation
+            let kind = match &docker {
+                Some(profile) if profile.model.is_some() => WorkerKind::DockerLive,
+                Some(_) => WorkerKind::DockerScripted,
+                None => WorkerKind::ControllerSimulation,
             };
             let prepared = if let Some(profile) = &docker {
                 (*bundle)

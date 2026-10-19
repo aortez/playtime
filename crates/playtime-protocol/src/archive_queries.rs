@@ -35,6 +35,9 @@ pub struct ArchiveRun {
     pub frontier: EventFrontier,
     pub incomplete_evidence: bool,
     pub uncommitted_event_bytes: u64,
+    /// Missing means the run recorded no live request timing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contention: Option<crate::api::Contention>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

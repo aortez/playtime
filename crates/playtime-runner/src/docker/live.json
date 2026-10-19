@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "mode": "live_smoke",
+  "parameters": {
+    "sampling_seed": 1042,
+    "memory_condition": "self",
+    "limits": {
+      "sessions": 2,
+      "work_turns_per_session": 6,
+      "wall_seconds": 120,
+      "generated_tokens": 4096,
+      "tokens_per_call": 512,
+      "handoff_tokens": 256,
+      "context_tokens": 32768,
+      "model_seconds": 30,
+      "command_seconds": 5,
+      "output_bytes": 4096,
+      "memento_bytes": 2048,
+      "log_bytes": 8388608,
+      "tool_parse_retries": 2,
+      "tool_parse_error_limit": 8
+    },
+    "workshop": {
+      "cpu_cores": 1.0,
+      "memory_bytes": 1073741824,
+      "workspace_bytes": 8388608,
+      "tmp_bytes": 16777216,
+      "pids": 64
+    }
+  },
+  "prompt": "The line \"Session N/2.\" below says which session this is. Do only that session's steps, running each command below in its own exec call with cwd /work.\nSession 1 of 2:\n1. printf %s playtime-persistent > probe.txt && python3 -c \"from PIL import Image; Image.new('RGB', (32, 32), (32, 96, 160)).save('probe.png')\" && mkdir -p /tmp/transient\n2. nohup sh -c 'i=0; while true; do i=$((i+1)); echo $i > counter.txt; sleep 0.1; done' > /dev/null 2>&1 &\nThen call end_session with finish_run=false and a memento telling session 2 to verify these files, not recreate them.\nSession 2 of 2: recreate nothing.\n1. cat probe.txt; echo; python3 -c \"from PIL import Image; print(Image.open('probe.png').size)\"; test -e /tmp/transient && echo present || echo absent; cat counter.txt; sleep 0.3; cat counter.txt\nThis should print playtime-persistent, (32, 32), absent, and the same number twice.\n2. Only if it did: printf %s persistence-ok > result.txt\nThen call end_session with finish_run=true and a short final memento that says whether result.txt was written.",
+  "protocol": "You are running a short two-session persistence check in a bounded Linux workshop. Use the exec tool to run shell commands as uid 1000, always with cwd /work. Your conversation resets between sessions: only files in /work persist, processes stop and /tmp is cleared. The next session receives your memento. End each session with end_session, using finish_run=false after session 1 and finish_run=true after session 2. Keep commands short and act directly.",
+  "inventory": "Locked Docker workshop with Python 3 and Pillow, uid 1000, no network, no seed files.",
+  "initial_files": {},
+  "models": [],
+  "execs": []
+}

@@ -122,14 +122,14 @@ impl PreparedExecution {
                     .iter()
                     .any(|r| r.path.as_str() == playtime_protocol::recovery::EXECUTION_CONTRACT)
                     || prepared.limits != profile.storage
-                    || reader.descriptor().mode != RunMode::ScriptedSmoke
+                    || reader.descriptor().mode != profile.mode
                 {
                     return Err(Error::Invalid(
                         "invalid Docker profile or simulation recovery authorization".into(),
                     ));
                 }
                 let config = profile.config();
-                (profile.scenario, RunMode::ScriptedSmoke, config, effects)
+                (profile.scenario, profile.mode, config, effects)
             } else {
                 let scenario: Scenario = serde_json::from_slice(&scenario_bytes)?;
                 crate::recovery::verify_worker_contract(

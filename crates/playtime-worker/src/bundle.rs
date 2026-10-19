@@ -150,11 +150,13 @@ impl VerifiedBundle {
         profile: &playtime_runner::docker::Profile,
     ) -> Result<PreparedSimulation> {
         profile.validate()?;
-        if !self
-            .descriptor
-            .capabilities
-            .implements_docker(&profile.digest()?)
-        {
+        let capabilities = &self.descriptor.capabilities;
+        let profiles = playtime_runner::docker::digest()?;
+        if !(if profile.model.is_some() {
+            capabilities.implements_live(&profiles)
+        } else {
+            capabilities.implements_docker(&profiles)
+        }) {
             return Err(Error::UnsupportedCapability);
         }
         let Self {

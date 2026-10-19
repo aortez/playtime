@@ -47,16 +47,18 @@ impl Daemon {
         supervisor: Arc<dyn Supervisor>,
         test_supervision: bool,
     ) -> life::Result<Self> {
-        Self::open_with_docker(root, bundle, supervisor, test_supervision, None).await
+        Self::open_with_docker(root, bundle, supervisor, test_supervision, None, None).await
     }
+    /// `live` names the Ollama endpoint for live runs, which also need `docker`.
     pub async fn open_with_docker(
         root: &Path,
         bundle: &Path,
         supervisor: Arc<dyn Supervisor>,
         test_supervision: bool,
         docker: Option<(&Path, &Path)>,
+        live: Option<&str>,
     ) -> life::Result<Self> {
-        if test_supervision && docker.is_some() {
+        if test_supervision && (docker.is_some() || live.is_some()) {
             return Err(life::Error::Invalid(
                 "CPU test supervisor rejects real Docker effects",
             ));
@@ -73,6 +75,9 @@ impl Daemon {
         let mut archive = Archive::new(root, bundle)?;
         if let Some((executable, socket)) = docker {
             archive.enable_docker(executable, socket).await?;
+        }
+        if let Some(endpoint) = live {
+            archive.enable_live(endpoint).await?;
         }
         let archive = Arc::new(archive);
         let coordinator =
@@ -297,6 +302,7 @@ fn lifecycle(error: life::Error) -> ApiError {
         life::Error::Invalid("unsupported recipe or mode") => {
             ApiError::new("unsupported_capability")
         }
+        life::Error::Invalid("live model unavailable") => ApiError::new("backend_unavailable"),
         _ => ApiError::new("ownership_unresolved"),
     }
 }
@@ -337,16 +343,29 @@ impl Application for Daemon {
             service_id: ServiceId::new(self.inner.coordinator.ledger().service_id().as_str())
                 .unwrap(),
             service_build: env!("CARGO_PKG_VERSION").into(),
-            backend: if self.inner.archive.docker.is_some() {
+            backend: if self.inner.archive.live.is_some() {
+                projection::docker_and_live_backend()
+            } else if self.inner.archive.docker.is_some() {
                 projection::docker_backend()
             } else {
                 projection::backend()
             },
-            modes: if self.inner.archive.docker.is_some() {
-                vec![RunMode::Simulation, RunMode::ScriptedSmoke]
-            } else {
-                vec![RunMode::Simulation]
-            },
+            modes: [
+                Some(RunMode::Simulation),
+                self.inner
+                    .archive
+                    .docker
+                    .is_some()
+                    .then_some(RunMode::ScriptedSmoke),
+                self.inner
+                    .archive
+                    .live
+                    .is_some()
+                    .then_some(RunMode::LiveSmoke),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
             features: vec![
                 "keyed_launch".into(),
                 "event_stream".into(),
@@ -361,7 +380,7 @@ impl Application for Daemon {
                 .into(),
             ],
             unsupported_adapters: [
-                Some("ollama".into()),
+                self.inner.archive.live.is_none().then(|| "ollama".into()),
                 self.inner.archive.docker.is_none().then(|| "docker".into()),
                 Some("restart_and_worker_loss_recovery".into()),
             ]
@@ -390,6 +409,16 @@ impl Application for Daemon {
                 },
             ));
         }
+        if self.inner.archive.live.is_some() {
+            recipes.push((
+                playtime_runner::docker::LIVE_RECIPE.into(),
+                Recipe {
+                    recipe_id: RecipeId::new(playtime_runner::docker::LIVE_RECIPE).unwrap(),
+                    name: "Two-session real Docker / live model".into(),
+                    modes: vec![RunMode::LiveSmoke],
+                },
+            ));
+        }
         paging::page(recipes, &query, "recipes", "catalog", None)
     }
     async fn preview(&self, recipe: RecipeId, request: PreviewRequest) -> Result<Preview> {
@@ -400,6 +429,15 @@ impl Application for Daemon {
                 .inner
                 .archive
                 .docker_preview()
+                .ok_or_else(|| ApiError::new("unsupported_capability"));
+        }
+        if recipe.as_str() == playtime_runner::docker::LIVE_RECIPE
+            && request.mode == RunMode::LiveSmoke
+        {
+            return self
+                .inner
+                .archive
+                .live_preview()
                 .ok_or_else(|| ApiError::new("unsupported_capability"));
         }
         if recipe.as_str() != "two-session" {

@@ -31,6 +31,15 @@ impl Endpoint {
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
+    /// The host when it is an IP address rather than a name.
+    pub fn ip_literal(&self) -> Option<IpAddr> {
+        let host = self.0.host_str()?;
+        host.strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(host)
+            .parse()
+            .ok()
+    }
     pub fn url(&self, operation: Operation) -> reqwest::Url {
         let mut url = self.0.clone();
         url.set_path(&format!(
@@ -117,43 +126,17 @@ impl NativeTransport {
         limits: &Limits,
     ) -> Result<Self> {
         limits.validate()?;
-        let mut roots = rustls::RootCertStore::empty();
-        match &trust {
-            Trust::BundledWebPki => roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned()),
-            Trust::PemOnly { certificates } => {
-                use rustls::pki_types::{CertificateDer, pem::PemObject};
-                if certificates.is_empty()
-                    || certificates.len() > 16
-                    || certificates
-                        .iter()
-                        .try_fold(0_usize, |size, pem| size.checked_add(pem.len()))
-                        .is_none_or(|size| size > 65_536)
-                {
-                    return Err(Failure::new(
-                        FailureKind::Request,
-                        "explicit TLS roots exceed frozen bounds",
-                    ));
-                }
-                for pem in certificates {
-                    let certificate =
-                        CertificateDer::from_pem_slice(pem.as_bytes()).map_err(|_| {
-                            Failure::new(FailureKind::Request, "invalid explicit TLS certificate")
-                        })?;
-                    roots.add(certificate).map_err(|_| {
-                        Failure::new(FailureKind::Request, "invalid explicit TLS root")
-                    })?;
-                }
-            }
+        let builder = reqwest::Client::builder();
+        #[cfg(feature = "tls")]
+        let builder = builder.tls_backend_preconfigured(tls_config(&trust)?);
+        #[cfg(not(feature = "tls"))]
+        if endpoint.0.scheme() == "https" {
+            return Err(Failure::new(
+                FailureKind::Request,
+                "HTTPS endpoints require the tls feature",
+            ));
         }
-        let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .map_err(|e| Failure::new(FailureKind::Request, e.to_string()))?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-        let mut builder = reqwest::Client::builder()
-            .tls_backend_preconfigured(tls)
+        let mut builder = builder
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
@@ -165,21 +148,27 @@ impl NativeTransport {
             .pool_max_idle_per_host(0)
             .connect_timeout(limits.connect_timeout);
         if let Resolution::Pinned { addresses } = &resolution {
-            if endpoint.0.domain().is_none() || addresses.is_empty() || addresses.len() > 16 {
-                return Err(Failure::new(
-                    FailureKind::Request,
-                    "pinned resolution requires a DNS hostname and 1..16 explicit IP addresses",
-                ));
+            match (endpoint.0.domain(), endpoint.ip_literal()) {
+                (Some(domain), _) if (1..=16).contains(&addresses.len()) => {
+                    let port = endpoint
+                        .0
+                        .port_or_known_default()
+                        .expect("HTTP(S) endpoint");
+                    let addresses: Vec<_> = addresses
+                        .iter()
+                        .map(|ip| SocketAddr::new(*ip, port))
+                        .collect();
+                    builder = builder.resolve_to_addrs(domain, &addresses);
+                }
+                // Nothing resolves an IP literal, so it can only be pinned to itself.
+                (None, Some(ip)) if addresses[..] == [ip] => {}
+                _ => {
+                    return Err(Failure::new(
+                        FailureKind::Request,
+                        "pinned resolution requires a DNS hostname and 1..16 explicit IP addresses, or an IP literal pinned to itself",
+                    ));
+                }
             }
-            let port = endpoint
-                .0
-                .port_or_known_default()
-                .expect("HTTP(S) endpoint");
-            let addresses: Vec<_> = addresses
-                .iter()
-                .map(|ip| SocketAddr::new(*ip, port))
-                .collect();
-            builder = builder.resolve_to_addrs(endpoint.0.domain().unwrap(), &addresses);
         }
         let client = builder
             .build()
@@ -200,6 +189,45 @@ impl NativeTransport {
     pub fn resolution(&self) -> &Resolution {
         &self.resolution
     }
+}
+#[cfg(feature = "tls")]
+fn tls_config(trust: &Trust) -> Result<rustls::ClientConfig> {
+    let mut roots = rustls::RootCertStore::empty();
+    match trust {
+        Trust::BundledWebPki => roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned()),
+        Trust::PemOnly { certificates } => {
+            use rustls::pki_types::{CertificateDer, pem::PemObject};
+            if certificates.is_empty()
+                || certificates.len() > 16
+                || certificates
+                    .iter()
+                    .try_fold(0_usize, |size, pem| size.checked_add(pem.len()))
+                    .is_none_or(|size| size > 65_536)
+            {
+                return Err(Failure::new(
+                    FailureKind::Request,
+                    "explicit TLS roots exceed frozen bounds",
+                ));
+            }
+            for pem in certificates {
+                let certificate = CertificateDer::from_pem_slice(pem.as_bytes()).map_err(|_| {
+                    Failure::new(FailureKind::Request, "invalid explicit TLS certificate")
+                })?;
+                roots
+                    .add(certificate)
+                    .map_err(|_| Failure::new(FailureKind::Request, "invalid explicit TLS root"))?;
+            }
+        }
+    }
+    Ok(
+        rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .map_err(|e| Failure::new(FailureKind::Request, e.to_string()))?
+        .with_root_certificates(roots)
+        .with_no_client_auth(),
+    )
 }
 #[async_trait::async_trait]
 impl Transport for NativeTransport {

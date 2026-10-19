@@ -3483,6 +3483,7 @@ dependencies = [
  "playtime-docker",
  "playtime-engine",
  "playtime-local",
+ "playtime-ollama",
  "playtime-protocol",
  "playtime-runner",
  "playtime-storage",
@@ -3563,9 +3564,11 @@ name = "playtime-worker"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "playtime-core",
  "playtime-docker",
  "playtime-engine",
+ "playtime-ollama",
  "playtime-protocol",
  "playtime-runner",
  "playtime-storage",

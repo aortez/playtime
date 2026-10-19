@@ -469,6 +469,19 @@ pub fn prepare_run(value: RunView) -> RunViewData {
             )
         },
     ));
+    if let Some(c) = &value.contention {
+        summary.push(if c.possible {
+            format!(
+                "Possible GPU contention: {} model reloads and {} queued requests across {} timed requests",
+                c.reloads, c.queue_waits, c.timed_requests
+            )
+        } else {
+            format!(
+                "No GPU contention flagged across {} timed requests",
+                c.timed_requests
+            )
+        });
+    }
     if let Some(cancel) = &value.cancellation {
         summary.push(format!(
             "Cancellation: {:?} · {}",

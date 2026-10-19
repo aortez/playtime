@@ -25,12 +25,14 @@ pub struct Execution {
     pending: Arc<AtomicBool>,
     wall_ms: u64,
     work_deadline: Arc<AtomicU64>,
+    /// Held for the worker's whole life so only one live run uses the model.
+    _live_lock: Option<playtime_worker_control::FileLock>,
 }
 impl Execution {
     pub async fn acquire(bootstrap: &Bootstrap) -> Result<Self> {
         if !matches!(
             bootstrap.binding.kind,
-            WorkerKind::ControllerSimulation | WorkerKind::DockerScripted
+            WorkerKind::ControllerSimulation | WorkerKind::DockerScripted | WorkerKind::DockerLive
         ) {
             return Err(Error::UnsupportedCapability);
         }
@@ -52,7 +54,8 @@ impl Execution {
         if content_ref(configuration.path.clone(), &bytes) != *configuration {
             return Err(Error::Invalid("configuration changed"));
         }
-        let native = bootstrap.binding.kind == WorkerKind::DockerScripted;
+        let live = bootstrap.binding.kind == WorkerKind::DockerLive;
+        let native = live || bootstrap.binding.kind == WorkerKind::DockerScripted;
         let profile = if native {
             Some(serde_json::from_slice::<playtime_runner::docker::Profile>(
                 &bytes,
@@ -62,6 +65,9 @@ impl Execution {
         };
         let scenario: Scenario = if let Some(profile) = &profile {
             profile.validate()?;
+            if profile.model.is_some() != live {
+                return Err(Error::Invalid("worker kind and frozen profile differ"));
+            }
             if std::env::var_os("PLAYTIME_SYSTEMD_WORKER").is_none() {
                 return Err(Error::Invalid(
                     "real Docker effects require systemd supervision",
@@ -90,6 +96,16 @@ impl Execution {
                 ..limits
             },
         };
+        // Take the machine-wide lock before any Docker or model work. Without
+        // it this worker fails before Begin.
+        let live_lock = profile
+            .as_ref()
+            .and_then(|profile| profile.model.as_ref())
+            .map(|model| {
+                playtime_worker_control::FileLock::acquire(&model.host.live_lock)
+                    .map_err(|_| Error::Invalid("another live run holds the live-model lock"))
+            })
+            .transpose()?;
         let owned = if let Some(profile) = profile {
             let effects = crate::docker::NativeEffects::prepare(profile, bootstrap).await?;
             PreparedExecution::acquire_docker(&path, &prepared, Box::new(effects))?
@@ -100,11 +116,10 @@ impl Execution {
         let bundle = VerifiedBundle::from_archive(&reader, &snapshot)?;
         bundle.verify_embedded(crate::EMBEDDED_BUILD)?;
         // A bundle never advertises a profile its own worker does not implement.
-        if native
-            && !bundle
-                .descriptor()
-                .capabilities
-                .implements_docker(&playtime_runner::docker::digest()?)
+        let capabilities = &bundle.descriptor().capabilities;
+        let profiles = playtime_runner::docker::digest()?;
+        if (live && !capabilities.implements_live(&profiles))
+            || (native && !capabilities.implements_docker(&profiles))
         {
             return Err(Error::UnsupportedCapability);
         }
@@ -118,6 +133,7 @@ impl Execution {
             pending: Arc::default(),
             wall_ms: bootstrap.wall_ms,
             work_deadline: Arc::default(),
+            _live_lock: live_lock,
         })
     }
 }

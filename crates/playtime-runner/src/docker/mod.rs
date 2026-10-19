@@ -1,20 +1,26 @@
-//! Versioned, intentionally narrow frozen Docker/scripted-model profile.
+//! Versioned, intentionally narrow frozen Docker profiles: scripted model
+//! responses, or the live locked model reached directly over plain HTTP.
 use crate::{Error, Result};
 use playtime_core::{RunMode, Sha256Digest};
 use playtime_docker::{DaemonIdentity, Limits, capture::CaptureLimits, transport::Selection};
 use playtime_engine::{ControllerConfig, simulation::Scenario};
 use playtime_storage::StorageLimits;
 use serde::{Deserialize, Serialize};
+use std::{net::IpAddr, path::PathBuf};
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
+pub const LIVE_PROFILE: &str = "docker_live_no_seed_self_v1";
 pub const RETURN_OVERHEAD_MS: u64 = 1000;
 pub const RECIPE: &str = "docker-two-session";
+pub const LIVE_RECIPE: &str = "live-two-session";
 pub const SCENARIO: &[u8] = include_bytes!("smoke.json");
+pub const LIVE_SCENARIO: &[u8] = include_bytes!("live.json");
 pub const IMAGE_LOCK: &[u8] = include_bytes!("image-lock.json");
+pub const MODEL_LOCK: &[u8] = include_bytes!("model-lock.json");
 
-/// Digest of this build's compiled profile, which its bundles advertise.
+/// Digest of this build's compiled profiles, which its bundles advertise.
 pub fn digest() -> Result<Sha256Digest> {
-    // The digest excludes host bindings, so these placeholders never matter.
+    // Templates exclude host bindings, so these placeholders never matter.
     let daemon = DaemonIdentity {
         id: String::new(),
         name: String::new(),
@@ -28,7 +34,47 @@ pub fn digest() -> Result<Sha256Digest> {
         executable_sha256: String::new(),
         socket: "/".into(),
     };
-    Profile::freeze(selection, daemon)?.digest()
+    let host = LiveHost {
+        endpoint: String::new(),
+        addresses: vec![],
+        live_lock: PathBuf::new(),
+    };
+    let templates = [
+        Profile::freeze(selection.clone(), daemon.clone())?.template()?,
+        Profile::freeze_live(selection, daemon, host)?.template()?,
+    ];
+    Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))
+}
+
+/// How a static worker reaches the live model. The daemon resolves the
+/// endpoint itself and freezes the addresses, because musl can't resolve mDNS.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LiveHost {
+    pub endpoint: String,
+    pub addresses: Vec<IpAddr>,
+    /// Machine-wide flock that every checkout's live worker holds for its lifetime.
+    pub live_lock: PathBuf,
+}
+impl LiveHost {
+    fn valid(&self) -> bool {
+        let mut addresses = self.addresses.clone();
+        addresses.sort();
+        addresses.dedup();
+        self.endpoint.starts_with("http://")
+            && (1..=16).contains(&self.addresses.len())
+            && addresses.len() == self.addresses.len()
+            && self.live_lock.is_absolute()
+    }
+}
+
+/// The exact model lock and request settings, plus the host they are sent to.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LiveModel {
+    pub lock: serde_json::Value,
+    pub settings: serde_json::Value,
+    pub host: LiveHost,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -46,6 +92,9 @@ pub struct Profile {
     pub capture: CaptureLimits,
     pub storage: StorageLimits,
     pub command_return_ms: u64,
+    /// Absent for scripted model responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<LiveModel>,
 }
 impl Profile {
     pub fn freeze(selection: Selection, daemon: DaemonIdentity) -> Result<Self> {
@@ -70,10 +119,44 @@ impl Profile {
                 ..StorageLimits::default()
             },
             command_return_ms: RETURN_OVERHEAD_MS,
+            model: None,
+        })
+    }
+    /// The same workshop and limits with the live model and its smoke prompt.
+    pub fn freeze_live(
+        selection: Selection,
+        daemon: DaemonIdentity,
+        host: LiveHost,
+    ) -> Result<Self> {
+        let scenario: Scenario = serde_json::from_slice(LIVE_SCENARIO)?;
+        let settings = serde_json::json!({
+            "context_tokens": scenario.parameters.limits.context_tokens,
+            "temperature": 0.8,
+            "top_p": 0.95,
+            "top_k": 40,
+            "repeat_penalty": 1.0,
+            "thinking": "low",
+            "use_mmap": null,
+            "keep_alive": "5m",
+        });
+        Ok(Self {
+            profile: LIVE_PROFILE.into(),
+            mode: RunMode::LiveSmoke,
+            scenario,
+            model: Some(LiveModel {
+                lock: serde_json::from_slice(MODEL_LOCK)?,
+                settings,
+                host,
+            }),
+            ..Self::freeze(selection, daemon)?
         })
     }
     pub fn validate(&self) -> Result<()> {
-        let expected = Self::freeze(self.selection.clone(), self.daemon.clone())?;
+        let (selection, daemon) = (self.selection.clone(), self.daemon.clone());
+        let expected = match &self.model {
+            None => Self::freeze(selection, daemon)?,
+            Some(model) => Self::freeze_live(selection, daemon, model.host.clone())?,
+        };
         if serde_json::to_value(self)? != serde_json::to_value(expected)?
             || !self.selection.executable.is_absolute()
             || !self.selection.socket.is_absolute()
@@ -83,6 +166,7 @@ impl Profile {
                 .executable_sha256
                 .bytes()
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            || self.model.as_ref().is_some_and(|model| !model.host.valid())
         {
             return Err(Error::Invalid(
                 "unsupported frozen Docker recipe, configuration or limits".into(),
@@ -91,17 +175,20 @@ impl Profile {
         self.scenario.parameters.validate()?;
         Ok(())
     }
-    /// SHA-256 of every build-time field: version, recipe, image lock, helpers
-    /// and limits. The host's Docker selection and daemon identity are frozen
-    /// at daemon startup instead, so they are excluded.
-    pub fn digest(&self) -> Result<Sha256Digest> {
+    /// Every build-time field: version, recipe, image and model locks, request
+    /// settings, helpers and limits. Host bindings are frozen at daemon startup
+    /// or admission instead, so they are excluded.
+    fn template(&self) -> Result<serde_json::Value> {
         let mut value = serde_json::to_value(self)?;
         let fields = value
             .as_object_mut()
             .ok_or_else(|| Error::Invalid("profile is not an object".into()))?;
         fields.remove("selection");
         fields.remove("daemon");
-        Ok(playtime_storage::sha256(&serde_json::to_vec(&value)?))
+        if let Some(model) = fields.get_mut("model").and_then(|m| m.as_object_mut()) {
+            model.remove("host");
+        }
+        Ok(value)
     }
     pub fn config(&self) -> ControllerConfig {
         ControllerConfig {
@@ -124,59 +211,145 @@ impl Profile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn frozen_profile_rejects_unreviewed_recipes_limits_helpers_and_versions() {
-        let profile = Profile::freeze(
-            Selection {
-                executable: "/synthetic/docker".into(),
-                socket: "/synthetic/socket".into(),
-                executable_sha256: "a".repeat(64),
-            },
-            DaemonIdentity {
-                id: "synthetic".into(),
-                name: "synthetic".into(),
-                cli_version: "28".into(),
-                server_version: "28".into(),
-                api_version: "1.51".into(),
-                kernel: "synthetic".into(),
-            },
-        )
-        .unwrap();
-        profile.validate().unwrap();
-        // Host bindings never change the advertised build-time digest.
-        assert_eq!(profile.digest().unwrap(), digest().unwrap());
-        for (pointer, replacement) in [
-            ("/version", serde_json::json!(2)),
-            ("/mode", serde_json::json!("simulation")),
-            (
-                "/scenario/initial_files",
-                serde_json::json!({"seed.txt":"unsupported"}),
-            ),
-            (
-                "/scenario/parameters/memory_condition",
-                serde_json::json!("self_plus_evidence"),
-            ),
-            (
-                "/scenario/parameters/limits/wall_seconds",
-                serde_json::json!(121),
-            ),
-            ("/scenario/prompt", serde_json::json!("replacement")),
-            (
-                "/storage/verified_content_bytes",
-                serde_json::json!(1073741824u64),
-            ),
-            ("/capture/entries", serde_json::json!(8192)),
-            ("/helpers/workspace-exporter-v1", serde_json::json!("wrong")),
-            ("/selection/socket", serde_json::json!("relative.sock")),
-        ] {
-            let mut bytes = serde_json::to_value(&profile).unwrap();
-            *bytes.pointer_mut(pointer).unwrap() = replacement;
+    fn selection() -> Selection {
+        Selection {
+            executable: "/synthetic/docker".into(),
+            socket: "/synthetic/socket".into(),
+            executable_sha256: "a".repeat(64),
+        }
+    }
+    fn daemon() -> DaemonIdentity {
+        DaemonIdentity {
+            id: "synthetic".into(),
+            name: "synthetic".into(),
+            cli_version: "28".into(),
+            server_version: "28".into(),
+            api_version: "1.51".into(),
+            kernel: "synthetic".into(),
+        }
+    }
+    fn host() -> LiveHost {
+        LiveHost {
+            endpoint: "http://model-host.local:11434".into(),
+            addresses: vec!["192.0.2.10".parse().unwrap()],
+            live_lock: "/run/user/1000/playtime/live-model.lock".into(),
+        }
+    }
+    fn rejects(profile: &Profile, changes: &[(&str, serde_json::Value)]) {
+        for (pointer, replacement) in changes {
+            let mut bytes = serde_json::to_value(profile).unwrap();
+            *bytes.pointer_mut(pointer).unwrap() = replacement.clone();
             let changed: Profile = serde_json::from_value(bytes).unwrap();
             assert!(changed.validate().is_err(), "{pointer}");
+            // Only host bindings leave the advertised build-time template alone.
+            let host = pointer.starts_with("/selection") || pointer.starts_with("/model/host");
             assert_eq!(
-                changed.digest().unwrap() == profile.digest().unwrap(),
-                pointer.starts_with("/selection"),
+                changed.template().unwrap() == profile.template().unwrap(),
+                host,
                 "{pointer}"
+            );
+        }
+    }
+    #[test]
+    fn frozen_profile_rejects_unreviewed_recipes_limits_helpers_and_versions() {
+        let profile = Profile::freeze(selection(), daemon()).unwrap();
+        profile.validate().unwrap();
+        rejects(
+            &profile,
+            &[
+                ("/version", serde_json::json!(2)),
+                ("/mode", serde_json::json!("simulation")),
+                (
+                    "/scenario/initial_files",
+                    serde_json::json!({"seed.txt":"unsupported"}),
+                ),
+                (
+                    "/scenario/parameters/memory_condition",
+                    serde_json::json!("self_plus_evidence"),
+                ),
+                (
+                    "/scenario/parameters/limits/wall_seconds",
+                    serde_json::json!(121),
+                ),
+                ("/scenario/prompt", serde_json::json!("replacement")),
+                (
+                    "/storage/verified_content_bytes",
+                    serde_json::json!(1073741824u64),
+                ),
+                ("/capture/entries", serde_json::json!(8192)),
+                ("/helpers/workspace-exporter-v1", serde_json::json!("wrong")),
+                ("/selection/socket", serde_json::json!("relative.sock")),
+            ],
+        );
+    }
+    #[test]
+    fn live_profile_freezes_model_lock_settings_and_valid_host_bindings() {
+        let live = Profile::freeze_live(selection(), daemon(), host()).unwrap();
+        live.validate().unwrap();
+        assert_eq!(live.mode, RunMode::LiveSmoke);
+        assert!(live.scenario.models.is_empty());
+        assert_eq!(live.scenario.parameters.limits.tool_parse_retries, 2);
+        // A scripted profile can't pass as live, or the reverse.
+        let mut scripted =
+            serde_json::to_value(Profile::freeze(selection(), daemon()).unwrap()).unwrap();
+        scripted["model"] = serde_json::to_value(&live.model).unwrap();
+        assert!(
+            serde_json::from_value::<Profile>(scripted)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        let mut unmodeled = live.clone();
+        unmodeled.model = None;
+        assert!(unmodeled.validate().is_err());
+        rejects(
+            &live,
+            &[
+                ("/model/lock/digest", serde_json::json!("0".repeat(64))),
+                ("/model/settings/context_tokens", serde_json::json!(65536)),
+                ("/model/settings/thinking", serde_json::json!("high")),
+                (
+                    "/scenario/parameters/limits/tool_parse_retries",
+                    serde_json::json!(0),
+                ),
+                (
+                    "/model/host/endpoint",
+                    serde_json::json!("https://model-host.local:11434"),
+                ),
+                ("/model/host/addresses", serde_json::json!([])),
+                (
+                    "/model/host/addresses",
+                    serde_json::json!(["192.0.2.10", "192.0.2.10"]),
+                ),
+                ("/model/host/live_lock", serde_json::json!("relative.lock")),
+            ],
+        );
+        // Any host binding produces the same advertised digest input.
+        let elsewhere = LiveHost {
+            endpoint: "http://other.local:11434".into(),
+            addresses: vec![
+                "192.0.2.11".parse().unwrap(),
+                "2001:db8::1".parse().unwrap(),
+            ],
+            live_lock: "/run/user/1001/playtime/live-model.lock".into(),
+        };
+        let moved = Profile::freeze_live(selection(), daemon(), elsewhere).unwrap();
+        moved.validate().unwrap();
+        assert_eq!(moved.template().unwrap(), live.template().unwrap());
+        assert_eq!(digest().unwrap(), digest().unwrap());
+    }
+    #[test]
+    fn frozen_lock_copies_match_the_repository_locks() {
+        // The worker build snapshot captures only crates/, so the locks are
+        // copied here. Refreshing either lock needs a new profile version.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (copy, path) in [
+            (IMAGE_LOCK, "environments/general.lock.json"),
+            (MODEL_LOCK, "models/gpt-oss-20b.lock.json"),
+        ] {
+            assert!(
+                copy == std::fs::read(root.join(path)).unwrap(),
+                "{path} changed; freeze a new Docker profile version for it"
             );
         }
     }

@@ -38,6 +38,8 @@ playtime-worker-control = { path = "crates/playtime-worker-control" }
 playtime-runner = { path = "crates/playtime-runner" }
 playtime-worker = { path = "crates/playtime-worker" }
 playtime-docker = { path = "crates/playtime-docker" }
+# Plain HTTP by default; members add the "tls" feature for HTTPS endpoints.
+playtime-ollama = { path = "crates/playtime-ollama", default-features = false }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 utoipa = "=6.0.0"
@@ -76,3 +78,7 @@ opt-level = 3
 debug = 1
 [profile.test.package.playtime-runner]
 debug = 1
+# The live worker also links an HTTP client. Third-party dependencies keep line
+# tables only, so the worker's own test image still fits that bound.
+[profile.test.package."*"]
+debug = "line-tables-only"

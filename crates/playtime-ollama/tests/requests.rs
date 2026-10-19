@@ -105,8 +105,38 @@ fn endpoints_keep_base_paths_and_reject_ambient_credentials() {
 
 #[test]
 fn frozen_resolution_and_trust_inputs_have_explicit_bounds() {
+    assert_eq!(
+        Endpoint::parse("http://fixture.invalid")
+            .unwrap()
+            .ip_literal(),
+        None
+    );
+    for (endpoint, ip) in [
+        ("http://127.0.0.1", "127.0.0.1"),
+        ("http://[2001:db8::10]:11434", "2001:db8::10"),
+    ] {
+        let endpoint = Endpoint::parse(endpoint).unwrap();
+        let ip: std::net::IpAddr = ip.parse().unwrap();
+        assert_eq!(endpoint.ip_literal(), Some(ip));
+        assert!(
+            NativeTransport::with_resolution(
+                endpoint,
+                Trust::BundledWebPki,
+                Resolution::Pinned {
+                    addresses: vec![ip]
+                },
+                &Limits::default()
+            )
+            .is_ok()
+        );
+    }
     for (endpoint, addresses) in [
-        ("http://127.0.0.1", vec!["127.0.0.1".parse().unwrap()]),
+        // An IP literal can only be pinned to itself.
+        ("http://127.0.0.1", vec!["192.0.2.10".parse().unwrap()]),
+        (
+            "http://127.0.0.1",
+            vec!["127.0.0.1".parse().unwrap(), "192.0.2.10".parse().unwrap()],
+        ),
         ("http://fixture.invalid", vec![]),
         (
             "http://fixture.invalid",

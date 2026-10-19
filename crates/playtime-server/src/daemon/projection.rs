@@ -26,6 +26,21 @@ pub(super) fn docker_backend() -> BackendIdentity {
                 .into(),
     }
 }
+pub(super) fn live_backend() -> BackendIdentity {
+    BackendIdentity {
+        kind: BackendKind::Controller,
+        description: "Frozen detached worker with real Docker tools and the live locked model"
+            .into(),
+    }
+}
+pub(super) fn docker_and_live_backend() -> BackendIdentity {
+    BackendIdentity {
+        kind: BackendKind::Controller,
+        description:
+            "Frozen detached worker with real Docker tools and scripted or live locked model responses"
+                .into(),
+    }
+}
 pub(super) fn frontier(f: &EventFrontier) -> Frontier {
     Frontier {
         run_id: f.archive.run_id.clone(),
@@ -79,10 +94,10 @@ fn base(record: &Admission) -> RunView {
         updated_at: record.accepted.utc.clone(),
         recipe_id: RecipeId::new(&record.request.recipe_id).unwrap(),
         preview_revision: PreviewRevision::new(&record.request.preview_revision).unwrap(),
-        backend: if record.request.mode == playtime_core::RunMode::ScriptedSmoke {
-            docker_backend()
-        } else {
-            backend()
+        backend: match record.request.mode {
+            playtime_core::RunMode::ScriptedSmoke => docker_backend(),
+            playtime_core::RunMode::LiveSmoke => live_backend(),
+            _ => backend(),
         },
         orchestration: Orchestration {
             state: match record.phase {
@@ -130,6 +145,7 @@ fn base(record: &Admission) -> RunView {
         worker: None,
         last_confirmed_frontier: None,
         event_anchors: None,
+        contention: None,
     }
 }
 pub(super) fn unprepared(record: &Admission) -> RunView {
@@ -141,6 +157,7 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
     let f = frontier(&run.frontier);
     view.controller_phase = run.phase;
     view.usage = Some(run.usage);
+    view.contention = run.contention;
     let allowance = run
         .unsettled_model_intents
         .iter()
