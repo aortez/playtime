@@ -128,7 +128,8 @@ leaves at least twice that, about 6,000 events against the 100,000 limit. Python
   - 8,192 tokens per call and per handoff, a 65,536-token context.
   - 180-second model and 60-second command caps.
   - 16 KiB of tool output, an 8 KiB memento, a 64 MiB log.
-  - Five parse retries, and a stop on the eighth parse failure across the run.
+  - Five parse retries. A session's eighth parse failure, recovered or not,
+    ends that session through its handoff, and the next session counts from zero.
 - **Workshop:** 8 CPUs, 10,000 MiB of memory, a 16 MiB `/work` with 900 entries,
   1 GiB of `/tmp` and 256 PIDs.
 - **Model:** `thinking: high`, temperature 0.8, top-p 0.95, top-k 40, repeat

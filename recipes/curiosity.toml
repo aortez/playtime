@@ -104,7 +104,8 @@ output_bytes = 16384
 memento_bytes = 8192
 log_bytes = 67108864
 tool_parse_retries = 5
-# Stop on the eighth parse failure across the run, including recovered ones.
+# End a session through its handoff on its eighth parse failure, including
+# recovered ones. The next session counts from zero.
 tool_parse_error_limit = 8
 
 [parameters.workshop]
