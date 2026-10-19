@@ -90,3 +90,14 @@ selection and daemon identity are excluded. A `--docker-scripted` daemon refuses
 to start when that digest differs from its own, and the Docker preview revision
 includes it. Bundles without the field still decode and run simulation, but
 cannot prepare or execute Docker runs.
+
+### Per-session tool-call parse ceiling
+
+Since 2026-10-18 (#73), `tool_parse_error_limit` counts parse errors per session
+instead of per run. Reaching it ends only that session, through the normal
+handoff (`early_handoff` with reason `tool_parse_error_limit`), and the next
+session counts from zero. More than `tool_parse_retries` consecutive errors still
+stop the run, and every failed request still charges its full allowance as
+unknown usage. No golden files changed, and older runs that stopped with
+`tool_parse_error_limit` still decode. See
+[the controller notes](rust-controller.md).
