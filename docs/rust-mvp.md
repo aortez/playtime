@@ -45,6 +45,44 @@ this table.
 
 ## Parts
 
+```mermaid
+flowchart LR
+    subgraph clients["Clients"]
+        cli["playtime CLI"]
+        ui["playtime-ui workbench"]
+        client["playtime-client"]
+        cli --> client
+        ui --> client
+    end
+
+    subgraph service["Service: one active run per data root"]
+        catalog["recipes/*.toml"]
+        daemon["playtimed"]
+        ledger[("SQLite ledger")]
+        catalog --> daemon
+        daemon --> ledger
+    end
+
+    subgraph worker["Worker: one per run, a user systemd unit"]
+        engine["playtime-worker<br>runs the bounded controller"]
+    end
+
+    archive["Run archive folder<br>frozen inputs, event log, checkpoints, result"]
+    docker["Docker workshop container<br>uid 1000, /work"]
+    ollama["Ollama host<br>gpt-oss:20b"]
+    lock["live-model.lock<br>shared by every checkout"]
+
+    client -- "loopback HTTP and SSE<br>bearer token" --> daemon
+    daemon -- "admit, freeze inputs, start" --> engine
+    daemon -. "probe at admission" .-> lock
+    daemon -. "inspect identity" .-> ollama
+    daemon -- "reads" --> archive
+    engine -- "holds for the run" --> lock
+    engine -- "exec, read_file, write_file" --> docker
+    engine -- "streamed chat" --> ollama
+    engine -- "writes" --> archive
+```
+
 **Daemon.** `playtimed` (`playtime-server`) owns admission and the worker's
 lifecycle. It loads the reviewed recipe catalog at startup, checks Docker, the
 locked image and the model's identity at startup and at each admission, and
