@@ -30,7 +30,7 @@ cargo run -q -p playtime-protocol --example schema --locked > crates/playtime-pr
 ```
 
 Do not automatically overwrite behavioral goldens when a test fails. The
-[compatibility matrix](../../../../docs/rust-compatibility.md) identifies the
-Python tests that justify each expectation. Editing any frozen input requires
+committed goldens are the spec; record a deliberate change with a short reviewed
+note in [rust-compatibility.md](../../../../docs/rust-compatibility.md). Editing any frozen input requires
 updating its reference, the stored manifest digest, and the affected trace
 references; the Python fixture-integrity tests detect stale hashes.

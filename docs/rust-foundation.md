@@ -156,8 +156,8 @@ Docker skips. The GitHub workflow is provided but has not yet run remotely.
 
 ## Following work
 
-The [compatibility matrix](rust-compatibility.md) assigns operational parity
-to the later migration issues. #18's [controller contract](rust-controller.md)
+The [compatibility notes](rust-compatibility.md) record that the legacy matrix
+is retired; the committed Rust goldens are the spec. #18's [controller contract](rust-controller.md)
 defines transitions/effects, request reservation/settlement, the deterministic
 scenario grammar, and cancellation/checkpoint/limit precedence.
 #19 joins a reviewed controller revision to storage, including observation
