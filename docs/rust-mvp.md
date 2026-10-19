@@ -147,8 +147,15 @@ of the model host (#67, #70).
 
 ## Run it
 
-Build the worker bundle and the binaries, then start the daemon on a new root
-with the live endpoint and the recipe catalog:
+`./go.sh` builds the worker bundle and the binaries from its checkout, starts
+the daemon as the user unit `playtimed-go` with its data under
+`/home/data2/playtime`, and opens the workbench. The daemon keeps running when
+the workbench closes, and the script won't restart it while a run is going.
+`./go.sh --no-build` reopens the workbench, `./go.sh --stop` stops the daemon
+between runs, and `./go.sh --help` lists its settings.
+
+To do the same by hand, build the worker bundle and the binaries, then start
+the daemon on a new root with the live endpoint and the recipe catalog:
 
 ```sh
 rustup target add x86_64-unknown-linux-musl --toolchain 1.94.1
