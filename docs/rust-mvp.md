@@ -18,7 +18,7 @@ Every slice is merged, and the soak has run:
 | 3. Live model called directly, with a live-run lock and contention flags | #72 | #83 | Merged. |
 | 4. Tool-call robustness | #73 | #81, #85 | Merged. |
 | 5. Recipes as data, seed import, long-run limits | #74 | #84 | Merged. The owner accepted the recipe text. |
-| 6. One real 10-session soak run | #75 | | The owner's run `20261019T040629Z-5766d327` completed all 10 sessions unattended. The report is on #75. |
+| 6. One real 10-session soak run | #75 | | The owner's run `20261019T040629Z-5766d327` completed all 10 sessions unattended, and the owner accepted it as the soak. The report is on #75. |
 
 Also merged: #77 froze Python and retired the legacy matrix, #79 and #86 took
 the backend-guard flake out of CI, and #89 fixed a worker test flake. The soak
