@@ -2,7 +2,7 @@
 use crate::{
     backend::Backend,
     model::*,
-    transcript::{TEXT_BYTES, WINDOW_ROWS},
+    transcript::{TEXT_BYTES, View, WINDOW_ROWS},
 };
 use egui::{Color32, RichText, Vec2};
 use playtime_client::config::Options;
@@ -23,15 +23,19 @@ pub struct Workbench {
     pub backend: Option<Backend>,
     pub metrics: FrameMetrics,
     texture: Option<(Arc<crate::media::Pixels>, egui::TextureHandle)>,
-    requested_range: Option<(usize, usize)>,
+    requested_range: Option<(View, usize, usize)>,
     pub options: Options,
     previous_narrow: Option<bool>,
     timeline: Option<TimelineView>,
     timeline_anchor: Option<usize>,
+    /// The row a view change was made around, until the backend locates it.
+    view_anchor: Option<usize>,
 }
-/// The last timeline layout, so a row-height change can keep a row in place.
+/// The last timeline layout, so a row-height or view change can keep a row in
+/// place.
 struct TimelineView {
     run: Option<RunId>,
+    view: View,
     row_height: f32,
     offset: f32,
 }
@@ -563,6 +567,11 @@ impl Workbench {
                 Disclosure::Full => 360.0,
             }
         };
+        let view = if self.model.preferences.disclosure == Disclosure::Full {
+            View::Full
+        } else {
+            View::Readable
+        };
         let total = self.model.window.total;
         let mut range = (0, 32);
         let mut selection = None;
@@ -574,14 +583,33 @@ impl Workbench {
         // top of the list. Keep the toggled row, or else the top row, in place.
         let anchor = self.timeline_anchor.take();
         let spacing = ui.spacing().item_spacing.y;
+        let mut view_anchor = None;
         if let Some(last) = &self.timeline
             && !self.model.following
             && last.run == self.model.selected
-            && last.row_height != row_height
         {
-            let (old, new) = (last.row_height + spacing, row_height + spacing);
-            let row = anchor.unwrap_or((last.offset / old) as usize);
-            area = area.vertical_scroll_offset((last.offset + row as f32 * (new - old)).max(0.0));
+            let old = last.row_height + spacing;
+            if last.view != view {
+                // The views list different rows, so the backend locates the top row
+                // in the new one.
+                let top = (last.offset / old) as usize;
+                view_anchor = top
+                    .checked_sub(self.model.window.start)
+                    .and_then(|i| self.model.window.rows.get(i))
+                    .map(|row| row.id);
+                self.view_anchor = view_anchor;
+            } else if last.row_height != row_height {
+                let new = row_height + spacing;
+                let row = anchor.unwrap_or((last.offset / old) as usize);
+                area =
+                    area.vertical_scroll_offset((last.offset + row as f32 * (new - old)).max(0.0));
+            }
+        }
+        if let Some((id, at)) = self.model.window.anchor
+            && self.view_anchor == Some(id)
+        {
+            self.view_anchor = None;
+            area = area.vertical_scroll_offset(at as f32 * (row_height + spacing));
         }
         let response = area.show_rows(ui, row_height, total, |ui, visible| {
             let start = visible.start.saturating_sub(2); range = (start, (visible.end - start + 2).min(WINDOW_ROWS));
@@ -593,17 +621,20 @@ impl Workbench {
                         egui::Frame::new().inner_margin(10).corner_radius(5).fill(if self.model.selected_row == Some(row.id) { Color32::from_rgb(31, 57, 57) } else { Color32::from_rgb(29, 34, 42) }).show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             ui.set_min_height(row_height - 28.0);
-                            ui.horizontal_wrapped(|ui| { ui.label(RichText::new(&row.title).color(ACCENT)); if ui.button(format!("{} activity {}", if self.model.expanded.contains(&row.id) { "Collapse" } else { "Expand" }, row.first_sequence)).clicked() { expansion = Some((row.id, i)); }
+                            ui.horizontal_wrapped(|ui| { ui.label(RichText::new(&row.title).color(ACCENT));
+                            // A checkpoint marker adds what that checkpoint saved.
+                            if let Some(files) = row.checkpoint.as_ref().and_then(|session| self.model.checkpoint_files.get(session)) { ui.label(files); }
+                            if ui.button(format!("{} activity {}", if self.model.expanded.contains(&row.id) { "Collapse" } else { "Expand" }, row.first_sequence)).clicked() { expansion = Some((row.id, i)); }
                             if ui.button(format!("Inspect source {}", row.first_sequence)).clicked() { selection = Some((row.id, row.first_sequence)); } });
-                            ui.small(&row.status);
-                            if self.model.preferences.disclosure != Disclosure::Compact { text(ui, &row.excerpt, &mut self.metrics); }
+                            if !row.marker { ui.small(&row.status); }
+                            if !row.marker && self.model.preferences.disclosure != Disclosure::Compact { text(ui, &row.excerpt, &mut self.metrics); }
                             if self.model.preferences.disclosure == Disclosure::Full || self.model.expanded.contains(&row.id) {
                                 egui::ScrollArea::vertical().id_salt(("row-body", row.id)).max_height(175.0).show(ui, |ui| {
                                     for section in &row.sections { ui.strong(brief(&section.label, 120)); text(ui, &section.text, &mut self.metrics); }
                                     if row.needs_loading { ui.label("Earlier source is outside the payload cache; inspect to reload it."); }
                                 });
                             }
-                            ui.small(&row.sources);
+                            if !row.marker { ui.small(&row.sources); }
                         });
                     } else { ui.label("Loading activity page…"); }
                 });
@@ -611,6 +642,7 @@ impl Workbench {
         });
         self.timeline = Some(TimelineView {
             run: self.model.selected.clone(),
+            view,
             row_height,
             offset: response.state.offset.y,
         });
@@ -619,9 +651,14 @@ impl Workbench {
         {
             self.model.following = false;
         }
-        if self.requested_range != Some(range) {
-            self.requested_range = Some(range);
-            self.model.command(Action::Window(range.0, range.1));
+        if self.requested_range != Some((view, range.0, range.1)) || view_anchor.is_some() {
+            self.requested_range = Some((view, range.0, range.1));
+            self.model.command(Action::Window(WindowRequest {
+                view,
+                start: range.0,
+                count: range.1,
+                anchor: view_anchor,
+            }));
         }
         if let Some((id, index)) = expansion {
             self.timeline_anchor = Some(index);

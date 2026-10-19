@@ -1,10 +1,14 @@
 //! Pure presentation state and explicit user intents. No execution authority.
-use crate::transcript::{SourcePage, Window};
+use crate::transcript::{SourcePage, View, Window};
 use playtime_client::{config::Options, state::LaunchReceipt};
 use playtime_core::{RunId, RunMode, SessionId};
 use playtime_protocol::api::*;
 use serde::{Deserialize, Serialize};
-use std::{collections::VecDeque, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    path::PathBuf,
+    sync::Arc,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Tag {
@@ -108,6 +112,15 @@ impl Default for Preferences {
         }
     }
 }
+/// The timeline rows to send, in one view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WindowRequest {
+    pub view: View,
+    pub start: usize,
+    pub count: usize,
+    /// A row to locate in `view`, so changing views keeps it in place.
+    pub anchor: Option<usize>,
+}
 #[derive(Clone, Debug)]
 pub enum Action {
     Connect(Options),
@@ -121,7 +134,7 @@ pub enum Action {
     Cancel(RunId),
     Observe(RunId),
     StopObservation,
-    Window(usize, usize),
+    Window(WindowRequest),
     Source(usize, u64, usize),
     Checkpoints(RunId, Option<String>),
     Checkpoint(RunId, SessionId),
@@ -155,7 +168,8 @@ pub enum Data {
     Cancellation(Box<RunViewData>),
     CancellationUnresolved(String),
     Window(Window, String, u64),
-    Checkpoints(Page<Checkpoint>),
+    /// The page and, by session, what each checkpoint saved.
+    Checkpoints(Page<Checkpoint>, BTreeMap<String, String>),
     Checkpoint(Box<Checkpoint>, MemoryView),
     Content(ContentView),
     GifFrame(Arc<crate::media::Pixels>, tokio::sync::oneshot::Sender<()>),
@@ -208,6 +222,8 @@ pub struct Model {
     pub source_sequence: u64,
     pub checkpoints: Vec<Checkpoint>,
     pub checkpoints_next: Option<String>,
+    /// What each checkpoint saved, by session, for the timeline's markers.
+    pub checkpoint_files: BTreeMap<String, String>,
     pub checkpoint: Option<Checkpoint>,
     pub file_page: usize,
     pub memory: Option<MemoryView>,
@@ -263,6 +279,7 @@ impl Default for Model {
             source_sequence: 0,
             checkpoints: vec![],
             checkpoints_next: None,
+            checkpoint_files: BTreeMap::new(),
             checkpoint: None,
             file_page: 0,
             memory: None,
@@ -373,6 +390,7 @@ impl Model {
         self.expanded.clear();
         self.source = None;
         self.checkpoints.clear();
+        self.checkpoint_files.clear();
         self.checkpoint = None;
         self.memory = None;
         self.content = None;
@@ -576,7 +594,7 @@ impl Model {
                     self.seen_live = live;
                 }
             }
-            Data::Checkpoints(page) => {
+            Data::Checkpoints(page, files) => {
                 if self.checkpoint.is_none()
                     && self.selected_row.is_none()
                     && let Some(checkpoint) = page.items.first()
@@ -589,16 +607,13 @@ impl Model {
                 }
                 self.checkpoints = page.items;
                 self.checkpoints_next = page.next_cursor;
+                self.checkpoint_files.extend(files);
             }
             Data::Checkpoint(c, memory) => {
                 if self.content.is_none()
                     && let Some(run) = self.selected.clone()
                     && let Some(id) = c.files.iter().find_map(|file| {
-                        let lower = file.name.to_ascii_lowercase();
-                        let image = [".png", ".jpg", ".jpeg", ".webp", ".gif"]
-                            .iter()
-                            .any(|suffix| lower.ends_with(suffix));
-                        if image
+                        if crate::media::image_name(&file.name)
                             && let ContentAvailability::Available { artifact_id, .. } =
                                 &file.content
                         {

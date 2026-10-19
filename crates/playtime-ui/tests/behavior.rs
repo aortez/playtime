@@ -86,7 +86,7 @@ fn late_history_merges_by_identity_and_final_text_replaces_chunks() {
     for event in records.iter().rev() {
         transcript.apply(event.clone(), None).unwrap();
     }
-    let rows = transcript.window(0, 64);
+    let rows = transcript.window(View::Full, 0, 64);
     assert_eq!(transcript.metrics.records, records.len());
     assert!(
         rows.rows
@@ -118,7 +118,13 @@ fn unknown_sources_remain_available_and_conflicting_duplicates_fail() {
     transcript.apply(event.clone(), None).unwrap();
     let source = transcript.raw(event.sequence.get(), 0).unwrap();
     assert!(source.text.contains("/do/not/read"));
-    assert!(transcript.window(0, 1).rows[0].status.contains("Unknown"));
+    for view in [View::Readable, View::Full] {
+        assert!(
+            transcript.window(view, 0, 1).rows[0]
+                .status
+                .contains("Unknown")
+        );
+    }
     event.data = serde_json::json!({"text":"changed"});
     assert!(transcript.apply(event, None).is_err());
 }

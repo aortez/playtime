@@ -577,6 +577,7 @@ fn expanding_an_activity_keeps_it_in_place() {
                     text: "{}".into(),
                 }],
                 needs_loading: false,
+                ..Default::default()
             })
             .collect(),
         ..Default::default()

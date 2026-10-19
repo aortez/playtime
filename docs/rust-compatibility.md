@@ -174,3 +174,12 @@ keep their receipts. The run header names the orchestration reason and prints
 the controller phase without `Option` debug text, so five reviewed workbench
 screenshots change from "controller None" to "controller unavailable". The HTTP
 and protocol goldens are unchanged.
+
+### Readable timeline
+
+Since 2026-10-19 (#92, part 1), Compact and Readable list each step once. The six
+archive records that repeat the observations are left out, and session starts,
+checkpoints and the run's end are one-line markers. Full still lists every
+record. Workbench window requests now name the view and can carry a row to
+locate. The reviewed screenshots, the HTTP and protocol goldens and the archive
+format are unchanged.

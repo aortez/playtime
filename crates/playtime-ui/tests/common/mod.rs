@@ -4,7 +4,7 @@ use playtime_server::{application::Application, fixture::Fixture};
 use playtime_ui::{
     backend::{prepare_preview, prepare_run},
     model::*,
-    transcript::Transcript,
+    transcript::{Transcript, View},
     ui::Workbench,
 };
 
@@ -61,7 +61,7 @@ pub async fn demo(launcher: bool) -> Workbench {
             transcript.apply(event, None).unwrap();
         }
     }
-    app.model.window = transcript.window(0, 64);
+    app.model.window = transcript.window(View::Readable, 0, 64);
     app.model.history = "Reviewed #42 model/tool excerpt · synthetic rendering fixture".into();
     app.model.notice =
         "Saved versions are evidence of publication, not verification of model claims.".into();

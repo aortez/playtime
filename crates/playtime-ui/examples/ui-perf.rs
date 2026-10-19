@@ -4,7 +4,7 @@ mod generated;
 use egui_kittest::Harness;
 use playtime_ui::{
     model::{Action, Disclosure},
-    transcript::Transcript,
+    transcript::{Transcript, View},
     ui::Workbench,
 };
 use std::time::{Duration, Instant};
@@ -37,7 +37,7 @@ fn main() {
     let mut app = Workbench::default();
     app.model.launcher = false;
     app.model.following = false;
-    app.model.window = index.window(0, 64);
+    app.model.window = index.window(View::Readable, 0, 64);
     let mut h = Harness::builder()
         .with_size([1440.0, 900.0])
         .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
@@ -64,7 +64,7 @@ fn main() {
         // Explicitly switch visible source windows and clear the previous run's
         // transient selection; parsing/index construction is timed separately.
         let position = ((seconds * 173) as usize) % (index.metrics.rows - 64);
-        h.state_mut().model.window = index.window(position, 64);
+        h.state_mut().model.window = index.window(View::Readable, position, 64);
         h.state_mut().model.window.start = 0; // Small viewport represents the selected page.
         h.state_mut().model.window.total = 64;
         if seconds.is_multiple_of(5) {

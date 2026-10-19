@@ -3,7 +3,7 @@
 use crate::{
     media,
     model::*,
-    transcript::{self, Transcript},
+    transcript::{self, Transcript, View},
 };
 use playtime_client::{
     Client, Error, Observation, RetryPolicy,
@@ -14,6 +14,7 @@ use playtime_core::RunId;
 use playtime_local::{PrivateDirectory, read_private, replace_private};
 use playtime_protocol::{api::*, events::EventEnvelope};
 use std::{
+    collections::BTreeMap,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -520,6 +521,62 @@ pub fn orchestration_reason(reason: &str) -> String {
         reason.replace('_', " ")
     }
 }
+/// What each checkpoint saved, by session: its files and images, and which
+/// files are new or changed since the checkpoint before it. Only a complete
+/// list shows what the earliest checkpoint added.
+pub fn checkpoint_files(checkpoints: &[Checkpoint], complete: bool) -> BTreeMap<String, String> {
+    let mut ordered = checkpoints.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|c| c.checkpoint.published_sequence);
+    let mut previous: Option<BTreeMap<&str, Option<&str>>> = complete.then(BTreeMap::new);
+    let mut summaries = BTreeMap::new();
+    for checkpoint in ordered {
+        let files = checkpoint
+            .files
+            .iter()
+            .filter(|file| !matches!(file.kind.as_str(), "5" | "directory"))
+            .map(|file| {
+                let digest = match &file.content {
+                    ContentAvailability::Available { content, .. } => Some(content.sha256.as_str()),
+                    ContentAvailability::Unavailable { .. } => None,
+                };
+                (file.name.as_str(), digest)
+            })
+            .collect::<BTreeMap<_, _>>();
+        let images = files.keys().filter(|name| media::image_name(name)).count();
+        let mut text = format!(
+            "{} {}",
+            files.len(),
+            if files.len() == 1 { "file" } else { "files" }
+        );
+        if images > 0 {
+            text.push_str(&format!(
+                ", {images} {}",
+                if images == 1 { "image" } else { "images" }
+            ));
+        }
+        if let Some(previous) = &previous {
+            let changed = files
+                .iter()
+                .filter(|(name, digest)| previous.get(**name) != Some(*digest))
+                .map(|(name, _)| transcript::excerpt(name, 60))
+                .collect::<Vec<_>>();
+            if changed.is_empty() {
+                text.push_str(" · nothing new or changed");
+            } else {
+                text.push_str(&format!(
+                    " · new or changed: {}",
+                    changed[..changed.len().min(4)].join(", ")
+                ));
+                if changed.len() > 4 {
+                    text.push_str(&format!(" and {} more", changed.len() - 4));
+                }
+            }
+        }
+        summaries.insert(checkpoint.checkpoint.session_id.as_str().to_owned(), text);
+        previous = Some(files);
+    }
+    summaries
+}
 async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semaphore>) -> Result<()> {
     let tag = command.tag;
     let client = &s.client;
@@ -650,6 +707,7 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
             }
         },
         Action::Checkpoints(run, cursor) => {
+            let first = cursor.is_none();
             let page = match client
                 .checkpoints(
                     &run,
@@ -669,7 +727,9 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 },
                 result => result.map_err(safe)?,
             };
-            out.send(tag, Some(run), Data::Checkpoints(page)).await;
+            let files = checkpoint_files(&page.items, first && page.next_cursor.is_none());
+            out.send(tag, Some(run), Data::Checkpoints(page, files))
+                .await;
         }
         Action::Checkpoint(run, session) => {
             let _permit = previews.acquire_owned().await.map_err(|e| e.to_string())?;
@@ -1143,7 +1203,12 @@ async fn observe(
         let mut reloading = false;
         let mut reload_failed = false;
         let mut pending_source: Option<Reload> = None;
-        let mut range = (0, 32);
+        let mut range = WindowRequest {
+            view: View::Readable,
+            start: 0,
+            count: 32,
+            anchor: None,
+        };
         let mut dirty = true;
         let mut history_done = false;
         let mut live = 0;
@@ -1168,7 +1233,11 @@ async fn observe(
                     Input::End(end) => { out.send(tag, Some(run.clone()), Data::Notice(format!("Stream reconciled: {:?}; lifecycle and cleanup are shown separately", end.status))).await; }
                 },
                 Some(command) = requests.recv() => match command.action {
-                    Action::Window(start, count) => { range = (start, count); dirty = true; reload_failed = false; }
+                    Action::Window(request) => {
+                        // A later request in the same view keeps a row still to locate.
+                        let anchor = request.anchor.or(range.anchor.filter(|_| range.view == request.view));
+                        range = WindowRequest { anchor, ..request }; dirty = true; reload_failed = false;
+                    }
                     Action::Source(row, requested, offset) => {
                         let sources = index.sources(row);
                         let sequence = sources.iter().copied().find(|seq| *seq >= requested).or_else(|| sources.last().copied());
@@ -1181,14 +1250,21 @@ async fn observe(
                     _ => (),
                 },
                 _ = redraw.tick(), if dirty => {
-                    if !reloading && (!reload_failed || pending_source.is_some()) {
-                        let request = pending_source.take().or_else(|| index.window(range.0, range.1).rows.iter().flat_map(|row| index.sources(row.id)).find(|seq| !index.contains(*seq)).map(|sequence| Reload { tag: None, sequence, offset: 0, cursor: index.cursor_for(sequence).map(str::to_owned) }));
-                        if let Some(request) = request { reloading = true; jobs.spawn(reload(reads.clone(), tx.clone(), reload_budget.clone(), request)); }
-                    }
                     index.metrics.inbox_bytes_high_water = reload_budget.high_bytes.load(Ordering::Relaxed);
                     index.metrics.inbox_records_high_water = reload_budget.high_records.load(Ordering::Relaxed);
+                    let mut window = index.window(range.view, range.start, range.count);
+                    // Answer a view change once, at the row it was made around.
+                    if let Some(id) = range.anchor.take() && let Some(at) = index.position(range.view, id) {
+                        range.start = at.saturating_sub(2);
+                        window = index.window(range.view, range.start, range.count);
+                        window.anchor = Some((id, at));
+                    }
+                    if !reloading && (!reload_failed || pending_source.is_some()) {
+                        let request = pending_source.take().or_else(|| window.rows.iter().flat_map(|row| index.sources(row.id)).find(|seq| !index.contains(*seq)).map(|sequence| Reload { tag: None, sequence, offset: 0, cursor: index.cursor_for(sequence).map(str::to_owned) }));
+                        if let Some(request) = request { reloading = true; jobs.spawn(reload(reads.clone(), tx.clone(), reload_budget.clone(), request)); }
+                    }
                     let status = format!("{} records indexed · {}", index.metrics.records, if history_done { "Earlier history loaded" } else { "Loading earlier history independently of live activity" });
-                    out.send(tag, Some(run.clone()), Data::Window(index.window(range.0, range.1), status, live)).await; dirty = false;
+                    out.send(tag, Some(run.clone()), Data::Window(window, status, live)).await; dirty = false;
                 }
             }
         }
@@ -1336,6 +1412,7 @@ mod tests {
                     sources: String::new(),
                     sections: vec![],
                     needs_loading: false,
+                    ..Default::default()
                 })
                 .collect();
             tx.try_send(Reply {
@@ -1346,7 +1423,7 @@ mod tests {
                         start: number,
                         total: 64,
                         rows,
-                        metrics: Default::default(),
+                        ..Default::default()
                     },
                     String::new(),
                     0,
