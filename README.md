@@ -5,9 +5,9 @@ development tools, and optional starting materials. Each session starts a fresh
 conversation; workspace files and the model's own `MEMENTO.md` carry work forward.
 Runs leave event logs, workspace snapshots, and an HTML report.
 
-Playtime is moving to Rust. The Rust daemon, CLI and workbench, what their MVP
-is and where it stands are in [docs/rust-mvp.md](docs/rust-mvp.md). The Python
-controller and the commands below are frozen.
+Playtime is moving to Rust. The Rust daemon, CLI and workbench reached their MVP
+in v0.1.0; [docs/rust-mvp.md](docs/rust-mvp.md) says how they fit together and
+how to run them. The Python controller and the commands below are frozen.
 
 ## Start
 
