@@ -186,6 +186,7 @@ impl Drop for Test {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn virtual_clock_proves_fixed_ninety_and_one_twenty_second_bounds() {
     for cleanup in [200_000, 20_000] {
         let t = Test::new(cleanup).await;
@@ -227,6 +228,7 @@ async fn virtual_clock_proves_fixed_ninety_and_one_twenty_second_bounds() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn replacement_generation_requires_held_exit_and_revokes_old_capabilities() {
     let t = Test::new(200_000).await;
     let old_request = request(&t.lease, 1);
@@ -292,6 +294,7 @@ async fn replacement_generation_requires_held_exit_and_revokes_old_capabilities(
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn stale_boot_replacement_and_unsupported_termination_never_release() {
     for wrong_boot in [true, false] {
         let t = Test::new(200_000).await;
@@ -333,6 +336,7 @@ async fn stale_boot_replacement_and_unsupported_termination_never_release() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn exact_binding_lengths_and_overflow_are_checked_before_mutation() {
     let t = Test::new(200_000).await;
     for mut r in [
@@ -370,6 +374,7 @@ async fn exact_binding_lengths_and_overflow_are_checked_before_mutation() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn response_frame_total_and_forwarding_queue_are_bounded() {
     for (frame_bytes, frames, read) in [
         (FRAME_BYTES + 1, 1, true),
@@ -408,6 +413,7 @@ async fn response_frame_total_and_forwarding_queue_are_bounded() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn dropping_an_old_completed_stream_does_not_cancel_the_next_request() {
     let t = Test::new(200_000).await;
     t.port.terminal.store(true, Ordering::SeqCst);

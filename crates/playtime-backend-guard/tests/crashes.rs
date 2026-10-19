@@ -19,6 +19,7 @@ async fn barrier(listener: &tokio::net::UnixListener) -> tokio::net::UnixStream 
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn synchronized_crashes_never_resend_possibly_dispatched_requests() {
     for (event, point, sends, may_have_dispatched, terminal) in [
         ("dispatch_marked", "BeforeWrite", 0, false, false),
@@ -100,6 +101,7 @@ async fn synchronized_crashes_never_resend_possibly_dispatched_requests() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn crash_after_upstream_submission_retains_reservation_and_deadlines() {
     let mut h = Harness::new(Mode::Hang).await;
     let client = h.start(true, None).await;
@@ -132,6 +134,7 @@ async fn crash_after_upstream_submission_retains_reservation_and_deadlines() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn stalled_journal_cannot_delay_stop_and_failed_handle_keeps_exclusion() {
     let mut h = Harness::new(Mode::Hang).await;
     let socket = h.root.join("barrier.sock");
@@ -189,6 +192,7 @@ async fn stalled_journal_cannot_delay_stop_and_failed_handle_keeps_exclusion() {
 }
 
 #[tokio::test]
+#[ignore = "guard gate: ./scripts/test-rust-backend-guard.sh"]
 async fn accepted_acquisition_retry_waits_for_same_durable_record() {
     let mut h = Harness::new(Mode::Terminal).await;
     let socket = h.root.join("barrier.sock");
