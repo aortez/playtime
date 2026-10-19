@@ -3,45 +3,15 @@
 The Rust MVP is the point where Playtime's daemon, CLI and workbench run a long
 real-model experiment unattended and let a person review it afterwards. #16
 defines it, and the [Rust MVP milestone](https://github.com/aortez/playtime/milestone/2)
-holds its slices. This document says what the MVP is, how its parts fit, what
-is done and what remains. When the MVP is declared, the status sections come
-out and the rest becomes the architecture document.
-
-## Status on 2026-10-18
-
-Every slice is merged, and the soak has run:
-
-| Slice | Issue | Pull requests | State |
-| --- | --- | --- | --- |
-| 1. Docker workshop with a scripted model | #66 | #69 | Merged. |
-| 2. Operator release for interrupted or failed runs | #71, #87 | #80, #88 | Merged. |
-| 3. Live model called directly, with a live-run lock and contention flags | #72 | #83 | Merged. |
-| 4. Tool-call robustness | #73 | #81, #85 | Merged. |
-| 5. Recipes as data, seed import, long-run limits | #74 | #84 | Merged. The owner accepted the recipe text. |
-| 6. One real 10-session soak run | #75 | | The owner's run `20261019T040629Z-5766d327` completed all 10 sessions unattended, and the owner accepted it as the soak. The report is on #75. |
-
-Also merged: #77 froze Python and retired the legacy matrix, #79 and #86 took
-the backend-guard flake out of CI, and #89 fixed a worker test flake. The soak
-found two problems: #93, now fixed, and #94.
+held its slices. It was released as v0.1.0. The soak's report on #75 and the
+follow-up checks on #16 give the evidence for each of #16's items. This
+document says how the parts fit, how a run goes and how to run it.
 
 ## Goal
 
 Run the reviewed `curiosity` recipe, 10 sessions of `gpt-oss:20b` with a seed
 pack and a 64K context, unattended, then browse every session's transcript,
 memento, files and images.
-
-## Done when
-
-| # | Item | State | Evidence |
-| --- | --- | --- | --- |
-| 1 | The reviewed curiosity recipe can be launched from the CLI or the workbench. | Done. The owner launched the soak from the workbench, and #84's live check launched from the CLI. | Soak run `20261019T040629Z-5766d327`; run `20261018T235429Z-9911f51c`. |
-| 2 | It runs unattended to completion, with at most one live run across both checkouts. | Done. The soak ran 10 sessions to `agent_finished` with no intervention, and in #83's live gate the lock refused an admission from a second daemon root. | The #75 report; [Live model](rust-live-model.md). |
-| 3 | You can watch it live, and closing or reopening the workbench never affects the run. | The workbench stayed open on the soak from launch to the end. Closing and reopening was verified at two sessions, not during the soak. | The #75 report; #83's live gate, run `20261018T222321Z-4e0ce29b`. |
-| 4 | Cancel works. After a cancel or a failure, the owner can release the slot and launch again. | Cancel verified live. Release is merged (#80, #88), and the normal service gate cancels, releases and launches again; release hasn't run live. | #84's live check, the same run as item 1; `./scripts/test-rust-service-e2e.sh --case normal`. |
-| 5 | Afterwards, every session's transcript, memento, files and images can be browsed, including from a copied archive. | Done at ten sessions, including an offline read of a copied archive. | The #75 report. |
-| 6 | Each run records the model and image identity and flags possible GPU contention. | Done. The soak froze both identities, and its 111 timed requests flagged no contention. | The #75 report; [Live model](rust-live-model.md). |
-
-The soak's report on #75 gives each item's evidence.
 
 ## Parts
 
@@ -196,7 +166,7 @@ on the machine with the locked image and the model host.
 
 ## Not in the MVP
 
-Tracked issues carry the `post-MVP` label.
+These issues come next, in an order the owner sets:
 
 - Host enforcement or the guard in the run path (#67, #68 as written, #70).
 - Automatic recovery and reattaching to a running worker after a daemon
@@ -208,13 +178,6 @@ Tracked issues carry the `post-MVP` label.
 - CI polish (#40), apart from the flake fixes.
 - The larger exec-schema measurement (#82). The MVP keeps schema A with a
   per-session parse-error cap.
-
-## After the MVP
-
-The MVP is declared when the soak's report is in and the owner has reviewed
-the recipe text. That commit is tagged and published as the first Rust
-release, and the milestone is closed. The post-MVP issues above follow, in an
-order the owner sets.
 
 ## Documents
 
