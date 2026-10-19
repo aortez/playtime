@@ -606,3 +606,23 @@ async fn explicit_frozen_resolution_preserves_the_configured_hostname_and_path()
         assert!(req.head.lines().next().unwrap().contains(" /base/api/"));
     }
 }
+
+#[tokio::test]
+async fn an_ip_literal_endpoint_is_pinned_to_itself() {
+    let mut server = Server::start(metadata_replies()).await;
+    let transport = NativeTransport::with_resolution(
+        Endpoint::parse(&server.url).unwrap(),
+        Trust::BundledWebPki,
+        Resolution::Pinned {
+            addresses: vec!["127.0.0.1".parse().unwrap()],
+        },
+        &Limits::default(),
+    )
+    .unwrap();
+    let mut adapter = Adapter::new(transport, lock(), Limits::default()).unwrap();
+    adapter
+        .inspect(false, deadline(), &CancellationToken::new())
+        .await
+        .unwrap();
+    server.finish().await;
+}

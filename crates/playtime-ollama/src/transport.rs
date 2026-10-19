@@ -31,6 +31,15 @@ impl Endpoint {
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
+    /// The host when it is an IP address rather than a name.
+    pub fn ip_literal(&self) -> Option<IpAddr> {
+        let host = self.0.host_str()?;
+        host.strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .unwrap_or(host)
+            .parse()
+            .ok()
+    }
     pub fn url(&self, operation: Operation) -> reqwest::Url {
         let mut url = self.0.clone();
         url.set_path(&format!(
@@ -139,21 +148,27 @@ impl NativeTransport {
             .pool_max_idle_per_host(0)
             .connect_timeout(limits.connect_timeout);
         if let Resolution::Pinned { addresses } = &resolution {
-            if endpoint.0.domain().is_none() || addresses.is_empty() || addresses.len() > 16 {
-                return Err(Failure::new(
-                    FailureKind::Request,
-                    "pinned resolution requires a DNS hostname and 1..16 explicit IP addresses",
-                ));
+            match (endpoint.0.domain(), endpoint.ip_literal()) {
+                (Some(domain), _) if (1..=16).contains(&addresses.len()) => {
+                    let port = endpoint
+                        .0
+                        .port_or_known_default()
+                        .expect("HTTP(S) endpoint");
+                    let addresses: Vec<_> = addresses
+                        .iter()
+                        .map(|ip| SocketAddr::new(*ip, port))
+                        .collect();
+                    builder = builder.resolve_to_addrs(domain, &addresses);
+                }
+                // Nothing resolves an IP literal, so it can only be pinned to itself.
+                (None, Some(ip)) if addresses[..] == [ip] => {}
+                _ => {
+                    return Err(Failure::new(
+                        FailureKind::Request,
+                        "pinned resolution requires a DNS hostname and 1..16 explicit IP addresses, or an IP literal pinned to itself",
+                    ));
+                }
             }
-            let port = endpoint
-                .0
-                .port_or_known_default()
-                .expect("HTTP(S) endpoint");
-            let addresses: Vec<_> = addresses
-                .iter()
-                .map(|ip| SocketAddr::new(*ip, port))
-                .collect();
-            builder = builder.resolve_to_addrs(endpoint.0.domain().unwrap(), &addresses);
         }
         let client = builder
             .build()

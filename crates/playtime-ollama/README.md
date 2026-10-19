@@ -166,7 +166,8 @@ A successful standalone compatibility probe does not complete these gates.
 
 For a static worker on a host whose libc resolver cannot resolve `.local`,
 `NativeTransport::with_resolution` accepts `Resolution::Pinned` with 1–16 owned
-IP addresses for the configured DNS hostname. This is an explicit frozen input,
+IP addresses for the configured DNS hostname. An IP-literal URL is never
+resolved, so it accepts only its own address. This is an explicit frozen input,
 not a discovered fallback. Host headers, TLS verification name, port and base
 path remain those of the configured URL. O2 must capture the chosen addresses in
 its frozen inputs and fail on stale addresses rather than silently refreshing

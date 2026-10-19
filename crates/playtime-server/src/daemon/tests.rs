@@ -287,10 +287,19 @@ fn live_admission_is_busy_while_another_worker_holds_the_shared_lock() {
 }
 
 #[tokio::test]
-async fn live_endpoints_resolve_to_frozen_addresses_and_need_a_host_name() {
+async fn live_endpoints_resolve_to_frozen_addresses_and_pin_ip_literals() {
     let local = playtime_ollama::Endpoint::parse("http://localhost:11434").unwrap();
     let addresses = super::archive::resolve(&local).await.unwrap();
     assert!(!addresses.is_empty() && addresses.iter().all(|ip| ip.is_loopback()));
-    let literal = playtime_ollama::Endpoint::parse("http://192.0.2.10:11434").unwrap();
-    assert!(super::archive::resolve(&literal).await.is_err());
+    for (url, ip) in [
+        ("http://192.0.2.10:11434", "192.0.2.10"),
+        ("http://[2001:db8::10]:11434", "2001:db8::10"),
+    ] {
+        let literal = playtime_ollama::Endpoint::parse(url).unwrap();
+        let ip: std::net::IpAddr = ip.parse().unwrap();
+        assert_eq!(super::archive::resolve(&literal).await.unwrap(), [ip]);
+    }
+    // The worker can't carry a link-local scope.
+    let link_local = playtime_ollama::Endpoint::parse("http://[fe80::1]:11434").unwrap();
+    assert!(super::archive::resolve(&link_local).await.is_err());
 }

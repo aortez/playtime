@@ -64,24 +64,31 @@ pub(super) fn probe_live_lock(path: &std::path::Path) -> life::Result<()> {
             _ => Error::Invalid("live model unavailable"),
         })
 }
-/// The static worker can't resolve mDNS names, so the daemon does. Link-local
-/// IPv6 addresses need a scope the worker can't carry.
+/// The static worker can't resolve mDNS names, so the daemon does. An IP
+/// literal is pinned as it is, without a lookup. Link-local IPv6 addresses
+/// need a scope the worker can't carry.
 pub(super) async fn resolve(
     endpoint: &playtime_ollama::Endpoint,
 ) -> life::Result<Vec<std::net::IpAddr>> {
-    let url = endpoint.url(playtime_ollama::Operation::Version);
-    let (Some(host), Some(port)) = (url.domain(), url.port_or_known_default()) else {
-        return Err(Error::Invalid("live endpoint needs a host name"));
-    };
-    let found = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        tokio::net::lookup_host((host, port)),
-    )
-    .await
-    .map_err(|_| Error::Invalid("live model unavailable"))?
-    .map_err(|_| Error::Invalid("live model unavailable"))?;
-    let mut addresses: Vec<_> = found
+    let found: Vec<_> = if let Some(ip) = endpoint.ip_literal() {
+        vec![ip]
+    } else {
+        let url = endpoint.url(playtime_ollama::Operation::Version);
+        let (Some(host), Some(port)) = (url.domain(), url.port_or_known_default()) else {
+            return Err(Error::Invalid("live endpoint needs a host"));
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            tokio::net::lookup_host((host, port)),
+        )
+        .await
+        .map_err(|_| Error::Invalid("live model unavailable"))?
+        .map_err(|_| Error::Invalid("live model unavailable"))?
         .map(|address| address.ip())
+        .collect()
+    };
+    let mut addresses: Vec<_> = found
+        .into_iter()
         .filter(|ip| !matches!(ip, std::net::IpAddr::V6(v6) if v6.segments()[0] & 0xffc0 == 0xfe80))
         .collect();
     addresses.sort();

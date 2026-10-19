@@ -17,18 +17,19 @@ target/debug/playtime --connection-file /absolute/service-root/.playtime/connect
 ```
 
 The workbench offers the same recipe. `--ollama-endpoint` needs
-`--docker-scripted`, a plain `http://` URL with a host name, and
+`--docker-scripted`, a plain `http://` URL with a host name or IP address, and
 `XDG_RUNTIME_DIR`.
 
 ## Endpoint, identity and the live-run lock
 
 - **Endpoint.** The static musl worker can't resolve mDNS names such as
   `oldman-bird.local`. The daemon resolves the endpoint at startup and freezes the
-  addresses (IPv4, or IPv6 other than link-local) into the profile. The worker
-  connects only to those addresses through `Resolution::Pinned`; the host name
-  stays in the URL and `Host` header. Each admission resolves again and refuses
-  if the addresses changed: restart the daemon between runs after the host moves.
-  No address is ever hard-coded.
+  addresses (IPv4, or IPv6 other than link-local) into the profile. An IP literal
+  such as `http://192.0.2.10:11434` needs no resolver: it is frozen as it is,
+  without a lookup. The worker connects only to those addresses through
+  `Resolution::Pinned`; the host name stays in the URL and `Host` header. Each
+  admission resolves again and refuses if the addresses changed: restart the
+  daemon between runs after the host moves. No address is ever hard-coded.
 - **Identity.** The profile freezes the exact model lock, a copy of
   `models/gpt-oss-20b.lock.json` tied to it by a unit test. The daemon inspects
   the model at startup and at each admission, and the worker inspects it at each
