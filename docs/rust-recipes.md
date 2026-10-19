@@ -56,6 +56,8 @@ a 48 MiB workspace with 4,096 entries, 1 GiB of `/tmp` and 1,024 PIDs.
 
 Recipes must also meet these rules:
 
+- The command cap must be more than 3 seconds, the return allowance each
+  command reserves (see [run-and-view](rust-docker-run-and-view.md)).
 - The event log can't exceed 64 MiB.
 - Only the `self` memory condition is supported.
 - Every session's capture of a full workspace must fit the archive (below).

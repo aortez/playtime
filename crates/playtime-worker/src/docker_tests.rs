@@ -17,6 +17,7 @@ enum FaultCase {
     None,
     SecondCapture,
     ToolDeadline,
+    CommandCap,
     DaemonLost,
     ChangedDaemon,
     CancelTool,
@@ -100,6 +101,20 @@ impl Transport for Port {
             match self.case {
                 FaultCase::LostOwner => panic!("injected native effect owner loss"),
                 FaultCase::ToolDeadline => return fake::lost(Fault::Deadline),
+                FaultCase::CommandCap if self.bridges.load(Ordering::SeqCst) == 1 => {
+                    // The command runs to the bridge's cap, then the bridge
+                    // takes its slowest reap path: 10 ms, a second kill, 2 s.
+                    let value: serde_json::Value = serde_json::from_slice(payload).unwrap();
+                    let cap = value["limits"]["command_seconds"].as_f64().unwrap();
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs_f64(cap + 2.01)) => {}
+                        _ = tokio::time::sleep_until(deadline) => return fake::lost(Fault::Deadline),
+                        _ = cancel.cancelled() => return fake::lost(Fault::Cancelled),
+                    }
+                    return fake::response(
+                        serde_json::json!({"stdout":"","stderr":"","exit_code":-9,"timed_out":true,"output_truncated":false,"duration_seconds":cap}),
+                    );
+                }
                 FaultCase::DaemonLost => {
                     self.fake.state.lock().unwrap().available = false;
                     return fake::lost(Fault::Io);
@@ -372,6 +387,20 @@ fn ambiguous_tools_and_daemon_loss_never_dispatch_another_model_or_tool() {
             ));
         }
     }
+}
+#[test]
+fn command_running_to_its_cap_keeps_a_confirmed_bridge_timeout() {
+    let (temp, port, report) = execute(FaultCase::CommandCap, None);
+    assert!(report.terminal_committed, "{:?}", report.diagnostics);
+    let result = report.result.unwrap();
+    assert_eq!(result.reason, playtime_core::StopReason::AgentFinished);
+    assert_eq!(result.usage.known_generated_tokens, 160);
+    assert_eq!(port.bridges.load(Ordering::SeqCst), 5);
+    let first = records(&temp.0.join("archive"))
+        .into_iter()
+        .find(|r| r.kind == "tool_result")
+        .unwrap();
+    assert_eq!(first.data["result"]["timed_out"], true);
 }
 #[test]
 fn cancellation_during_tool_and_capture_retains_owner_until_bounded_cleanup() {
@@ -832,6 +861,39 @@ fn recipe_seeds_are_written_before_session_one_and_frozen_as_inputs() {
             .unwrap();
     assert_eq!(frozen.recipe, Some(seeded_recipe()));
     assert_eq!(frozen.mode, playtime_core::RunMode::Experiment);
+}
+#[test]
+fn tool_without_time_before_the_work_deadline_ends_at_the_wall_limit() {
+    let mut recipe = seeded_recipe();
+    recipe.seeds.clear();
+    recipe.parameters.limits.wall_seconds = std::num::NonZeroU64::new(5).unwrap();
+    // The first reply takes 2.5 s, so its tool call comes with less than the
+    // 3 s return allowance left before the 5 s work deadline.
+    let [first, last] = native_records().remove(0);
+    let fake = ollama::Fake::new(
+        identity()
+            .into_iter()
+            .chain([slow_reply(vec![first, last], Duration::from_millis(1250))]),
+    );
+    let (temp, port, report) = run(FaultCase::None, None, Some(fake), Some(recipe));
+    assert!(report.terminal_committed, "{:?}", report.diagnostics);
+    let result = report.result.unwrap();
+    assert_eq!(
+        result.reason,
+        playtime_core::StopReason::WallLimit,
+        "{:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        result.cleanup,
+        playtime_protocol::events::CleanupOutcome::Complete
+    );
+    // The model requested the tool, but nothing reached Docker.
+    let records = records(&temp.0.join("archive"));
+    assert!(records.iter().any(|r| r.kind == "tool_request"));
+    assert!(!records.iter().any(|r| r.kind == "tool_result"));
+    assert_eq!(port.bridges.load(Ordering::SeqCst), 0);
+    assert!(port.fake.state.lock().unwrap().containers.is_empty());
 }
 #[test]
 fn live_identity_change_at_session_start_stops_before_another_request() {

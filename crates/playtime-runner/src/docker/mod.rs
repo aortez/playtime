@@ -14,7 +14,9 @@ pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
 pub const LIVE_PROFILE: &str = "docker_live_no_seed_self_v1";
-pub const RETURN_OVERHEAD_MS: u64 = 1000;
+/// Reserved inside each command's effect cap for the Docker calls around
+/// `docker exec` and the bridge's own kill and reap, which can wait 2 s.
+pub const RETURN_OVERHEAD_MS: u64 = 3000;
 pub const RECIPE: &str = "docker-two-session";
 pub const LIVE_RECIPE: &str = "live-two-session";
 pub const SCENARIO: &[u8] = include_bytes!("smoke.json");
