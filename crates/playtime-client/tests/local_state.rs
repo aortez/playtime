@@ -268,6 +268,47 @@ fn unsafe_and_corrupt_receipts_are_not_replaced() {
     symlink(&target, &path).unwrap();
     assert!(store.save(&pending, "http://localhost:1").is_err());
     assert_eq!(std::fs::read(&target).unwrap(), b"preserve");
+    assert!(store.discard(&saved_for(&pending)).is_err());
+    assert_eq!(std::fs::read(&target).unwrap(), b"preserve");
+}
+fn saved_for(pending: &PendingLaunch) -> playtime_client::state::LaunchReceipt {
+    playtime_client::state::LaunchReceipt {
+        schema_version: 1,
+        service_id: pending.service_id.clone(),
+        endpoint: "http://localhost:1".into(),
+        key: pending.key.clone(),
+        request: pending.request.clone(),
+        created_at_unix_ms: 0,
+        run_id: None,
+    }
+}
+#[test]
+fn only_an_unacknowledged_matching_receipt_is_discarded() {
+    let root = Temp::new();
+    let store = ReceiptStore::new(&root.0.join("state"));
+    let pending = pending();
+    let saved = store.save(&pending, "http://127.0.0.1:1").unwrap();
+    let mut changed = saved.clone();
+    changed.request.preview_revision = PreviewRevision::new("new-revision").unwrap();
+    assert!(matches!(store.discard(&changed), Err(StateError::Conflict)));
+    let acknowledged = store
+        .acknowledge(&saved, &RunId::new("run-a").unwrap())
+        .unwrap();
+    assert!(matches!(store.discard(&saved), Err(StateError::Conflict)));
+    assert!(matches!(
+        store.discard(&acknowledged),
+        Err(StateError::Conflict)
+    ));
+    assert_eq!(store.read(&pending.key).unwrap(), Some(acknowledged));
+
+    let mut fresh = pending.clone();
+    fresh.key = IdempotencyKey::new("refused").unwrap();
+    let refused = store.save(&fresh, "http://127.0.0.1:1").unwrap();
+    store.discard(&refused).unwrap();
+    assert_eq!(store.read(&fresh.key).unwrap(), None);
+    // Discarding is idempotent, and only the refused receipt went away.
+    store.discard(&refused).unwrap();
+    assert_eq!(store.list(None, 10).unwrap().items.len(), 1);
 }
 
 #[test]

@@ -97,6 +97,11 @@ impl PrivateDirectory {
     pub fn replace(&self, name: &str, bytes: &[u8]) -> io::Result<()> {
         publish(&self.0, Self::name(name)?, bytes, true)
     }
+    /// Removes one entry without following links, then syncs the directory.
+    pub fn remove(&self, name: &str) -> io::Result<()> {
+        unlinkat(&self.0.0, Self::name(name)?, AtFlags::empty())?;
+        self.0.0.sync_all()
+    }
     pub fn names(&self) -> io::Result<Vec<String>> {
         let mut names = Vec::new();
         for entry in Dir::read_from(&self.0.0)? {

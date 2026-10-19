@@ -164,3 +164,13 @@ stays `running` until it is terminal instead of briefly reporting
 `worker_unavailable`. Both had made `run --wait` and `runs wait` return exit 9 on
 normal runs. Cancels, failures, lost workers and daemon restarts still end in
 `reconciling` and need a release. The API's values and the goldens are unchanged.
+
+### Workbench refusals and run status
+
+Since 2026-10-18 (#97), the workbench removes the receipt of a key it just
+generated when the service refuses that first request with `run_busy` or
+`stale_preview`, through the new `ReceiptStore::discard`. Lookups and retries
+keep their receipts. The run header names the orchestration reason and prints
+the controller phase without `Option` debug text, so five reviewed workbench
+screenshots change from "controller None" to "controller unavailable". The HTTP
+and protocol goldens are unchanged.
