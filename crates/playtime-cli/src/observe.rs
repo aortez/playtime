@@ -14,8 +14,8 @@ pub fn terminal(view: &RunView) -> bool {
     view.orchestration.state == OrchestrationState::Terminal
 }
 /// The daemon stopped monitoring a run that isn't Terminal, so nothing changes
-/// until `playtime runs release`. A normal start also passes through
-/// Reconciling (`control_uncertain`), which doesn't count.
+/// until `playtime runs release`. Reconciling with `control_uncertain` is
+/// still being resolved and doesn't count.
 pub fn awaiting_release(view: &RunView) -> bool {
     view.orchestration.state == OrchestrationState::Reconciling
         && matches!(
@@ -257,8 +257,8 @@ mod tests {
         assert_eq!(outcome_exit(&view, false), 10);
         view.orchestration.state = OrchestrationState::Reconciling;
         assert_eq!(outcome_exit(&view, true), 10);
-        // Only a run the daemon stopped monitoring waits for a release. A
-        // normal start passes through Reconciling (control_uncertain).
+        // Only a run the daemon stopped monitoring waits for a release, not
+        // one whose control is still being resolved.
         assert!(next_step(&view).is_none());
         view.orchestration.reason = Some("control_uncertain".into());
         assert!(!awaiting_release(&view));

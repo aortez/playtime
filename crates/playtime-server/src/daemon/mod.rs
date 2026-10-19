@@ -246,9 +246,12 @@ impl Daemon {
                     .await
                     .map_err(lifecycle)?;
                 let terminal = record.phase == Phase::Terminal;
-                let stopped = record.supervisor.as_ref().is_some_and(|s| s.stopped);
+                // A worker stopped for normal completion stays monitored until
+                // finish_normal records Terminal or the loss.
+                let lost = record.phase == Phase::Reconciling
+                    && record.supervisor.as_ref().is_some_and(|s| s.stopped);
                 self.publish(record).await?;
-                Ok::<_, ApiError>(terminal || stopped)
+                Ok::<_, ApiError>(terminal || lost)
             }
             .await;
             if matches!(result, Ok(true)) {

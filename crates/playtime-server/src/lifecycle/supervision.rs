@@ -6,6 +6,13 @@ enum Evidence {
     StopAccepted,
 }
 
+/// The daemon stops a worker without a cancel only in `finish_normal`, after
+/// confirming normal completion, and that records Terminal next. Any other
+/// stop means the worker is gone and the daemon stops monitoring it.
+pub(super) fn normal_stop(record: &Admission) -> bool {
+    record.stop_accepted.is_some() && record.cancel_requested.is_none()
+}
+
 impl Inner {
     pub(super) async fn observe_supervisor(&self, admission: Admission) -> Result<Admission> {
         let Some(prepared) = admission.prepared.as_ref() else {
@@ -124,7 +131,7 @@ impl Inner {
                                     StopDelivery::Requested
                                 });
                             }
-                            if observation.stopped {
+                            if observation.stopped && !normal_stop(record) {
                                 record.phase = Phase::Reconciling;
                                 record.reason = Some(Reason::WorkerUnavailable);
                             }

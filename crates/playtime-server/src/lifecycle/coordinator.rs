@@ -232,14 +232,27 @@ impl Coordinator {
     /// termination. Worker loss and interrupted evidence remain reserved.
     pub async fn finish_normal(&self, run: RunId) -> Result<Admission> {
         let expected = self.inner.ledger.get(&run).await?;
-        if expected.phase == Phase::Terminal
-            || expected.confirmed_read.is_none()
+        if expected.phase == Phase::Terminal {
+            return Ok(expected);
+        }
+        if expected.confirmed_read.is_none()
             || expected.last_status.as_ref().is_none_or(|s| {
                 s.publication_pending
                     || !matches!(s.state, WorkerState::Running | WorkerState::Cancelling)
             })
             || !self.inner.archive.normal_completion(&expected).await?
         {
+            // A worker stopped for a completion that no longer qualifies is
+            // lost like any other, so the daemon stops monitoring it.
+            if supervision::normal_stop(&expected)
+                && expected.phase != Phase::Reconciling
+                && expected.supervisor.as_ref().is_some_and(|s| s.stopped)
+            {
+                return self
+                    .inner
+                    .uncertain(&expected, Reason::WorkerUnavailable)
+                    .await;
+            }
             return Ok(expected);
         }
         let stopped = self.inner.stop_supervisor(expected.clone()).await?;

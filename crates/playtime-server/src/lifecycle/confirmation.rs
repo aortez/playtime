@@ -8,6 +8,20 @@ use playtime_worker_control::{Bootstrap, Client, Endpoint};
 use std::{sync::Arc, time::Duration};
 use tokio::time::{Instant, timeout_at};
 
+/// A worker whose unit is up but that hasn't answered yet, with no cancel
+/// requested and its startup deadline still ahead.
+fn starting(record: &Admission, now_boot_ms: u64) -> bool {
+    record.last_status.is_none()
+        && record.cancel_requested.is_none()
+        && record
+            .prepared
+            .as_ref()
+            .is_some_and(|p| now_boot_ms < p.startup_deadline_boot_ms)
+        && record.supervisor.as_ref().is_some_and(|s| {
+            !s.stopped && matches!(s.active_state.as_str(), "activating" | "active")
+        })
+}
+
 impl Inner {
     pub(super) async fn shared_refresh(self: &Arc<Self>, run: RunId) -> Result<Admission> {
         let inner = self.clone();
@@ -25,6 +39,9 @@ impl Inner {
                 }
                 match inner.exchange(&record, Command::Status).await {
                     Ok((endpoint, reply)) => inner.accept(record, endpoint, reply).await,
+                    // Its first answer can trail the unit's start. Until the
+                    // startup deadline, that isn't uncertainty or loss.
+                    Err(_) if starting(&record, inner.clock.now().boot_ms) => Ok(record),
                     Err(reason) => inner.uncertain(&record, reason).await,
                 }
             })
@@ -481,11 +498,72 @@ mod tests {
         assert_eq!(late.last_status, record.last_status);
         assert_eq!(c.ledger().get(&record.run_id).await.unwrap(), superseded);
     }
+    fn observation(launch: &PreparedLaunch, active_state: &str) -> SupervisorObservation {
+        let stopped = active_state == "inactive";
+        SupervisorObservation {
+            manager_id: launch.binding.invocation_id.clone(),
+            cgroup: "/synthetic-test".into(),
+            active_state: active_state.into(),
+            main_pid: if stopped { 0 } else { 123 },
+            ready_monotonic_us: 0,
+            stopping_monotonic_us: 0,
+            result: "test".into(),
+            stopped,
+            exit: None,
+        }
+    }
+    async fn confirm(ledger: &Ledger, run: &RunId) {
+        let reference = playtime_storage::content_ref(
+            playtime_core::ArchivePath::new("test").unwrap(),
+            b"test",
+        );
+        let identity = playtime_protocol::storage::ArchiveIdentity {
+            run_id: run.clone(),
+            descriptor: reference.clone(),
+            input_manifest: reference.clone(),
+        };
+        ledger
+            .update(run, "test_confirmed", move |record| {
+                record.confirmed_read = Some(ConfirmedRead {
+                    frontier: playtime_protocol::storage::EventFrontier {
+                        archive: identity,
+                        marker: reference,
+                        committed_sequence: 1,
+                        committed_bytes: 2,
+                        prefix_sha256: digest(b"a\n"),
+                    },
+                    owner_generation: 1,
+                    source: ConfirmationSource::Worker,
+                });
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+    /// A running unit whose worker has no control endpoint yet.
+    struct Unreachable;
+    #[async_trait]
+    impl Supervisor for Unreachable {
+        async fn ensure_legacy_idle(&self, _: &Path) -> Result<()> {
+            Ok(())
+        }
+        async fn start(&self, _: &PreparedLaunch) -> Result<Option<Endpoint>> {
+            unreachable!()
+        }
+        async fn locate(&self, _: &PreparedLaunch) -> Result<Endpoint> {
+            Err(Error::Uncertain)
+        }
+        async fn observe(&self, launch: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
+            Ok(Some(observation(launch, "activating")))
+        }
+    }
     struct FinishSupervisor {
         stopped: AtomicBool,
         stop_calls: AtomicUsize,
         ledger: Ledger,
         change_owner: bool,
+        /// An accepted stop leaves the unit deactivating until the test stops it.
+        linger: bool,
     }
     #[async_trait]
     impl Supervisor for FinishSupervisor {
@@ -499,22 +577,20 @@ mod tests {
             unreachable!()
         }
         async fn observe(&self, launch: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
-            let stopped = self.stopped.load(Ordering::SeqCst);
-            Ok(Some(SupervisorObservation {
-                manager_id: launch.binding.invocation_id.clone(),
-                cgroup: "/synthetic-test".into(),
-                active_state: if stopped { "inactive" } else { "active" }.into(),
-                main_pid: 123,
-                ready_monotonic_us: 0,
-                stopping_monotonic_us: 0,
-                result: "test".into(),
-                stopped,
-                exit: None,
-            }))
+            let state = if self.stopped.load(Ordering::SeqCst) {
+                "inactive"
+            } else if self.stop_calls.load(Ordering::SeqCst) > 0 {
+                "deactivating"
+            } else {
+                "active"
+            };
+            Ok(Some(observation(launch, state)))
         }
         async fn stop(&self, launch: &PreparedLaunch, _: &SupervisorObservation) -> Result<()> {
             self.stop_calls.fetch_add(1, Ordering::SeqCst);
-            self.stopped.store(true, Ordering::SeqCst);
+            if !self.linger {
+                self.stopped.store(true, Ordering::SeqCst);
+            }
             if self.change_owner {
                 self.ledger
                     .update(&launch.binding.run_id, "test_new_owner", |record| {
@@ -536,6 +612,7 @@ mod tests {
                 stop_calls: AtomicUsize::new(0),
                 ledger: ledger.clone(),
                 change_owner,
+                linger: false,
             });
             let coordinator = Coordinator::new(
                 ledger.clone(),
@@ -550,28 +627,9 @@ mod tests {
                 Phase::Terminal,
                 "missing trusted read boundary"
             );
-            let reference = playtime_storage::content_ref(
-                playtime_core::ArchivePath::new("test").unwrap(),
-                b"test",
-            );
-            let identity = playtime_protocol::storage::ArchiveIdentity {
-                run_id: run.clone(),
-                descriptor: reference.clone(),
-                input_manifest: reference.clone(),
-            };
+            confirm(&ledger, &run).await;
             ledger
-                .update(&run, "test_confirmed", move |record| {
-                    record.confirmed_read = Some(ConfirmedRead {
-                        frontier: playtime_protocol::storage::EventFrontier {
-                            archive: identity,
-                            marker: reference,
-                            committed_sequence: 1,
-                            committed_bytes: 2,
-                            prefix_sha256: digest(b"a\n"),
-                        },
-                        owner_generation: 1,
-                        source: ConfirmationSource::Worker,
-                    });
+                .update(&run, "test_pending", |record| {
                     record.last_status.as_mut().unwrap().publication_pending = true;
                     Ok(())
                 })
@@ -618,6 +676,116 @@ mod tests {
                 assert!(final_record.supervisor.unwrap().stopped);
                 assert!(final_record.stop_accepted.is_some());
             }
+        }
+    }
+    // Clients wait until a run is Terminal or reports worker loss (#93), so a
+    // worker that is starting or finishing normally must not report its loss.
+    #[tokio::test]
+    async fn a_starting_worker_that_cannot_answer_yet_is_not_reported_lost() {
+        // FixedClock is at boot 1000 ms. Past the startup deadline, or after a
+        // cancel, an unreachable worker is lost as before.
+        for (deadline, cancelled, still_starting) in [
+            (2000, false, true),
+            (1000, false, false),
+            (2000, true, false),
+        ] {
+            let (_root, old, archive, record, _) = setup().await;
+            let ledger = old.ledger().clone();
+            ledger
+                .update(&record.run_id, "test_starting", move |record| {
+                    record.phase = Phase::Starting;
+                    record.last_status = None;
+                    record.prepared.as_mut().unwrap().startup_deadline_boot_ms = deadline;
+                    if cancelled {
+                        record.cancel_requested = Some(FixedClock.now());
+                    }
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            let coordinator =
+                Coordinator::new(ledger, archive, Arc::new(Unreachable), Arc::new(FixedClock));
+            let refreshed = coordinator.refresh(record.run_id).await.unwrap();
+            assert_eq!(
+                (refreshed.phase, refreshed.reason),
+                if still_starting {
+                    (Phase::Starting, None)
+                } else {
+                    (Phase::Reconciling, Some(Reason::WorkerUnavailable))
+                }
+            );
+        }
+    }
+    #[tokio::test]
+    async fn stopping_a_normally_completed_worker_never_reports_its_loss() {
+        for still_completes in [true, false] {
+            let (_root, old, archive, record, _) = setup().await;
+            let ledger = old.ledger().clone();
+            let supervisor = Arc::new(FinishSupervisor {
+                stopped: AtomicBool::new(false),
+                stop_calls: AtomicUsize::new(0),
+                ledger: ledger.clone(),
+                change_owner: false,
+                linger: true,
+            });
+            let coordinator = Coordinator::new(
+                ledger.clone(),
+                archive.clone(),
+                supervisor.clone(),
+                Arc::new(FixedClock),
+            );
+            let run = record.run_id.clone();
+            confirm(&ledger, &run).await;
+            archive.complete.store(true, Ordering::SeqCst);
+            let stopping = coordinator.finish_normal(run.clone()).await.unwrap();
+            assert_eq!(stopping.phase, Phase::Running);
+            assert!(stopping.stop_accepted.is_some());
+            // The next refresh sees the unit stopped. The run stays Running.
+            supervisor.stopped.store(true, Ordering::SeqCst);
+            let observed = coordinator.refresh(run.clone()).await.unwrap();
+            assert_eq!((observed.phase, observed.reason), (Phase::Running, None));
+            assert!(observed.supervisor.unwrap().stopped);
+            archive.complete.store(still_completes, Ordering::SeqCst);
+            let finished = coordinator.finish_normal(run.clone()).await.unwrap();
+            if still_completes {
+                assert_eq!((finished.phase, finished.reason), (Phase::Terminal, None));
+            } else {
+                // A completion that no longer qualifies is lost like any other.
+                assert_eq!(
+                    (finished.phase, finished.reason),
+                    (Phase::Reconciling, Some(Reason::WorkerUnavailable))
+                );
+            }
+            assert_eq!(supervisor.stop_calls.load(Ordering::SeqCst), 1);
+        }
+    }
+    #[tokio::test]
+    async fn a_worker_that_stops_unasked_or_for_a_cancel_is_lost() {
+        for cancel in [false, true] {
+            let (_root, old, archive, record, _) = setup().await;
+            let ledger = old.ledger().clone();
+            let supervisor = Arc::new(FinishSupervisor {
+                stopped: AtomicBool::new(!cancel),
+                stop_calls: AtomicUsize::new(0),
+                ledger: ledger.clone(),
+                change_owner: false,
+                linger: false,
+            });
+            let coordinator =
+                Coordinator::new(ledger, archive, supervisor.clone(), Arc::new(FixedClock));
+            let lost = if cancel {
+                coordinator.cancel(record.run_id).await.unwrap()
+            } else {
+                coordinator.refresh(record.run_id).await.unwrap()
+            };
+            assert_eq!(
+                (lost.phase, lost.reason),
+                (Phase::Reconciling, Some(Reason::WorkerUnavailable))
+            );
+            assert_eq!(
+                supervisor.stop_calls.load(Ordering::SeqCst),
+                usize::from(cancel)
+            );
         }
     }
 }
