@@ -183,3 +183,13 @@ checkpoints and the run's end are one-line markers. Full still lists every
 record. Workbench window requests now name the view and can carry a row to
 locate. The reviewed screenshots, the HTTP and protocol goldens and the archive
 format are unchanged.
+
+### Run header
+
+Since 2026-10-19 (#92, part 2), the run header leads with progress against the
+frozen limits, read from the observations as they are indexed, and an ended run
+leads with its outcome and the sessions it completed. The workbench shows states
+in words: the run list says "Ended" for a terminal run, and the launcher's
+preview names the mode and memory condition. Six reviewed screenshots change,
+and two new ones show a running and an ended run. The HTTP and protocol goldens
+and the archive format are unchanged.

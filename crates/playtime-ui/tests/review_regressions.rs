@@ -631,7 +631,7 @@ async fn released_and_stranded_runs_say_so_and_offer_no_cancel() {
     };
     let prepared = prepare_run(stranded.clone());
     assert!(
-        prepared.summary[0].contains("orchestration Reconciling · worker unavailable")
+        prepared.summary[0].starts_with("Reconciling · worker unavailable · ")
             && !prepared.summary[0].contains("Some("),
         "{}",
         prepared.summary[0]
@@ -670,13 +670,13 @@ async fn released_and_stranded_runs_say_so_and_offer_no_cancel() {
     };
     let summary = prepare_run(released.clone()).summary;
     assert!(
-        summary[0].contains("orchestration Terminal · released by operator"),
+        summary[0].starts_with("Ended · released by operator · "),
         "{}",
         summary[0]
     );
     h.state_mut().model.runs = vec![released];
     h.run();
-    h.get_by_label(&format!("Run {run} · Terminal · released"));
+    h.get_by_label(&format!("Run {run} · Ended · released"));
 }
 
 #[tokio::test]

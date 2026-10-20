@@ -699,8 +699,9 @@ impl Model {
                     run.run_id
                 )),
                 Some(run) => text.push_str(&format!(
-                    " Run {} holds the slot while it is {:?}.",
-                    run.run_id, run.orchestration.state
+                    " Run {} holds the slot while it is {}.",
+                    run.run_id,
+                    crate::progress::state_words(run.orchestration.state).to_lowercase()
                 )),
                 None => {
                     text.push_str(" Another run holds the slot, possibly from another checkout.")

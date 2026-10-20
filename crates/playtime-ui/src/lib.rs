@@ -2,6 +2,7 @@
 pub mod backend;
 pub mod media;
 pub mod model;
+pub mod progress;
 mod read_retry;
 pub mod transcript;
 pub mod ui;

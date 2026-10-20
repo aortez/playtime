@@ -1,4 +1,5 @@
 //! Bounded transcript index and payload working set. Used only by background work.
+use crate::progress::{self, Progress, Tracker, Update};
 use playtime_protocol::{
     api::EventCursor,
     events::{CleanupOutcome, EventEnvelope, EventPayload, KnownEvent, MemoryRef, decode_event},
@@ -63,6 +64,8 @@ pub struct Window {
     pub metrics: Metrics,
     /// A requested row and its index in this view, to keep it in place.
     pub anchor: Option<(usize, usize)>,
+    /// The run's progress, for the header.
+    pub progress: Progress,
 }
 #[derive(Clone, Debug)]
 pub struct SourcePage {
@@ -116,6 +119,7 @@ pub struct Transcript {
     pages: Vec<String>,
     cache: BTreeMap<u64, Cached>,
     lru: VecDeque<u64>,
+    progress: Tracker,
     pub metrics: Metrics,
     pub boundary: bool,
 }
@@ -168,7 +172,7 @@ pub fn size(bytes: u64) -> String {
     }
 }
 /// A wire value such as `session_limit` as words.
-fn words(value: &impl serde::Serialize) -> String {
+pub(crate) fn words(value: &impl serde::Serialize) -> String {
     serde_json::to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(|text| text.replace('_', " ")))
@@ -220,8 +224,10 @@ fn role(event: &KnownEvent) -> Role {
                 words(reason),
                 match cleanup {
                     CleanupOutcome::Complete => "complete".into(),
-                    CleanupOutcome::Failed { errors } =>
-                        format!("failed ({} errors)", errors.len()),
+                    CleanupOutcome::Failed { errors } => format!(
+                        "failed ({})",
+                        progress::count(errors.len() as u64, "error", "errors")
+                    ),
                     CleanupOutcome::Unknown => "unknown".into(),
                 },
                 thousands(usage.budget_charged_tokens)
@@ -240,6 +246,7 @@ struct Projection {
     parts: Vec<Section>,
     final_response: bool,
     role: Role,
+    progress: Update,
 }
 fn project(event: &EventEnvelope) -> Result<Projection, String> {
     let decoded = decode_event(&serde_json::to_string(event).map_err(|e| e.to_string())?)
@@ -252,9 +259,11 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
         parts: vec![],
         final_response: false,
         role: Role::Activity,
+        progress: Update::default(),
     };
     if let EventPayload::Observation(observation) = decoded.payload() {
         let o = observation.observation();
+        p.progress = Update::observation(observation);
         let session = o
             .session_id
             .as_ref()
@@ -271,11 +280,12 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
             ObservationPayload::Known(known) => match known.as_ref() {
                 KnownObservation::ControllerStarted { mode, .. } => {
                     p.excerpt = format!(
-                        "Controller started in {mode:?} mode. Frozen parameters are retained in source."
+                        "Controller started in {} mode. Frozen parameters are retained in source.",
+                        progress::mode_words(*mode)
                     );
                 }
                 KnownObservation::PhaseChanged { phase, .. } => {
-                    p.excerpt = format!("Controller phase: {phase:?}");
+                    p.excerpt = format!("Controller phase: {}", progress::phase_words(*phase));
                 }
                 KnownObservation::MemoryReceived {
                     memory, ordinal, ..
@@ -420,7 +430,10 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
             text: json(&event.data),
         });
         match decoded.payload() {
-            EventPayload::Known(known) => p.role = role(known),
+            EventPayload::Known(known) => {
+                p.role = role(known);
+                p.progress = Update::event(known);
+            }
             EventPayload::Control(_) if event.kind == "effect_intent" => {
                 p.role = Role::Bookkeeping;
             }
@@ -462,6 +475,7 @@ impl Transcript {
         Ok(())
     }
     /// Returns false for an identical redelivery; contradictory content fails.
+    /// A record without a history page arrived live.
     pub fn apply(&mut self, event: EventEnvelope, page: Option<usize>) -> Result<bool, String> {
         if self.run_id.as_ref().is_some_and(|run| *run != event.run_id) {
             return Err("Transcript run identity mismatch".into());
@@ -483,7 +497,8 @@ impl Transcript {
             }
             return Ok(false);
         }
-        let p = project(&event)?;
+        let mut p = project(&event)?;
+        let update = std::mem::take(&mut p.progress);
         let existing = self.keys.get(&p.key).copied();
         let marker = match &p.role {
             Role::Marker { text, .. } => text.len() + 64,
@@ -492,6 +507,7 @@ impl Transcript {
         // Conservative per-node overhead includes B-tree slots, source and order
         // indexes. Strings are counted separately; full source lives in the LRU.
         let cost = 192
+            + update.tracked_bytes()
             + if existing.is_none() {
                 384 + p.key.len() * 2 + p.title.len() + 256 + 176 + marker
             } else {
@@ -543,6 +559,7 @@ impl Transcript {
             },
         );
         self.put(seq, raw, p.parts);
+        self.progress.apply(seq, update, page.is_none());
         self.metrics.records = self.records.len();
         self.metrics.rows = self.groups.len();
         Ok(true)
@@ -560,6 +577,10 @@ impl Transcript {
                 .partition_point(|old| self.groups[*old].first < first);
             self.readable.insert(slot, id);
         }
+    }
+    /// `complete` means earlier history has loaded.
+    pub fn progress(&self, complete: bool) -> Progress {
+        self.progress.progress(complete)
     }
     fn order(&self, view: View) -> &[usize] {
         match view {
@@ -680,6 +701,7 @@ impl Transcript {
             rows,
             metrics: self.metrics.clone(),
             anchor: None,
+            progress: Progress::default(),
         }
     }
     pub fn sources(&self, id: usize) -> Vec<u64> {

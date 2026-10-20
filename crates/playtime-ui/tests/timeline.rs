@@ -100,6 +100,36 @@ fn readable_shows_markers_and_full_keeps_every_record() {
 }
 
 #[test]
+fn the_run_end_marker_counts_cleanup_errors() {
+    let marker = |errors: &[&str]| {
+        let mut archive = archive();
+        let finished = archive
+            .iter_mut()
+            .find(|event| event.kind == "run_finished")
+            .unwrap();
+        finished.data["cleanup"] = json!({"status": "failed", "errors": errors});
+        let mut transcript = Transcript::default();
+        for event in archive {
+            transcript.apply(event, None).unwrap();
+        }
+        let readable = transcript.window(View::Readable, 0, 64);
+        let row = readable
+            .rows
+            .iter()
+            .find(|row| row.title.starts_with("Run finished"));
+        row.unwrap().title.clone()
+    };
+    assert_eq!(
+        marker(&["container left behind"]),
+        "Run finished: agent finished · cleanup failed (1 error) · 110 tokens charged"
+    );
+    assert_eq!(
+        marker(&["container left behind", "network left behind"]),
+        "Run finished: agent finished · cleanup failed (2 errors) · 110 tokens charged"
+    );
+}
+
+#[test]
 fn readable_keeps_every_observation_and_drops_its_archive_repeats() {
     let records = events(include_str!(
         "../../playtime-protocol/tests/fixtures/controller-observations/completed.jsonl"
