@@ -56,9 +56,11 @@ only while they are laid out, so scroll them into view first.
 ## Rules
 
 - Look at every screenshot you take. A blank or black frame means a failed start.
-- To view a real daemon, such as the soak's root, ask the owner first, then run
-  `start --connection-file FILE`. The driver refuses Launch, Retry and Cancel
-  there without `--force`, and live inference always needs the owner's go.
+- To view a real daemon, such as the one `./go.sh` starts, ask the owner first,
+  then run `start --connection-file FILE` with the file go.sh prints, by default
+  `/home/data2/playtime/root/.playtime/connection.json`. The driver refuses
+  Launch, Retry and Cancel there without `--force`, and live inference always
+  needs the owner's go.
 - Never set accessibility properties on the desktop's session bus.
   at-spi-bus-launcher writes them through GSettings, and with the real HOME that
   once switched on the desktop's `toolkit-accessibility`. `start` checks that the
