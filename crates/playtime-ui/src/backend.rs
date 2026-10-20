@@ -3,6 +3,7 @@
 use crate::{
     media,
     model::*,
+    progress,
     transcript::{self, Transcript, View},
 };
 use playtime_client::{
@@ -373,8 +374,9 @@ pub fn prepare_preview(value: Preview) -> PreviewView {
     let workshop = &value.parameters.workshop;
     let summary = vec![
         format!(
-            "Mode: {:?} · revision {}",
-            value.mode, value.preview_revision
+            "Mode: {} · revision {}",
+            progress::mode_words(value.mode),
+            value.preview_revision
         ),
         format!(
             "Seeds: {} files · {} bytes",
@@ -407,8 +409,9 @@ pub fn prepare_preview(value: Preview) -> PreviewView {
             workshop.pids
         ),
         format!(
-            "Sampling seed: {} · memory condition: {:?}",
-            value.parameters.sampling_seed, value.parameters.memory_condition
+            "Sampling seed: {} · memory condition: {}",
+            value.parameters.sampling_seed,
+            progress::memory_words(value.parameters.memory_condition)
         ),
         format!("Model: {}", value.model_identity),
         format!("Workshop: {}", value.workshop_identity),
@@ -426,99 +429,12 @@ pub fn prepare_preview(value: Preview) -> PreviewView {
     }
 }
 pub fn prepare_run(value: RunView) -> RunViewData {
-    let mut summary = vec![
-        format!(
-            "Mode {:?} · orchestration {:?}{} · controller {}",
-            value.mode,
-            value.orchestration.state,
-            value
-                .orchestration
-                .reason
-                .as_deref()
-                .map_or(String::new(), |reason| format!(
-                    " · {}",
-                    orchestration_reason(reason)
-                )),
-            value
-                .controller_phase
-                .map_or("unavailable".into(), |phase| format!("{phase:?}"))
-        ),
-        format!(
-            "Outcome: {}",
-            value
-                .outcome
-                .as_ref()
-                .map_or("not committed".into(), |o| format!("{:?}", o.reason))
-        ),
-        format!(
-            "Cleanup: {:?} · evidence: {:?}",
-            value.cleanup, value.evidence
-        ),
-    ];
-    summary.push(value.usage.as_ref().map_or(
-        "Known usage unavailable · uncertain usage unavailable".into(),
-        |u| {
-            format!(
-                "{} {} · uncertain charge {} across {} requests · charged {} · complete {}",
-                if value.accounting_coverage.is_some() {
-                    "Settled known"
-                } else {
-                    "Known"
-                },
-                u.known_generated_tokens,
-                u.unknown_reserved_tokens,
-                u.unknown_requests,
-                u.budget_charged_tokens,
-                u.usage_complete
-            )
-        },
-    ));
-    summary.push(value.accounting_coverage.as_ref().map_or_else(
-        || "Pending allowance and allocation: unavailable from this API projection".into(),
-        |coverage| {
-            format!(
-                "Pending allowance {} across {} unsettled requests · coverage {:?}",
-                coverage.unsettled_allowance, coverage.unsettled_requests, coverage.availability
-            )
-        },
-    ));
-    if let Some(c) = &value.contention {
-        summary.push(if c.possible {
-            format!(
-                "Possible GPU contention: {} model reloads and {} queued requests across {} timed requests",
-                c.reloads, c.queue_waits, c.timed_requests
-            )
-        } else {
-            format!(
-                "No GPU contention flagged across {} timed requests",
-                c.timed_requests
-            )
-        });
-    }
-    if let Some(cancel) = &value.cancellation {
-        summary.push(format!(
-            "Cancellation: {:?} · {}",
-            cancel.enforcement,
-            cancel
-                .uncertainty
-                .as_deref()
-                .unwrap_or("no uncertainty reported")
-        ));
-    }
+    let summary = progress::details(&value);
     let source = transcript::source_page(&serde_json::to_string_pretty(&value).unwrap(), 0);
     RunViewData {
         value,
         summary,
         source,
-    }
-}
-/// Reasons are snake_case API words. A released run must read differently from
-/// a completed one.
-pub fn orchestration_reason(reason: &str) -> String {
-    if reason == "operator_released" {
-        "released by operator".into()
-    } else {
-        reason.replace('_', " ")
     }
 }
 /// What each checkpoint saved, by session: its files and images, and which
@@ -1230,7 +1146,7 @@ async fn observe(
                         else if let Some(tag) = request.tag && let Some(source) = index.raw(request.sequence, request.offset) { out.send(tag, Some(run.clone()), Data::Source(request.sequence, source)).await; }
                     }
                     Input::Error(error) => return Err(error),
-                    Input::End(end) => { out.send(tag, Some(run.clone()), Data::Notice(format!("Stream reconciled: {:?}; lifecycle and cleanup are shown separately", end.status))).await; }
+                    Input::End(end) => { out.send(tag, Some(run.clone()), Data::Notice(format!("Stream reconciled: {}; lifecycle and cleanup are shown separately", transcript::words(&end.status)))).await; }
                 },
                 Some(command) = requests.recv() => match command.action {
                     Action::Window(request) => {
@@ -1263,6 +1179,7 @@ async fn observe(
                         let request = pending_source.take().or_else(|| window.rows.iter().flat_map(|row| index.sources(row.id)).find(|seq| !index.contains(*seq)).map(|sequence| Reload { tag: None, sequence, offset: 0, cursor: index.cursor_for(sequence).map(str::to_owned) }));
                         if let Some(request) = request { reloading = true; jobs.spawn(reload(reads.clone(), tx.clone(), reload_budget.clone(), request)); }
                     }
+                    window.progress = index.progress(history_done);
                     let status = format!("{} records indexed · {}", index.metrics.records, if history_done { "Earlier history loaded" } else { "Loading earlier history independently of live activity" });
                     out.send(tag, Some(run.clone()), Data::Window(window, status, live)).await; dirty = false;
                 }

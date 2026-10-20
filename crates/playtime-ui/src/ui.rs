@@ -2,6 +2,7 @@
 use crate::{
     backend::Backend,
     model::*,
+    progress,
     transcript::{TEXT_BYTES, View, WINDOW_ROWS},
 };
 use egui::{Color32, RichText, Vec2};
@@ -344,11 +345,14 @@ impl Workbench {
                 .map(|r| r.modes.clone())
                 .unwrap_or_default();
             egui::ComboBox::from_label("Mode")
-                .selected_text(format!("{:?}", self.model.mode))
+                .selected_text(progress::capitalized(progress::mode_words(self.model.mode)))
                 .show_ui(ui, |ui| {
                     for mode in modes {
                         if ui
-                            .selectable_label(self.model.mode == mode, format!("{mode:?}"))
+                            .selectable_label(
+                                self.model.mode == mode,
+                                progress::capitalized(progress::mode_words(mode)),
+                            )
                             .clicked()
                             && let Some(id) = &self.model.recipe
                         {
@@ -485,6 +489,14 @@ impl Workbench {
                 .map_or("Select a run", |r| r.as_str()),
         );
         if let Some(run) = &self.model.run {
+            // Progress first, then state and accounting.
+            let lead = progress::lead(&run.value, &self.model.window.progress);
+            if let Some((first, rest)) = lead.split_first() {
+                ui.label(RichText::new(brief(first, 1000)).size(17.0).strong());
+                for line in rest {
+                    ui.label(brief(line, 1000));
+                }
+            }
             for line in &run.summary {
                 ui.small(brief(line, 1000));
             }
@@ -854,12 +866,13 @@ impl Workbench {
 }
 /// The run list is narrow; the header shows the full orchestration reason.
 fn run_state(run: &RunView) -> String {
+    let state = progress::state_words(run.orchestration.state);
     if awaiting_release(run) {
-        format!("{:?} · needs release", run.orchestration.state)
+        format!("{state} · needs release")
     } else if run.orchestration.reason.as_deref() == Some("operator_released") {
-        format!("{:?} · released", run.orchestration.state)
+        format!("{state} · released")
     } else {
-        format!("{:?}", run.orchestration.state)
+        state.into()
     }
 }
 /// Captured workspace entries carry their tar type flag.

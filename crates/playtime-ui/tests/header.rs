@@ -1,0 +1,502 @@
+//! The run header leads with progress against the frozen limits and says
+//! every state in words (#92).
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
+use playtime_core::{RunMode, RunPhase, StopReason};
+use playtime_protocol::{api::*, events::EventEnvelope, v1::UsageSummary};
+use playtime_ui::{
+    backend::prepare_run,
+    model::*,
+    progress::{Limits, Progress, details, lead},
+    transcript::{Transcript, View},
+    ui::Workbench,
+};
+use serde_json::json;
+
+fn records() -> Vec<EventEnvelope> {
+    include_str!("../../playtime-protocol/tests/fixtures/controller-observations/completed.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+/// The records up to `last`, all arriving live.
+fn indexed(records: &[EventEnvelope], last: u64) -> Transcript {
+    let mut transcript = Transcript::default();
+    for event in records.iter().filter(|event| event.sequence.get() <= last) {
+        transcript.apply(event.clone(), None).unwrap();
+    }
+    transcript
+}
+const FIXTURE: Limits = Limits {
+    sessions: 3,
+    turns: 2,
+    wall_seconds: 300,
+    tokens: 1000,
+};
+const CURIOSITY: Limits = Limits {
+    sessions: 10,
+    turns: 10,
+    wall_seconds: 1800,
+    tokens: 300_000,
+};
+
+fn view(state: OrchestrationState) -> RunView {
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../playtime-server/tests/fixtures/http-contract.json"
+    ))
+    .unwrap();
+    let mut view: RunView = serde_json::from_value(contract["completed_run"].clone()).unwrap();
+    view.orchestration.state = state;
+    view
+}
+fn usage(known: u64, unknown: u64, unknown_requests: u64) -> UsageSummary {
+    UsageSummary {
+        known_generated_tokens: known,
+        unknown_reserved_tokens: unknown,
+        unknown_requests,
+        budget_charged_tokens: known + unknown,
+        usage_complete: unknown_requests == 0,
+    }
+}
+fn coverage(view: &RunView, requests: u64, allowance: u64) -> AccountingCoverage {
+    AccountingCoverage {
+        schema_version: 1,
+        availability: EvidenceAvailability::Available,
+        unsettled_requests: requests,
+        unsettled_allowance: allowance,
+        frontier: view.last_confirmed_frontier.clone().unwrap(),
+    }
+}
+/// The fixture's run in its second session, with an `exec` command running.
+fn running() -> RunView {
+    let mut view = view(OrchestrationState::Running);
+    view.outcome = None;
+    view.controller_phase = Some(RunPhase::Working);
+    view.usage = Some(usage(21, 0, 0));
+    view.accounting_coverage = Some(coverage(&view, 0, 0));
+    view
+}
+fn ended() -> RunView {
+    let mut view = view(OrchestrationState::Terminal);
+    view.usage = Some(usage(26, 0, 0));
+    view.accounting_coverage = Some(coverage(&view, 0, 0));
+    view.cleanup = Cleanup::Complete;
+    view
+}
+
+#[test]
+fn progress_follows_the_run_against_its_frozen_limits() {
+    let records = records();
+    let at = |last, complete| indexed(&records, last).progress(complete);
+    assert_eq!(
+        at(1, false),
+        Progress {
+            limits: Some(FIXTURE),
+            elapsed_ms: Some(0),
+            activity: Some("starting the run".into()),
+            ..Default::default()
+        }
+    );
+    let steps = |last, complete| {
+        let p = at(last, complete);
+        (p.session, p.turn, p.activity)
+    };
+    let step = |session, turn, activity: &str| (session, turn, Some(activity.to_owned()));
+    assert_eq!(steps(7, false), step(Some(1), Some(1), "thinking"));
+    assert_eq!(
+        steps(16, false),
+        step(Some(1), Some(1), "running a command")
+    );
+    assert_eq!(steps(20, false), step(Some(1), Some(2), "thinking"));
+    assert_eq!(steps(23, false), step(Some(1), Some(2), "handing off"));
+    assert_eq!(steps(25, false), step(Some(1), Some(2), "working"));
+    assert_eq!(
+        steps(28, false),
+        step(Some(1), Some(2), "saving a checkpoint")
+    );
+    // Session 2's number is recorded with its memento; once every earlier
+    // record is indexed, a session still starting is the next one.
+    assert_eq!(steps(29, false), step(None, Some(0), "starting a session"));
+    assert_eq!(
+        steps(29, true),
+        step(Some(2), Some(0), "starting a session")
+    );
+    assert_eq!(
+        steps(31, false),
+        step(Some(2), Some(0), "starting a session")
+    );
+    assert_eq!(
+        steps(41, false),
+        step(Some(2), Some(1), "running a command")
+    );
+    assert_eq!(at(41, false).elapsed_ms, Some(350));
+    assert_eq!(
+        steps(54, false),
+        step(Some(2), Some(2), "stopping: agent finished")
+    );
+    assert_eq!(steps(59, true), step(Some(2), Some(2), "finished"));
+    assert_eq!(at(59, true).elapsed_ms, Some(400));
+}
+
+#[test]
+fn handoff_requests_are_not_work_turns() {
+    let records = records();
+    let mut transcript = indexed(&records, 22);
+    // The controller asks for the memento after the session's last turn.
+    let mut phase = records[4].clone();
+    phase.sequence = std::num::NonZeroU64::new(23).unwrap();
+    phase.data["controller_sequence"] = json!(23);
+    phase.data["data"]["value"]["phase"] = json!("handing_off");
+    let mut request = records[18].clone();
+    request.sequence = std::num::NonZeroU64::new(24).unwrap();
+    request.data["controller_sequence"] = json!(24);
+    request.data["data"]["value"]["handoff"] = json!(true);
+    for event in [phase, request] {
+        transcript.apply(event, None).unwrap();
+    }
+    let progress = transcript.progress(false);
+    assert_eq!(progress.turn, Some(2));
+    assert_eq!(progress.activity.as_deref(), Some("handing off"));
+}
+
+#[test]
+fn while_history_loads_only_current_values_show() {
+    let records = records();
+    let mut transcript = Transcript::default();
+    // The live stream starts in session 2, after that session began.
+    for event in records
+        .iter()
+        .filter(|e| (31..=41).contains(&e.sequence.get()))
+    {
+        transcript.apply(event.clone(), None).unwrap();
+    }
+    assert_eq!(
+        transcript.progress(false),
+        Progress {
+            limits: None,
+            session: Some(2),
+            turn: None,
+            elapsed_ms: Some(350),
+            activity: Some("running a command".into()),
+        }
+    );
+    // Earlier history arrives afterwards, in order.
+    for event in records.iter().filter(|e| e.sequence.get() <= 30) {
+        transcript.apply(event.clone(), Some(0)).unwrap();
+    }
+    let loading = transcript.progress(false);
+    assert_eq!((loading.limits, loading.turn), (Some(FIXTURE), None));
+    let loaded = transcript.progress(true);
+    assert_eq!((loaded.session, loaded.turn), (Some(2), Some(1)));
+    assert_eq!(loaded.activity.as_deref(), Some("running a command"));
+
+    // Without live records, nothing loaded so far is current: an ended run's
+    // first sessions load before its last.
+    let mut transcript = Transcript::default();
+    for event in records.iter().filter(|e| e.sequence.get() <= 20) {
+        transcript.apply(event.clone(), Some(0)).unwrap();
+    }
+    assert_eq!(
+        transcript.progress(false),
+        Progress {
+            limits: Some(FIXTURE),
+            ..Default::default()
+        }
+    );
+}
+
+#[test]
+fn a_live_run_leads_with_progress_and_an_ended_run_with_its_outcome() {
+    let records = records();
+    let progress = indexed(&records, 41).progress(true);
+    assert_eq!(
+        lead(&running(), &progress),
+        [
+            "Session 2 of 3 · turn 1 of 2 · running a command",
+            "21 of 1,000 tokens charged · 0:00 of 5:00 wall time",
+        ]
+    );
+    assert_eq!(
+        details(&running()),
+        [
+            "Running · simulation · evidence available",
+            "Settled: 21 tokens reported · all usage reported · nothing pending",
+        ]
+    );
+    let progress = indexed(&records, 59).progress(true);
+    assert_eq!(
+        lead(&ended(), &progress),
+        [
+            "Ended: agent finished · 2 of 3 sessions · 26 of 1,000 tokens charged",
+            "Cleanup complete · 0:00 of 5:00 wall time",
+        ]
+    );
+
+    // A long live run, as #92 describes it.
+    let mut view = running();
+    view.mode = RunMode::Experiment;
+    view.usage = Some(usage(50_000, 57_344, 7));
+    view.accounting_coverage = Some(coverage(&view, 1, 8_192));
+    let progress = Progress {
+        limits: Some(CURIOSITY),
+        session: Some(4),
+        turn: Some(3),
+        elapsed_ms: Some(750_400),
+        activity: Some("running a command".into()),
+    };
+    assert_eq!(
+        lead(&view, &progress),
+        [
+            "Session 4 of 10 · turn 3 of 10 · running a command",
+            "107,344 of 300,000 tokens charged · 12:30 of 30:00 wall time",
+        ]
+    );
+    assert_eq!(
+        details(&view)[1],
+        "Settled: 50,000 tokens reported · 7 requests with unknown usage, charged 57,344 · 8,192 tokens held for 1 unsettled request"
+    );
+}
+
+#[test]
+fn unavailable_values_are_never_shown_as_zero() {
+    let mut view = running();
+    view.usage = None;
+    view.accounting_coverage = None;
+    view.controller_phase = None;
+    assert_eq!(
+        lead(&view, &Progress::default()),
+        ["Running", "Tokens charged: unavailable"]
+    );
+    assert_eq!(details(&view)[1], "Token accounting unavailable");
+    view.usage = Some(usage(0, 100, 1));
+    assert_eq!(
+        details(&view)[1],
+        "Known: 0 tokens reported · 1 request with unknown usage, charged 100 · pending allowance not reported"
+    );
+    // Before the first records, the API's phase stands in for the activity.
+    view.controller_phase = Some(RunPhase::Checkpointing);
+    assert_eq!(lead(&view, &Progress::default())[0], "Saving a checkpoint");
+}
+
+/// Debug names of more than one word, such as `StopAccepted`.
+fn debug_names() -> Vec<String> {
+    let mut names = vec![];
+    for state in states() {
+        names.push(format!("{state:?}"));
+    }
+    for mode in [
+        RunMode::Experiment,
+        RunMode::ScriptedSmoke,
+        RunMode::LiveSmoke,
+        RunMode::Simulation,
+    ] {
+        names.push(format!("{mode:?}"));
+    }
+    for phase in phases() {
+        names.push(format!("{phase:?}"));
+    }
+    for reason in reasons() {
+        names.push(format!("{reason:?}"));
+    }
+    for enforcement in enforcements() {
+        names.push(format!("{enforcement:?}"));
+    }
+    names.extend(["OwnershipUnresolved".into(), "Terminal".into()]);
+    names.retain(|name| name == "Terminal" || name.chars().skip(1).any(char::is_uppercase));
+    names
+}
+fn states() -> [OrchestrationState; 6] {
+    [
+        OrchestrationState::Preparing,
+        OrchestrationState::Starting,
+        OrchestrationState::Running,
+        OrchestrationState::Cancelling,
+        OrchestrationState::Reconciling,
+        OrchestrationState::Terminal,
+    ]
+}
+fn phases() -> [RunPhase; 7] {
+    [
+        RunPhase::Admitted,
+        RunPhase::StartingSession,
+        RunPhase::Working,
+        RunPhase::HandingOff,
+        RunPhase::Checkpointing,
+        RunPhase::CleaningUp,
+        RunPhase::Terminal,
+    ]
+}
+fn enforcements() -> [Enforcement; 4] {
+    [
+        Enforcement::Requested,
+        Enforcement::StopAccepted,
+        Enforcement::Stopped,
+        Enforcement::Uncertain,
+    ]
+}
+fn reasons() -> Vec<StopReason> {
+    [
+        "agent_finished",
+        "session_limit",
+        "token_limit",
+        "wall_limit",
+        "log_limit",
+        "model_timeout",
+        "model_connection_error",
+        "model_response_byte_limit",
+        "incomplete_model_response",
+        "missing_token_usage",
+        "tool_parse_retry_limit",
+        "tool_parse_error_limit",
+        "too_many_tools_in_one_response",
+        "token_limit_exceeded_by_server",
+        "interrupted",
+        "infrastructure_failure",
+    ]
+    .iter()
+    .map(|reason| serde_json::from_value(json!(reason)).unwrap())
+    .collect()
+}
+fn assert_words(lines: &[String]) {
+    let names = debug_names();
+    for line in lines {
+        assert!(
+            !line.contains("Some(") && !line.contains("None") && !line.contains('_'),
+            "{line}"
+        );
+        for name in &names {
+            assert!(!line.contains(name.as_str()), "{name} in {line}");
+        }
+    }
+}
+
+#[test]
+fn every_state_reads_as_words() {
+    let records = records();
+    let progress = indexed(&records, 59).progress(true);
+    let mut views = vec![];
+    for state in states() {
+        let mut view = running();
+        view.orchestration.state = state;
+        for reason in [None, Some("worker_unavailable"), Some("operator_released")] {
+            view.orchestration.reason = reason.map(Into::into);
+            views.push(view.clone());
+        }
+    }
+    for phase in phases() {
+        let mut view = running();
+        view.controller_phase = Some(phase);
+        views.push(view);
+    }
+    for reason in reasons() {
+        let mut view = ended();
+        view.outcome.as_mut().unwrap().reason = reason;
+        views.push(view);
+    }
+    for cleanup in [
+        Cleanup::Complete,
+        Cleanup::Failed {
+            errors: vec!["container left behind".into()],
+        },
+        Cleanup::Unknown,
+    ] {
+        for state in [
+            OrchestrationState::Reconciling,
+            OrchestrationState::Terminal,
+        ] {
+            let mut view = ended();
+            view.orchestration.state = state;
+            view.cleanup = cleanup.clone();
+            views.push(view);
+        }
+    }
+    for evidence in [
+        EvidenceAvailability::Unavailable {
+            reason: "awaiting authenticated worker confirmation".into(),
+        },
+        EvidenceAvailability::OwnershipUnresolved {
+            reason: "another daemon holds the archive".into(),
+        },
+    ] {
+        let mut view = running();
+        view.evidence = evidence.clone();
+        view.accounting_coverage.as_mut().unwrap().availability = evidence;
+        views.push(view);
+    }
+    for enforcement in enforcements() {
+        let mut view = running();
+        view.cancellation = Some(Cancellation {
+            requested_at: view.updated_at.clone(),
+            enforcement,
+            stop_accepted_at: None,
+            grace_deadline: None,
+            uncertainty: Some("worker termination unresolved".into()),
+        });
+        views.push(view);
+    }
+    for possible in [false, true] {
+        let mut view = ended();
+        view.contention = Some(Contention {
+            timed_requests: 117,
+            reloads: 1,
+            queue_waits: 2,
+            possible,
+        });
+        views.push(view);
+    }
+    for mode in [RunMode::ScriptedSmoke, RunMode::LiveSmoke] {
+        let mut view = running();
+        view.mode = mode;
+        views.push(view);
+    }
+    for view in views {
+        assert_words(&lead(&view, &progress));
+        assert_words(&lead(&view, &Progress::default()));
+        assert_words(&prepare_run(view).summary);
+    }
+}
+
+#[test]
+fn the_workbench_shows_the_header_and_no_debug_text() {
+    let records = records();
+    let transcript = indexed(&records, 41);
+    let mut app = Workbench::default();
+    app.model.connection = ConnectionState::Connected;
+    app.model.launcher = false;
+    app.model.following = false;
+    let view = running();
+    app.model.selected = Some(view.run_id.clone());
+    app.model.runs = vec![view.clone()];
+    app.model.run = Some(prepare_run(view));
+    app.model.window = transcript.window(View::Readable, 0, 64);
+    app.model.window.progress = transcript.progress(true);
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    h.get_by_label("Session 2 of 3 · turn 1 of 2 · running a command");
+    h.get_by_label("21 of 1,000 tokens charged · 0:00 of 5:00 wall time");
+    h.get_by_label("Running · simulation · evidence available");
+    h.get_by_label("Run fixture-run-00000001 · Running");
+    let texts = h
+        .query_all_by(|_| true)
+        .filter_map(|node| {
+            let node = node.accesskit_node();
+            if node.role() == egui::accesskit::Role::Label {
+                node.value()
+            } else {
+                node.label()
+            }
+        })
+        .collect::<Vec<_>>();
+    assert!(texts.len() > 20);
+    let names = debug_names();
+    for text in texts {
+        assert!(!text.contains("Some("), "{text}");
+        for name in &names {
+            assert!(!text.contains(name.as_str()), "{name} in {text}");
+        }
+    }
+}

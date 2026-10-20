@@ -1,8 +1,12 @@
 #![cfg(feature = "ui-snapshots")]
 mod common;
 use egui_kittest::Harness;
+use playtime_core::RunPhase;
+use playtime_protocol::{api::*, events::EventEnvelope, v1::UsageSummary};
 use playtime_ui::{
+    backend::prepare_run,
     model::{ConnectionState, Inspector},
+    transcript::{Transcript, View},
     ui::Workbench,
 };
 use std::sync::Arc;
@@ -20,6 +24,48 @@ fn setup() -> eframe::egui_wgpu::WgpuSetup {
     }));
     WgpuSetup::CreateNew(setup)
 }
+/// The controller-observation fixture's run, live while its second session
+/// waits for the model, or ended, so the header shows progress.
+fn progress_screen(app: &mut Workbench, ended: bool) {
+    let last = if ended { 59 } else { 34 };
+    let mut transcript = Transcript::default();
+    for line in include_str!(
+        "../../playtime-protocol/tests/fixtures/controller-observations/completed.jsonl"
+    )
+    .lines()
+    {
+        let event: EventEnvelope = serde_json::from_str(line).unwrap();
+        if event.sequence.get() <= last {
+            transcript.apply(event, None).unwrap();
+        }
+    }
+    let mut view = app.model.run.as_ref().unwrap().value.clone();
+    let known = if ended { 26 } else { 13 };
+    view.usage = Some(UsageSummary {
+        known_generated_tokens: known,
+        unknown_reserved_tokens: 0,
+        unknown_requests: 0,
+        budget_charged_tokens: known,
+        usage_complete: true,
+    });
+    view.accounting_coverage = Some(AccountingCoverage {
+        schema_version: 1,
+        availability: EvidenceAvailability::Available,
+        unsettled_requests: if ended { 0 } else { 1 },
+        unsettled_allowance: if ended { 0 } else { 100 },
+        frontier: view.last_confirmed_frontier.clone().unwrap(),
+    });
+    if !ended {
+        view.orchestration.state = OrchestrationState::Running;
+        view.outcome = None;
+        view.cleanup = Cleanup::Unknown;
+        view.controller_phase = Some(RunPhase::Working);
+    }
+    app.model.runs = vec![view.clone()];
+    app.model.run = Some(prepare_run(view));
+    app.model.window = transcript.window(View::Readable, 0, 64);
+    app.model.window.progress = transcript.progress(true);
+}
 #[tokio::test]
 async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
@@ -30,8 +76,13 @@ async fn reviewed_workbench_screens() {
         ("memory", false, false, Inspector::Memory, false),
         ("disconnected", false, false, Inspector::Details, true),
         ("narrow", false, true, Inspector::Details, false),
+        ("running", false, false, Inspector::Details, false),
+        ("ended", false, false, Inspector::Details, false),
     ] {
         let mut app = common::demo(launcher).await;
+        if matches!(name, "running" | "ended") {
+            progress_screen(&mut app, name == "ended");
+        }
         app.model.inspector = inspector;
         if name != "image" {
             app.model.content = None;
