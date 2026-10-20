@@ -188,8 +188,8 @@ format are unchanged.
 
 Since 2026-10-19 (#92, part 2), the run header leads with progress against the
 frozen limits, read from the observations as they are indexed, and an ended run
-leads with its outcome. The workbench shows states in words: the run list says
-"Ended" for a terminal run, and the launcher's preview names the mode and memory
-condition. Six reviewed screenshots change, and two new ones show a running and
-an ended run. The HTTP and protocol goldens and the archive format are
-unchanged.
+leads with its outcome and the sessions it completed. The workbench shows states
+in words: the run list says "Ended" for a terminal run, and the launcher's
+preview names the mode and memory condition. Six reviewed screenshots change,
+and two new ones show a running and an ended run. The HTTP and protocol goldens
+and the archive format are unchanged.

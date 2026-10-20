@@ -224,8 +224,10 @@ fn role(event: &KnownEvent) -> Role {
                 words(reason),
                 match cleanup {
                     CleanupOutcome::Complete => "complete".into(),
-                    CleanupOutcome::Failed { errors } =>
-                        format!("failed ({} errors)", errors.len()),
+                    CleanupOutcome::Failed { errors } => format!(
+                        "failed ({})",
+                        progress::count(errors.len() as u64, "error", "errors")
+                    ),
                     CleanupOutcome::Unknown => "unknown".into(),
                 },
                 thousands(usage.budget_charged_tokens)

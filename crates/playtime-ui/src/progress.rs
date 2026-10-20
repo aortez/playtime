@@ -38,6 +38,8 @@ pub struct Progress {
     pub limits: Option<Limits>,
     /// The latest session's ordinal.
     pub session: Option<u64>,
+    /// Sessions whose checkpoint the run's stop didn't interrupt.
+    pub completed: Option<u64>,
     /// The work turns the latest session has started.
     pub turn: Option<u64>,
     /// Controller time at the latest record.
@@ -66,8 +68,12 @@ enum Activity {
 pub(crate) struct Update {
     session: Option<String>,
     elapsed_ms: Option<u64>,
+    /// The controller's start, so its checkpoints are recorded too.
+    started: bool,
     limits: Option<Limits>,
     ordinal: Option<u64>,
+    /// A checkpoint the run's stop didn't interrupt.
+    completed: Option<u64>,
     phase: Option<RunPhase>,
     /// A model request, with its handoff flag unless its payload is retained
     /// elsewhere.
@@ -85,6 +91,7 @@ impl Update {
         update.activity = match observation.payload() {
             ObservationPayload::Known(known) => match known.as_ref() {
                 KnownObservation::ControllerStarted { parameters, .. } => {
+                    update.started = true;
                     update.limits = Limits::from_parameters(parameters);
                     Some(Activity::Starting)
                 }
@@ -115,8 +122,13 @@ impl Update {
                     Some(Activity::Tool(excerpt(name, 60)))
                 }
                 KnownObservation::MementoWriteIntent { .. } => Some(Activity::HandingOff),
-                KnownObservation::ControllerCheckpoint { ordinal, .. } => {
+                KnownObservation::ControllerCheckpoint {
+                    ordinal,
+                    interrupted,
+                    ..
+                } => {
                     update.ordinal = Some(ordinal.get().into());
+                    update.completed = (!interrupted).then_some(ordinal.get().into());
                     Some(Activity::Phase(RunPhase::Checkpointing))
                 }
                 KnownObservation::ControllerStop { reason, .. } => {
@@ -131,6 +143,10 @@ impl Update {
             },
             // A retained payload still names its kind.
             ObservationPayload::Referenced { .. } => match o.observation_kind.as_str() {
+                "controller_started" => {
+                    update.started = true;
+                    Some(Activity::Starting)
+                }
                 "model_request" => {
                     update.request = Some(None);
                     Some(Activity::Model)
@@ -195,6 +211,13 @@ pub(crate) struct Tracker {
     limits: Option<Limits>,
     /// The highest ordinal recorded for any session.
     max_ordinal: u64,
+    /// The highest uninterrupted checkpoint. Sessions run in order and an
+    /// interrupted checkpoint is the run's last, so this counts the sessions
+    /// completed.
+    completed: u64,
+    /// The controller's start is indexed. An archive without controller
+    /// records has no checkpoints to count.
+    started: bool,
     current: Option<Session>,
     /// The latest record naming a session, and whether it arrived live. Until
     /// history loads, only a live record names the run's latest session.
@@ -208,11 +231,15 @@ pub(crate) struct Tracker {
 impl Tracker {
     /// A record without a history page arrived live.
     pub(crate) fn apply(&mut self, sequence: u64, update: Update, live: bool) {
+        self.started |= update.started;
         if update.limits.is_some() {
             self.limits = update.limits;
         }
         if let Some(ordinal) = update.ordinal {
             self.max_ordinal = self.max_ordinal.max(ordinal);
+        }
+        if let Some(ordinal) = update.completed {
+            self.completed = self.completed.max(ordinal);
         }
         if let Some(id) = update.session {
             if sequence > self.session_sequence {
@@ -271,6 +298,7 @@ impl Tracker {
                 s.ordinal
                     .or_else(|| complete.then_some(self.max_ordinal + 1))
             }),
+            completed: (complete && self.started).then_some(self.completed),
             turn: session
                 .filter(|s| complete || s.started_live)
                 .map(Session::turns),
@@ -289,13 +317,17 @@ impl Tracker {
         match activity {
             Activity::Starting => "starting the run".into(),
             Activity::Phase(phase) => phase_words(*phase).into(),
+            // A handoff request says so itself, even before the session's
+            // handing-off phase has loaded.
             Activity::Model => {
-                if self
-                    .current
-                    .as_ref()
-                    .and_then(|session| session.handoff)
-                    .is_some_and(|start| sequence > start)
-                {
+                if self.current.as_ref().is_some_and(|session| {
+                    session.handoff.is_some_and(|start| sequence > start)
+                        || session
+                            .requests
+                            .range(..=sequence)
+                            .next_back()
+                            .is_some_and(|(_, handoff)| *handoff == Some(true))
+                }) {
                     "handing off".into()
                 } else {
                     "thinking".into()
@@ -319,7 +351,7 @@ impl Tracker {
 
 /// The header's first two lines. A live run leads with its session, turn and
 /// activity, then tokens and time against the frozen limits. An ended run leads
-/// with its outcome, sessions and tokens, then cleanup.
+/// with its outcome, the sessions it completed and tokens, then cleanup.
 pub fn lead(run: &RunView, progress: &Progress) -> Vec<String> {
     let limits = progress.limits;
     let tokens = run.usage.as_ref().map_or_else(
@@ -346,9 +378,10 @@ pub fn lead(run: &RunView, progress: &Progress) -> Vec<String> {
             Some(outcome) => format!("Ended: {}", words(&outcome.reason)),
             None => "Ended without a recorded outcome".into(),
         }];
-        first.extend(progress.session.map(|session| match limits {
-            Some(limits) => format!("{session} of {} sessions", limits.sessions),
-            None => count(session, "session", "sessions"),
+        // A session the stop cut off isn't completed.
+        first.extend(progress.completed.map(|completed| match limits {
+            Some(limits) => format!("{completed} of {} sessions completed", limits.sessions),
+            None => count(completed, "session completed", "sessions completed"),
         }));
         first.push(tokens);
         let mut second = vec![cleanup_words(&run.cleanup)];
@@ -447,7 +480,7 @@ fn accounting(run: &RunView) -> String {
         thousands(usage.known_generated_tokens)
     )];
     parts.push(if usage.unknown_requests == 0 {
-        "all usage reported".into()
+        "no unknown usage".into()
     } else {
         format!(
             "{} with unknown usage, charged {}",
@@ -548,16 +581,20 @@ fn evidence_words(evidence: &EvidenceAvailability) -> String {
 fn cleanup_words(cleanup: &Cleanup) -> String {
     match cleanup {
         Cleanup::Complete => "Cleanup complete".into(),
-        Cleanup::Failed { errors } => {
-            format!(
-                "Cleanup failed with {}",
-                count(errors.len() as u64, "error", "errors")
-            )
-        }
+        // The first error says what was left behind.
+        Cleanup::Failed { errors } => match errors.split_first() {
+            None => "Cleanup failed".into(),
+            Some((first, [])) => format!("Cleanup failed: {}", excerpt(first, 200)),
+            Some((first, rest)) => format!(
+                "Cleanup failed: {} and {}",
+                excerpt(first, 200),
+                count(rest.len() as u64, "more error", "more errors")
+            ),
+        },
         Cleanup::Unknown => "Cleanup unknown".into(),
     }
 }
-fn count(value: u64, one: &str, many: &str) -> String {
+pub(crate) fn count(value: u64, one: &str, many: &str) -> String {
     format!(
         "{} {}",
         thousands(value),

@@ -59,9 +59,11 @@ command, handing off or saving a checkpoint. The limits come from the
 `controller_started` observation. The transcript index updates this summary as
 records arrive, apart from the payload working set, so eviction never changes
 it. Until earlier history has loaded, a value appears only if live records make
-it current. An ended run leads with its outcome, its sessions and the tokens
-charged, then cleanup. States, outcomes, cleanup, evidence and accounting read as
-words with thousands separators, and unavailable values stay distinct from zero.
+it current. An ended run leads with its outcome, the sessions it completed and
+the tokens charged, then cleanup. A session whose checkpoint the stop interrupted
+isn't counted, and a failed cleanup names its first error. States, outcomes,
+cleanup, evidence and accounting read as words with thousands separators, and
+unavailable values stay distinct from zero.
 The run header and list name the orchestration reason, so an operator release
 reads "released by operator". A run the daemon stopped monitoring shows its
 `playtime runs release` command, and Cancel is off once the worker has stopped.
@@ -102,8 +104,9 @@ are explicitly unavailable where the current API does not project them.
   Retained references resolve by matching published content metadata to opaque IDs,
   with an explicit bounded lookup and visible failure if not published/found.
 - `progress.rs` keeps the run's progress from indexed records and words the run
-  header. It holds the frozen limits, the latest session's requests and the
-  latest record's time and activity, so its memory stays bounded by one session.
+  header. It holds the frozen limits, the count of completed sessions, the latest
+  session's requests and the latest record's time and activity, so its memory
+  stays bounded by one session.
 - `ui.rs` renders prepared strings/pixels and emits intents. It virtualizes the
   timeline, caps expanded items and pages file metadata. No URL, file, HTML, SVG or
   script loader is installed. egui/eframe/egui_kittest are pinned to 0.34.3; image is
@@ -196,9 +199,9 @@ UPDATE_SNAPSHOTS=1 VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json cargo te
 ```
 
 Never update images just to make a check pass. Baselines cover launcher, readable
-activity, memory/file image inspection, connection error/stale information and
-900×600 layout. Their fixture labels remain visible; screenshots are not evidence
-of real execution.
+activity, memory/file image inspection, connection error/stale information,
+900×600 layout, and the header of a running and an ended run. Their fixture labels
+remain visible; screenshots are not evidence of real execution.
 
 ## Performance measurement
 

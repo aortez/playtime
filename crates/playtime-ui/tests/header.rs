@@ -15,11 +15,38 @@ use playtime_ui::{
 };
 use serde_json::json;
 
-fn records() -> Vec<EventEnvelope> {
-    include_str!("../../playtime-protocol/tests/fixtures/controller-observations/completed.jsonl")
+fn parse(jsonl: &str) -> Vec<EventEnvelope> {
+    jsonl
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
+}
+fn records() -> Vec<EventEnvelope> {
+    parse(include_str!(
+        "../../playtime-protocol/tests/fixtures/controller-observations/completed.jsonl"
+    ))
+}
+/// Session 2 stops on a model connection error.
+fn partial_failure() -> Vec<EventEnvelope> {
+    parse(include_str!(
+        "../../playtime-protocol/tests/fixtures/controller-observations/partial-failure.jsonl"
+    ))
+}
+/// A copy of a record at another sequence.
+fn moved(record: &EventEnvelope, sequence: u64) -> EventEnvelope {
+    let mut record = record.clone();
+    record.sequence = std::num::NonZeroU64::new(sequence).unwrap();
+    record.data["controller_sequence"] = json!(sequence);
+    record
+}
+/// The record with its value stored as an artifact, as a value over 256 KiB is.
+fn stored(mut record: EventEnvelope) -> EventEnvelope {
+    record.data["data"] = json!({"storage": "artifact", "content": {
+        "path": format!("artifacts/observations/{}.json", record.sequence),
+        "sha256": "0".repeat(64),
+        "size_bytes": 300_000,
+    }});
+    record
 }
 /// The records up to `last`, all arriving live.
 fn indexed(records: &[EventEnvelope], last: u64) -> Transcript {
@@ -143,22 +170,71 @@ fn progress_follows_the_run_against_its_frozen_limits() {
 #[test]
 fn handoff_requests_are_not_work_turns() {
     let records = records();
-    let mut transcript = indexed(&records, 22);
     // The controller asks for the memento after the session's last turn.
-    let mut phase = records[4].clone();
-    phase.sequence = std::num::NonZeroU64::new(23).unwrap();
-    phase.data["controller_sequence"] = json!(23);
+    let mut phase = moved(&records[4], 23);
     phase.data["data"]["value"]["phase"] = json!("handing_off");
-    let mut request = records[18].clone();
-    request.sequence = std::num::NonZeroU64::new(24).unwrap();
-    request.data["controller_sequence"] = json!(24);
+    let mut request = moved(&records[18], 24);
     request.data["data"]["value"]["handoff"] = json!(true);
-    for event in [phase, request] {
+    let mut transcript = indexed(&records, 22);
+    for event in [phase, request.clone()] {
         transcript.apply(event, None).unwrap();
     }
     let progress = transcript.progress(false);
     assert_eq!(progress.turn, Some(2));
     assert_eq!(progress.activity.as_deref(), Some("handing off"));
+
+    // After a reconnect, the request says it's the handoff before the
+    // handing-off phase loads, and so does the output streamed for it.
+    let mut transcript = Transcript::default();
+    for event in [request, moved(&records[7], 25)] {
+        transcript.apply(event, None).unwrap();
+    }
+    assert_eq!(
+        transcript.progress(false).activity.as_deref(),
+        Some("handing off")
+    );
+}
+
+#[test]
+fn requests_stored_as_artifacts_count_like_the_controller() {
+    let records = records();
+    // A large work request counts as a turn.
+    let mut transcript = indexed(&records, 18);
+    transcript.apply(stored(records[18].clone()), None).unwrap();
+    let progress = transcript.progress(false);
+    assert_eq!(
+        (progress.turn, progress.activity.as_deref()),
+        (Some(2), Some("thinking"))
+    );
+    // A large request after the handing-off phase is the handoff.
+    let mut phase = moved(&records[4], 23);
+    phase.data["data"]["value"]["phase"] = json!("handing_off");
+    let mut transcript = indexed(&records, 22);
+    for event in [phase, stored(moved(&records[18], 24))] {
+        transcript.apply(event, None).unwrap();
+    }
+    let progress = transcript.progress(false);
+    assert_eq!(
+        (progress.turn, progress.activity.as_deref()),
+        (Some(2), Some("handing off"))
+    );
+}
+
+#[test]
+fn a_model_error_says_whether_the_run_retries() {
+    let failed = partial_failure();
+    assert_eq!(
+        indexed(&failed, 38).progress(false).activity.as_deref(),
+        Some("stopping after a model error")
+    );
+    let mut error = failed[37].clone();
+    error.data["data"]["value"]["recovery_allowed"] = json!(true);
+    let mut transcript = indexed(&failed, 37);
+    transcript.apply(error, None).unwrap();
+    assert_eq!(
+        transcript.progress(false).activity.as_deref(),
+        Some("retrying after a model error")
+    );
 }
 
 #[test]
@@ -177,6 +253,7 @@ fn while_history_loads_only_current_values_show() {
         Progress {
             limits: None,
             session: Some(2),
+            completed: None,
             turn: None,
             elapsed_ms: Some(350),
             activity: Some("running a command".into()),
@@ -222,14 +299,14 @@ fn a_live_run_leads_with_progress_and_an_ended_run_with_its_outcome() {
         details(&running()),
         [
             "Running · simulation · evidence available",
-            "Settled: 21 tokens reported · all usage reported · nothing pending",
+            "Settled: 21 tokens reported · no unknown usage · nothing pending",
         ]
     );
     let progress = indexed(&records, 59).progress(true);
     assert_eq!(
         lead(&ended(), &progress),
         [
-            "Ended: agent finished · 2 of 3 sessions · 26 of 1,000 tokens charged",
+            "Ended: agent finished · 2 of 3 sessions completed · 26 of 1,000 tokens charged",
             "Cleanup complete · 0:00 of 5:00 wall time",
         ]
     );
@@ -242,6 +319,7 @@ fn a_live_run_leads_with_progress_and_an_ended_run_with_its_outcome() {
     let progress = Progress {
         limits: Some(CURIOSITY),
         session: Some(4),
+        completed: None,
         turn: Some(3),
         elapsed_ms: Some(750_400),
         activity: Some("running a command".into()),
@@ -278,6 +356,61 @@ fn an_outcome_recorded_before_the_run_ends_still_shows() {
         !details(&ended())
             .iter()
             .any(|line| line.contains("Outcome"))
+    );
+}
+
+#[test]
+fn an_ended_run_counts_only_the_sessions_it_completed() {
+    // The model error interrupts session 2's checkpoint.
+    let transcript = indexed(&partial_failure(), 47);
+    let mut view = ended();
+    view.outcome.as_mut().unwrap().reason = StopReason::ModelConnectionError;
+    view.usage = Some(usage(13, 100, 1));
+    assert_eq!(
+        lead(&view, &transcript.progress(true))[0],
+        "Ended: model connection error · 1 of 3 sessions completed · 113 of 1,000 tokens charged"
+    );
+    // Until earlier history loads, the count isn't known.
+    assert_eq!(transcript.progress(false).completed, None);
+    assert_eq!(
+        lead(&view, &transcript.progress(false))[0],
+        "Ended: model connection error · 113 of 1,000 tokens charged"
+    );
+    assert_eq!(indexed(&records(), 59).progress(true).completed, Some(2));
+    // An archive without controller records has no checkpoints to count.
+    let archive = parse(include_str!(
+        "../../playtime-protocol/tests/fixtures/two-session/events.jsonl"
+    ));
+    assert_eq!(indexed(&archive, 16).progress(true).completed, None);
+}
+
+#[test]
+fn a_failed_cleanup_names_its_first_error() {
+    let progress = indexed(&records(), 59).progress(true);
+    let mut view = ended();
+    view.cleanup = Cleanup::Failed {
+        errors: vec!["container left behind".into()],
+    };
+    assert_eq!(
+        lead(&view, &progress)[1],
+        "Cleanup failed: container left behind · 0:00 of 5:00 wall time"
+    );
+    view.cleanup = Cleanup::Failed {
+        errors: vec![
+            "container left behind".into(),
+            "network left behind".into(),
+            "volume left behind".into(),
+        ],
+    };
+    assert_eq!(
+        lead(&view, &progress)[1],
+        "Cleanup failed: container left behind and 2 more errors · 0:00 of 5:00 wall time"
+    );
+    // A run still reconciling reports cleanup under the lead.
+    view.orchestration.state = OrchestrationState::Reconciling;
+    assert!(
+        details(&view)
+            .contains(&"Cleanup failed: container left behind and 2 more errors".to_owned())
     );
 }
 
@@ -422,6 +555,10 @@ fn every_state_reads_as_words() {
         Cleanup::Failed {
             errors: vec!["container left behind".into()],
         },
+        Cleanup::Failed {
+            errors: vec!["container left behind".into(), "network left behind".into()],
+        },
+        Cleanup::Failed { errors: vec![] },
         Cleanup::Unknown,
     ] {
         for state in [
