@@ -392,6 +392,14 @@ pub fn details(run: &RunView) -> Vec<String> {
     first.push(mode_words(run.mode).into());
     first.push(evidence_words(&run.evidence));
     let mut lines = vec![first.join(" · ")];
+    // The archive can record the outcome before the daemon sees the worker
+    // stop, and a cancelled run can wait in reconciling. An ended run reports
+    // its outcome in its lead.
+    if state != OrchestrationState::Terminal
+        && let Some(outcome) = &run.outcome
+    {
+        lines.push(format!("Outcome: {}", words(&outcome.reason)));
+    }
     // An ended run reports cleanup in its lead.
     if matches!(
         state,

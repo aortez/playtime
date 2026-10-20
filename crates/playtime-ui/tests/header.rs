@@ -260,6 +260,28 @@ fn a_live_run_leads_with_progress_and_an_ended_run_with_its_outcome() {
 }
 
 #[test]
+fn an_outcome_recorded_before_the_run_ends_still_shows() {
+    // A cancelled run whose worker the daemon lost waits in reconciling.
+    let mut view = ended();
+    view.orchestration.state = OrchestrationState::Reconciling;
+    view.orchestration.reason = Some("worker_unavailable".into());
+    view.outcome.as_mut().unwrap().reason = StopReason::Interrupted;
+    assert_eq!(
+        details(&view)[..3],
+        [
+            "Reconciling · worker unavailable · simulation · evidence available",
+            "Outcome: interrupted",
+            "Cleanup complete",
+        ]
+    );
+    assert!(
+        !details(&ended())
+            .iter()
+            .any(|line| line.contains("Outcome"))
+    );
+}
+
+#[test]
 fn unavailable_values_are_never_shown_as_zero() {
     let mut view = running();
     view.usage = None;
