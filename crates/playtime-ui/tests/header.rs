@@ -468,7 +468,12 @@ fn every_state_reads_as_words() {
         });
         views.push(view);
     }
-    for mode in [RunMode::ScriptedSmoke, RunMode::LiveSmoke] {
+    // The fixture's run is a simulation.
+    for mode in [
+        RunMode::Experiment,
+        RunMode::ScriptedSmoke,
+        RunMode::LiveSmoke,
+    ] {
         let mut view = running();
         view.mode = mode;
         views.push(view);
