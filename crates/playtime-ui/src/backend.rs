@@ -135,7 +135,7 @@ impl Backend {
                     break;
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
-                    model.notice = "Client background work stopped".into();
+                    model.notify("Client background work stopped", None);
                     break;
                 }
             }
@@ -342,8 +342,10 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                 if jobs.len() >= 16 { out.send(tag, None, action_error(&command.action, "Client work limit reached; retry the explicit action".into())).await; continue; }
                 let session = s.clone(); let out = out.clone(); let previews = previews.clone();
                 jobs.spawn(async move {
+                    // A download reports on the saved file, not the open run, so
+                    // its result still arrives and stays after another run opens.
                     let run = match &command.action {
-                        Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) | Action::Download(run, _, _) => Some(run.clone()), _ => None,
+                        Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
                     };
                     let action = command.action.clone();
                     let result = perform(&session, &out, command, previews).await;
@@ -780,14 +782,18 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
             .await;
         }
         Action::Download(run, id, path) => {
-            let artifact = client.artifact(&run, &id).await.map_err(safe)?;
+            // The client's errors don't say what failed, and this notice can
+            // arrive after another run opens.
+            let failed =
+                |error: Error| format!("Download not saved to {}: {error}", path.display());
+            let artifact = client.artifact(&run, &id).await.map_err(failed)?;
             client
                 .download_to_path(&run, &artifact, &path, &CancellationToken::new())
                 .await
-                .map_err(safe)?;
+                .map_err(failed)?;
             out.send(
                 tag,
-                Some(run),
+                None,
                 Data::Notice(format!("Verified download saved to {}", path.display())),
             )
             .await;

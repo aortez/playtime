@@ -679,8 +679,10 @@ impl Workbench {
                 if self.model.expanded.len() < 64 {
                     self.model.expanded.insert(id);
                 } else {
-                    self.model.notice =
-                        "64 activities are expanded; collapse one before opening another".into();
+                    self.model.notify(
+                        "64 activities are expanded; collapse one before opening another",
+                        self.model.selected.clone(),
+                    );
                 }
             }
         }
