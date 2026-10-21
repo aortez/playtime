@@ -207,9 +207,10 @@ fn reply(h: &mut Harness<'_, Workbench>, run: Option<RunId>, data: Data) {
 async fn a_run_notice_clears_when_another_run_or_the_launcher_opens() {
     let mut app = common::demo(false).await;
     let first = app.model.selected.clone().unwrap();
-    let mut other = app.model.runs[0].clone();
-    other.run_id = RunId::new("other-run").unwrap();
-    app.model.runs.push(other);
+    let other = RunId::new("other-run").unwrap();
+    let mut view = app.model.runs[0].clone();
+    view.run_id = other.clone();
+    app.model.runs.push(view);
     let mut h = Harness::builder()
         .with_size([1440.0, 900.0])
         .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
@@ -220,16 +221,23 @@ async fn a_run_notice_clears_when_another_run_or_the_launcher_opens() {
     h.get_by_label("Run other-run · Ended").click();
     h.run();
     assert!(h.query_by_label(reconciled).is_none());
+    // A failed load, such as a checkpoint list that timed out.
+    let failed = "HTTP deadline exceeded";
+    reply(&mut h, Some(other.clone()), Data::Error(failed.into()));
+    h.get_by_label(failed);
+    h.get_by_label(&format!("Run {first} · Ended")).click();
+    h.run();
+    assert!(h.query_by_label(failed).is_none());
     // A notice that isn't about a run stays.
     let saved = "Verified download saved to /tmp/art.png";
     reply(&mut h, None, Data::Notice(saved.into()));
-    h.get_by_label(&format!("Run {first} · Ended")).click();
+    h.get_by_label("Run other-run · Ended").click();
     h.run();
     h.get_by_label(saved);
     let unresolved = "Cancellation unresolved: reply lost. Inspect status before retrying.";
     reply(
         &mut h,
-        Some(first),
+        Some(other),
         Data::CancellationUnresolved(unresolved.into()),
     );
     h.get_by_label(unresolved);
@@ -315,4 +323,41 @@ async fn an_accepted_launch_refreshes_the_run_list() {
         );
         h.get_by_label("Run launched-run · Preparing");
     }
+}
+
+/// Presses Reconnect and answers it, then says whether the model watches `run`.
+fn reconnect(h: &mut Harness<'_, Workbench>, run: &RunId) -> bool {
+    let capabilities = Fixture::new(ServiceId::new("snapshot-fixture").unwrap()).capabilities();
+    h.get_by_label("Reconnect").click();
+    h.run();
+    h.state_mut().model.commands.clear();
+    reply(
+        h,
+        None,
+        Data::Connected(capabilities, "http://127.0.0.1:PORT".into()),
+    );
+    h.state()
+        .model
+        .commands
+        .iter()
+        .any(|command| matches!(&command.action, Action::Observe(watched) if watched == run))
+}
+
+/// Reconnecting from the launcher doesn't watch the run it left again, so
+/// that run's notices stay closed with it (#104).
+#[tokio::test]
+async fn reconnecting_from_the_launcher_leaves_the_last_run_closed() {
+    let app = common::demo(false).await;
+    let run = app.model.selected.clone().unwrap();
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.get_by_label("New experiment").click();
+    h.run();
+    assert!(!reconnect(&mut h, &run));
+    assert!(h.state().model.launcher);
+    // Reconnecting with the run open still watches it again.
+    h.get_by_label(&format!("Run {run} · Ended")).click();
+    h.run();
+    assert!(reconnect(&mut h, &run));
 }

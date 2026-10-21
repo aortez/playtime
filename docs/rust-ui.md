@@ -83,8 +83,9 @@ are explicitly unavailable where the current API does not project them.
   Replies carry connection/selection/preview/inspection/launch generations and run IDs.
   Late replies cannot move selection, roll back lifecycle, or install old previews.
   A status notice about a run, such as its stream's end, a failed load or a
-  cancellation, lasts only while that run is open. Other notices, such as a saved
-  download, stay until the next notice replaces them.
+  cancellation, lasts only while that run is open. The launcher stops watching
+  the run it left, and a reconnect there doesn't resume it. Other notices, such
+  as a saved or failed download, stay until the next notice replaces them.
   Preview refreshes preserve pending and unresolved launches; their replies remain
   applicable after preview changes without moving a newer run selection. Run
   snapshots reject older `updated_at` values and preserve terminal/cancellation

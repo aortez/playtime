@@ -238,7 +238,7 @@ pub struct Model {
     pub notice: String,
     /// The run `notice` is about. Selecting a run or opening the launcher
     /// clears that run's notice.
-    pub notice_run: Option<RunId>,
+    notice_run: Option<RunId>,
     pub destination: String,
     pub connection_file: String,
     pub commands: VecDeque<Command>,
@@ -530,12 +530,17 @@ impl Model {
                 self.command(Action::Recipes(None));
                 self.command(Action::Runs(None));
                 self.command(Action::Receipts(None));
+                // Restore the saved run, or resume watching the open one. The
+                // launcher stopped watching the run it left, so a reconnect
+                // there doesn't resume it.
                 if self.selected.is_none()
                     && self.preferences.service_id == self.service
                     && let Some(run) = self.preferences.run_id.clone()
                 {
                     self.select_run(run);
-                } else if let Some(run) = self.selected.clone() {
+                } else if !self.launcher
+                    && let Some(run) = self.selected.clone()
+                {
                     self.command(Action::Observe(run));
                 }
             }

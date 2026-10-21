@@ -197,8 +197,9 @@ and the archive format are unchanged.
 ### Workbench notices and run list
 
 Since 2026-10-20 (#104), a workbench status notice about a run clears when
-another run or the launcher opens. A download's result is no longer tagged with
-the open run, so it still arrives, and stays, after another run opens. An
-accepted launch refreshes the run list at once instead of at the next 5-second
-poll. The reviewed screenshots, the HTTP and protocol goldens and the archive
-format are unchanged.
+another run or the launcher opens, and reconnecting from the launcher no longer
+watches the run it left. A download's result is no longer tagged with the open
+run, so it still arrives, and stays, after another run opens. A failed download
+now names its destination. An accepted launch refreshes the run list at once
+instead of at the next 5-second poll. The reviewed screenshots, the HTTP and
+protocol goldens and the archive format are unchanged.

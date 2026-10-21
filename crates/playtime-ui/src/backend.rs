@@ -782,11 +782,15 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
             .await;
         }
         Action::Download(run, id, path) => {
-            let artifact = client.artifact(&run, &id).await.map_err(safe)?;
+            // The client's errors don't say what failed, and this notice can
+            // arrive after another run opens.
+            let failed =
+                |error: Error| format!("Download not saved to {}: {error}", path.display());
+            let artifact = client.artifact(&run, &id).await.map_err(failed)?;
             client
                 .download_to_path(&run, &artifact, &path, &CancellationToken::new())
                 .await
-                .map_err(safe)?;
+                .map_err(failed)?;
             out.send(
                 tag,
                 None,

@@ -21,11 +21,9 @@ async fn selection_changes_invalidate_preview_and_duplicate_launch_intents() {
         )
         .await
         .unwrap();
-    let mut model = Model {
-        connection: ConnectionState::Connected,
-        modes: vec![preview.mode],
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.connection = ConnectionState::Connected;
+    model.modes = vec![preview.mode];
     model.choose_recipe(preview.recipe_id.clone(), preview.mode);
     let original = model.tag;
     model.choose_recipe(RecipeId::new("fixture-empty").unwrap(), preview.mode);
@@ -148,10 +146,8 @@ fn text_pages_respect_utf8_and_diff_limits_are_explicit() {
 
 #[test]
 fn cancellation_reply_loss_stays_unresolved_and_inspection_generations_are_independent() {
-    let mut model = Model {
-        connection: ConnectionState::Connected,
-        ..Default::default()
-    };
+    let mut model = Model::default();
+    model.connection = ConnectionState::Connected;
     model.select_run(RunId::new("running").unwrap());
     model.commands.clear();
     model.cancel();

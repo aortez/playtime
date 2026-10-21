@@ -124,6 +124,22 @@ async fn desktop_client_launch_observe_inspect_and_reopen_uses_only_public_http(
     until(&mut model, &mut backend, |m| m.notice == saved).await;
     model.new_experiment();
     assert_eq!(model.notice, saved);
+    // Downloading over that file fails. The failure names the destination and
+    // stays too.
+    model.select_run(run.clone());
+    until(&mut model, &mut backend, |m| {
+        m.notice.starts_with("Stream reconciled")
+    })
+    .await;
+    model.command(Action::Download(
+        run.clone(),
+        ArtifactId::new("saved-image").unwrap(),
+        destination.clone(),
+    ));
+    let failed = format!("Download not saved to {}: ", destination.display());
+    until(&mut model, &mut backend, |m| m.notice.starts_with(&failed)).await;
+    model.new_experiment();
+    assert!(model.notice.starts_with(&failed), "{}", model.notice);
     let key = model.saved.as_ref().unwrap().key.clone();
     drop(backend);
     let mut backend = Backend::start(egui::Context::default());
