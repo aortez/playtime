@@ -31,7 +31,8 @@ the display, D-Bus session and accessibility settings private to one directory.
 The playbook is `.claude/skills/run-workbench/SKILL.md`.
 
 Choose a recipe, review the frozen preview, then launch. The left pane contains
-recent runs and unresolved launch receipts. Lookup/retry retains the original
+recent runs and unresolved launch receipts. The run list refreshes every 5
+seconds and as soon as a launch is accepted. Lookup/retry retains the original
 request and key. Failed recovery stays unresolved, including lookup 404/503,
 invalid replies, rejected retries and local receipt errors. These failures do not
 authorize a fresh launch; resolution requires a validated response for the
@@ -81,6 +82,9 @@ are explicitly unavailable where the current API does not project them.
 - `model.rs` owns independent connection, selection, mutation and history states.
   Replies carry connection/selection/preview/inspection/launch generations and run IDs.
   Late replies cannot move selection, roll back lifecycle, or install old previews.
+  A status notice about a run, such as its stream's end, a failed load or a
+  cancellation, lasts only while that run is open. Other notices, such as a saved
+  download, stay until the next notice replaces them.
   Preview refreshes preserve pending and unresolved launches; their replies remain
   applicable after preview changes without moving a newer run selection. Run
   snapshots reject older `updated_at` values and preserve terminal/cancellation

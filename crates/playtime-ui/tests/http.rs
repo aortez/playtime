@@ -108,6 +108,22 @@ async fn desktop_client_launch_observe_inspect_and_reopen_uses_only_public_http(
     ));
     until(&mut model, &mut backend, |m| m.content.is_some()).await;
     assert!(model.content.as_ref().unwrap().image.is_some());
+    // The stream's end is the run's notice. A download's notice is about the
+    // saved file, so it stays when the launcher opens (#104).
+    until(&mut model, &mut backend, |m| {
+        m.notice.starts_with("Stream reconciled")
+    })
+    .await;
+    let destination = root.join("saved-image.png");
+    model.command(Action::Download(
+        run.clone(),
+        ArtifactId::new("saved-image").unwrap(),
+        destination.clone(),
+    ));
+    let saved = format!("Verified download saved to {}", destination.display());
+    until(&mut model, &mut backend, |m| m.notice == saved).await;
+    model.new_experiment();
+    assert_eq!(model.notice, saved);
     let key = model.saved.as_ref().unwrap().key.clone();
     drop(backend);
     let mut backend = Backend::start(egui::Context::default());

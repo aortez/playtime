@@ -236,6 +236,9 @@ pub struct Model {
     pub playing: bool,
     pub preferences: Preferences,
     pub notice: String,
+    /// The run `notice` is about. Selecting a run or opening the launcher
+    /// clears that run's notice.
+    pub notice_run: Option<RunId>,
     pub destination: String,
     pub connection_file: String,
     pub commands: VecDeque<Command>,
@@ -292,6 +295,7 @@ impl Default for Model {
             playing: false,
             preferences: Preferences::default(),
             notice: String::new(),
+            notice_run: None,
             destination: String::new(),
             connection_file: String::new(),
             commands: VecDeque::new(),
@@ -299,10 +303,23 @@ impl Default for Model {
     }
 }
 impl Model {
+    /// Shows `notice` in the status bar. A notice about a run lasts only while
+    /// that run is open.
+    pub fn notify(&mut self, notice: impl Into<String>, run: Option<RunId>) {
+        self.notice = notice.into();
+        self.notice_run = run;
+    }
+    fn clear_run_notice(&mut self) {
+        if self.notice_run.take().is_some() {
+            self.notice.clear();
+        }
+    }
     pub fn command(&mut self, action: Action) {
         if self.commands.len() >= 64 {
-            self.notice =
-                "Client work queue is full; retry this action after current work finishes".into();
+            self.notify(
+                "Client work queue is full; retry this action after current work finishes",
+                None,
+            );
             match action {
                 Action::Launch(_) => self.launch = Mutation::Rejected(self.notice.clone()),
                 Action::Recover(..) => self.launch = Mutation::Unresolved(self.notice.clone()),
@@ -382,6 +399,7 @@ impl Model {
     }
     pub fn select_run(&mut self, run: RunId) {
         self.tag.selection += 1;
+        self.clear_run_notice();
         self.selected = Some(run.clone());
         self.launcher = false;
         self.run = None;
@@ -422,6 +440,7 @@ impl Model {
     }
     pub fn new_experiment(&mut self) {
         self.tag.selection += 1;
+        self.clear_run_notice();
         self.launcher = true;
         self.command(Action::StopObservation);
         self.stop_animation();
@@ -548,7 +567,7 @@ impl Model {
             Data::PreviewError(error) => {
                 self.previewing = false;
                 self.preview = None;
-                self.notice = error;
+                self.notify(error, None);
             }
             Data::LaunchProgress(state, saved) => {
                 self.launch = state;
@@ -571,20 +590,23 @@ impl Model {
                     self.select_run(accepted.run_id);
                 }
                 self.command(Action::Receipts(None));
+                // Otherwise the run list shows the new run only at its next poll.
+                self.command(Action::Runs(None));
             }
             Data::Run(run) => {
                 self.apply_run(*run);
             }
             Data::Cancellation(cancel) => {
                 self.cancellation = Mutation::Accepted;
-                self.notice =
-                    "Cancellation intent acknowledged; inspect enforcement and cleanup below"
-                        .into();
+                self.notify(
+                    "Cancellation intent acknowledged; inspect enforcement and cleanup below",
+                    reply.run,
+                );
                 self.apply_run(*cancel);
             }
             Data::CancellationUnresolved(error) => {
                 self.cancellation = Mutation::Unresolved(error.clone());
-                self.notice = error;
+                self.notify(error, reply.run);
             }
             Data::Window(window, history, live) => {
                 self.window = window;
@@ -648,7 +670,10 @@ impl Model {
                             _ => None,
                         });
                     if expected.is_some_and(|expected| *expected != content.artifact.content) {
-                        self.notice = "Published content identity mismatch; preview refused".into();
+                        self.notify(
+                            "Published content identity mismatch; preview refused",
+                            reply.run,
+                        );
                         return;
                     }
                 }
@@ -673,14 +698,14 @@ impl Model {
                 self.source = Some(source);
             }
             Data::Notice(message) => {
-                self.notice = message;
+                self.notify(message, reply.run);
             }
             Data::Connection(state) => {
                 self.stale = state != ConnectionState::Connected;
                 self.connection = state;
             }
             Data::Error(error) => {
-                self.notice = error;
+                self.notify(error, reply.run);
             }
         }
     }

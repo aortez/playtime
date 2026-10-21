@@ -1,5 +1,5 @@
 use egui_kittest::{Harness, kittest::Queryable};
-use playtime_core::RunMode;
+use playtime_core::{RunId, RunMode};
 use playtime_protocol::api::*;
 use playtime_server::{application::Application, fixture::Fixture};
 use playtime_ui::{backend::prepare_preview, model::*, ui::Workbench};
@@ -193,4 +193,126 @@ async fn recover_cancel_reconnect_and_inspect_through_named_controls() {
     h.get_by_label("Reconnect").click();
     h.run();
     assert_eq!(h.state().model.connection, ConnectionState::Connecting);
+}
+
+/// Applies a reply to the model's current requests, then redraws.
+fn reply(h: &mut Harness<'_, Workbench>, run: Option<RunId>, data: Data) {
+    let tag = h.state().model.tag;
+    h.state_mut().model.apply(Reply { tag, run, data });
+    h.run();
+}
+
+/// The status bar keeps a run's notices only while that run is open (#104).
+#[tokio::test]
+async fn a_run_notice_clears_when_another_run_or_the_launcher_opens() {
+    let mut app = common::demo(false).await;
+    let first = app.model.selected.clone().unwrap();
+    let mut other = app.model.runs[0].clone();
+    other.run_id = RunId::new("other-run").unwrap();
+    app.model.runs.push(other);
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    let reconciled =
+        "Stream reconciled: committed completion; lifecycle and cleanup are shown separately";
+    reply(&mut h, Some(first.clone()), Data::Notice(reconciled.into()));
+    h.get_by_label(reconciled);
+    h.get_by_label("Run other-run · Ended").click();
+    h.run();
+    assert!(h.query_by_label(reconciled).is_none());
+    // A notice that isn't about a run stays.
+    let saved = "Verified download saved to /tmp/art.png";
+    reply(&mut h, None, Data::Notice(saved.into()));
+    h.get_by_label(&format!("Run {first} · Ended")).click();
+    h.run();
+    h.get_by_label(saved);
+    let unresolved = "Cancellation unresolved: reply lost. Inspect status before retrying.";
+    reply(
+        &mut h,
+        Some(first),
+        Data::CancellationUnresolved(unresolved.into()),
+    );
+    h.get_by_label(unresolved);
+    h.get_by_label("New experiment").click();
+    h.run();
+    assert!(h.query_by_label(unresolved).is_none());
+}
+
+/// An accepted launch asks for the run list at once rather than waiting for
+/// the list's next poll, even when another run was opened meanwhile (#104).
+#[tokio::test]
+async fn an_accepted_launch_refreshes_the_run_list() {
+    for navigate in [false, true] {
+        let mut h = Harness::builder()
+            .with_size([1440.0, 900.0])
+            .build_ui_state(
+                |ui, app: &mut Workbench| app.draw(ui),
+                common::demo(true).await,
+            );
+        h.get_by_label("Launch experiment").click();
+        h.run();
+        // The service's reply carries the launch command's tag.
+        let Some(Command {
+            tag,
+            action: Action::Launch(request),
+        }) = h.state().model.commands.back().cloned()
+        else {
+            panic!("Launch experiment queued no launch");
+        };
+        let old = h.state().model.runs[0].clone();
+        if navigate {
+            h.get_by_label(&format!("Run {} · Ended", old.run_id))
+                .click();
+            h.run();
+        }
+        let mut run = old.clone();
+        run.run_id = RunId::new("launched-run").unwrap();
+        run.orchestration.state = OrchestrationState::Preparing;
+        run.outcome = None;
+        let saved = playtime_client::state::LaunchReceipt {
+            schema_version: 1,
+            service_id: h.state().model.service.clone().unwrap(),
+            endpoint: "http://127.0.0.1:1234".into(),
+            key: IdempotencyKey::new("accepted-launch").unwrap(),
+            request,
+            created_at_unix_ms: 0,
+            run_id: Some(run.run_id.clone()),
+        };
+        h.state_mut().model.commands.clear();
+        h.state_mut().model.apply(Reply {
+            tag,
+            run: None,
+            data: Data::Accepted(
+                Box::new(LaunchResponse {
+                    run_id: run.run_id.clone(),
+                    accepted_at: run.accepted_at.clone(),
+                    replayed: false,
+                    run: run.clone(),
+                }),
+                saved,
+            ),
+        });
+        h.run();
+        assert!(
+            h.state()
+                .model
+                .commands
+                .iter()
+                .any(|command| matches!(command.action, Action::Runs(None)))
+        );
+        assert_eq!(
+            h.state().model.selected.as_ref() == Some(&run.run_id),
+            !navigate
+        );
+        reply(
+            &mut h,
+            None,
+            Data::Runs(Page {
+                items: vec![run, old],
+                next_cursor: None,
+                frontier: None,
+            }),
+        );
+        h.get_by_label("Run launched-run · Preparing");
+    }
 }
