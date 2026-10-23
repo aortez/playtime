@@ -20,6 +20,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[path = "service_diagnostics.rs"]
+mod diagnostics;
+
 /// A cancelled run keeps the data root's slot until the operator releases it.
 /// Cancel a first run through the shared client, which avoids the CLI's
 /// process start-up before the cancel, then release it through the CLI.
@@ -399,6 +402,13 @@ impl NormalService {
         .map_err(|_| "service event deadline")??;
         self.view = self.client.run(&self.run).await?;
         let usage = self.view.usage.clone().ok_or("missing usage")?;
+        let diagnostics = json!({
+            "run_id": self.run,
+            "outcome": self.view.outcome,
+            "usage": usage,
+            "accounting_coverage": self.view.accounting_coverage,
+            "observations": diagnostics::summarize(observed.values()),
+        });
         // Live usage varies, and a recovered tool-parse error leaves an
         // unknown charge, so only scripted runs have exact accounting.
         let exact = match self.backend {
@@ -421,7 +431,9 @@ impl NormalService {
                 .as_ref()
                 .is_none_or(|c| c.unsettled_allowance != 0)
         {
-            return Err("normal terminal/accounting projection mismatch".into());
+            return Err(
+                format!("normal terminal/accounting projection mismatch: {diagnostics}").into(),
+            );
         }
         let final_frontier = self
             .view
@@ -476,7 +488,7 @@ impl NormalService {
             .checkpoints(&self.run, &PageQuery::default())
             .await?;
         if checkpoints.items.len() != 2 {
-            return Err("expected two actual controller sessions".into());
+            return Err(format!("expected two actual controller sessions: {diagnostics}").into());
         }
         for checkpoint in &checkpoints.items {
             let CheckpointIndexRead::Supported { index, .. } = self
@@ -525,7 +537,7 @@ impl NormalService {
                             "persistent.txt"
                         }
             })
-            .ok_or("saved file absent")?;
+            .ok_or_else(|| format!("saved file absent: {diagnostics}"))?;
         let mut bytes = Vec::new();
         self.client
             .download(&self.run, saved, &mut bytes, &cancel)
@@ -543,7 +555,7 @@ impl NormalService {
                 b"survives".as_slice()
             }
         {
-            return Err("downloaded saved file differs".into());
+            return Err(format!("downloaded saved file differs: {diagnostics}").into());
         }
         for artifact in &artifacts {
             let mut bytes = Vec::new();
@@ -841,7 +853,11 @@ fn fresh_second_session(history: &[playtime_protocol::events::EventEnvelope]) ->
     let value = |kind: &str, accept: &dyn Fn(&serde_json::Value) -> bool| {
         history
             .iter()
-            .filter(|e| e.kind == "controller_observation" && e.data["observation_kind"] == kind)
+            .filter(|e| {
+                e.kind == "controller_observation"
+                    && e.data["session_id"] == "s2"
+                    && e.data["observation_kind"] == kind
+            })
             .map(|e| &e.data["data"]["value"])
             .find(|v| accept(v))
             .cloned()
@@ -849,15 +865,9 @@ fn fresh_second_session(history: &[playtime_protocol::events::EventEnvelope]) ->
     };
     let delivered = value("memory_received", &|v| v["ordinal"] == 2)?;
     let memento = delivered["memory"]["content"].as_str().unwrap_or_default();
-    let request = value("model_request", &|v| {
-        v["messages"].as_array().is_some_and(|m| {
-            m.iter().any(|m| {
-                m["content"]
-                    .as_str()
-                    .is_some_and(|text| text.contains("Session 2/2."))
-            })
-        })
-    })?;
+    // Prompt text may describe both sessions. The archive's session identity
+    // selects the first request; later requests must not hide a stale context.
+    let request = value("model_request", &|_| true)?;
     let messages = request["messages"].as_array().ok_or("invalid request")?;
     if memento.is_empty()
         || messages.len() != 2
@@ -976,4 +986,60 @@ fn copy(source: &Path, destination: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_conversation_uses_session_identity_and_checks_its_first_request() {
+        let event = |sequence, session, kind, value| {
+            serde_json::from_value(json!({
+                "schema_version": 1, "run_id": "fresh-session-test", "sequence": sequence,
+                "time": "2026-10-23T00:00:00Z", "kind": "controller_observation",
+                "data": {"session_id": session, "observation_kind": kind,
+                    "data": {"storage": "inline", "value": value}}
+            }))
+            .unwrap()
+        };
+        let mut history = vec![
+            event(
+                1,
+                "s1",
+                "model_request",
+                json!({"messages": [
+                    {"role": "system", "content": "protocol"},
+                    {"role": "user", "content": "Instructions for Session 2/2. also appear here."}
+                ]}),
+            ),
+            event(
+                2,
+                "s2",
+                "memory_received",
+                json!({"ordinal": 2,
+                "memory": {"content": "verify existing files"}}),
+            ),
+            event(
+                3,
+                "s2",
+                "model_request",
+                json!({"messages": [
+                    {"role": "system", "content": "protocol"},
+                    {"role": "user", "content": "Session 2/2.\nverify existing files"}
+                ]}),
+            ),
+        ];
+        fresh_second_session(&history).unwrap();
+        // A later clean-looking request must not hide a stale first conversation.
+        history.push(history[2].clone());
+        history[2].data["data"]["value"]["messages"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"role": "assistant", "content": "old private context"}));
+        assert!(fresh_second_session(&history).is_err());
+        history[2] = history[3].clone();
+        history[2].data["data"]["value"]["messages"][1]["content"] = json!("wrong memento");
+        assert!(fresh_second_session(&history).is_err());
+    }
 }

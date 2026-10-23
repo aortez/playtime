@@ -370,6 +370,14 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
                 limits.json_bytes,
             )
         }
+        ("GET", ["api", "v1", "recipes", id, "model-settings"]) => {
+            no_query(&request)?;
+            json(
+                &app.recipe_model_settings(recipe_id(id)?).await?,
+                200,
+                limits.json_bytes,
+            )
+        }
         ("GET", ["api", "v1", "recipes", id, "definition"]) => {
             no_query(&request)?;
             json(

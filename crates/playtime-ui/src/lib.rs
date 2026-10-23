@@ -7,3 +7,5 @@ pub mod progress;
 mod read_retry;
 pub mod transcript;
 pub mod ui;
+
+mod model_settings;

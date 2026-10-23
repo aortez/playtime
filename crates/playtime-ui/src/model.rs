@@ -631,11 +631,11 @@ impl Model {
                 self.authoring
                     .receipts
                     .retain(|r| r.pending.key != response.key);
-                let select = self
-                    .authoring
-                    .draft
-                    .as_ref()
-                    .is_none_or(|draft| draft.request() == response.request);
+                let select = self.authoring.draft.as_ref().is_none_or(|draft| {
+                    draft
+                        .request()
+                        .is_ok_and(|request| request == response.request)
+                });
                 self.authoring.last_saved = Some(response.definition.execution_recipe_id.clone());
                 if select {
                     self.authoring.draft = None;

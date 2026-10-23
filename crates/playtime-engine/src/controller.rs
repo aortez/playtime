@@ -715,23 +715,13 @@ impl<I: IdSource> Controller<I> {
             json!({"ordinal": self.session, "context": "fresh", "memory": memory,
             "evidence": evidence, "memory_condition": self.config.parameters.memory_condition}),
         );
-        self.messages = vec![
-            message("system", self.config.protocol.clone()),
-            message(
-                "user",
-                format!(
-                    "{}\nSession {}/{}.\nBudget: {}\nMemento limit: {} UTF-8 bytes.\n\n{}\n\nMemento status: {}\n{}",
-                    self.config.prompt,
-                    self.session,
-                    self.config.parameters.limits.sessions,
-                    canonical(&self.budget()),
-                    self.config.parameters.limits.memento_bytes,
-                    self.config.inventory,
-                    memory.status,
-                    memory.content
-                ),
-            ),
-        ];
+        self.messages = crate::context::SessionInput {
+            parameters: &self.config.parameters,
+            protocol: &self.config.protocol,
+            prompt: &self.config.prompt,
+            inventory: &self.config.inventory,
+        }
+        .messages(self.session, self.remaining_tokens(), &memory);
         if let Some(evidence) = evidence {
             self.messages.push(message("user", evidence.content));
         }
@@ -770,18 +760,7 @@ impl<I: IdSource> Controller<I> {
             TOOLS.clone()
         };
         let (context_input, basis) = self.context.estimate(&self.messages, &tools);
-        let context_reserve = if handoff {
-            4096
-        } else {
-            8192_u64
-                .saturating_add(limits.handoff_tokens.get())
-                .saturating_add(
-                    limits
-                        .output_bytes
-                        .get()
-                        .min(limits.context_tokens.get() / 4),
-                )
-        };
+        let context_reserve = crate::context::request_context_reserve(limits, handoff);
         if context_input
             .saturating_add(maximum)
             .saturating_add(context_reserve)

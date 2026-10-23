@@ -474,6 +474,33 @@ Acceptance covers the complete path:
   Native evidence must use the real worker path; fake HTTP fixtures alone do not
   establish that the saved prompt executed.
 
+## Model settings authoring slice
+
+After #119/#113, [#5](https://github.com/aortez/playtime/issues/5) extends the same
+immutable save/preview/launch workflow. It keeps the locked model and existing
+memento harness. Main controls are reasoning (Model default, Low, Medium, High),
+temperature and context capacity. Ordinary-response and memento-handoff caps
+are separate from context and the inherited whole-run generation budget.
+Advanced controls expose top-p, top-k, repeat penalty and the numeric sampling
+seed, distinct from seed files. Existing reviewed bounds remain: top-k 1–1,000,
+repeat penalty >0 and <=2, context <=131,072 and each output cap <=16,384.
+Whole-run budgets, protocol and session counts remain #108 follow-up work.
+
+Resets restore the selected revision's settings at editor entry; differences are
+visible before saving. No field silently adjusts another. Save and preview check
+initial context fit using the controller's prompt construction and reserve
+calculation, without inference. An impossible first work request is refused with
+an explanation. Estimates are conservative, not tokenizer or GPU-fit promises.
+Runtime remaining-budget clamps and per-request context enforcement remain.
+
+Capability resolution is scoped to the complete locked model/backend identity,
+with reviewed reasoning choices and a context ceiling from locked metadata.
+Model default omits the request setting and does not claim a known default level.
+New settings revisions retain capability provenance; #7 generalizes the resolver.
+Settings remain editable offline. Existing saved recipes/receipts remain readable
+through additive fields; this slice needs no database migration or reset and does
+not establish a general development compatibility promise.
+
 ## Validation and completion
 
 Follow [development gates](development.md) for each changed boundary, including

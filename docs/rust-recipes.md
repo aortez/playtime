@@ -36,7 +36,7 @@ A recipe file holds everything the model and the workshop get:
 - `[parameters]` holds the controller's run parameters: `sampling_seed`,
   `memory_condition`, `[parameters.limits]` and `[parameters.workshop]`.
 - `[model]` holds the request settings for the locked `gpt-oss:20b`: `thinking`
-  (`low`, `medium` or `high`), `temperature`, `top_p`, `top_k` and
+  (`default`, `low`, `medium` or `high`), `temperature`, `top_p`, `top_k` and
   `repeat_penalty`.
 
 The context size is `context_tokens`; the keep-alive is fixed at five minutes.
@@ -174,8 +174,9 @@ it after verified worker termination and resource cleanup; see
 
 Services advertise `recipe_authoring_v1`. In the workbench, select a catalog
 recipe, choose **Clone recipe**, edit its name and prompt, and **Save revision**.
-Select **Edit recipe** on a saved recipe to create its next revision. The model,
-harness, budgets, protocol, and seeds remain inherited and read-only. Unsaved
+Select **Edit recipe** on a saved recipe to create its next revision. The model identity, harness, whole-run budgets, protocol, and seeds remain
+inherited and read-only. The model settings editor changes reasoning, sampling,
+context capacity, and ordinary-response/memento-handoff caps. Unsaved
 edits disable launch and prevent changing the selection until explicitly saved
 or discarded. A conflicting edit keeps its text; it can be saved as a new recipe
 or discarded before selecting the current head.
@@ -251,3 +252,99 @@ preview was unavailable. Restoring the socket produced a fresh ready preview
 without restarting; the saved definition and picker listing stayed identical.
 That check is recorded in the same evidence directory as
 `readiness-restoration.json`.
+
+## Model settings editor
+
+`recipe_model_settings_v1` adds **Model settings** to the clone/revision form.
+Reasoning offers Model default, Low, Medium and High for the locked GPT-OSS model.
+Model default omits `think`; its effective default level is not claimed known.
+Temperature accepts 0–2, context up to 131,072 tokens and each response/handoff
+cap up to 16,384. Advanced fields accept top-p >0 and <=1, top-k 1–1,000, repeat
+penalty >0 and <=2, and numeric sampling seed 0–2,147,483,647. These choices do
+not modify whole-run budgets or the checked-in recipe. Reset buttons restore the
+values at editor entry. Changed values remain visible before Save revision.
+
+The service checks structural limits and conservative first-request context fit
+without inference. Prompt construction and reserves are shared with the running
+controller. A context that would immediately hand off is refused with a bounded
+explanation; no field is silently adjusted. Later requests still enforce context
+and remaining generation independently. Context estimates and the locked model's
+reported ceiling do not guarantee GPU memory fit or a number of turns.
+
+`GET /recipes/{recipe_id}/model-settings` returns identity-bound settings and
+capabilities without requiring live Docker/Ollama. Clone/revise requests optionally
+supply a complete `model_settings` object; omission retains the source settings.
+New settings revisions freeze `model_capabilities` and its provenance. The current
+resolver is a reviewed fallback scoped to the complete GPT-OSS lock and Ollama
+0.32.3, with context ceiling from locked `model_info`; it does not infer support
+from names. [Ollama's thinking contract](https://docs.ollama.com/capabilities/thinking)
+distinguishes explicit reasoning choices from omission. Model registration (#7)
+will extend this resolver to other models and advertised metadata.
+
+The fields are additive: existing frozen definitions, keyed request JSON and
+replies remain readable; the service ledger stays at version 6. Rebuild the worker
+bundle because its capability digest now includes settings authoring. This does
+not establish a general migration or data-reset policy.
+
+### Settings validation evidence (2026-10-22)
+
+The native acceptance run `20261023T043804Z-78c826dc` saved settings while Ollama
+was unavailable, reopened without the source catalog, restored readiness, and
+launched reviewed revision A after saving head B. A local forwarding test
+transport retained the actual Ollama request: temperature 0, sampling seed 0,
+context 49,152, ordinary response cap 4,096, top-p 1, top-k 40, repeat penalty 1,
+and omitted `think`. Its archived handoff cap was 2,048. Definition, scenario and
+model settings agreed. It ended `agent_finished`, with complete cleanup, 219
+known generated tokens and confirmed frontier sequence 63. Evidence is retained
+outside Git at `/tmp/playtime-model-settings-native-zj58z8kb/evidence`.
+
+The final-bundle repeat `20261023T044216Z-cee307b9` also passed the same checks;
+evidence is retained at `/tmp/playtime-model-settings-native-nnwwrm1p/evidence`.
+
+The standard live smoke gate did not pass on two retained attempts. Run
+`20261023T043720Z-91131432` ended at the session limit because the model used
+`finish_run=false` in its final handoff. Run `20261023T043844Z-44e9afb2` ended
+`agent_finished`, but a required saved file was absent. Both had complete cleanup
+and known usage. Their roots are `/tmp/pt20-ad6c10701eb2` and
+`/tmp/pt20-a15a56acc70e`. The authored-settings acceptance does not substitute for
+that gate or establish restart/recovery behavior.
+
+### Live smoke failure investigation (2026-10-22)
+
+Inspection of those two archives explains the failures more precisely:
+
+- `20261023T043720Z-91131432`: in session 2 the model repeated both session-1
+  setup commands, then called `end_session` with `finish_run=false`. The
+  controller correctly stopped at its two-session limit. It never received the
+  command to write `result.txt`.
+- `20261023T043844Z-44e9afb2`: the model split the session-2 verification into
+  six calls: read the text, inspect the image, check `/tmp`, read the counter,
+  sleep, and read the counter again. All checks succeeded, including the same
+  counter value (`9`) before and after the wait. Those calls exhausted the six
+  work turns, so the controller offered only `end_session`. The model ended the
+  run and claimed `result.txt exists` in its memento without having written it.
+  The missing file is consistent with the command history and checkpoint index;
+  this is not evidence of an artifact disappearing during capture.
+
+Both archives retain the unchanged baseline smoke scenario and model settings
+(temperature 0.8, low reasoning, context 32,768), without an authored recipe or
+settings override. The session-opening messages match the pre-settings-PR
+construction byte for byte. Replaying the archived model responses and tool
+results through the Rust simulator reproduces all six/ten request context and
+budget decisions and both stop reasons. This replay treats command text as data;
+it neither executes commands nor re-establishes Docker or live-model behavior.
+Local replay inputs/results are under `/tmp/playtime-smoke-investigation`.
+
+The evidence points to model instruction-following and a brittle smoke task,
+not a settings-authoring regression. The prompt includes both sessions' steps
+and says to run each command in its own call, while the second session fits its
+turn budget only if the model groups the verification commands. Follow-up should
+clarify the numbered command blocks and session selection, retain independent
+artifact assertions, and report the actual stop reason and exhausted limit.
+The two failed gates remain failed evidence; no additional live run was made
+during this investigation and no recipe limits were increased.
+
+The subsequent [smoke prompt and gate follow-up](rust-live-model.md#evidence)
+clarified command grouping and corrected the gate's text-based session selector.
+The full live CLI/workbench gate then passed with the original limits and model
+settings; its new evidence is recorded there alongside the retained failures.

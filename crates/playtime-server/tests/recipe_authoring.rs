@@ -20,6 +20,7 @@ fn source_recipe() -> RunRecipe {
 fn clone_request(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Clone {
         request: CloneRecipeRequest {
+            model_settings: None,
             source: RecipeSource {
                 execution_recipe_id: definition.execution_recipe_id.clone(),
                 definition_digest: definition.definition_digest.clone(),
@@ -33,6 +34,7 @@ fn revise(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Revise {
         recipe_id: definition.saved.as_ref().unwrap().recipe_id.clone(),
         request: ReviseRecipeRequest {
+            model_settings: None,
             expected_head: definition.execution_recipe_id.clone(),
             name: name.into(),
             prompt: format!("Prompt for {name}"),
@@ -384,9 +386,18 @@ async fn actual_http_client_and_private_receipts_work_without_execution() {
             .unwrap(),
         source
     );
-    let pending = client
-        .prepare_recipe_save(clone_request(&source, "client clone"))
-        .unwrap();
+    let mut settings = client
+        .recipe_model_settings(&source)
+        .await
+        .unwrap()
+        .settings;
+    settings.temperature = 0.0;
+    settings.reasoning = RecipeReasoning::ModelDefault;
+    let mut request = clone_request(&source, "client clone");
+    if let RecipeMutation::Clone { request } = &mut request {
+        request.model_settings = Some(settings.clone());
+    }
+    let pending = client.prepare_recipe_save(request).unwrap();
     let state = Temp::new();
     let store = RecipeSaveStore::new(&state.0);
     let receipt = store.save(&pending, client.endpoint()).unwrap();
@@ -418,6 +429,18 @@ async fn actual_http_client_and_private_receipts_work_without_execution() {
             .definition,
         saved.definition
     );
+    assert_eq!(
+        client
+            .recipe_model_settings(&recovered.definition)
+            .await
+            .unwrap()
+            .settings,
+        settings
+    );
+    let mut settings_mismatch = recovered.clone();
+    settings_mismatch.definition.inherited["recipe"]["model"]["temperature"] =
+        serde_json::json!(1.0);
+    assert!(store.acknowledge(&restored, &settings_mismatch).is_err());
     let mut mismatched = recovered.clone();
     mismatched.definition.prompt = "Different prompt".into();
     assert!(store.acknowledge(&restored, &mismatched).is_err());
@@ -495,4 +518,182 @@ async fn actual_http_client_and_private_receipts_work_without_execution() {
     assert_eq!(store.list_service(Some(&service)).unwrap(), vec![own]);
     catalog.check().await.unwrap();
     server.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn model_settings_are_atomic_offline_recoverable_and_preserve_old_definitions() {
+    let root = Temp::new();
+    let (ledger, catalog, source) = setup(&root).await;
+    let old = catalog
+        .save(key("old-prompt-only"), clone_request(&source, "old"))
+        .await
+        .unwrap();
+    let view = catalog
+        .model_settings(&source.execution_recipe_id)
+        .await
+        .unwrap();
+    let mut settings = view.settings.clone();
+    settings.temperature = 0.0;
+    settings.sampling_seed = 0;
+    settings.reasoning = RecipeReasoning::ModelDefault;
+    settings.context_tokens = 131072;
+    settings.tokens_per_call = 4096;
+    settings.handoff_tokens = 2048;
+    let with_settings = |value: RecipeModelSettings| {
+        let mut request = clone_request(&source, "settings");
+        if let RecipeMutation::Clone { request } = &mut request {
+            request.model_settings = Some(value);
+        }
+        request
+    };
+    let request = with_settings(settings.clone());
+    let saved = catalog
+        .save(key("settings"), request.clone())
+        .await
+        .unwrap();
+    let id = &saved.definition.execution_recipe_id;
+    assert_eq!(catalog.model_settings(id).await.unwrap().settings, settings);
+    assert!(
+        saved.definition.inherited["model_capabilities"]["provenance"]
+            .as_str()
+            .unwrap()
+            .contains("0.32.3")
+    );
+    assert_eq!(
+        saved.definition.inherited["recipe"]["parameters"]["limits"]["generated_tokens"],
+        source.inherited["recipe"]["parameters"]["limits"]["generated_tokens"]
+    );
+    assert_eq!(saved.definition.seeds, source.seeds);
+    assert_eq!(
+        catalog
+            .definition(&source.execution_recipe_id)
+            .await
+            .unwrap(),
+        source
+    );
+    for invalid in [
+        {
+            let mut s = settings.clone();
+            s.context_tokens = 24576;
+            s.tokens_per_call = 8192;
+            s.handoff_tokens = 8192;
+            s
+        },
+        {
+            let mut s = settings.clone();
+            s.top_k = 0;
+            s
+        },
+        {
+            let mut s = settings.clone();
+            s.repeat_penalty = 2.1;
+            s
+        },
+        {
+            let mut s = settings.clone();
+            s.temperature = -0.1;
+            s
+        },
+    ] {
+        let error = catalog
+            .save(key("refused"), with_settings(invalid))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "invalid_parameters");
+        assert_eq!(
+            catalog.lookup(&key("refused")).await.unwrap_err().code(),
+            "not_found"
+        );
+    }
+    // A long prompt can pass static limits but fail the actual controller guard.
+    let mut too_long = request.clone();
+    if let RecipeMutation::Clone { request } = &mut too_long {
+        request.prompt = "x".repeat(65536);
+        request.model_settings.as_mut().unwrap().context_tokens = 65536;
+    }
+    let error = catalog.save(key("long"), too_long).await.unwrap_err();
+    assert!(error.0.message.contains("too small to begin work"));
+    drop(catalog);
+    drop(ledger);
+    let catalog = Catalog::new(Ledger::open(&root.0).await.unwrap(), vec![]).unwrap();
+    catalog.check().await.unwrap();
+    assert_eq!(
+        catalog
+            .lookup(&key("old-prompt-only"))
+            .await
+            .unwrap()
+            .definition,
+        old.definition
+    );
+    assert_eq!(
+        catalog.lookup(&key("settings")).await.unwrap().definition,
+        saved.definition
+    );
+    let replay = catalog.save(key("settings"), request).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(catalog.model_settings(id).await.unwrap().settings, settings);
+}
+
+#[tokio::test]
+async fn inherited_settings_do_not_bypass_context_validation_on_clone_or_revision() {
+    let root = Temp::new();
+    let (_, catalog, source) = setup(&root).await;
+    let saved = catalog
+        .save(key("original"), clone_request(&source, "original"))
+        .await
+        .unwrap();
+    let family = &saved.definition.saved.as_ref().unwrap().recipe_id;
+    let mut clone = clone_request(&source, "too long");
+    let mut revision = revise(&saved.definition, "too long");
+    for mutation in [&mut clone, &mut revision] {
+        match mutation {
+            RecipeMutation::Clone { request } => {
+                assert!(request.model_settings.is_none());
+                request.prompt = "x".repeat(65536);
+            }
+            RecipeMutation::Revise { request, .. } => {
+                assert!(request.model_settings.is_none());
+                request.prompt = "x".repeat(65536);
+            }
+        }
+    }
+    for (id, mutation) in [("oversized-clone", clone), ("oversized-revision", revision)] {
+        let error = catalog.save(key(id), mutation).await.unwrap_err();
+        assert_eq!(error.code(), "invalid_parameters");
+        assert!(error.0.message.contains("too small to begin work"));
+        assert_eq!(
+            catalog.lookup(&key(id)).await.unwrap_err().code(),
+            "not_found"
+        );
+        assert_eq!(
+            catalog.head(family).await.unwrap(),
+            saved.definition.saved.clone().unwrap()
+        );
+    }
+    assert_eq!(
+        catalog
+            .page(PageQuery::default(), None, None)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    // Rejected operations consumed neither keys nor revisions.
+    let next = catalog
+        .save(
+            key("oversized-revision"),
+            revise(&saved.definition, "valid"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(next.definition.saved.unwrap().revision, 2);
+    catalog
+        .save(
+            key("oversized-clone"),
+            clone_request(&source, "valid clone"),
+        )
+        .await
+        .unwrap();
+    catalog.check().await.unwrap();
 }

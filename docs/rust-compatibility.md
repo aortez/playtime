@@ -233,3 +233,52 @@ executing recipe/scenario. The compiled profile digest now includes this capabil
 requiring a rebuilt worker bundle. Existing profiles omit the new optional field.
 See [saved recipes](rust-recipes.md#saved-recipes-and-prompt-editing) for bounds,
 recovery, and the native acceptance evidence.
+
+## Model settings authoring (#5)
+
+The HTTP schema adds `GET /recipes/{recipe_id}/model-settings`, its typed response,
+and optional complete `model_settings` objects on clone/revise requests. Omitted
+settings serialize exactly as earlier requests, preserving stored idempotency
+keys and receipts. Frozen recipes add optional capability evidence only for new
+settings saves; old definition digests are unchanged. The ledger remains version
+6, without a migration/reset. This is additive compatibility for this slice,
+not a general development retention commitment.
+
+Recipe reasoning additionally supports the explicit `default` choice, projected
+to an omitted Ollama `think` field. Existing explicit levels and unchanged recipes
+retain their wire settings. The worker profile digest includes settings-authoring
+support; rebuild bundles. Save/preview now refuse initial context configurations
+that the controller would immediately hand off. The controller's prompt and
+reserve calculations are shared without changing its behavior or goldens.
+
+Initial context validation also applies to prompt-only saves that inherit model
+settings. Rejected saves publish neither a revision nor an idempotency result;
+existing keyed saves still replay their original response without revalidation.
+Recovering a save preserves a current settings draft with unfinished or invalid
+numeric input instead of attempting an infallible request conversion.
+
+Reviewed OpenAPI changes are the new route/DTOs and the two optional request
+fields. New settings-editor screenshots cover wide/narrow layouts; existing
+prompt-only editor baselines remain as older-service compatibility views.
+
+### Live smoke command grouping
+
+The `live-two-session` smoke prompt now identifies each numbered shell block as
+one `exec` call, distinguishes the current session from the alternative session's
+instructions, and combines session-2 verification and the conditional result-file
+write in one Python block. Assertions must pass before the result is written.
+Limits, sampling settings, controller behavior, and success assertions are
+unchanged. The compiled profile digest changes with the prompt; rebuild the
+worker bundle. Existing run archives retain the earlier prompt as evidence.
+
+Process-gate failures now include the actual outcome, accounting, work-call and
+forced-handoff counts by session, and tool-request sequences mentioning the
+result file. A mention does not prove a successful write; referenced observations
+that were not inspected are counted explicitly. No schema or behavioral goldens
+change.
+
+The gate's fresh-conversation check selects session 2's first model request by
+archived session identity instead of searching prompt text for `Session 2/2.`.
+Prompts may describe both sessions; the first session's text is not evidence of
+which session executed a request. The check still rejects extra conversation
+history and a missing or mismatched delivered memento.

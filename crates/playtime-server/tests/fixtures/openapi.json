@@ -600,6 +600,16 @@
       "CloneRecipeRequest": {
         "additionalProperties": false,
         "properties": {
+          "model_settings": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecipeModelSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -1740,6 +1750,109 @@
         "pattern": "^[A-Za-z0-9_-]+$",
         "type": "string"
       },
+      "RecipeModelCapabilities": {
+        "additionalProperties": false,
+        "description": "Reviewed capabilities for the exact locked model and backend, retained in new definitions.",
+        "properties": {
+          "backend_version": {
+            "type": "string"
+          },
+          "context_ceiling": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "default_reasoning": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecipeReasoning"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model_digest": {
+            "type": "string"
+          },
+          "provenance": {
+            "type": "string"
+          },
+          "reasoning": {
+            "items": {
+              "$ref": "#/components/schemas/RecipeReasoning"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "model_digest",
+          "backend_version",
+          "provenance",
+          "reasoning"
+        ],
+        "type": "object"
+      },
+      "RecipeModelSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "context_tokens": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handoff_tokens": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasoning": {
+            "$ref": "#/components/schemas/RecipeReasoning"
+          },
+          "repeat_penalty": {
+            "format": "double",
+            "type": "number"
+          },
+          "sampling_seed": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "temperature": {
+            "format": "double",
+            "type": "number"
+          },
+          "tokens_per_call": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "top_k": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "top_p": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "reasoning",
+          "temperature",
+          "context_tokens",
+          "tokens_per_call",
+          "handoff_tokens",
+          "top_p",
+          "top_k",
+          "repeat_penalty",
+          "sampling_seed"
+        ],
+        "type": "object"
+      },
       "RecipeMutation": {
         "oneOf": [
           {
@@ -1783,6 +1896,16 @@
             "type": "object"
           }
         ]
+      },
+      "RecipeReasoning": {
+        "description": "An explicit omission is distinct from any particular reasoning level.",
+        "enum": [
+          "model_default",
+          "low",
+          "medium",
+          "high"
+        ],
+        "type": "string"
       },
       "RecipeSaveResponse": {
         "additionalProperties": false,
@@ -1831,6 +1954,36 @@
           "path",
           "size_bytes",
           "sha256"
+        ],
+        "type": "object"
+      },
+      "RecipeSettingsView": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/RecipeModelCapabilities"
+          },
+          "definition_digest": {
+            "type": "string"
+          },
+          "execution_recipe_id": {
+            "$ref": "#/components/schemas/RecipeId"
+          },
+          "generated_tokens": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/RecipeModelSettings"
+          }
+        },
+        "required": [
+          "execution_recipe_id",
+          "definition_digest",
+          "settings",
+          "capabilities",
+          "generated_tokens"
         ],
         "type": "object"
       },
@@ -1973,6 +2126,16 @@
         "properties": {
           "expected_head": {
             "$ref": "#/components/schemas/RecipeId"
+          },
+          "model_settings": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecipeModelSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "type": "string"
@@ -2852,6 +3015,90 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RecipeDefinition"
+                }
+              }
+            },
+            "description": "Successful response",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Playtime-Service-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/api/v1/recipes/{recipe_id}/model-settings": {
+      "get": {
+        "operationId": "recipe_model_settings",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recipe_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeSettingsView"
                 }
               }
             },

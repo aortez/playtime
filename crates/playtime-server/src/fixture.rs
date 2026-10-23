@@ -497,6 +497,7 @@ impl Application for Fixture {
                 Some("events".into()),
                 Some("downloads".into()),
                 self.catalog.as_ref().map(|_| RECIPE_AUTHORING.into()),
+                self.catalog.as_ref().map(|_| MODEL_SETTINGS.into()),
             ]
             .into_iter()
             .flatten()
@@ -509,6 +510,13 @@ impl Application for Fixture {
             ],
             limits: self.limits.clone(),
         }
+    }
+    async fn recipe_model_settings(&self, id: RecipeId) -> Result<RecipeSettingsView> {
+        self.catalog
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .model_settings(&id)
+            .await
     }
     async fn recipe_definition(&self, id: RecipeId) -> Result<RecipeDefinition> {
         self.catalog

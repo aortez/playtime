@@ -412,6 +412,7 @@ impl Application for Daemon {
             .collect(),
             features: vec![
                 RECIPE_AUTHORING.into(),
+                MODEL_SETTINGS.into(),
                 "keyed_launch".into(),
                 "event_stream".into(),
                 "verified_artifacts".into(),
@@ -477,6 +478,9 @@ impl Application for Daemon {
             )
             .await
     }
+    async fn recipe_model_settings(&self, id: RecipeId) -> Result<RecipeSettingsView> {
+        self.inner.catalog.model_settings(&id).await
+    }
     async fn recipe_definition(&self, id: RecipeId) -> Result<RecipeDefinition> {
         self.inner.catalog.definition(&id).await
     }
@@ -510,6 +514,7 @@ impl Application for Daemon {
         }
         if request.mode == RunMode::Experiment {
             self.inner.catalog.definition(&recipe).await?;
+            self.inner.catalog.check_context(&recipe).await?;
         } else if !matches!(
             (recipe.as_str(), request.mode),
             (playtime_runner::docker::RECIPE, RunMode::ScriptedSmoke)

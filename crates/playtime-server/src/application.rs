@@ -127,6 +127,9 @@ pub trait Application: Send + Sync + 'static {
     async fn recipe_definition(&self, _id: RecipeId) -> Result<RecipeDefinition> {
         Err(ApiError::new("unsupported_capability"))
     }
+    async fn recipe_model_settings(&self, _id: RecipeId) -> Result<RecipeSettingsView> {
+        Err(ApiError::new("unsupported_capability"))
+    }
     async fn recipe_save(
         &self,
         _key: IdempotencyKey,

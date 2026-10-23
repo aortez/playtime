@@ -171,7 +171,7 @@ impl Recipe {
             return invalid("the archive can't hold a full workspace for every session");
         }
         let m = &self.model;
-        let sampling = b.thinking.contains(&m.thinking.as_str())
+        let sampling = (m.thinking == "default" || b.thinking.contains(&m.thinking.as_str()))
             && (0.0..=2.0).contains(&m.temperature)
             && m.top_p > 0.0
             && m.top_p <= 1.0
@@ -274,7 +274,7 @@ pub(super) fn settings(context_tokens: u64, sampling: &Sampling) -> serde_json::
         "top_p": sampling.top_p,
         "top_k": sampling.top_k,
         "repeat_penalty": sampling.repeat_penalty,
-        "thinking": sampling.thinking,
+        "thinking": if sampling.thinking == "default" { None } else { Some(&sampling.thinking) },
         "use_mmap": null,
         "keep_alive": "5m",
     })

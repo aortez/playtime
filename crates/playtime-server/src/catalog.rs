@@ -114,6 +114,20 @@ impl Catalog {
         let sources = self.sources.clone();
         self.call(move |db| frozen(db, &sources, &execution)).await
     }
+    pub async fn model_settings(&self, execution: &RecipeId) -> Result<RecipeSettingsView> {
+        self.frozen(execution.as_str())
+            .await?
+            .0
+            .settings_view()
+            .map_err(|_| ApiError::new("unsupported_capability"))
+    }
+    pub async fn check_context(&self, execution: &RecipeId) -> Result<()> {
+        self.frozen(execution.as_str())
+            .await?
+            .0
+            .check_initial_context()
+            .map_err(settings_error)
+    }
     pub async fn definition(&self, execution: &RecipeId) -> Result<RecipeDefinition> {
         let (definition, saved) = self.frozen(execution.as_str()).await?;
         definition
@@ -321,7 +335,17 @@ fn save_recipe(
     definition.recipe.id = execution_id.to_string();
     definition.recipe.name = name.clone();
     definition.recipe.prompt = prompt.clone();
+    let settings = match &request {
+        RecipeMutation::Clone { request } => &request.model_settings,
+        RecipeMutation::Revise { request, .. } => &request.model_settings,
+    };
+    if let Some(settings) = settings {
+        definition
+            .apply_model_settings(settings)
+            .map_err(settings_error)?;
+    }
     definition.validate().map_err(|_| invalid())?;
+    definition.check_initial_context().map_err(settings_error)?;
     let definition_json = encode(&definition)?;
     let saved = SavedRecipe {
         recipe_id: recipe_id.clone(),
@@ -670,6 +694,14 @@ fn integer(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
     })
 }
 
+fn settings_error(error: playtime_runner::Error) -> ApiError {
+    let mut result = ApiError::new("invalid_parameters");
+    if let playtime_runner::Error::Invalid(message) = error {
+        result.0.message = message;
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,6 +724,7 @@ mod tests {
             .unwrap();
         let request = RecipeMutation::Clone {
             request: CloneRecipeRequest {
+                model_settings: None,
                 source: RecipeSource {
                     execution_recipe_id: source.execution_recipe_id,
                     definition_digest: source.definition_digest,
