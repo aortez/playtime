@@ -308,3 +308,38 @@ The standard live smoke gate did not pass on two retained attempts. Run
 and known usage. Their roots are `/tmp/pt20-ad6c10701eb2` and
 `/tmp/pt20-a15a56acc70e`. The authored-settings acceptance does not substitute for
 that gate or establish restart/recovery behavior.
+
+### Live smoke failure investigation (2026-10-22)
+
+Inspection of those two archives explains the failures more precisely:
+
+- `20261023T043720Z-91131432`: in session 2 the model repeated both session-1
+  setup commands, then called `end_session` with `finish_run=false`. The
+  controller correctly stopped at its two-session limit. It never received the
+  command to write `result.txt`.
+- `20261023T043844Z-44e9afb2`: the model split the session-2 verification into
+  six calls: read the text, inspect the image, check `/tmp`, read the counter,
+  sleep, and read the counter again. All checks succeeded, including the same
+  counter value (`9`) before and after the wait. Those calls exhausted the six
+  work turns, so the controller offered only `end_session`. The model ended the
+  run and claimed `result.txt exists` in its memento without having written it.
+  The missing file is consistent with the command history and checkpoint index;
+  this is not evidence of an artifact disappearing during capture.
+
+Both archives retain the unchanged baseline smoke scenario and model settings
+(temperature 0.8, low reasoning, context 32,768), without an authored recipe or
+settings override. The session-opening messages match the pre-settings-PR
+construction byte for byte. Replaying the archived model responses and tool
+results through the Rust simulator reproduces all six/ten request context and
+budget decisions and both stop reasons. This replay treats command text as data;
+it neither executes commands nor re-establishes Docker or live-model behavior.
+Local replay inputs/results are under `/tmp/playtime-smoke-investigation`.
+
+The evidence points to model instruction-following and a brittle smoke task,
+not a settings-authoring regression. The prompt includes both sessions' steps
+and says to run each command in its own call, while the second session fits its
+turn budget only if the model groups the verification commands. Follow-up should
+clarify the numbered command blocks and session selection, retain independent
+artifact assertions, and report the actual stop reason and exhausted limit.
+The two failed gates remain failed evidence; no additional live run was made
+during this investigation and no recipe limits were increased.
