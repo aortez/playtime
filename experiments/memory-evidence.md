@@ -1,5 +1,9 @@
 # Memory evidence pilot (issue #1)
 
+> **Historical Python study.** The Python controller is frozen. This plan and
+> its commands are retained as evidence; do not run or resume Python experiments.
+> See the [Rust operation guide](../docs/rust-mvp.md#run-it) for current execution.
+
 Condition A is `memory_condition = "self"` (the default). Condition B is
 `memory_condition = "self_plus_evidence"`. Both use the unchanged inspiration,
 protocol, tools, workspace, sampling settings and limits in `curiosity.toml`.

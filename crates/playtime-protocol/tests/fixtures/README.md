@@ -20,7 +20,9 @@ real model/workshop locks, or actual worker binaries are included.
   examples for #18/#19, not a general legacy reader or a second controller.
 - `usage-unknown.json` and `error-unsupported-version.json` fix initial read-model
   shapes. `schema.json` fixes OpenAPI envelope, reference, and read-model schemas;
-  the HTTP endpoint collection is intentionally empty until #20.
+  its empty HTTP endpoint collection is preserved as part of the original
+  foundation fixture. The current HTTP v1 schema and transport fixtures live in
+  [playtime-server's fixture directory](../../../playtime-server/tests/fixtures/README.md).
 
 Validate with the normal Rust and Python suites. When deliberately changing a
 contract, review the JSON diff and regenerate the schema with:

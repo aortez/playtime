@@ -1,5 +1,9 @@
 # Memory evidence pilot results · 2026-10-17
 
+> **Historical Python results.** These findings describe the archived Python
+> study. The Python controller is frozen; preserve these records and use the
+> [Rust operation guide](../docs/rust-mvp.md#run-it) for current execution.
+
 The appendix was delivered and archived as designed. B retained more usable
 generators in the 1042 and 3042 pairs, but still carried false or stale claims
 and repeated failures. These observations do not establish that the appendix

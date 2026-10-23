@@ -1,5 +1,10 @@
 # Prompt comparison: first chunk
 
+> **Historical Python results.** The study status and continuation commands below
+> are retained as recorded in October 2026. The Python controller is now frozen;
+> do not run or resume these experiments. See the
+> [Rust operation guide](../docs/rust-mvp.md#run-it) for current execution.
+
 Chunk 1 completed on 2026-10-18 UTC, using sampling seed 1042 in the frozen order
 Current, Minimal, Persona. The study is paused. All six runs in chunks 2 and 3
 remain frozen and unstarted.
