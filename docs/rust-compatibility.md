@@ -260,3 +260,25 @@ numeric input instead of attempting an infallible request conversion.
 Reviewed OpenAPI changes are the new route/DTOs and the two optional request
 fields. New settings-editor screenshots cover wide/narrow layouts; existing
 prompt-only editor baselines remain as older-service compatibility views.
+
+### Live smoke command grouping
+
+The `live-two-session` smoke prompt now identifies each numbered shell block as
+one `exec` call, distinguishes the current session from the alternative session's
+instructions, and combines session-2 verification and the conditional result-file
+write in one Python block. Assertions must pass before the result is written.
+Limits, sampling settings, controller behavior, and success assertions are
+unchanged. The compiled profile digest changes with the prompt; rebuild the
+worker bundle. Existing run archives retain the earlier prompt as evidence.
+
+Process-gate failures now include the actual outcome, accounting, work-call and
+forced-handoff counts by session, and tool-request sequences mentioning the
+result file. A mention does not prove a successful write; referenced observations
+that were not inspected are counted explicitly. No schema or behavioral goldens
+change.
+
+The gate's fresh-conversation check selects session 2's first model request by
+archived session identity instead of searching prompt text for `Session 2/2.`.
+Prompts may describe both sessions; the first session's text is not evidence of
+which session executed a request. The check still rejects extra conversation
+history and a missing or mismatched delivered memento.

@@ -137,13 +137,40 @@ session 1's steps in session 2, so the run ended at the session limit without
 after coalescing) the stream and every infrastructure check passed. The model
 retried a broken `bash -c` heredoc five times in session 1, then reported success
 in session 2 without writing `result.txt`. This smoke tests the live path, not
-the model's shell skills, so the prompt now gives each session two short commands
-and their expected output. The third attempt (run `20261018T221517Z-679794a1`)
+the model's shell skills, so the prompt was then changed to give each session
+two short commands and their expected output. The third attempt (run `20261018T221517Z-679794a1`)
 completed the task in 8.4 work seconds and passed every check except an earlier
 version of the streaming check. That version timed records at the client, which
 began following only after the busy probe, and each response had generated in
 under half a second, so there was no partial output to show. The gate now uses
 the archive timing above, and a CPU test checks commits directly.
+
+The October 22 follow-up makes command grouping explicit: each fenced block is
+one `exec` call, and session 2 verifies persistence and writes its result in one
+block. Python assertions prevent writing a success result after a failed check.
+Limits and model settings remain unchanged. Failure diagnostics report the actual
+outcome and per-session work/handoff calls, and the fresh-conversation assertion
+uses archived session identity rather than a phrase that can appear anywhere in
+the prompt. See the [settings smoke investigation](rust-recipes.md#live-smoke-failure-investigation-2026-10-22)
+for the retained failures that motivated this change.
+
+The first run with that prompt (`20261023T054529Z-d69bd9a3`) finished with
+complete cleanup and the required result file, but exposed the gate's old
+prompt-text session selector. It selected session 1 because the new instructions
+mention both session markers. Evidence remains at `/tmp/pt20-890c4c7d6338`; the
+corrected identity-based check passes on its recorded first session-2 request.
+A regression test also rejects stale history and a mismatched memento.
+
+After correcting the gate, the full live wrapper passed: CLI run
+`20261023T054921Z-728c128b` used 476 known tokens, and workbench launch
+`20261023T054935Z-53717c70` used 446. Both ended `agent_finished`, with complete
+cleanup, three ordinary model calls in session 1 and two in session 2, no forced
+handoff, and `result.txt` containing exactly `persistence-ok`. Evidence, copied
+archives and the workbench image are retained under
+`/tmp/playtime-service.zusQZlzH`. The scripted Docker wrapper passed separately
+under `/tmp/playtime-service.gjINa45h`. These runs validate the revised smoke
+task; they do not erase the earlier failures or establish general model
+reliability or the deferred restart/recovery path.
 
 CPU tests drive the live port through a fake transport and the real controller
 and writer. They cover identity checks before each session, archived chunks, an

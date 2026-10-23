@@ -343,3 +343,8 @@ clarify the numbered command blocks and session selection, retain independent
 artifact assertions, and report the actual stop reason and exhausted limit.
 The two failed gates remain failed evidence; no additional live run was made
 during this investigation and no recipe limits were increased.
+
+The subsequent [smoke prompt and gate follow-up](rust-live-model.md#evidence)
+clarified command grouping and corrected the gate's text-based session selector.
+The full live CLI/workbench gate then passed with the original limits and model
+settings; its new evidence is recorded there alongside the retained failures.
