@@ -28,7 +28,8 @@ pub struct Workbench {
     pub options: Options,
     previous_narrow: Option<bool>,
     timeline: Option<TimelineView>,
-    timeline_anchor: Option<usize>,
+    timeline_anchor: Option<(usize, f32)>,
+    heights: crate::timeline_layout::Heights,
     /// The row a view change was made around, until the backend locates it.
     view_anchor: Option<usize>,
 }
@@ -37,8 +38,10 @@ pub struct Workbench {
 struct TimelineView {
     run: Option<RunId>,
     view: View,
-    row_height: f32,
-    offset: f32,
+    width: f32,
+    disclosure: Disclosure,
+    total: usize,
+    top: Option<(usize, usize, f32)>,
 }
 
 impl Workbench {
@@ -589,93 +592,168 @@ impl Workbench {
                 .show(ui, |ui| self.image(ui, false));
         }
         ui.separator();
-        let row_height = if !self.model.expanded.is_empty() {
-            360.0
-        } else {
-            match self.model.preferences.disclosure {
-                Disclosure::Compact => 120.0,
-                Disclosure::Readable => 210.0,
-                Disclosure::Full => 360.0,
-            }
-        };
         let view = if self.model.preferences.disclosure == Disclosure::Full {
             View::Full
         } else {
             View::Readable
         };
         let total = self.model.window.total;
+        let width = ui.available_width();
         let mut range = (0, 32);
         let mut selection = None;
         let mut expansion = None;
         let mut area = egui::ScrollArea::vertical()
             .id_salt(("timeline", self.model.selected.clone()))
             .stick_to_bottom(self.model.following);
-        // Every row shares one height, so changing it moves every row below the
-        // top of the list. Keep the toggled row, or else the top row, in place.
-        let anchor = self.timeline_anchor.take();
-        let spacing = ui.spacing().item_spacing.y;
         let mut view_anchor = None;
-        if let Some(last) = &self.timeline
-            && !self.model.following
-            && last.run == self.model.selected
-        {
-            let old = last.row_height + spacing;
-            if last.view != view {
-                // The views list different rows, so the backend locates the top row
-                // in the new one.
-                let top = (last.offset / old) as usize;
-                view_anchor = top
-                    .checked_sub(self.model.window.start)
-                    .and_then(|i| self.model.window.rows.get(i))
-                    .map(|row| row.id);
-                self.view_anchor = view_anchor;
-            } else if last.row_height != row_height {
-                let new = row_height + spacing;
-                let row = anchor.unwrap_or((last.offset / old) as usize);
-                area =
-                    area.vertical_scroll_offset((last.offset + row as f32 * (new - old)).max(0.0));
+        let mut anchor = None;
+        if let Some(last) = &self.timeline {
+            if last.run != self.model.selected {
+                self.heights.clear();
+                self.view_anchor = None;
+                self.requested_range = None;
+            } else {
+                let order_changed =
+                    last.total != total
+                        || self.model.window.rows.iter().enumerate().any(|(i, row)| {
+                            !self.heights.matches(self.model.window.start + i, row.id)
+                        });
+                if !self.model.following
+                    && let Some((id, index, within)) = last.top
+                {
+                    let located = self
+                        .model
+                        .window
+                        .rows
+                        .iter()
+                        .position(|row| row.id == id)
+                        .map(|i| self.model.window.start + i);
+                    if (last.view != view || (order_changed && located.is_none()))
+                        && self.view_anchor.is_none()
+                    {
+                        view_anchor = Some(id);
+                        self.view_anchor = Some(id);
+                    } else {
+                        anchor = Some((located.unwrap_or(index), within));
+                    }
+                }
+                if last.width != width
+                    || last.disclosure != self.model.preferences.disclosure
+                    || order_changed
+                {
+                    self.heights.clear();
+                }
             }
         }
         if let Some((id, at)) = self.model.window.anchor
             && self.view_anchor == Some(id)
         {
             self.view_anchor = None;
-            area = area.vertical_scroll_offset(at as f32 * (row_height + spacing));
+            anchor = Some((at, 0.0));
         }
-        let response = area.show_rows(ui, row_height, total, |ui, visible| {
-            let start = visible.start.saturating_sub(2); range = (start, (visible.end - start + 2).min(WINDOW_ROWS));
-            for i in visible {
+        if let Some((id, within)) = self.timeline_anchor.take()
+            && let Some(index) = self.model.window.rows.iter().position(|row| row.id == id)
+        {
+            anchor = Some((self.model.window.start + index, within));
+        }
+        if let Some((index, within)) = anchor {
+            area = area.vertical_scroll_offset((self.heights.top(index) + within).max(0.0));
+        }
+        let mut top = None;
+        let response = area.show_viewport(ui, |ui, viewport| {
+            // Establish the whole content rectangle before placing a cold
+            // viewport in its middle; otherwise egui treats that first child
+            // as the beginning and counts the skipped prefix twice.
+            ui.set_height(self.heights.top(total));
+            let origin = ui.max_rect().min;
+            let start = self.heights.at(viewport.min.y, total);
+            let mut y = self.heights.top(start);
+            let mut end = start;
+            for i in start..total.min(start + WINDOW_ROWS) {
+                if y > viewport.max.y { break; }
                 self.metrics.laid_out_rows += 1;
-                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), row_height), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.set_min_height(row_height);
-                    if let Some(row) = self.model.window.rows.get(i.saturating_sub(self.model.window.start)).filter(|_| i >= self.model.window.start) {
-                        egui::Frame::new().inner_margin(10).corner_radius(5).fill(if self.model.selected_row == Some(row.id) { Color32::from_rgb(31, 57, 57) } else { Color32::from_rgb(29, 34, 42) }).show(ui, |ui| {
-                            ui.set_min_width(ui.available_width());
-                            ui.set_min_height(row_height - 28.0);
-                            ui.horizontal_wrapped(|ui| { ui.label(RichText::new(&row.title).color(ACCENT));
-                            // A checkpoint marker adds what that checkpoint saved.
-                            if let Some(files) = row.checkpoint.as_ref().and_then(|session| self.model.checkpoint_files.get(session)) { ui.label(files); }
-                            if ui.button(format!("{} activity {}", if self.model.expanded.contains(&row.id) { "Collapse" } else { "Expand" }, row.first_sequence)).clicked() { expansion = Some((row.id, i)); }
-                            if ui.button(format!("Inspect source {}", row.first_sequence)).clicked() { selection = Some((row.id, row.first_sequence)); } });
-                            if !row.marker { ui.small(&row.status); }
-                            if !row.marker && self.model.preferences.disclosure != Disclosure::Compact { text(ui, &row.excerpt, &mut self.metrics); }
-                            if self.model.preferences.disclosure == Disclosure::Full || self.model.expanded.contains(&row.id) {
-                                egui::ScrollArea::vertical().id_salt(("row-body", row.id)).max_height(175.0).show(ui, |ui| {
-                                    for section in &row.sections { ui.strong(brief(&section.label, 120)); text(ui, &section.text, &mut self.metrics); }
-                                    if row.needs_loading { ui.label("Earlier source is outside the payload cache; inspect to reload it."); }
+                let row = self.model.window.rows.get(i.saturating_sub(self.model.window.start))
+                    .filter(|_| i >= self.model.window.start);
+                if top.is_none() && let Some(row) = row { top = Some((row.id, i, viewport.min.y - y)); }
+                let rect = egui::Rect::from_min_size(origin + egui::vec2(0.0, y), egui::vec2(ui.available_width(), 0.0));
+                let response = ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    if let Some(row) = row {
+                        ui.push_id(row.id, |ui| {
+                            let expanded = self.model.expanded.contains(&row.id);
+                            let nested = row.nested;
+                            egui::Frame::new().inner_margin(10).corner_radius(5)
+                                .outer_margin(egui::Margin { left: if nested { 22 } else { 0 }, ..Default::default() })
+                                .fill(if self.model.selected_row == Some(row.id) { Color32::from_rgb(31, 57, 57) } else { Color32::from_rgb(29, 34, 42) })
+                                .show(ui, |ui| {
+                                ui.set_min_width(ui.available_width());
+                                if let Some(parent) = &row.parent { ui.small(parent); }
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(RichText::new(&row.title).color(ACCENT).strong());
+                                    if let Some(files) = row.checkpoint.as_ref().and_then(|session| self.model.checkpoint_files.get(session)) { ui.label(files); }
+                                    let more = row.sections.len() > 6 || row.sections.iter().any(|s| s.text.len() > 512)
+                                        || self.model.preferences.disclosure == Disclosure::Compact;
+                                    if !row.marker && (more || expanded) {
+                                    let button = ui.small_button(if expanded { "Show less" } else { "Show more" });
+                                    button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{} activity {}", if expanded { "Collapse" } else { "Expand" }, row.first_sequence)));
+                                    if button.clicked() { expansion = Some((row.id, viewport.min.y - y)); }
+                                    }
+                                    let button = ui.small_button("Inspect source");
+                                    button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Inspect source {}", row.first_sequence)));
+                                    if button.clicked() { selection = Some((row.id, row.first_sequence)); }
                                 });
-                            }
-                            if !row.marker { ui.small(&row.sources); }
+                                if !row.marker && !row.status.is_empty() {
+                                    if row.status.starts_with("Failed") || row.status.starts_with("Timed out") {
+                                        ui.label(RichText::new(&row.status).small().color(Color32::LIGHT_RED));
+                                    } else { ui.small(&row.status); }
+                                }
+                                let show = self.model.preferences.disclosure != Disclosure::Compact || expanded;
+                                if show && !row.marker {
+                                    if row.sections.is_empty() && !row.nested && !row.excerpt.is_empty() { text(ui, &row.excerpt, &mut self.metrics); }
+                                    let limit = if expanded || view == View::Full { 4096 } else { 512 };
+                                    // The backend prepares a bounded window. A single block
+                                    // also caps its displayed sections; exact continuation
+                                    // remains available through the paged source inspector.
+                                    let count = if expanded { 16 } else { 6 };
+                                    for section in row.sections.iter().take(count) {
+                                        ui.strong(brief(&section.label, 120));
+                                        let value = crate::transcript::excerpt(&section.text, limit);
+                                        trace_text(ui, &section.label, &value, &mut self.metrics);
+                                        if value.len() < section.text.len() { ui.small("Excerpt · Show more or inspect source for continuation"); }
+                                    }
+                                    if row.sections.len() > count { ui.small("More recorded sections · Show more or inspect source"); }
+                                }
+                                if row.needs_loading { ui.small("Earlier content is loading or unavailable · inspect source"); }
+                                if view == View::Full { ui.small(&row.sources); }
+                            });
                         });
-                    } else { ui.label("Loading activity page…"); }
+                    } else { ui.set_min_height(112.0); ui.label("Loading activity page…"); }
                 });
+                let height = response.response.rect.height().max(24.0) + 8.0;
+                if let Some(row) = row && self.heights.set(i, row.id, height) { ui.ctx().request_repaint(); }
+                y += height; end = i + 1;
             }
+            range = (start.saturating_sub(2), (end - start + 4).min(WINDOW_ROWS));
         });
+        // egui applies wheel/scrollbar movement after the viewport callback.
+        // Anchor the resulting offset, not the pre-input viewport, or the next
+        // frame would undo scrolling.
+        let at = self.heights.at(response.state.offset.y, total);
+        if let Some(row) = self
+            .model
+            .window
+            .rows
+            .get(at.saturating_sub(self.model.window.start))
+            .filter(|_| at >= self.model.window.start)
+        {
+            top = Some((row.id, at, response.state.offset.y - self.heights.top(at)));
+        }
         self.timeline = Some(TimelineView {
             run: self.model.selected.clone(),
             view,
-            row_height,
-            offset: response.state.offset.y,
+            width,
+            disclosure: self.model.preferences.disclosure,
+            total,
+            top,
         });
         if ui.rect_contains_pointer(response.inner_rect)
             && ui.input(|i| i.smooth_scroll_delta.y != 0.0 || i.pointer.any_pressed())
@@ -691,8 +769,8 @@ impl Workbench {
                 anchor: view_anchor,
             }));
         }
-        if let Some((id, index)) = expansion {
-            self.timeline_anchor = Some(index);
+        if let Some((id, within)) = expansion {
+            self.timeline_anchor = Some((id, within));
             self.model.following = false;
             if !self.model.expanded.remove(&id) {
                 if self.model.expanded.len() < 64 {
@@ -912,6 +990,22 @@ fn brief(text: &str, max: usize) -> &str {
         end -= 1;
     }
     &text[..end]
+}
+fn trace_text(ui: &mut egui::Ui, label: &str, value: &str, metrics: &mut FrameMetrics) {
+    let remaining = TEXT_BYTES.saturating_sub(metrics.text_bytes);
+    let visible = brief(value, remaining);
+    metrics.text_bytes += visible.len();
+    let mut rich = RichText::new(visible).color(Color32::from_gray(220));
+    if !matches!(
+        label,
+        "Recorded thinking" | "Model response" | "Submitted memento"
+    ) {
+        rich = rich.monospace();
+    }
+    ui.add(egui::Label::new(rich).wrap());
+    if visible.len() < value.len() {
+        ui.small("Text viewport limit · inspect source for continuation");
+    }
 }
 fn text(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
     let remaining = TEXT_BYTES.saturating_sub(metrics.text_bytes);

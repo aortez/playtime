@@ -282,3 +282,15 @@ archived session identity instead of searching prompt text for `Session 2/2.`.
 Prompts may describe both sessions; the first session's text is not evidence of
 which session executed a request. The check still rejects extra conversation
 history and a missing or mismatched delivered memento.
+
+
+## Readable call traces (#124)
+
+The Rust workbench now groups calls and their tools using recorded request/session
+identities, with typed tool summaries and content-sized virtualized blocks. Long
+text uses explicit excerpts; missing results and partial inference remain visible.
+Raw records and retained content remain available through source inspection; Full
+keeps its source-oriented presentation. No protocol, archive, controller or service
+ledger version changes. Existing rendering baselines change deliberately for the
+trace layout, with new wide/narrow failure-handoff, streaming and long-text
+fixtures. Session navigation and contextual published-memory summaries remain #125.

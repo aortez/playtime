@@ -376,3 +376,86 @@ fn switching_to_full_keeps_the_top_row_in_place() {
         "row {anchor} is not the top row after switching views"
     );
 }
+
+#[test]
+fn late_history_and_resize_keep_a_paused_reader_on_the_same_activity() {
+    let mut app = Workbench::default();
+    app.model.launcher = false;
+    app.model.following = false;
+    app.model.window = Window {
+        total: 40,
+        rows: rows(0..40, false),
+        ..Default::default()
+    };
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    h.hover_at(egui::pos2(670.0, 600.0));
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -1600.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run_steps(30);
+    let (id, before) = (1..40)
+        .filter_map(|n| {
+            h.query_by_label(&format!("Inspect source {n}"))
+                .map(|node| (n, node.rect().top()))
+        })
+        .find(|(_, top)| *top > 180.0)
+        .unwrap();
+    assert!(id > 5);
+    let mut older = rows(1000..1010, false);
+    older.extend(rows(0..40, false));
+    h.state_mut().model.window = Window {
+        total: 50,
+        rows: older,
+        ..Default::default()
+    };
+    h.run();
+    let after = h.get_by_label(&format!("Inspect source {id}")).rect().top();
+    assert!(
+        (after - before).abs() < 2.0,
+        "history moved the reader: {before} -> {after}"
+    );
+    h.set_size(egui::vec2(900.0, 900.0));
+    h.run();
+    assert!(h.query_by_label(&format!("Inspect source {id}")).is_some());
+    assert!(!h.state().model.following);
+}
+
+#[test]
+fn following_reaches_new_blocks_and_pausing_keeps_earlier_content() {
+    let mut app = Workbench::default();
+    app.model.launcher = false;
+    app.model.following = true;
+    app.model.window = Window {
+        total: 20,
+        rows: rows(0..20, false),
+        ..Default::default()
+    };
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run_steps(30);
+    h.get_by_label("Inspect source 20");
+    h.state_mut().model.window = Window {
+        total: 30,
+        rows: rows(0..30, false),
+        ..Default::default()
+    };
+    h.run_steps(30);
+    h.get_by_label("Inspect source 30");
+    h.get_by_label("Pause following").click();
+    h.run();
+    h.state_mut().model.window = Window {
+        total: 40,
+        rows: rows(0..40, false),
+        ..Default::default()
+    };
+    h.run_steps(30);
+    h.get_by_label("Inspect source 30");
+    assert!(h.query_by_label("Inspect source 40").is_none());
+}
