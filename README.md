@@ -77,6 +77,7 @@ instructions for running the Rust controller.
 
 - [Architecture, operation, and document map](docs/rust-mvp.md)
 - [Development setup and test gates](docs/development.md)
+- [Experiment studio design and next phase plan](docs/experiment-studio.md) (draft)
 - [Repository working rules](AGENTS.md)
 - [CLI commands and connection settings](docs/rust-cli.md)
 - [Workbench behavior and screenshots](docs/rust-ui.md)
