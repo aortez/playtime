@@ -1,18 +1,16 @@
-# Native Docker sandbox (D1, #53)
+# Native Docker sandbox
 
-The Docker/scripted-model production composition is now available through
-[#66 run-and-view](rust-docker-run-and-view.md). The scope below describes its
-underlying slice; live inference and automatic recovery remain separate work.
-
-`playtime-docker` owns native subprocess transport and the lifetime of an owned
-workshop. It does not dispatch the controller, publish checkpoints, grant recovery
-permission or enable a production worker capability. #54 supplies [stopped-workspace capture](rust-workspace-capture.md). #24 D3 composes Docker with the runner, committed-intent barriers, daemon,
-and run-and-view gates. Python remains operational; this slice closes none of
-#24, #20, #21 or #22.
+`playtime-docker` owns bounded native subprocess transport and the lifetime of an
+owned workshop. [Stopped-workspace capture](rust-workspace-capture.md) produces
+snapshot candidates; the runner publishes checkpoints. The
+[packaged worker](rust-docker-run-and-view.md) composes those pieces with committed
+intent barriers and the daemon. [Live-model execution](rust-live-model.md) uses
+the same sandbox with Ollama. This guide owns sandbox contracts, not admission
+or archive recovery authority.
 
 ## Supported selection and readiness
 
-The first profile supports a local rootful Linux amd64 Docker Engine, API 1.41+
+The supported profile requires a local rootful Linux amd64 Docker Engine, API 1.41+
 and cgroup v2. CPU quota, memory, swap and PID enforcement, seccomp and the local
 volume driver must be available. Rootless engines, user-namespace remapping,
 remote/context-selected engines, Docker Desktop and other platforms fail closed.
@@ -36,8 +34,8 @@ volumes/build hooks. The immutable image ID binds the reviewed interpreter/bridg
 profile. After the owned holder starts, before tools, a fixed isolated probe also
 checks the actual interpreter path, bridge SHA-256 and uid/gid. Preview never
 creates a container, runs a probe, pulls/builds/loads an image or refreshes a lock.
-Unlike Python's fallback restoration, a missing image is a distinct failure;
-explicit archive restoration remains later #24 work and a #28 parity difference.
+A missing image is a distinct failure. Rust does not automatically restore image
+archives; explicit image restoration is not implemented in the Rust client.
 
 ## Ownership and lifecycle
 
@@ -46,8 +44,9 @@ the discovered daemon. These are trusted caller inputs, never model arguments.
 A descriptor is not lifecycle authorization. Before every resource create,
 `OwnershipJournal::commit` must durably publish the exact `Proposal`, including
 derived name, labels, image, limits and original absolute timer deadline. The
-production owner will supply its journal; the D1 gates use explicitly synthetic
-descriptors and journals. No production authorization is fabricated here.
+worker supplies a durable private journal; the sandbox gates use explicitly
+synthetic descriptors and journals. The adapter itself grants no admission
+authority.
 
 The bounded name hashes the full owner. Labels use `io.playtime.*`, include role
 and session ordinal, and bind the exact proposal. A preexisting proposed name is
@@ -93,7 +92,7 @@ previous-agent quiescence. `quiesce` force-removes only the exact owned agent,
 checks absence on the original daemon, validates the running holder/volume and
 requires its holder to be the sole remaining volume mount. It returns a
 non-serializable `Quiescent<'_>` exclusive borrow. A new session and holder cleanup
-are impossible while that borrow is held. D2 keeps it throughout capture,
+are impossible while that borrow is held. Capture keeps it throughout export,
 including exporter failure fencing; it is not a snapshot or writer receipt.
 
 ## Transport, tools and uncertainty
@@ -130,7 +129,7 @@ Transport timeout/disconnect/cancellation or malformed output fences the agent.
 The caller must invoke `quiesce` or final `cleanup`; another tool, new session or
 snapshot cannot proceed on that uncertain agent. Quiescence must be proven even
 if a local child exited successfully. Do not map this error to a successful tool
-timeout, user cancellation or non-dispatch proof when integrating the runner.
+timeout, user cancellation or non-dispatch proof in the runner.
 
 Start/initialize use at most twenty seconds within the frozen work deadline.
 Quiescence uses at most twenty seconds of the caller's total stop/capture bound
@@ -148,7 +147,6 @@ cleanup is an explicit operation after the checkpoint borrow ends.
 ```sh
 cargo test --locked -p playtime-docker
 ./scripts/test-rust-docker-e2e.sh --case sandbox
-PLAYTIME_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 ```
 
 The real wrapper uses only the already-present `environments/general.lock.json`
@@ -167,8 +165,10 @@ output/workspace/inode/tmp/PID limits, poisoned imports, binary/image-file reads
 valid command timeout, persistence, fresh `/tmp`, old background-writer cessation,
 cancellation during a running command, independent lifetime expiry, retained
 holder and exact absence after cleanup. It does not capture/publish a checkpoint,
-inspect a daemon run in the UI or claim the #24 production gate. The D2 checkpoint gate and D3 production integration add those separate pieces. No workshop sources, image/model locks or saved archives
-are modified by this implementation.
+inspect a daemon run in the UI, or establish production run-and-view. The
+checkpoint and service run-and-view gates test those separate pieces; see
+[development](development.md). Gates preserve workshop sources, identity locks,
+and existing run archives.
 
 The container inspection fixture is a normalized capture from this gate's own
 synthetic Docker Engine 28.4.0 holder, with host/run identifiers and nonessential

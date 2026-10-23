@@ -1,25 +1,12 @@
 # Controller/archive transcript contract
 
-Tracking: [#42](https://github.com/aortez/playtime/issues/42), under
-[#19](https://github.com/aortez/playtime/issues/19). This implements
-protocol decoding, executable mapping fixtures, lossless controller facts, late
+This contract defines protocol decoding, lossless controller facts, late
 checkpoint acknowledgments, and verified storage traversal. The
-[incremental durable driver](rust-archive-driver.md) connects these contracts to
-real archive publication. Recovery and Python readers remain separate tickets.
+[incremental durable driver](rust-archive-driver.md) connects it to real archive
+publication. [Storage](rust-storage.md) owns confirmed frontiers and file policy;
+[worker lifecycle](rust-worker-lifecycle.md) owns admission and control.
 
-## Pinned inputs
-
-- Controller: `0d781da14e49bc51aa4fd22e4bd0718c003c23ef`, merged in #41. Its tree
-  matches reviewed branch head `1a31bc09d25046491f29b17ed8924cbd63c55431`;
-  controller source originated in `7b2fce1c55a59b5ed87de09d1cbf3d1ae21b2af1`.
-- Storage: `6584db01831878bd5e764b4b48a3b3f6753589b3`, merged in #38 and included
-  in the controller merge. Layout, confirmed frontiers, and error semantics are
-  defined in [rust-storage.md](rust-storage.md).
-- Worker ownership/recovery: #34's admission, Begin, and cancellation contract,
-  inspected October 17, 2026. Its implementation is not a dependency of this
-  mapping fixture; production reconciliation requires its reviewed adapter.
-
-## Observation contract implemented here
+## Observation contract
 
 The version-1 event envelope gains kind `controller_observation`. Its data is:
 
@@ -62,7 +49,7 @@ can be partial, complete, or truncated only from observed completion/limit
 evidence. Tool results preserve delivered output, an optional unabridged result,
 and original truncation/error flags. No formatter infers missing content.
 
-`tool_dispatch` and `memento_write` are **intent** names in the pinned engine.
+`tool_dispatch` and `memento_write` are **intent** names in the engine.
 Typed decoding calls them `ToolIntent` and `MementoWriteIntent` to preserve that
 distinction. `tool_not_dispatched` cancels the intent; no command completion is
 invented. `request_not_dispatched` releases an unstarted reservation. A durable
@@ -107,8 +94,8 @@ must name exact preceding committed observations, including their LF bytes.
 
 ## Durable driver mapping
 
-Canonical facts come from the lossless typed control-update drain required by
-#42, never by scraping the byte-limited raw outbox. The raw copies remain
+Canonical facts come from the lossless typed control-update drain, never by
+scraping the byte-limited raw outbox. The raw copies remain
 inspectable but may be explicitly omitted when their allowance is exhausted.
 The implemented typed drain supplies admission/settlement/non-dispatch, session boundaries,
 checkpoint receipts, the first stop decision, and the final result even when
@@ -135,22 +122,22 @@ Actual serialized envelopes and mapping metadata count against the frozen log
 allocation, including the 65,536-byte finalization reserve. Prewrite capacity refusal feeds `ExternalLogBudgetExhausted`; uncertain I/O
 failure feeds `PersistenceFailed` and retires the writer. Neither permits new
 experimental effects. The integration driver services timers while a
-serialized writer thread owns pending I/O; #20 owns worker termination.
+serialized writer thread owns pending I/O; the service owns worker termination.
 
 The checkpoint content manifest must expose immutable file-version references,
 session/checkpoint provenance, original metadata, and explicit unavailable
 content. Individual retained images must be downloadable without extracting a
-workspace archive. #35 maps verified references to opaque artifact IDs; source
+workspace archive. The daemon maps verified references to opaque artifact IDs; source
 paths and unpublished workspace contents are not remote API capabilities.
 
 ## Large observation bodies
 
-The pinned engine permits model responses up to 4 MiB and chunks up to 512 KiB
+The engine permits model responses up to 4 MiB and chunks up to 512 KiB
 under its own encoded-size accounting. Storage defaults to 1 MiB per JSONL
-record, and #35 also specifies 1 MiB per event (with a separate SSE framing
+record, and the HTTP API also specifies 1 MiB per event (with a separate SSE framing
 allowance).
 Adding an inline wrapper can exceed those bounds even when the source response
-is valid. #42 settles the representation at a 256 KiB inline value threshold.
+is valid. The representation uses a 256 KiB inline value threshold.
 
 Larger original data values are immutable JSON artifacts. The same observation
 header retains sequence, elapsed time, kind and identities, with
@@ -169,7 +156,7 @@ starting another session, even after the ordinary publication effect timed out.
 The final archive outcome waits until that publication result is settled. An
 unresolved operation can still commit; a timeout does not establish failure.
 
-## Recovery handoff and subsequent gates
+## Integration and recovery boundary
 
 The [durable driver](rust-archive-driver.md) executes two sessions through the
 production controller with scripted adapters and real storage. Its acceptance
@@ -178,8 +165,8 @@ reads identical observations, accounting, memory, evidence, and individual files
 without a database. Failed or unresolved publication returns incomplete evidence
 and the last actual receipt; it never silently resumes work.
 
-Worker supervision is #34. Exclusive reconciliation belongs to #43 after its
-ownership contract is refined, and Python archive readers belong to sibling #44.
-Those are separate completion gates for parent #19. Neither a discovered marker
-nor a timeout gives a service authority to execute or reconcile a worker. #20
-will connect authorized workers/archives to #35's independently developed API.
+The [daemon](rust-daemon.md) connects authorized workers and archives to the
+public API. The [read-only recovery planner](rust-recovery-contract.md) cannot
+acquire ownership or mutate an archive. Neither a discovered marker nor a timeout
+gives a service authority to execute or reconcile a worker. Automatic archive
+recovery remains unimplemented.

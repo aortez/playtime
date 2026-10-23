@@ -1,11 +1,15 @@
 # Recovery contract and read-only planning
 
-Issue #50 supplies the R1 contract for #43. It can prepare an explicitly
+`playtime-runner::recovery` implements the read-only R1 contract introduced in
+#50 for #43. It can prepare an explicitly
 recoverable simulation and compute a deterministic recovery proposal from
 bounded evidence. It cannot acquire recovery ownership, stop a process, change
 an archive, append events, truncate a tail, adopt a receipt, release admission,
 or abandon a run. Those storage transactions and lifecycle integrations remain
-#43 R2 and subsequent #20 work; this does not complete #21/#22 production gates.
+unimplemented (#43 R2 and daemon integration). The daemon's operator release is
+a separate lifecycle operation: it does not apply a recovery proposal or modify
+archive evidence. See [development](development.md#gates-that-are-not-implemented)
+for the incomplete restart/recovery acceptance gates.
 
 ## Preparation and execution
 

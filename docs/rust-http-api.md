@@ -1,13 +1,12 @@
 # Native HTTP API and shared client
 
-Tracking: [#35](https://github.com/aortez/playtime/issues/35). Base:
-`0d781da14e49bc51aa4fd22e4bd0718c003c23ef`, the merged foundation, controller and
-storage. This slice implements HTTP and client behavior against a **scripted
-application fixture**. It executes no controller, worker, model, Docker command,
-or GPU operation. Production integration remains
-[#20](https://github.com/aortez/playtime/issues/20).
+`playtime-server::http` and `playtime-client` supply the authenticated loopback API
+used by the daemon, CLI, and workbench. The [daemon application](rust-daemon.md)
+connects these handlers to durable admission, packaged workers, and verified
+archives. A separate scripted application fixture exercises transport contracts
+without executing a controller, worker, model, or Docker command.
 
-## Run the examples
+## Run the transport fixtures
 
 In one terminal, choose a new data directory:
 
@@ -29,7 +28,7 @@ history/live anchors, reconnects from its acknowledged position, and downloads
 and verifies a small PNG. Its receipt and downloaded file are written beside the
 connection descriptor. The server exits at the declared lifetime and closes
 observers. Omit `--listen` for `127.0.0.1:8766`; `::1` and port zero are supported.
-Non-loopback listeners are refused. Python continues to use port 8765.
+Non-loopback listeners are refused.
 
 The demo reveals four canned records at 150 ms intervals. `fixture-example`
 includes an unknown event payload, a checkpoint, incoming/outgoing memory,
@@ -38,7 +37,7 @@ inference usage. `fixture-empty` ends with explicitly incomplete, empty evidence
 The unknown observation includes a synthetic retained JSON ContentRef. Its
 opaque artifact appears at the referencing event's frontier and downloads through
 the ordinary content route. Payload strings resembling paths remain inert data;
-this synthetic wrapper is not #42's observation schema.
+this synthetic wrapper is not the controller-observation schema.
 These are transport fixtures, not two-session engine simulations or portable
 archives. Their manifests and publication receipts are labeled synthetic.
 
@@ -46,8 +45,8 @@ The example uses an explicit `fixture-service` identity; `--service-id` selects
 a different test identity. Its application state is in memory, and each example
 invocation starts a fresh script. Do not use it as a persistent service or to
 recover receipts from an earlier invocation. Restart tests keep the same scripted
-backend outside the stopped HTTP server; #34/#20 own persistent admission and
-process restart recovery.
+backend outside the stopped HTTP server. They do not test daemon restart with
+an active packaged worker; automatic reattachment remains unimplemented.
 
 ## Modules and application ownership
 
@@ -57,10 +56,13 @@ process restart recovery.
 | `playtime-local` | Shared descriptor-relative credential/discovery file policy; no network or runtime |
 | `playtime-server::application` | Application interface for catalog, admission, lifecycle and verified evidence |
 | `playtime-server::http` | Axum/Tower authentication boundary, routes, bounds, streaming and schema |
+| `playtime-server::daemon` | Production application over lifecycle coordination and verified archive queries |
 | `playtime-server::fixture` | Canned replies, test call recording and explicit script advancement |
 | `playtime-client` | Service-pinned requests, acknowledged SSE reconnect and verified streaming downloads |
 
-HTTP has no engine/storage/SQLite dependency. The core crate retains its I/O
+The HTTP module delegates execution and evidence to the application interface;
+the server crate's daemon/lifecycle modules own engine/archive/SQLite integration.
+The core crate retains its I/O
 independence; protocol has no runtime dependency. Schema-only mirrors describe
 core enums and `RunParameters` without adding schema dependencies to core.
 The foundation OpenAPI fixture and archive/event schemas are unchanged.
@@ -91,12 +93,13 @@ The application adapter must implement these authority boundaries:
   returning a reader. It never opens a caller-provided path or URL.
 
 `Frontier` and `EventCursor` are serializable read-position metadata. They are
-**not** `playtime_storage::CommittedFrontier` receipts. #20 must bind archive
-reads to the verified original worker/manifest/invocation, or an equally explicit
-owner-validated port. Deserializing a worker message or finding a marker does
-not establish live publication authority. #42 supplies the actual archive/query
-projection and content references; HTTP assigns no experimental meaning to
-unknown event kinds or observation fields.
+**not** `playtime_storage::CommittedFrontier` receipts. The daemon binds archive
+reads to verified original worker/manifest/invocation confirmations; see
+[confirmation authority](rust-daemon.md#confirmation-authority-and-publication).
+Deserializing a worker message or finding a marker does not establish live
+publication authority. The runner supplies archive queries and content references,
+projected by the daemon; HTTP assigns no experimental meaning to unknown event
+kinds or observation fields.
 
 ## Wire contract
 
@@ -185,7 +188,8 @@ Any Origin is rejected. Host must be localhost, 127.0.0.1 or [::1] with a valid
 port, including a different local SSH-forward port. Forwarded headers are ignored.
 No permissive CORS headers or unauthenticated discovery endpoint exist.
 
-To rotate: stop the API, replace its credential securely with a new 64-character
+Rotate credentials only between runs, because automatic daemon reattachment is
+not implemented. Stop the API, replace its credential securely with a new 64-character
 lowercase hex token (32 random bytes) in the same owned 0600 file, and restart.
 Stopping closes streams; old credentials then fail. Worker lifetime belongs to
 the application, not HTTP. Live rotation and remote setup remain #25.
@@ -218,11 +222,11 @@ Valid SSE activity resets that budget; stalled reconnect bodies cannot extend it
 version, corruption and parser failures are surfaced; they do not trigger an
 endless retry. Cancelling observation only detaches and never calls run cancellation.
 
-#21 adds shared connection resolution, private durable launch receipts, cursor
-files, and explicit regular-file replacement for verified downloads. See
+`playtime-client` also owns shared connection resolution, private durable launch
+receipts, cursor files, and explicit regular-file replacement for verified downloads. See
 [the native client guide](rust-cli.md) for those APIs and the CLI fixture gate.
 
-## Validation and integration gate
+## Validation
 
 ```sh
 cargo fmt --all -- --check
@@ -245,9 +249,9 @@ Reviewed goldens live under `crates/playtime-server/tests/fixtures/`; they are
 independent of the foundation goldens. `openapi` and `contract_fixture` examples
 print candidate replacements for deliberate review; tests never regenerate them.
 
-#20 must reuse these handlers and this client with real #34 lifecycle and #42
-archive adapters, and rerun the public conformance/failure cases against those
-adapters. In particular, the fixture's in-memory admission map does not prove
-SQLite durability, and its watch notifications do not prove authenticated worker
-publication. #43 supplies exclusive recovery after verified worker loss. #21/#22
-can build against this fixture, while their real-integration completion gates remain.
+The [normal daemon gate](rust-daemon.md#executable-gate-and-remaining-gates) uses
+these same handlers and client with real lifecycle/archive adapters. Docker and
+live gates add native effects. The transport fixture's in-memory admission map
+does not prove SQLite durability, and its watch notifications do not prove
+authenticated worker publication. Restart and worker-loss recovery remain outside
+these implemented gates; see [development](development.md).

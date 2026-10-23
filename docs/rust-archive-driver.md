@@ -1,11 +1,9 @@
 # Durable controller archive driver
 
-Tracking: [#42](https://github.com/aortez/playtime/issues/42), the execution slice
-of [#19](https://github.com/aortez/playtime/issues/19). The implementation started
-from merged controller/storage main `0d781da14e49bc51aa4fd22e4bd0718c003c23ef`.
 `playtime-runner` integrates engine, protocol, and storage. Engine decisions stay
 free of I/O; storage stays synchronous and independent of controller/runtime or
-service policy. Python remains the operational model/Docker runner.
+service policy. The same driver runs scripted effects for simulation and native
+effects supplied by the [packaged worker](rust-worker-package.md).
 
 ## Execute and inspect
 
@@ -38,21 +36,24 @@ bundle contains the six compiling crates and root Cargo files, including their
 compile-time fixture inputs; it excludes runs, images, and unrelated files.
 The bundle records `demo_cargo_build_script_live_workspace_not_isolated` as its
 capture method; it makes no isolated-build/reproducibility claim. These are not
-the storage fixture's synthetic worker bytes. Production #20 preparation supplies
+the storage fixture's synthetic worker bytes. Production preparation supplies
 a separately validated worker bundle compiled from a source snapshot captured
 before compilation in isolation. An API daemon must not call demo self-capture
 and archive itself as the worker. Rebuild/repeat execution remains #27.
 
-`run_prepared` takes an explicitly authorized prepared identity, verifies inputs
-and the executing binary, then calls `ArchiveWriter::open_prepared`. That method
-holds the writer lock, verifies the exact archive/manifest identity and all
-inputs, requires a zero marker and an empty event file, and confirms durability.
-It rejects tails, existing events, damage, and another writer. It neither grants
-execution authority nor resumes an interrupted run.
+`run_prepared` is the standalone convenience wrapper around
+`PreparedExecution::acquire(...).execute(...)`; its caller supplies execution
+authorization. Acquisition first calls `ArchiveWriter::open_prepared`, which
+holds the writer lock, verifies the archive/manifest identity and frozen inputs,
+requires a zero marker and empty event file, and confirms durability. The driver
+then verifies the executing binary and configuration through that receipt.
+It rejects tails, existing events, damage, and another writer. The packaged
+worker retains the prepared value until Begin consumes its grant; acquisition
+neither grants execution authority nor resumes an interrupted run.
 
 ## Dispatch and persistence
 
-The driver owns one controller, one scripted external effect, and one serialized
+The driver owns one controller, one active external effect, and one serialized
 storage operation. A storage thread owns `ArchiveWriter`; the controller thread
 continues polling cancellation and `next_wakeup_ms` while I/O is pending.
 `DriverClock` supplies monotonic time and UTC. `VirtualClock` advances only at
@@ -77,14 +78,16 @@ stable non-dispatch facts and releases only an unstarted reservation. An intent
 without a committed settlement or non-dispatch proof remains unresolved.
 
 Scripted cancellation synchronously retires its schedule, establishing ownership
-before the next workshop operation. Already applied file mutations remain. A
-real model/workshop adapter will need its own cancellation/join contract; this
-simulation does not claim real process isolation or network preemption.
+before the next workshop operation. Already applied file mutations remain. Native
+adapters have their own cancellation/join contracts; see
+[Docker fencing](rust-docker.md#transport-tools-and-uncertainty) and
+[the live model path](rust-live-model.md). Simulation alone does not establish
+real process isolation or model-host termination.
 
 ## Checkpoints and late receipts
 
 A successful stopped snapshot produces the controller's `PublishCheckpoint`
-effect. Its intent commits first. The driver then publishes exact synthetic
+effect. Its intent commits first. The driver then publishes exact adapter-supplied
 workspace bytes, individual regular-file objects, memory/evidence, a versioned
 checkpoint index and source map, and commits `checkpoint_published`. Only that
 receipt permits `Input::PublicationCommitted` to advance controller state.
@@ -148,7 +151,7 @@ owner and immutable batch. The lock remains held until that thread actually
 settles. An owner can poll its receipt for supervision; dropping the handle does
 not cancel the operation. No terminal event is fabricated. Lost receipts likewise
 remain incomplete from the driver's confirmed frontier even if offline inspection
-later discovers a newer marker. Reconciliation is #43, not automatic continuation.
+later discovers a newer marker. Automatic reconciliation/continuation is not implemented.
 
 `DriverOptions::confirmed` accepts a cloneable read-only `LatestReceipt`. It
 coalesces updates to one in-memory value, initialized only by the verified empty
@@ -156,8 +159,8 @@ writer receipt and advanced only after returned commit receipts. Failed/lost or
 unresolved operations retain the preceding value. Sampling performs no filesystem
 operation and never holds a lock across controller work or I/O. A late receipt
 returned by `PendingPublication::poll` can update the same observer; it does not
-fabricate a terminal event. #34/#20 own authenticated transport and service-ledger
-persistence.
+fabricate a terminal event. Worker control and the daemon own authenticated
+transport and service-ledger persistence.
 
 ## Query interface and validation
 
@@ -185,11 +188,11 @@ also tests each artifact/event/marker durability boundary and process crashes.
 Streaming tests pin the time/size batching limits; capacity tests preserve usage
 when raw records disappear and count externalized payload bytes.
 
-Run workspace fmt, locked Clippy/tests, and Python unittest discovery. The existing
-foundation CI workflow includes every workspace crate and example, so adding
-`playtime-runner` needs no parallel CI pipeline. No model, Docker, systemd, GPU,
-or active study is required.
+Run the [required workspace checks](development.md#required-checks-for-rust-changes).
+The runner's scripted tests need no model, Docker, systemd, GPU, or active study.
 
-Next execution work is #34 supervision and refined #43 recovery. #35's API and
-scripted HTTP backend proceed independently in the other workspace. They meet
-at #20, which connects authorized workers and these archives to real clients.
+The [daemon](rust-daemon.md) connects worker confirmations and these archives to
+real clients. [Recovery planning](rust-recovery-contract.md) is read-only;
+automatic reconciliation and restart reattachment remain outside the run path.
+See [development](development.md) for the separate simulation, package, service,
+Docker, and live-model gates.

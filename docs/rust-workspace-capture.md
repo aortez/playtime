@@ -1,18 +1,14 @@
-# Stopped-workspace capture (D2, #54)
-
-The Docker/scripted-model production composition is now available through
-[#66 run-and-view](rust-docker-run-and-view.md). The scope below describes its
-underlying slice; live inference and automatic recovery remain separate work.
+# Stopped-workspace capture
 
 `playtime-docker::capture` turns an owned, stopped workshop into a bounded
-`SnapshotCandidate`. It does not publish a checkpoint or enable production Docker
-execution. #24 D3 still supplies the controller effect adapter, durable dispatch
-barriers, archive preparation, daemon recipe capability, and run-and-view gate.
-#20, #21 and #22 remain open integration work. The Python workflow is retained.
+`SnapshotCandidate`. A candidate is not a published checkpoint. The
+[worker/runner integration](rust-docker-run-and-view.md) supplies the controller
+effect adapter, committed dispatch barriers, archive preparation/publication,
+and daemon recipe capability for both scripted and live model execution.
 
 ## Ownership and completion
 
-Capture requires D1's non-serializable `Quiescent<'_>` exclusive sandbox borrow.
+Capture requires a non-serializable `Quiescent<'_>` exclusive sandbox borrow.
 The original total stop/capture deadline is retained (at most 80 seconds, of which
 at most 20 seconds may be spent quiescing). It is never renewed by another capture
 attempt. The holder/volume identities and sole remaining mount are checked both
@@ -26,14 +22,14 @@ on stdin. There is no runtime source lookup, model-selected executable, host she
 Cargo invocation, image rebuild, or lock update. The root lifetime timer remains
 separate. Helper digests accompany the candidate and are recorded in the frozen
 worker build record. The worker compares them to its compiled helper bytes before
-execution. This adds no real-workshop worker capability.
+execution. The helper digest alone grants no execution capability.
 
 Before helper dispatch, the holder is fenced. Only explicit non-dispatch evidence
 or complete successful transport clears the pending-helper state. Lost replies,
 nonzero/uncertain exits, cancellation, timeout, and dropped futures retain it.
 Neither local CLI reaping nor another agent-absence lookup can clear that state.
 Final cleanup force-removes the exact owned holder and verifies absence before
-volume removal, under D1's single aggregate 20-second cleanup budget. If cleanup
+volume removal, under the sandbox's single aggregate 20-second cleanup budget. If cleanup
 cannot establish cessation, residual ownership is reported. It is safe to lose a
 candidate; it is not safe to resume using an uncertain exporter.
 
@@ -64,7 +60,8 @@ Regular files retain exact bytes, size, mode and SHA-256. Directories and links
 retain metadata only. Symlinks preserve bounded targets, even absolute or escaping
 targets, without following them. Later hardlinks name the first regular inode's
 logical path. They never become extra retained file contents or permission to
-extract/continue a workspace. Seed import is unchanged and remains files/directories.
+extract/continue a workspace. [Recipe seeds](rust-recipes.md#seeds) are separately
+frozen UTF-8 regular files, written through the bridge before the first model request.
 
 The Rust validator uses `Read`, explicit 512-byte blocks and separate incremental
 raw-tar and file hashes. It uses no tar extraction library. It checks unsigned
@@ -106,8 +103,8 @@ any other objects the runner will add. Count references/events/log bytes as well
 content bytes. Capture checks the actual tar plus duplicated individual contents,
 its candidate index, outgoing memory and their references against the remainder;
 checked arithmetic rejects overflow. Preparation checks event/log availability and
-per-object compatibility. D3 must derive usage/reserves from authoritative writer
-state and update cumulative usage between checkpoints. This API is not an admission
+per-object compatibility. The worker derives usage/reserves from authoritative writer
+receipts and updates cumulative usage between checkpoints. This API is not an admission
 reservation, and fitting the workspace limit does not promise that every tree fits
 the archive. The writer independently enforces its actual limits; no global storage
 default has been raised.
@@ -134,13 +131,12 @@ three writer failure points. A completed handoff followed by publication failure
 advertises only the earlier checkpoint. A marker renamed before failure remains
 offline evidence, not a promoted live receipt. A delayed receipt keeps the writer
 owned and advances the live frontier only when actually delivered. No failed writer
-is retried. Production composition remains D3.
+is retried. The [production run-and-view gate](rust-docker-run-and-view.md#executable-evidence)
+exercises real capture through the worker and archive writer.
+
+In addition to the [required workspace checks](development.md#required-checks-for-rust-changes):
 
 ```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-PLAYTIME_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 ./scripts/test-rust-docker-e2e.sh --case sandbox
 ./scripts/test-rust-docker-e2e.sh --case checkpoint
 ./scripts/test-rust-worker-package.sh

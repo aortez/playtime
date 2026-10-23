@@ -1,9 +1,9 @@
-# Live model, called directly (#72)
+# Live model, called directly
 
 The `live-two-session` catalog recipe runs the same packaged worker, controller,
 writer and Docker workshop as [run-and-view](rust-docker-run-and-view.md). Its
 model requests go to the locked `gpt-oss:20b` through the `playtime-ollama`
-adapter (#61), directly over plain HTTP. Scripted mode stays the CPU and CI path.
+adapter, directly over plain HTTP. CPU and CI tests use scripted model effects.
 Host enforcement and the guarded composition (#67, #68 as written, #70) are not
 part of the MVP; only the owner and Playtime use the model host.
 
@@ -102,8 +102,9 @@ log), with two differences:
   8,192-token context would hand off before any work. The scripted profile uses
   32,768 for the same reason.
 
-New bundles advertise `real_model` and a `docker_profile` digest covering both
-compiled profile templates. A live admission needs both; a bundle without
+Current bundles advertise `real_model` and a `docker_profile` digest covering
+the scripted smoke, live smoke, reference catalog recipe, and recipe bounds.
+A live admission needs both; a bundle without
 `real_model` still runs scripted Docker and simulation. Older bundles reject the
 live worker kind.
 

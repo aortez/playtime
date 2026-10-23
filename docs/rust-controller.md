@@ -1,8 +1,18 @@
 # Bounded Rust controller and simulation
 
-Tracking: [#18](https://github.com/aortez/playtime/issues/18). Builds on the
-foundation commit `de1647a` and Python baseline `ad7a2f2` in the compatibility
-matrix. The Python launcher remains the operational entry point.
+`playtime-engine` owns execution policy for both simulation and real runs. Its
+committed behavioral goldens are the spec; Python parity is retired. The
+[archive driver](rust-archive-driver.md) persists its decisions, and the
+[worker](rust-worker-package.md) supplies native effects.
+
+To run the in-memory simulation without Docker, Ollama, or wall-clock sleeps:
+
+```sh
+cargo run --locked -p playtime-engine --example simulate -- crates/playtime-engine/tests/fixtures/two-session.json
+```
+
+This prints a simulation-labeled result and trace. It does not create a portable
+archive; use the archive-driver example for that.
 
 ## Transition and effect contract
 
@@ -22,9 +32,10 @@ driver to cancel/join it before executing a conflicting workshop operation. Comp
 must match both effect ID and type; stale/duplicate results cannot settle usage
 or execute tools. Every effect has a deadline. A driver must deliver a tick at
 `next_wakeup_ms()` even if its model or workshop never yields; this includes the
-run wall timer during checkpointing. Real async scheduling, durable event
-envelopes, publication transactions, and supervision belong to
-#19/#20/#23/#24, not this in-memory driver.
+run wall timer during checkpointing. The archive runner and native effect
+adapters supply real scheduling and publication; the worker/service supply
+supervision. Those responsibilities stay
+outside the controller and its in-memory simulator.
 
 At an observation boundary, cancellation precedes the run wall deadline, which
 precedes the effect deadline, which precedes completion. Equality expires a
@@ -33,7 +44,7 @@ or tool dispatch but permits one final checkpoint attempt and cleanup. During an
 already pending checkpoint, cancellation marks the run interrupted without
 restarting that effect. A successful `finish_run` write is a completion candidate;
 checkpoint publication must succeed before it becomes `agent_finished`. Thus a
-checkpoint failure remains an infrastructure failure, as in Python. Normal end
+checkpoint failure remains an infrastructure failure. Normal end
 precedence is agent completion, token exhaustion, then session exhaustion.
 
 Checkpoint effects have an 80-second bound (stop plus snapshot), publication
@@ -41,9 +52,8 @@ Checkpoint effects have an 80-second bound (stop plus snapshot), publication
 Cleanup failure is separate from the primary reason and never erases it. A
 checkpoint is visible as `last_checkpoint` only after publication acknowledgment.
 Publication failure preserves the preceding checkpoint. A partial startup still
-receives cleanup. These explicit race/deadline rules clarify behavior previously
-dependent on synchronous Python calls; they do not promise preemption of real
-Docker/network work until those adapters exist.
+receives cleanup. Native adapters must independently bound and cancel their work;
+controller deadlines alone cannot establish Docker or model-host termination.
 
 ## Accounting invariants fixed for property tests
 
@@ -91,29 +101,28 @@ text is never interpreted or passed to a shell. Read/write operations affect onl
 the simulator's in-memory workshop. Files and temporary/process state are distinct.
 
 The example prints a simulation-labeled result and normalized trace; these are
-test artifacts, not frozen experiment archives. Existing protocol `RunMode`
-already carries `simulation`. API/report/portable-manifest integration is deferred
-to their owning issues, where that label must remain explicit.
+test artifacts, not frozen experiment archives. `RunMode::Simulation` also labels
+the packaged simulation in the daemon, API, and archives.
 
 Context estimates, prompts, tool descriptions, and delivered tool truncation
-retain Python's canonical ASCII JSON sizing. Evidence uses sorted UTF-8 JSON,
-the same 4096-byte ceiling, file/command ordering, excerpt budgets, and unknown
-field semantics. File comparison includes permissions, entry types and link
+use canonical ASCII JSON sizing pinned by the Rust fixtures. Evidence uses
+sorted UTF-8 JSON, a 4096-byte ceiling, deterministic file/command ordering,
+excerpt budgets, and explicit unknown-field semantics. File comparison includes permissions, entry types and link
 targets as well as content hashes and lengths. Artifact hashes refer to exact
 bytes. Evidence source references
-identify checkpoint artifacts and observation sequences; #19 supplies durable
-record hashes and validates archived provenance.
+identify checkpoint artifacts and observation sequences; the runner/storage
+integration supplies durable record hashes and validates archived provenance.
 
-Ordinary observations reserve 65536 log bytes for finalization, matching Python.
+Ordinary observations reserve 65536 log bytes for finalization.
 An exhausted log stops admission; the result remains available separately even
 when a deliberately tiny log cannot fit all final observations. Adapter input
 must also be bounded before allocation: controller checks do not make reading
 an unbounded network frame safe.
 
-## Validation and next boundary
+## Validation and integration
 
-Rust checks cover deterministic repeated traces, independent Python recovery and
-evidence oracles, and 128 fixed-seed property cases for monotonic completed
+Rust checks cover deterministic repeated traces, committed recovery and evidence
+fixtures, and 128 fixed-seed property cases for monotonic completed
 accounting, admission within allocation, and no dispatch after a stop decision.
 Virtual-time cases cover never-yielding inference, partial disconnects, parser
 ceilings, missing usage, command timeouts, context/byte/log limits, handoff
@@ -129,8 +138,9 @@ full; raw logging may omit records without erasing those control facts.
 `ScriptedAdapters` supports incremental dispatch/cancellation and remains the
 adapter used by the original in-memory simulation.
 
-The simulation's JSON workspaces remain explicitly synthetic. Real adapters,
-process supervision, and recovery require their owning tickets. The
-[transcript contract](rust-archive-bridge.md) defines protocol-only decoding,
+The simulation's JSON workspaces remain explicitly synthetic. Native Docker and
+Ollama execution uses the same controller through worker-supplied effects; see
+[run-and-view](rust-docker-run-and-view.md) and [live model](rust-live-model.md).
+The [transcript contract](rust-archive-bridge.md) defines protocol-only decoding,
 reviewed mapping fixtures, and the separation between raw copies and canonical
-accounting/publication authority.
+accounting/publication authority. Automatic recovery remains unimplemented.

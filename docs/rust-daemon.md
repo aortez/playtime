@@ -1,17 +1,17 @@
-# Normal Rust daemon execution (#20, slice B)
+# Rust daemon and archive-backed API
 
-The Docker/scripted-model production composition is now available through
-[#66 run-and-view](rust-docker-run-and-view.md). The scope below describes its
-underlying slice; live inference and automatic recovery remain separate work.
+`playtimed` runs the bounded controller in a separately supervised packaged
+worker. Its ordinary HTTP handlers, native client, CLI and workbench observe
+actual portable archives. The default `two-session` recipe uses scripted model
+and workshop effects; [Docker run-and-view](rust-docker-run-and-view.md),
+[live inference](rust-live-model.md), and the [recipe catalog](rust-recipes.md)
+add native execution through the same application boundary.
 
-`playtimed` now runs the real bounded controller in a separately supervised,
-packaged worker. Model and workshop effects are scripted. The ordinary HTTP
-handlers, native client, CLI and workbench observe its actual portable archive.
-This slice does not complete #20, #21 or #22: surviving-worker restart, worker-loss
-recovery and the full CLI/UI simulation gates remain subsequent work. #50 owns
-recoverable preparation and recovery protocol/planner contracts. This slice uses
-the existing preparation profile; opting the daemon into #50's reviewed recovery
-capability is a subsequent join, not an implied permission to recover these runs.
+This guide covers admission, confirmed reads, lifecycle publication, and the
+normal CPU simulation gate. Automatic restart reattachment and archive recovery
+are not implemented. The [recovery planner](rust-recovery-contract.md) supports
+explicitly recoverable simulations, but normal daemon preparation does not opt
+into that capability or grant permission to repair these archives.
 
 ## Build, launch and view
 
@@ -28,7 +28,7 @@ target/debug/playtimed --root /absolute/service-root --bundle /absolute/new-work
 ```
 
 The default is Linux user-systemd supervision, with no subprocess fallback.
-The worker installs #52's invocation/READY notification, ExecStopPost diagnostic
+The worker installs invocation/READY notification, ExecStopPost diagnostic
 and SIGTERM hooks. READY follows grant consumption and initial publication.
 SIGTERM requests cancellation before the frozen work deadline; at that deadline
 it lets the controller's clock establish the wall stop. It retains pending
@@ -59,8 +59,8 @@ checkpoint indexes and artifact content come through authenticated HTTP. Closing
 or detaching a client does not cancel execution. Native bearer/origin/loopback
 policy is unchanged; the default port remains 8766.
 
-The service owns a frozen catalog containing the opaque `two-session` recipe.
-The recipe bytes are embedded in the service; preview revision binds those bytes
+The default catalog contains the opaque `two-session` recipe.
+Its bytes are embedded in the service; preview revision binds those bytes
 and the verified bundle ID. The HTTP request selects an ID and revision, never a
 scenario, host pathname or command. Preview labels scripted model/workshop
 identities and unavailable real adapters. Scripted command strings remain data.
@@ -115,7 +115,7 @@ add its own provenance rather than overwrite this origin. Equal confirmations
 create no extra transition. Failed validation/publication retains the prior
 verified projection with visible uncertainty and no terminal stream notice.
 On daemon startup, saved prefixes are revalidated for inspection; active runs
-remain reconciling. This slice does not resume their refresh/launch actors.
+remain reconciling. The daemon does not resume their refresh/launch actors.
 
 There is one coalesced refresh lane per run, a 250 ms floor, a five-second request
 bound and failure backoff capped at five seconds. Observers share it. Cancellation
@@ -199,8 +199,9 @@ regenerate any screenshot goldens. A separate default-systemd daemon invocation
 using the launch commands above checks the real manager hooks; the CPU gate is
 not evidence of independent enforcement.
 
-`--case lifecycle` and `--case recovery` are intentionally not implemented here.
-The existing CLI/UI `--backend simulation` gates still fail explicitly until the
-full #20/#43 integration exists. Restart/upgrade, worker loss, recovery writes,
-operator abandonment and the parent crash/failure matrix remain open. Recovery
-settlement DTO/planner changes belong to #50 and are not guessed in this slice.
+`--case lifecycle` and `--case recovery` are not supported by the service wrapper.
+The dedicated CLI/UI `--backend simulation` gates still fail pending restart and
+worker-loss recovery integration, even though the normal service gate above works.
+Operator release is implemented; it does not write a recovery settlement or
+complete the restart/crash failure matrix. See [development](development.md#gates-that-are-not-implemented)
+for gate scope and [recovery](rust-recovery-contract.md) for the read-only contract.

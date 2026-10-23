@@ -1,45 +1,36 @@
 # Worker lifecycle: admission, control and systemd supervision
 
-The admission/control and real systemd supervision slices of
-[#34](https://github.com/aortez/playtime/issues/34) are based on merged main
-`b81db2a7aa4d38e702627ee78cceff2f171ca225`. They provide durable admission,
-private worker control, independent cancellation, confirmed reads and a Linux
-user-manager adapter. Execution in the conformance harness is still explicitly
-synthetic. Recovery ownership and production integration remain in #34/#43/#20.
+`playtime-server::lifecycle` owns durable admission, private worker control,
+independent cancellation, confirmed reads and a Linux systemd user-manager
+adapter. `playtime-worker-control` owns framing, credentials, bootstrap checks
+and the prepared worker's one-use grant. It has no server, HTTP, SQLite, engine
+or storage dependency. `playtime-protocol::worker` owns private version-1 messages,
+separate from the public HTTP DTOs.
 
-## Ownership and the HTTP branch
+## Ownership and application integration
 
-`playtime-server::lifecycle` owns admission, orchestration and its ledger.
-`playtime-worker-control` owns framing, credentials, bootstrap checks and the
-prepared worker's one-use grant. It has no server, HTTP, SQLite, engine or storage
-dependency. `playtime-protocol::worker` owns private version-1 messages, separately
-from #35's HTTP DTOs. The current worker kind is `supervision_fixture`; a real
-worker is not advertised by this milestone.
+The [daemon application](rust-daemon.md) maps the public recipe/mode/preview
+request to `AdmissionRequest`, retaining replay-before-preview semantics and the
+distinction between acceptance and running. Its persistent service identifier
+is the HTTP `ServiceId`. HTTP/auth handlers remain separate from lifecycle
+coordination, ledger transactions, and supervisor operations.
 
-#46's application interface was inspected at `e2fa960f2cb9f5add6debe8fd147cbf9da527392`,
-then its integration with #45 and CI adjustment at
-`e834fadb50b1df9094456ae139a7a10f5d746381`.
-The #46 integration includes the lifecycle foundation merged by #48 at
-`22282e72bbfb0d215ab890edad7d6e0a5a608a0a`. Lifecycle files,
-`tests/lifecycle.rs`, `tests/lifecycle/` and `examples/lifecycle_fixture.rs`
-remain separate from the HTTP/auth/client implementation. The combined workspace
-retains both sets of pinned dependencies and exports every HTTP module alongside
-`pub mod lifecycle`. No changes from another checkout's working tree are imported.
-
-The later #20 adapter maps `AdmissionRequest` to the API's typed
-recipe/mode/preview request. Its durable service identifier can be represented by
-the HTTP `ServiceId` without changing that contract. It must retain replay-before-
-preview semantics and distinguish acceptance from running. There is deliberately
-no HTTP `Application` implementation in this slice.
+The [packaged worker](rust-worker-package.md) supports controller simulation,
+Docker/scripted-model and Docker/live-model execution. The lifecycle conformance
+harness uses a separate `supervision_fixture` worker with synthetic archive
+evidence. Its coordinator reattachment tests do not establish automatic daemon
+reattachment: production startup currently marks active runs reconciling and
+leaves them for operator resolution.
 
 ## Durable transitions
 
 The SQLite ledger lives at `.playtime/service.sqlite3`, with verified WAL,
-`synchronous=FULL`, foreign keys and schema version 3. Versions 1 and 2 upgrade
+`synchronous=FULL`, foreign keys and schema version 5. Versions 1–4 upgrade
 in one transaction, preserving service identity, canonical requests and counters.
-Version 1 adds ownership/revision counters; version 2 must already contain them.
-Version 3 adds supervisor observations and stop acceptance/delivery separately
-from private-control cancellation. Migration never defaults damaged v2 counters.
+Version 1 migration adds ownership/revision counters; version 2 must already
+contain them. Version 3 added supervisor observations and stop acceptance/delivery
+separately from private-control cancellation; version 4 added confirmed reads and
+version 5 operator release. Migration never defaults damaged v2 counters.
 Older binaries refuse the upgraded schema. Its service identity is
 created once and cross-checked against a private identity file. Missing, damaged,
 incomplete or unsupported ledgers fail closed; they are never silently rebuilt.
@@ -55,6 +46,11 @@ intent, delivery acknowledgment and last verified worker status. There are at mo
 16 admitted blocking ledger operations; short transactions do not cross archive or process
 operations. Once a coordinator operation is accepted, it belongs to a detached
 Tokio task, so dropping a caller does not roll back or abandon its commit.
+
+The diagram shows admission/control transitions, including reattachment supported
+by the coordinator fixture. Production daemon restart does not take the two
+reattachment transitions; completion and operator release are described in the
+[daemon guide](rust-daemon.md#results-and-safe-completion).
 
 ```mermaid
 stateDiagram-v2
@@ -77,19 +73,19 @@ stateDiagram-v2
    when acquiring that control, including a busy result racing another commit.
    A matching typed request returns its original selection and run; a different request
    conflicts. A different service identity is rejected first.
-2. Under the Python-compatible run lock, validate/freeze the selection and save
+2. Under the shared run lock, validate/freeze the selection and save
    the reservation. Acceptance means that reservation exists, not that work ran.
-3. Prepare immutable fixture inputs and a private executable copy. Save the exact
+3. Prepare immutable inputs and a private executable copy. Save the exact
    preparation and a single start intent before submitting the absolute executable
    with typed arguments. An ambiguous submission is queried, never resubmitted.
 4. Release the launcher's run lock after submission, before waiting for prepared.
    The worker acquires that same lock and its prepared writer lock, verifies the
    reservation, actual `/proc/self/exe` image and frozen input identity, and reports
-   prepared. It holds both locks while waiting for Begin. No fixture execution
-   record exists at this point.
+   prepared. It holds both locks while waiting for Begin. No experimental effect
+   has been dispatched at this point.
 5. Commit Begin permission, publish the immutable private authorization, then send
    Begin. The worker serializes grant operations, durably records consumption,
-   starts its original work clock, and publishes its first synthetic receipt.
+   starts its original work clock, and returns its initial publication receipt.
    Only the resulting authenticated response can establish running.
 6. Persist a verified response before returning it to a caller. A lost reply
    leaves the saved frontier unchanged until fresh Status verifies the same
@@ -102,7 +98,7 @@ request still waiting on coordinator preflight. Cancellation racing an already
 dispatched Begin cannot undo work that has consumed its grant. If preparation
 finishes after cancellation, its identity is retained for cleanup, its grant is
 revoked and no worker is submitted. Cancellation does not prove process termination
-or release the active slot in these slices.
+or release the active slot.
 
 ## Independent control and confirmations
 
@@ -143,10 +139,12 @@ The generation check is a commit fence; exclusive recovery ownership and its
 authority to increment that generation remain part of the later recovery slice.
 
 A new coordinator marks active ownership reconciling before any public liveness
-claim. It can reattach to the **same surviving worker**; it never starts a
-replacement from a lost reply or worker death. Further experiment execution after
-worker loss requires explicit continuation. #43 interface refinement can proceed
-alongside this work; its implementation is not a prerequisite for the fixture.
+claim. Its conformance harness can reauthenticate the **same surviving worker**;
+it never starts a replacement from a lost reply or worker death. The production
+daemon does not yet resume these actors after restart. Further execution after
+worker loss would require explicit continuation; automatic recovery is not
+implemented. Operator release can free admission after termination/resource
+checks, without continuing execution or repairing archive evidence.
 
 ## Private messages and evidence
 
@@ -265,7 +263,7 @@ The worker notification API sends only READY, never timeout extensions. D-Bus
 operations have five-second bounds; timed-out filesystem work retains one of four
 supervisor I/O permits until it settles.
 
-Worker integration for #20:
+The packaged worker installs these hooks:
 
 1. At the frozen worker's entry point, call
    `systemd::record_exit_if_requested(bootstrap_path)` before acquiring exclusion.
@@ -321,37 +319,32 @@ across coordinator restart and diagnostic failures, retained admission after
 worker termination, v1/v2 ledger migration, and READY ordering around initial
 publication. They do not
 substitute for the opt-in manager tests. The private wire protocol stays v1;
-HTTP DTOs and archive formats are unchanged by this slice.
+the supervision protocol is versioned independently of HTTP and archive formats.
 
 See systemd's [D-Bus interface](https://www.freedesktop.org/software/systemd/man/latest/org.freedesktop.systemd1.html),
 [service timeout semantics](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html),
 and [notification contract](https://www.freedesktop.org/software/systemd/man/latest/sd_notify.html).
 
-Validation for this slice: formatting and locked workspace Clippy passed;
-258 Rust tests passed, with 14 opt-in/helper entries ignored in the default run.
-All six opt-in systemd tests passed against user systemd 259.5, including the
-full 60/180-second bounds. The Python suite ran 94 tests: 88 passed and six Docker
-checks were skipped. Native and systemd walkthroughs completed. The inherited
-file-description regression failed before the explicit-unlock fix and passed
-afterward. Corrupt private diagnostics reproduced blocked cancellation before the
-manager-only stop fix. Fixture spawning also retries explicit pre-exec `ETXTBSY`
-rejections for at most five seconds within the original startup deadline; it does
-not retry ambiguous starts. A held-writer regression verifies both retry and expiry.
-PR #51's shared `Worker` status-refresh additions were reviewed as
-additive; production integration still must install the systemd entry/notify hooks.
+Historical systemd validation for the original supervision implementation (#52)
+ran all six opt-in tests against user systemd 259.5, including the full 60/180-second
+bounds. The inherited-file-description regression failed before the explicit-unlock
+fix and passed afterward. Corrupt private diagnostics reproduced blocked
+cancellation before the manager-only stop fix.
 
-## Remaining #34 work
+Fixture spawning retries explicit pre-exec `ETXTBSY` rejections for at most five
+seconds within the original startup deadline; it does not retry ambiguous starts.
+A held-writer regression verifies both retry and expiry. These fixtures are
+separate from the production package and service gates in [development](development.md).
 
-- Extend fault injection across every ledger/port acknowledgment boundary and
-  cover real exclusive takeover and incomplete publication ownership.
-- Implement #43's proposed owned `InvocationFence`, `HeldRecoveryAuthority`,
-  stable recovery attempt and explicit resolution ports against #50's compiled
-  DTO/JSONL contract once reviewed. A serializable stopped observation is not
-  that fence. Releasing admission additionally requires proven resource cleanup
-  and the reviewed recovery transaction.
-- #20 joins these ports to the real prepared runner handle and authenticated
-  returned receipts, production bundles and #46's handlers/client. The real
-  worker's source/lock/protocol binding and production packaging remain there.
+## Recovery boundary
+
+Automatic daemon reattachment, exclusive takeover, recovery transactions, and the
+full crash/failure matrix remain incomplete. The read-only
+[recovery contract](rust-recovery-contract.md) does not implement an owned
+`InvocationFence`, `HeldRecoveryAuthority`, or permission to mutate an archive.
+A serializable stopped observation cannot supply that authority. Operator release
+is a separate implemented path that verifies termination and resource cleanup,
+records the operator's reason, and leaves archive evidence unchanged.
 
 SQLite durability settings follow its [synchronization documentation](https://www.sqlite.org/pragma.html#pragma_synchronous).
 Process-kill tests establish the implemented protocol's behavior, not arbitrary

@@ -1,17 +1,22 @@
 # Playtime
 
-This repository is a local-model experiment controller and a disposable Docker
-workshop. Keep the controller independent of third-party Python packages.
+This repository is a Rust local-model experiment controller and a disposable
+Docker workshop. Work in the existing standalone checkout; do not create linked
+Git worktrees unless the user explicitly requests an exception.
 
-- `src/playtime/`: host controller, Ollama adapter, snapshotting, reports, CLI.
+- `crates/` and `xtask/`: Rust controller, effects, service, clients, and packaging.
+- `recipes/`: reviewed Rust recipe catalog.
+- `src/playtime/` and `tests/*.py`: frozen Python controller and tests; keep the
+  controller independent of third-party Python packages.
 - `workshop/`: image definition, locked packages, fixed container tool bridge.
-- `experiments/`: complete TOML recipes. Paths are relative to the project root.
+- `experiments/`: historical Python recipes, study plans, and results.
 - `prompts/` and `seeds/`: versioned experimental inputs.
 - `models/` and `environments/`: small identity lock files; commit these.
 - `.playtime/` and `runs/`: local image archives and run records; never commit.
 
 Rust is the target. Its MVP (#16) is released as v0.1.0; `docs/rust-mvp.md` says
-how its parts fit and how to run it. The Python controller is frozen: don't modify
+how its parts fit and how to run it. `docs/development.md` maps checks to changes.
+The Python controller is frozen: don't modify
 `src/playtime/` or `tests/*.py`, and don't run Python experiments. It is no
 longer a parity oracle, the legacy compatibility matrix is retired, and legacy
 archives and fixtures no longer constrain Rust. The committed Rust goldens are
@@ -31,7 +36,8 @@ between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`
 for publication, file/link policy, limits, and failure-test contracts.
 `playtime-runner` integrates the controller and storage through incremental
-scripted adapters. Preserve committed-intent dispatch barriers, independent
+scripted or worker-supplied native effects. Preserve committed-intent dispatch
+barriers, independent
 timer/cancel servicing, late checkpoint receipts, actual log-byte accounting,
 and incomplete evidence on uncertain writes. See `docs/rust-archive-driver.md`.
 Its demo must explicitly capture the actual executing image through `/proc/self/exe`;
@@ -59,7 +65,7 @@ builds verified static bundles from a staged source snapshot. Preserve the same
 owned prepared writer through Begin, and never invoke Cargo during admission or
 worker execution. See `docs/rust-worker-package.md`; run
 `./scripts/test-rust-worker-package.sh` for worker/package changes. This CPU gate
-does not replace #34 supervision or the #20/#43 CLI/UI production gates.
+does not replace real systemd, Docker/live run-and-view, or restart/recovery gates.
 `playtime-server` owns HTTP/auth in modules separate from lifecycle coordination;
 `playtime-client` owns native transport and acknowledged event reconnect.
 `playtime-local` shares credential/discovery file policy. Keep HTTP fixture
@@ -70,7 +76,7 @@ experimental workers. `playtimed` supplies normal production simulation through
 the same handlers; see `docs/rust-daemon.md` and run
 `./scripts/test-rust-service-e2e.sh --case normal` for daemon integration changes.
 Its CPU test supervisor is explicitly separate from real systemd enforcement;
-restart/recovery and the full CLI/UI simulation gates remain subsequent work.
+restart/recovery and the full CLI/UI simulation gates remain incomplete.
 `playtimed --docker-scripted` runs the frozen `docker-two-session` recipe in a
 packaged systemd worker with real Docker. See `docs/rust-docker-run-and-view.md`;
 run `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted`
@@ -87,22 +93,25 @@ durable launch receipts, cursor files and verified downloads belong in
 UI render loops. `playtime-test-support` owns native-client subprocess fixtures,
 isolated roots, readiness deadlines and owned-process cleanup. See
 `docs/rust-cli.md`; run `./scripts/test-rust-cli-e2e.sh --backend fixture` for CLI
-changes. The simulation gate must fail clearly until #20/#42/#43 are available;
-never substitute fixtures or claim this completes #21.
+changes. The dedicated CLI simulation gate still fails pending full restart/recovery
+integration; the service-normal gate is separate. Never substitute fixtures
+or claim they establish the missing recovery behavior.
 `playtime-ui` owns egui presentation and a separate view model. Keep network,
 private files, JSON parsing, hashing, image decoding and memory diffs outside
 render callbacks. Use shared client receipts/downloads; closing or detaching the
 UI never cancels a run. Preserve generation/run identity checks and bounded
 history/image work. See `docs/rust-ui.md`; run the UI fixture wrapper for UI
 changes. Review screenshot differences using the pinned software Vulkan renderer;
-never silently skip or regenerate baselines. The UI simulation gate remains an
-explicit failure until #20/#43 are connected; do not close #22 from fixture tests.
+never silently skip or regenerate baselines. The dedicated UI simulation gate
+still fails pending full restart/recovery
+integration; service-normal and Docker/live gates exercise the implemented paths.
+Do not treat fixture tests as recovery evidence.
 Commit `Cargo.lock`; ignore
 `target/`. Validate Rust changes with `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, and
 `cargo test --workspace --locked`, plus the Python suite below. See
 `docs/rust-foundation.md` for the scope and versioning rules. Keep runtime,
-service, database, and GUI dependencies in their later owning crates. When Rust
+service, database, and GUI dependencies in their owning crates. When Rust
 behavior changes on purpose, update the affected behavioral or schema goldens and
 add a short reviewed note to `docs/rust-compatibility.md`; do not automatically
 regenerate them just to make a test pass.
