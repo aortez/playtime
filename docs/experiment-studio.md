@@ -321,6 +321,41 @@ launch replay. No deletion or garbage collection is exposed in this slice; saved
 revisions and save replay records are retained. A transaction rollback must not
 leave an orphan revision or a moved head. Archives retain their own copied inputs.
 
+### Authoring without execution readiness
+
+Loading, reading, cloning, and editing saved definitions must work when the model
+or workshop is unavailable, including at service startup. Catalog initialization
+must be independent of live-adapter readiness; an unreachable Ollama endpoint,
+missing registered model, unavailable Docker daemon, or absent workshop image
+leaves execution unavailable without preventing recipe authoring. Configured
+definitions remain listed when readiness changes.
+
+Separate structural definition validation, execution compatibility, and current
+readiness. Saves validate the supported definition format, edited fields, inherited
+content and identities, and catalog bounds without live inspection. They preserve
+registered identity mismatches or unsupported execution components as execution
+limitations; they never refresh locks, substitute components, or erase the draft.
+Unsupported definition formats cannot be edited by pretending to understand them.
+Catalog corruption, invalid private credentials, and an explicitly supplied invalid
+source catalog remain errors, not reasons to invent an empty or healthy service.
+
+The definition read returns stored settings, identity records, and seed metadata
+without requiring a resolved execution profile. The workbench can therefore show
+the configuration even when preview fails. A preview that cannot establish
+compatibility/readiness returns a typed `execution_unavailable` error with bounded
+reasons, and no usable preview token. The UI retains the saved definition next to
+the limitation and keeps editing enabled. Do not fabricate worker bindings or a
+launch-ready `Preview` just to populate the form. Unsupported mode/capability and
+invalid-definition errors retain their distinct meaning.
+
+When execution becomes available, obtain a fresh normal preview and require its
+ordinary admission checks. Availability changes do not alter the definition's
+digest or saved revision, and never trigger automatic launch. For an existing
+accepted launch key, lookup/replay still precedes current readiness/busy checks;
+unavailable execution must not hide a prior acceptance or cause a duplicate run.
+New model registration may require live inspection; editing an existing saved
+definition does not depend on adding that later workflow.
+
 ### API and client flow
 
 Add capability-advertised operations under the existing authenticated `/api/v1`
@@ -347,6 +382,33 @@ operate on that exact revision. List saved heads alongside existing catalog item
 without exposing every old revision in the main picker. Older services omit the
 new capability; clients disable authoring with an explanation while preserving
 ordinary launches.
+
+Saved-head pagination uses stable logical-recipe keys, never the current head's
+execution ID, name, or modification time. Assign each logical recipe a persisted,
+monotonically increasing creation sequence on its first save. Order saved recipes
+by `(creation_sequence, logical_recipe_id)` and carry the first page's maximum
+creation sequence plus the last returned key in the cursor. Later revisions do not
+change that key; later-created recipes are excluded until a fresh traversal. The
+creation sequence is a database ordering value, not a wall-clock timestamp.
+
+Read each page and its head revisions consistently within a database read
+transaction. Each row reports the head observed for that page; this is stable
+membership/order, not a snapshot of every head across all pages. Bind a cursor to
+the service, listing kind/filter, and format version. For the combined picker,
+use stable source/logical-recipe keys and a source-catalog generation as well as
+the saved-recipe creation cutoff. Changing the file-backed/built-in catalog
+invalidates that traversal explicitly; saving a new head or changing readiness
+does not. An invalid cursor requests a refresh, never silently starts page one.
+The current paginator's execution-ID ordering must not be reused for saved heads.
+
+Versioned listing metadata must expose logical identity separately from the head's
+execution handle so the UI can maintain a stable row identity. Selecting a row
+pins its observed execution revision. A later save or refresh may show a newer
+head, but cannot replace that selected revision or its pending preview. Revision
+history likewise uses immutable per-recipe ordering with an initial high-water
+mark. Cursor retries may observe newer head values for the same logical rows;
+clients reconcile those rows by logical identity without duplicating them or
+retargeting a selected execution.
 
 The shared client saves a private pending-save receipt containing service identity,
 key, and exact typed request before sending. Lookup/replay resolves ambiguity with
@@ -390,6 +452,21 @@ Acceptance covers the complete path:
 - Exercise concurrent saves, source changes, duplicate keys, lost replies,
   transaction interruption, database capacity, invalid input, and old-service
   behavior using the actual catalog store and API/client fixtures.
+- Save new heads for both already-returned and not-yet-returned recipes between
+  page requests. Traverse with small item/byte limits and assert every eligible
+  logical recipe appears once. New recipes appear only after refresh. Cover cursor
+  retry, source-catalog invalidation, service/filter mismatch, revision-history
+  growth, and selection pinned to an older observed revision.
+- Start the service with saved recipes and unavailable model/workshop execution,
+  without the original source catalog. Read, clone, edit, save, and recover a lost
+  save reply successfully. Use real catalog persistence and fake readiness ports
+  to cover unreachable Ollama, missing model, unavailable Docker, and absent image;
+  prove no inference, model loading, or image preparation occurs during authoring.
+- Show the saved configuration and typed preview limitation while editing remains
+  available; refuse new launches and preserve accepted-key replay. Restore readiness
+  and obtain a fresh preview without changing the saved revision or auto-launching.
+  Verify source-catalog/private-data corruption still fails rather than being
+  masked as ordinary execution unavailability.
 - Test the admission-to-preparation race against a newer saved head. Check archived
   definition/scenario agreement and rejection after model/environment/bundle drift.
 - Preserve existing catalog behavior and baseline goldens. Review editor screenshots,
