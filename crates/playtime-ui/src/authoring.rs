@@ -19,17 +19,15 @@ pub struct Draft {
     pub settings: Option<crate::model_settings::SettingsDraft>,
 }
 impl Draft {
-    pub fn request(&self) -> RecipeMutation {
-        if !self.clone
+    pub fn request(&self) -> Result<RecipeMutation, String> {
+        let model_settings = self.settings.as_ref().map(|s| s.value()).transpose()?;
+        let request = if !self.clone
             && let Some(saved) = &self.original.saved
         {
             RecipeMutation::Revise {
                 recipe_id: saved.recipe_id.clone(),
                 request: ReviseRecipeRequest {
-                    model_settings: self
-                        .settings
-                        .as_ref()
-                        .map(|s| s.value().expect("validated draft")),
+                    model_settings,
                     expected_head: self.original.execution_recipe_id.clone(),
                     name: self.name.clone(),
                     prompt: self.prompt.clone(),
@@ -38,10 +36,7 @@ impl Draft {
         } else {
             RecipeMutation::Clone {
                 request: CloneRecipeRequest {
-                    model_settings: self
-                        .settings
-                        .as_ref()
-                        .map(|s| s.value().expect("validated draft")),
+                    model_settings,
                     source: RecipeSource {
                         execution_recipe_id: self.original.execution_recipe_id.clone(),
                         definition_digest: self.original.definition_digest.clone(),
@@ -50,7 +45,8 @@ impl Draft {
                     prompt: self.prompt.clone(),
                 },
             }
-        }
+        };
+        Ok(request)
     }
     pub fn valid(&self) -> bool {
         self.settings.as_ref().is_none_or(|s| s.value().is_ok())
@@ -104,8 +100,9 @@ impl Model {
         }
         if let Some(draft) = &self.authoring.draft
             && draft.valid()
+            && let Ok(request) = draft.request()
         {
-            self.command(Action::SaveRecipe(draft.request()));
+            self.command(Action::SaveRecipe(request));
         }
     }
     pub fn discard_recipe_edits(&mut self) {

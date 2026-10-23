@@ -633,3 +633,67 @@ async fn model_settings_are_atomic_offline_recoverable_and_preserve_old_definiti
     assert!(replay.replayed);
     assert_eq!(catalog.model_settings(id).await.unwrap().settings, settings);
 }
+
+#[tokio::test]
+async fn inherited_settings_do_not_bypass_context_validation_on_clone_or_revision() {
+    let root = Temp::new();
+    let (_, catalog, source) = setup(&root).await;
+    let saved = catalog
+        .save(key("original"), clone_request(&source, "original"))
+        .await
+        .unwrap();
+    let family = &saved.definition.saved.as_ref().unwrap().recipe_id;
+    let mut clone = clone_request(&source, "too long");
+    let mut revision = revise(&saved.definition, "too long");
+    for mutation in [&mut clone, &mut revision] {
+        match mutation {
+            RecipeMutation::Clone { request } => {
+                assert!(request.model_settings.is_none());
+                request.prompt = "x".repeat(65536);
+            }
+            RecipeMutation::Revise { request, .. } => {
+                assert!(request.model_settings.is_none());
+                request.prompt = "x".repeat(65536);
+            }
+        }
+    }
+    for (id, mutation) in [("oversized-clone", clone), ("oversized-revision", revision)] {
+        let error = catalog.save(key(id), mutation).await.unwrap_err();
+        assert_eq!(error.code(), "invalid_parameters");
+        assert!(error.0.message.contains("too small to begin work"));
+        assert_eq!(
+            catalog.lookup(&key(id)).await.unwrap_err().code(),
+            "not_found"
+        );
+        assert_eq!(
+            catalog.head(family).await.unwrap(),
+            saved.definition.saved.clone().unwrap()
+        );
+    }
+    assert_eq!(
+        catalog
+            .page(PageQuery::default(), None, None)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    // Rejected operations consumed neither keys nor revisions.
+    let next = catalog
+        .save(
+            key("oversized-revision"),
+            revise(&saved.definition, "valid"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(next.definition.saved.unwrap().revision, 2);
+    catalog
+        .save(
+            key("oversized-clone"),
+            clone_request(&source, "valid clone"),
+        )
+        .await
+        .unwrap();
+    catalog.check().await.unwrap();
+}

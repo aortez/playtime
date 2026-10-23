@@ -251,6 +251,12 @@ support; rebuild bundles. Save/preview now refuse initial context configurations
 that the controller would immediately hand off. The controller's prompt and
 reserve calculations are shared without changing its behavior or goldens.
 
+Initial context validation also applies to prompt-only saves that inherit model
+settings. Rejected saves publish neither a revision nor an idempotency result;
+existing keyed saves still replay their original response without revalidation.
+Recovering a save preserves a current settings draft with unfinished or invalid
+numeric input instead of attempting an infallible request conversion.
+
 Reviewed OpenAPI changes are the new route/DTOs and the two optional request
 fields. New settings-editor screenshots cover wide/narrow layouts; existing
 prompt-only editor baselines remain as older-service compatibility views.

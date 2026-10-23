@@ -499,3 +499,88 @@ async fn model_settings_keyboard_zero_invalid_value_and_resets() {
     h.run();
     assert!(h.state().model.commands.iter().any(|c| matches!(&c.action, Action::SaveRecipe(RecipeMutation::Clone { request }) if request.model_settings.as_ref().is_some_and(|s| s.context_tokens == 65536 && s.temperature == 0.8))));
 }
+
+#[tokio::test]
+async fn recovered_save_preserves_an_unfinished_numeric_draft() {
+    let mut app = common::model_settings_editor().await;
+    let request = app
+        .model
+        .authoring
+        .draft
+        .as_ref()
+        .unwrap()
+        .request()
+        .unwrap();
+    let root = playtime_test_support::TestRoot::new().unwrap();
+    let ledger = playtime_server::lifecycle::Ledger::open(&root.0)
+        .await
+        .unwrap();
+    let catalog = playtime_server::catalog::Catalog::new(
+        ledger,
+        playtime_server::daemon::catalog::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../recipes"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let saved = catalog
+        .save(
+            IdempotencyKey::new("another-workbench").unwrap(),
+            request.clone(),
+        )
+        .await
+        .unwrap();
+    app.model.service = Some(saved.service_id.clone());
+    let mut h = Harness::builder()
+        .with_size([900.0, 600.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    let selected = h.state().model.recipe.clone();
+    for text in ["-", "", "not a number", "3"] {
+        h.get_by_label("Temperature").focus();
+        h.run();
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.run();
+        h.key_press(egui::Key::Backspace);
+        h.run();
+        h.get_by_label("Temperature").type_text(text);
+        h.run();
+        assert!(!h.state().model.authoring.draft.as_ref().unwrap().valid());
+        let tag = h.state().model.tag;
+        let receipt = playtime_client::recipes::RecipeSaveReceipt {
+            pending: playtime_client::recipes::PendingRecipeSave {
+                schema_version: 1,
+                service_id: saved.service_id.clone(),
+                key: saved.key.clone(),
+                request: request.clone(),
+            },
+            endpoint: h.state().model.endpoint.clone(),
+            saved_execution: None,
+        };
+        // Reconnect discovers another client's receipt after this draft was opened.
+        h.state_mut().model.apply(Reply {
+            tag,
+            run: None,
+            data: Data::RecipeSaveReceipts(vec![receipt]),
+        });
+        h.state_mut().model.commands.clear();
+        h.state_mut().model.apply(Reply {
+            tag,
+            run: None,
+            data: Data::RecipeSaved(Box::new(saved.clone())),
+        });
+        h.run();
+        assert_eq!(h.get_by_label("Temperature").value().as_deref(), Some(text));
+        assert_eq!(h.state().model.recipe, selected);
+        assert!(h.state().model.authoring.draft.is_some());
+        assert!(h.state().model.authoring.receipts.is_empty());
+        assert_eq!(
+            h.state().model.authoring.last_saved.as_ref(),
+            Some(&saved.definition.execution_recipe_id)
+        );
+        assert!(!h.state().model.commands.iter().any(|c| matches!(
+            c.action,
+            Action::Preview(..) | Action::Definition(_) | Action::SaveRecipe(_)
+        )));
+    }
+}

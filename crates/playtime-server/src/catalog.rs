@@ -345,6 +345,7 @@ fn save_recipe(
             .map_err(settings_error)?;
     }
     definition.validate().map_err(|_| invalid())?;
+    definition.check_initial_context().map_err(settings_error)?;
     let definition_json = encode(&definition)?;
     let saved = SavedRecipe {
         recipe_id: recipe_id.clone(),
