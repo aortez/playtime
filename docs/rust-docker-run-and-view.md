@@ -1,11 +1,13 @@
-# Packaged Docker run-and-view (#66)
+# Packaged Docker run-and-view
 
 The `docker-two-session` catalog recipe runs the real controller in a frozen,
 user-systemd worker. Its five model replies are scripted; its tools, session
 processes, workspace capture, archive publication and client downloads are real.
 The same controller and archive encoder also retain the existing simulation path.
-This completes only D3a. Guarded Ollama application integration, broader recipes,
-seeds/restoration, surviving-worker restart and recovery remain separate work.
+The [live-model path](rust-live-model.md) and [reviewed recipe catalog](rust-recipes.md)
+add real inference and seeds through this composition. Model-host enforcement,
+automatic image restoration, daemon restart reattachment, and archive recovery
+remain unimplemented.
 
 ## Run it
 
@@ -45,14 +47,17 @@ invokes Cargo, searches source files, refreshes the image or calls a model.
 The worker receives `PATH=/no-runtime-cargo` under systemd.
 
 The profile is `docker_scripted_no_seed_self_v1`, with private worker kind
-`docker_scripted` and archive/run mode `scripted_smoke`. The packaged executable
-advertises `real_workshop`, never `real_model`, and the `docker_profile` digest of
-its compiled profile (everything except the host's Docker selection and daemon
-identity). `--docker-scripted` startup refuses a bundle whose digest differs from
+`docker_scripted` and archive/run mode `scripted_smoke`. This profile requires a
+bundle advertising `real_workshop` and a matching
+`docker_profile` digest. Current bundles also advertise `real_model` for live
+execution. The digest covers compiled templates, recipe bounds and embedded
+identities, excluding the host's Docker selection and daemon identity.
+`--docker-scripted` startup refuses a bundle whose digest differs from
 the service's own, so a bundle from another revision cannot pass admission and
-then stall in `Reconciling`. The preview revision includes the digest. A worker
-and producer both reject unsupported profile versions, changed
-recipes/prompts/limits, seeds and other memory conditions. Older simulation
+then stall in `Reconciling`. The preview revision includes the digest. The worker
+and producer reject unsupported profile versions and modifications
+to this fixed recipe's prompts/limits. This smoke profile has no seeds and uses
+`self` memory; the separate catalog-recipe profile supports seeds. Older simulation
 bundles/archives retain their existing path. `controller_archive_v1` recovery
 does not authorize this Docker profile;
 its configuration cannot decode as the simulation recovery contract.
@@ -76,8 +81,8 @@ output tokens, 512/request, 256/handoff, 30-second model and five-second command
 caps, 4,096 output bytes, 2,048 memento bytes and an 8 MiB event log. Resources are
 one CPU, 1,024 MiB memory, 8 MiB workspace, 16 MiB tmp and 64 PIDs. Scripted context
 is 32,768: the conservative byte-based context guard must fit the fixed commands
-and tool schemas. The later live profile's proposed 8,192 context is not used or
-claimed here. Storage defaults are unchanged.
+and tool schemas. The live smoke also uses 32,768; catalog recipes supply their
+own bounded context. Storage defaults are unchanged.
 
 ## Dispatch and ownership
 
@@ -99,7 +104,7 @@ quiescence; publication is bounded by 20; final Docker cleanup has one aggregate
 Each resource proposal is durably written to a service-private, one-use
 `docker-<role>-<session>.json` before Docker create. It binds the full private
 worker binding (including run/manifest/grant/invocation), exact committed effect
-intent/frontier and full D1 proposal. Files are bounded, mode 0600, no-follow,
+intent/frontier and full sandbox proposal. Files are bounded, mode 0600, no-follow,
 synced with their directory and never overwritten. A cancelled journal operation
 retains its filesystem owner/permit; uncertainty cannot authorize a retry.
 These records survive worker loss and are not experimental writer receipts.
@@ -148,8 +153,10 @@ Normal admission release requires committed terminal/accounting evidence, settle
 publication, exact successful Docker cleanup and original-worker termination.
 Interrupted/infrastructure outcomes report `Reconciling`; worker/API loss leaves
 the admission and private ownership evidence reserved. Restart can inspect saved
-confirmed prefixes but does not launch a replacement, finalize, recover, abandon
-or release these runs. Those joins remain #59/#43.
+confirmed prefixes but does not automatically launch a replacement, finalize,
+recover, or release these runs. Explicit `playtime runs release` verifies original
+worker termination and owned-resource absence before freeing admission; it leaves
+the archive unchanged.
 
 The worker applies the same rule to controller simulation. A simulation run that
 ends interrupted, with an infrastructure failure or with incomplete cleanup shows
@@ -167,7 +174,6 @@ it.
 ./scripts/test-rust-worker-package.sh
 ./scripts/test-rust-cli-e2e.sh --backend fixture
 ./scripts/test-rust-ui-e2e.sh --backend fixture
-PLAYTIME_DOCKER_TESTS=1 python3 -m unittest discover -s tests -v
 ```
 
 Run-and-view has a 540-second bound after explicit build/preparation. It uses the
@@ -221,6 +227,7 @@ tests with Docker enabled, the package gate (including producer/executing-worker
 Docker rejection cases), the existing normal-service gate, both Docker gates,
 12 CLI fixture process cases and two UI fixture process cases.
 
-This slice does not close #24, #20, #21 or #22. Live Ollama ownership/enforcement,
-application composition with that guarded backend, restart recovery, general
-recipes/seeds and explicit image restoration remain separate acceptance gates.
+This evidence establishes Docker/scripted execution and review. The separate
+[live gate](rust-live-model.md#evidence) adds direct Ollama execution. Neither
+establishes model-host enforcement, automatic restart/recovery, or image
+restoration. See [development](development.md) for current gate coverage.

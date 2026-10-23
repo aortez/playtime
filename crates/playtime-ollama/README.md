@@ -1,9 +1,12 @@
-# Native Ollama adapter — #55 / #23 O1
+# Native Ollama adapter
 
 `playtime-ollama` implements independent native HTTP(S) adapter primitives. It
 accepts the engine's already-admitted `ModelRequest`, preserves native observations
 and returns one result. It does not execute tools, retry, settle canonical usage,
-change model locks, supervise Ollama, or integrate the daemon/packaged worker.
+change model locks, or supervise Ollama. The packaged worker uses this adapter
+for [live execution](../../docs/rust-live-model.md); the worker owns composition
+with the controller and archive writer. Production model-host enforcement is
+not implemented.
 
 The only supported profile is Ollama **0.32.3**, **gpt-oss:20b**, digest
 `17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7`, definition
@@ -32,7 +35,8 @@ are rejected rather than mapped to a level. Other reasoning controls remain #5/#
   identity before this adapter's first inference. Failed explicit inspection or
   an observed response identity change invalidates its cached verification.
   Metadata is not an atomic model-name lease or backend-executable attestation.
-  O2 must construct/revalidate the adapter in the executing worker.
+  The live worker inspects identity at each session start; metadata checks do
+  not supply the backend ownership authority required by a future guarded path.
 - Effective context/sampling settings preserve values and omissions: zero
   temperature/top-p/top-k/repeat penalty and `use_mmap: false` survive encoding.
   The exact admitted cap/seed/messages/tools are sent, with stream true and
@@ -157,10 +161,11 @@ hashes, partial message, usage and uncertainty are printed as JSONL; preserve th
 output locally. Default tests never contact Ollama. No live cancellation or
 backend stop is performed by this example.
 
-Remaining gates: #23 O2 real worker/runner integration and backend-wide ownership,
-#24 real Docker plus scripted model and then the two-session live run-and-view,
-#20/#21/#22 actual artifact inspection, cancellation/restart/worker-loss recovery.
-A successful standalone compatibility probe does not complete these gates.
+The [Docker/scripted gate](../../docs/rust-docker-run-and-view.md#executable-evidence)
+and [live gate](../../docs/rust-live-model.md#evidence) exercise worker/runner
+integration and artifact inspection. A standalone compatibility probe does not
+replace either gate or establish model-host ownership. Automatic restart and
+worker-loss recovery remain unimplemented.
 
 [types]: https://github.com/ollama/ollama/blob/fce745fe5e4f0c7741ca46fc5484c9471c997d00/api/types.go
 
@@ -169,9 +174,10 @@ For a static worker on a host whose libc resolver cannot resolve `.local`,
 IP addresses for the configured DNS hostname. An IP-literal URL is never
 resolved, so it accepts only its own address. This is an explicit frozen input,
 not a discovered fallback. Host headers, TLS verification name, port and base
-path remain those of the configured URL. O2 must capture the chosen addresses in
-its frozen inputs and fail on stale addresses rather than silently refreshing
-them. The probe accepts `--resolve-ip IP` and prints that configuration. Default
+path remain those of the configured URL. The daemon freezes the chosen addresses
+and refuses admission after a resolution change; the worker uses those frozen
+addresses rather than silently refreshing them. The probe accepts `--resolve-ip IP`
+and prints that configuration. Default
 `Resolution::System` uses the system resolver under the same deadline.
 
 The adapter's Rustls feature includes reqwest's default crypto provider (AWS-LC),
@@ -185,9 +191,9 @@ CC_x86_64_unknown_linux_musl=musl-gcc cargo build --locked \
   -p playtime-ollama --example compatibility --target x86_64-unknown-linux-musl
 ```
 
-O2 must record the C compiler/crypto build inputs in worker provenance when this
-adapter is actually added to the packaged worker; this PR leaves that package
-and its runtime capabilities unchanged.
+That command builds the TLS-capable adapter example. The packaged worker and
+daemon disable TLS and support plain HTTP, so their musl build does not require
+this crypto C toolchain. See [worker packaging](../../docs/rust-worker-package.md).
 
 ## Validation recorded for this slice (2026-10-18)
 
@@ -211,7 +217,6 @@ and its runtime capabilities unchanged.
   tool was executed; no retries or service changes occurred. Source revision,
   executable hash and JSONL diagnostics are retained locally, not in fixtures.
 
-These are adapter and fixture results. The remaining production/live gates
-listed above, including real Docker sessions, archive/UI inspection of those
-sessions, and backend cancellation/restart/worker-loss enforcement, are unrun
-by this slice.
+These dated results cover the adapter before worker integration. Subsequent
+Docker/live integration evidence is recorded in the linked guides; these probe
+results alone do not establish that integration or backend enforcement.

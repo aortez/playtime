@@ -1,4 +1,4 @@
-# Recipes as data (#74)
+# Reviewed recipe catalog
 
 Long live runs come from a reviewed catalog: the `*.toml` files in `recipes/`.
 The daemon loads the catalog at startup, checks every recipe against compiled
@@ -162,6 +162,8 @@ outside version control), showed:
   Within a second it published session 2's interrupted checkpoint, removed its
   Docker resources and finished the archive with cleanup complete.
 
-The daemon stops the worker's unit as soon as it delivers a cancel. It never
-confirms the final frontier, so it shows the run as `reconciling`
-(`worker_unavailable`) until an operator releases it (#71).
+Cancellation requests the worker unit's stop. Even when the worker writes a final
+checkpoint, the daemon does not treat cancellation as normal confirmed completion;
+the run can remain `reconciling` (`worker_unavailable`). An operator can release
+it after verified worker termination and resource cleanup; see
+[daemon completion and release](rust-daemon.md#results-and-safe-completion).

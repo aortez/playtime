@@ -1,17 +1,18 @@
-# Rust native client and fixture process gate
+# Rust CLI and shared client state
 
-Tracking: [#21](https://github.com/aortez/playtime/issues/21). Transport base:
-`e2fa960f2cb9f5add6debe8fd147cbf9da527392` (#35), reviewed for service-bound
-mutations, acknowledged observation, and retained-content downloads.
+`playtime-cli` builds the Rust `playtime` binary used with `playtimed`. The
+existing `./playtime` is the frozen Python launcher. The Rust client owns parsing
+and presentation; `playtime-client` owns authenticated transport, connection
+resolution, receipts, cursors, and verified downloads. It does not start the
+service, execute workers, or access Docker or the model directly. IDs in commands
+are opaque API identifiers, not filesystem paths.
 
-`playtime-cli` builds the Rust `playtime` binary. The existing `./playtime` remains
-the Python launcher. This delivery implements the CLI/shared-helper and fixture
-gate. It does **not** complete #21: the production simulation gate requires #20's
-real daemon, #42 archives, and #43 worker-loss recovery. No Python fallback,
-implicit service startup, worker execution, model access, or Docker access exists
-in the client. IDs in commands are opaque API identifiers, not filesystem paths.
+For normal use, start with [go.sh and daemon operation](rust-mvp.md#run-it).
+The examples below use scripted HTTP fixtures. Their gate and the working normal
+service gate are distinct from the dedicated client simulation acceptance gate,
+which still fails pending full restart/recovery integration.
 
-## Development use
+## Commands and fixture use
 
 Start the bounded `api_fixture` from [the HTTP guide](rust-http-api.md) in a new
 directory, then use its actual connection descriptor:
@@ -214,13 +215,11 @@ still never published as a successful download.
 
 ## Test bed and gates
 
+Run the [required workspace checks](development.md#required-checks-for-rust-changes)
+and the CLI fixture gate:
+
 ```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-python3 -m unittest discover -s tests -v
 ./scripts/test-rust-cli-e2e.sh --backend fixture
-./scripts/test-rust-cli-e2e.sh --backend simulation
 ```
 
 The **fixture** wrapper builds binaries/examples once and discovers executable
@@ -230,7 +229,7 @@ It runs the Rust `cli-e2e` process driver with the actual CLI and a separate
 CLI process and an in-process real loopback server. Neither invokes Cargo from a
 running test. Tests use port zero, deadline-based readiness, fresh protected
 service/client directories, isolated XDG config/state, and owned-child cleanup.
-`playtime-test-support` provides this infrastructure for #22's suite too.
+`playtime-test-support` provides this infrastructure for the workbench suite too.
 
 Cases cover command/output contracts, 10 known + 100 unknown = 110 charged tokens,
 ambiguous admission and same-key recovery, observer signals/deadlines, broken
@@ -242,13 +241,15 @@ Failures retain a bounded diagnostic bundle under `/tmp/playtime-cli-failure-*`
 containing command stdout/stderr and operation/ID traces. Credential files and
 client receipts are excluded and known test credentials are redacted.
 
-The **simulation** invocation currently exits nonzero with an explicit missing
-production-integration diagnostic. It cannot skip or substitute a fixture. #20
-must supply its production daemon/test-supervisor adapter and real controller
-simulation; #42/#43 must supply durable archives and worker-loss recovery. That
-gate still needs two fresh sessions, persistence, disconnect accounting, workshop
+The dedicated `./scripts/test-rust-cli-e2e.sh --backend simulation` invocation
+still exits nonzero. Its diagnostic names the original integration issues; it
+must not skip or substitute a fixture. The [normal service gate](rust-daemon.md#executable-gate-and-remaining-gates)
+already supplies the real daemon, controller, archives and client inspection.
+The broader simulation acceptance also requires disconnect accounting, workshop
 timeout, cancellation, API restart with a surviving worker, worker loss, no
 repeated dispatch, and checkpoint/artifact inspection through the API alone.
-Do not close #21 until that gate passes. A test supervisor is not a systemd smoke;
-#34 owns its opt-in real-systemd boundary. None of this fixture validation requires
+Do not claim that full acceptance from fixture or normal-path tests.
+A test supervisor is not a systemd smoke;
+[Worker lifecycle](rust-worker-lifecycle.md#real-systemd-supervision) documents
+the opt-in real-systemd boundary. None of this fixture validation requires
 a model, Docker daemon, GPU, or desktop.

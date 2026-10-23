@@ -1,18 +1,17 @@
-# Frozen controller worker (#20, slice A)
+# Frozen worker packaging and execution
 
-The Docker/scripted-model production composition is now available through
-[#66 run-and-view](rust-docker-run-and-view.md). The scope below describes its
-underlying slice; live inference and automatic recovery remain separate work.
-
-`playtime-worker` composes the real runner/archive writer with the authenticated
-private control library. It supports controller simulation and the explicit
-Docker/scripted-model profile described above. It has no server, HTTP, SQLite,
-UI or real model adapter. Native tool text travels only to the fixed in-container
+`playtime-worker` composes the runner/archive writer with authenticated private
+control. It supports controller simulation, Docker with a scripted model, and
+Docker with live Ollama through `playtime-ollama`. It has no public API server,
+SQLite ledger, or UI. Native tool text travels only to the fixed in-container
 bridge; it never reaches a host shell.
 
-This slice supplies the package and prepared-writer handoff. It does not supply
-`playtimed`, public admission/catalog adapters, systemd enforcement, recovery, or
-the CLI/UI production-simulation gates. Those remain #20 B–D, #34 and #43.
+`xtask` builds and verifies the static worker bundle. The
+[daemon](rust-daemon.md) owns public admission and the
+[lifecycle coordinator](rust-worker-lifecycle.md) owns systemd supervision. This
+guide covers packaging and the prepared-writer handoff; automatic reattachment
+and archive recovery remain unimplemented. See [development](development.md) for
+how package, service, Docker/live, and recovery gates differ.
 
 ## Build and validate
 
@@ -59,7 +58,7 @@ fetch dependencies but does not compile them or execute their build scripts.
 Dirty status compares those captured bytes and paths with the recorded revision,
 not a post-build checkout status. This is provenance, not a bit-identical or
 offline rebuild guarantee. The final executable bytes are execution identity.
-Kernel and future model/workshop services retain separate requirements.
+The kernel, model host, and Docker workshop retain separate requirements.
 
 `bundle.json` names the executable, source snapshot, lockfile and build record
 using `ContentRef` and `WorkerIdentity`. SHA-256 of the exact descriptor bytes is
@@ -114,7 +113,7 @@ the frozen scenario, image identity and writer together without creating a
 controller/work clock or dispatching an adapter. The value is non-Clone and
 nonserializable. It is ownership, not permission to execute.
 
-The #34 `Worker` still owns durable grant consumption/revocation and the run lock.
+The private-control `Worker` owns durable grant consumption/revocation and the run lock.
 Its Begin callback consumes the runner value into a controller thread using the
 same writer. Work time starts at the consumed Begin timestamp, including thread
 scheduling delay. Duplicate Begin cannot create a second execution. Cancellation
@@ -125,7 +124,8 @@ production implementation samples only coalesced in-memory receipts and flags;
 it never discovers markers or blocks on disk. Begin waits briefly for committed
 initial records; timeout leaves the original thread and grant alive in
 Reconciling, and later Status can report its returned receipt. The wire receipt
-still requires #34's service verification/persist-before-visible gate in slice B.
+still requires service verification and persistence before publication through
+the public API; see [daemon confirmation](rust-daemon.md#confirmation-authority-and-publication).
 
 The worker retains a pending-publication owner and polls until it settles.
 `publication_pending` conservatively remains true while its driver can publish,

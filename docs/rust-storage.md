@@ -1,11 +1,5 @@
 # Portable Rust archive storage
 
-Tracking: [#33](https://github.com/aortez/playtime/issues/33), the independent
-storage slice of [#19](https://github.com/aortez/playtime/issues/19).
-Branch `33-archive-storage` starts at foundation commit
-`de1647ad54e7d842b365b60ebf4c95f78936cf20`. It does not include the independent
-`18-rust-controller` branch. Stack its review against `17-rust-foundation`.
-
 `playtime-storage` implements synchronous, bounded filesystem I/O, verification,
 and publication. Its dependencies are core/protocol, the pinned Serde versions,
 SHA-256 (`sha2` 0.11.1, as used by #18), and `rustix` 1.1.4 for safe,
@@ -30,8 +24,10 @@ controller nor the synthetic worker. The fixture records that worker execution
 is unavailable. The folder-only copy test removes the original folder and
 verifies every frozen input and referenced artifact from the copy.
 
-This is #33's storage gate. #19 must separately execute the reviewed controller,
-persist that execution, and pass the same detached inspection gate.
+This example tests storage alone. The [archive driver](rust-archive-driver.md)
+executes the controller and tests its durable output independently; the
+[daemon gate](rust-daemon.md#executable-gate-and-remaining-gates) adds clients and
+worker supervision.
 
 ## Layout and authority
 
@@ -58,7 +54,7 @@ were checked independently with Python stdlib hashing; #17's goldens are unchang
 and exactly the manifest's referenced objects. It returns only after verifying
 the stored input bytes and publishing metadata. A per-archive exclusive lock
 lasts until the writer drops, including after a failure. This lock is separate
-from #20's data-root admission lock. An archive's existence or successful
+from the service's data-root admission lock. An archive's existence or successful
 preparation does not grant permission to execute anything.
 Dropping a lock explicitly unlocks it before closing its descriptor, so a
 concurrent process spawn cannot temporarily retain ownership through an
@@ -105,9 +101,9 @@ terminal receipt. Missing/stale/fabricated result files never create completion.
 Offline inspection takes a shared lock while selecting and validating the
 recovered marker, refusing an active writer. After confirmed process exit it can
 observe an old or newly published valid marker; that does not prove whether the
-failed caller received acknowledgment. Service ownership, reattachment and
-controlled reconciliation belong to #19/#20. There is no writer-resume or
-automatic repair API here. Readers never truncate/promote a suffix, skip a gap,
+failed caller received acknowledgment. Service ownership belongs to the lifecycle
+coordinator; automatic reattachment and controlled archive reconciliation are
+not implemented. There is no writer-resume or automatic repair API here. Readers never truncate/promote a suffix, skip a gap,
 or repair a bad committed hash. When no terminal event commits, inspection says
 `incomplete_evidence`; usage then describes observed canonical settlements, not
 an assurance that every attempted request is accounted for.
@@ -173,7 +169,7 @@ Errors expose `malformed_data`, `unsupported_version`, `invalid_cursor`,
 `limit_exceeded`, or `io_error`, plus readable context and uncertain-publication
 status. No caller should branch on message text.
 
-## Validation and next integration
+## Validation
 
 Tests exercise folder-only copies, immutable publication, exact hashes, malformed
 known and preserved unknown events, strict sequence checks, fixed pagination
@@ -189,19 +185,13 @@ Run the repository's formatting, locked Clippy/tests, and Python unittest suite.
 No live services, GPU, Docker, or desktop are used. The existing workflow already
 covers all workspace crates and example compilation.
 
-Local validation: formatting and locked Clippy with warnings denied passed;
-55 workspace Rust tests passed, including the parent crash tests and the lock
-inheritance regression. The Python suite ran 91 tests: 85 passed and six Docker
-tests were explicitly skipped. The documented fixture example also completed
-successfully. No existing input/event/schema fixture changed.
+The runner owns observation mappings, dispatch barriers and checkpoint indexes;
+the service owns admission, worker control and authenticated read confirmations.
+Neither can use an unconfirmed marker or an in-memory result as durable completion
+authority. See [daemon confirmation](rust-daemon.md#confirmation-authority-and-publication)
+for the separate protected confirmation-authority read path.
 
-#19 owns versioned controller observations, archive sequence/digest mappings,
-retained outboxes, dispatch barriers, actual checkpoint manifests/indexes,
-interrupted-run reconciliation and legacy readers. #20 owns admission SQLite
-transactions, worker ownership transfer and service transport. Neither can use
-an unconfirmed marker or an in-memory result as durable completion authority.
-
-## Durable driver integration (#42)
+## Durable driver integration
 
 `open_prepared` is a narrow empty-archive handoff: exclusive writer lock, exact
 expected identity, complete verified inputs, zero marker, empty event file, and
@@ -217,5 +207,5 @@ preceding committed observation lines including LF, never records newly staged
 in the same append. Existing synthetic fixtures and their bytes are unchanged.
 
 See [rust-archive-driver.md](rust-archive-driver.md) for executing simulations,
-late receipt handling, and normalized copied-folder queries. Recovery and legacy
-readers remain separate #43/#44 work.
+late receipt handling, and normalized copied-folder queries. Automatic recovery
+is not implemented; Rust does not read legacy Python archives.

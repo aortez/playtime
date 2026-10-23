@@ -1,16 +1,10 @@
 # Rust foundation architecture decision
 
-Tracking: [#16](https://github.com/aortez/playtime/issues/16), with the bounded
-foundation scope in [#17](https://github.com/aortez/playtime/issues/17).
-Branch `17-rust-foundation` starts at the specified Python baseline
-`ad7a2f2a5a6947d396f601a43fe622716e41200c`. Its tree is identical to the merged
-`main` revision `ca276261605632701b018bb0a3b879eecc80d107` inspected at startup.
-
-Status: implemented foundation for #17, extended with #18's bounded controller
-and deterministic in-memory driver, and #33's synchronous portable archive
-storage. See the [controller contract](rust-controller.md) and
-[storage contract](rust-storage.md). #19 will integrate these components.
-The Python launcher remains the operational entry point.
+The Rust workspace separates pure values, wire contracts, execution policy,
+external effects, durable evidence, service coordination, and presentation. This
+guide records those boundaries and the foundation's value/versioning contracts.
+See [architecture and operation](rust-mvp.md) for the complete run path and
+[compatibility rules](rust-compatibility.md) for the retired Python parity policy.
 
 ## Agreed boundaries
 
@@ -18,47 +12,46 @@ The Python launcher remains the operational entry point.
 I/O or a runtime. `playtime-protocol` owns versioned client/event contracts and
 serialization/schema dependencies. Neither depends on a service or UI.
 
-`playtime-engine` now implements orchestration decisions and simulation adapters;
-real adapters and the internal `playtime-worker` binary follow later. Later
-packages are `playtime-server` (`playtimed`), `playtime-client`
-(shared reqwest client), `playtime-cli` (`playtime`), and `playtime-ui` (egui).
-Add these in their owning issues when they have implementations.
+`playtime-engine` owns orchestration decisions and the deterministic simulator.
+`playtime-runner` integrates it with synchronous `playtime-storage` through a
+serialized writer and replaceable effects. `playtime-worker` supplies native
+Docker/Ollama effects and private worker control. The daemon in `playtime-server`
+owns admission and lifecycle coordination, separate from HTTP/auth modules.
+`playtime-client` owns transport and shared durable client state;
+`playtime-cli` and `playtime-ui` own presentation.
 
-The service owns admission. Each run has a separate worker, supervised by a
-Linux systemd user service. A client/API restart leaves a surviving worker
-running. A confirmed worker crash becomes an interrupted result with the last
-valid checkpoint; continuation requires an explicit new allocation. The Rust
-and Python implementations must share mutual exclusion for a data root.
-The existing coordination point is an exclusive `flock` on
-`<data-root>/.playtime/run.lock`. The service must also account for a starting
-legacy systemd unit before admitting work; checking a PID or replacing the lock
-file is insufficient. #20 implements this coordination, with no queue or worker
-auto-restart.
+The service admits one active run per data root, with no queue or worker
+auto-restart. Each run has a separate Linux systemd user service. Closing a
+client does not cancel the worker. Restarting the daemon retains the reservation
+and marks active runs reconciling; automatic reattachment and worker-loss recovery
+are not implemented. Operator release requires verified termination and resource
+cleanup and does not repair the archive.
+
+Admission uses an exclusive `flock` on `<data-root>/.playtime/run.lock` and checks
+for legacy workers before handoff. Checking a PID or replacing the lock file is
+insufficient. The legacy exclusion remains a safety boundary, not a requirement
+to run the frozen Python controller.
 
 Portable run folders own frozen inputs, experimental events, checkpoints, and
 results. SQLite owns admission/idempotency and orchestration ledgers; query
-indexes and reports are derived. The lifecycle is preview → freeze verified
-inputs → admit worker → publish checkpoints → publish result. #33 implements
-archive publication. Controller integration and reconciliation belong to #19;
-supervision, SQLite admission transactions, and API behavior belong to #20.
-Inputs are frozen before admission, and worker startup verifies the frozen
-identities again. Client disconnect does not cancel work. Cancellation, failed
-inference, and incomplete cleanup remain recorded outcomes. Operational tracing
-is separate from the durable experiment event history.
+indexes and reports are derived. The service reserves admission, prepares frozen
+inputs and the worker grant, then starts the worker. The worker verifies those
+identities again before Begin. Cancellation, failed inference, and incomplete
+cleanup remain recorded outcomes. Operational diagnostics are separate from the
+durable experiment event history.
 
-Worker identity is independent of viewer/client/service identity. Strict repeat
-will verify the frozen worker executable and inputs, recording source/build/
-dependency provenance and platform requirements separately. Rust execution is
-a new controller baseline; historical exact repeats retain the archived Python
-route. Source plus a lockfile is not a promise of bit-identical rebuilding.
+Worker identity is independent of viewer/client/service identity. Source/build/
+dependency provenance and platform requirements are recorded separately from the
+actual executable bytes. Source plus a lockfile is not a promise of bit-identical
+rebuilding. Strict repeat is not implemented.
 
 ## Values and accounting
 
 `UsageTotals` aggregates completed request outcomes. Known zero generation is
 valid. Unknown usage carries a positive dispatched allowance and a request
 count; subsequent successes do not erase either. Overflow rejects the entire
-update. The future controller must separately reserve before dispatch and
-settle requests exactly once; this accumulator does not implement admission.
+update. The controller separately reserves before dispatch and
+settles requests exactly once; this accumulator does not implement admission.
 
 Run, session, and request IDs are distinct opaque types. They accept 1–128 ASCII
 letters/digits/underscores/hyphens with an alphanumeric first character; clients
@@ -70,17 +63,18 @@ Seconds, tokens, byte counts, and CPU cores have explicit field names. Requested
 limits reject unknown keys, invalid types, invalid bounds, conflicting reserves,
 and arithmetic overflow. Zero sampling seed and measured zero tokens are valid;
 missing usage has a distinct positive reservation. The context configuration
-check preserves the Python baseline; admission of each request needs the full
-conversation/context/handoff checks in #18. `RunParameters` is the bounded
-foundation subset, not a complete recipe or the future override API.
+check is only one layer; request admission also applies the controller's full
+conversation/context/handoff checks. `RunParameters` is the bounded controller
+configuration; the [recipe profile](rust-recipes.md) adds texts, seeds and model
+settings. An interactive override API is not implemented.
 
 Command exits, timeouts, and absent results are separate outcomes. Missing,
 available (including empty), and unavailable memory are separate states.
 Cleanup can be complete, failed with errors, or unknown. These are observations;
-the engine implements transition and cancellation rules separately in #18.
+the [engine](rust-controller.md) implements transition and cancellation rules.
 
 Archive paths are lexical relative paths without empty, dot, parent, backslash,
-NUL, or colon components. This is not permission to open/extract them: #33's
+NUL, or colon components. This is not permission to open/extract them: the
 storage layer also enforces root containment, link rules, types, and byte bounds.
 Event times are UTC RFC 3339 strings with `Z`, years 0001–9999, seconds 00–59,
 and optional 1–9 fractional digits. The parser rejects invalid dates and local
@@ -90,7 +84,7 @@ offsets instead of normalizing evidence timestamps.
 
 | Contract | Version | Reader |
 | --- | --- | --- |
-| HTTP DTOs | `/api/v1` | `v1`; endpoints belong to #20 |
+| HTTP DTOs | `/api/v1` | `playtime-protocol::api` and `playtime-server::http` |
 | Event envelope | `schema_version: 1` | `events::decode_event` |
 | Frozen input manifest | `schema_version: 1` | `archive::decode_input_manifest` |
 | Archive layout | `schema_version: 1` | `storage::decode_archive_descriptor` |
@@ -120,17 +114,17 @@ other frozen inputs, and independent worker artifacts. Each reference holds a
 relative path, SHA-256 of the exact stored bytes, and byte length. Paths must be
 unique and inside `inputs/`; the manifest excludes itself. The hash of the
 stored manifest bytes lives outside it, represented by the `run_started` input
-manifest reference. #33 also binds it in immutable `archive.json`; #20 owns
+manifest reference. Storage also binds it in immutable `archive.json`; the service owns
 the independent admission transaction.
 Do not deserialize and reserialize bytes before verifying their digest.
 
 Executable, source artifact, and Cargo.lock references are distinct. Compiler,
 target, build profile, revision/dirty status, and platform requirements are
 separate provenance, not substitutes for executable identity. GUI/CLI/service
-rebuilds do not change worker identity. #33 verifies concrete bytes without
-executing them. Compatible host checks and archived execution routes belong to
-#27; #19 owns legacy readers. Existing Python hashes retain their own serializer
-and validation rules.
+rebuilds do not change worker identity. Storage verifies concrete bytes without
+executing them; the worker package validator checks execution compatibility.
+Archived repeat execution is not implemented, and Rust does not read Python
+archives.
 
 ## Fixtures and checks
 
@@ -142,28 +136,8 @@ It describes an outcome; it does not execute an experiment.
 
 The schema golden fixes the event/error envelopes and archive/read-model shapes.
 Known event payloads are validated by Rust types; their detailed schemas can be
-extended alongside #18's additional event kinds. The generic `data` schema
+extended for additional event kinds with reviewed compatibility changes. The generic `data` schema
 allows arbitrary JSON so future kinds remain inspectable.
 
-`.github/workflows/foundation.yml` runs formatting, Clippy, Rust tests, and the
-Python suite on Linux with the pinned toolchain and Python 3.12, once per pull
-request and on each push to `main`. Tests require no model, GPU, Docker daemon,
-display server, service manager, or secrets. Docker tests remain explicitly
-opt-in. See README for the exact local commands.
-
-Local validation on the foundation branch: formatting and Clippy with warnings
-denied passed; 25 Rust tests passed; the Python suite ran 91 tests with 6 explicit
-Docker skips. The GitHub workflow is provided but has not yet run remotely.
-
-## Following work
-
-The [compatibility notes](rust-compatibility.md) record that the legacy matrix
-is retired; the committed Rust goldens are the spec. #18's [controller contract](rust-controller.md)
-defines transitions/effects, request reservation/settlement, the deterministic
-scenario grammar, and cancellation/checkpoint/limit precedence.
-#19 joins a reviewed controller revision to storage, including observation
-mapping, retained outboxes, durable effect dispatch, and legacy readers. #20
-integrates worker ownership/takeover and SQLite admission from #34 with the
-HTTP/shared client from #35. Real
-adapters, service supervision, authenticated remote access, portable reports,
-and strict repeat remain separate deliverables.
+The [development guide](development.md) lists current CI jobs and required checks.
+Foundation tests use synthetic data and do not require Docker or a live model.

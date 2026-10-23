@@ -1,15 +1,16 @@
-# Native workbench fixture milestone
+# Native workbench
 
-`playtime-ui` is the first Linux egui/eframe workbench for the public HTTP API.
-The Python launcher remains operational. This branch advances #22 against the
-scripted service; it does **not** complete #22 or the production simulation gate.
+`playtime-ui` is the Linux egui/eframe workbench for the public HTTP API. It uses
+the shared client with the production daemon or an explicitly labeled fixture.
+The backend prepares bounded data outside rendering; the view model owns user
+selection, pending mutations, and stale-reply checks.
 
-The checkout starts from the shared-client revisions `da5f3a3` (acknowledged SSE
-frontier consistency) and `e532b9d` (CLI/API integration), with #42's observation
-mapping and durable driver merged through `a8a3dab`. All changes were made in the
-existing checkout. No unfinished files were copied from `../playtime2`.
+For normal use, [go.sh](rust-mvp.md#run-it) builds and opens the workbench against
+the daemon. The dedicated UI simulation gate remains incomplete because it also
+requires restart/worker-loss recovery; it is separate from the working service
+and Docker/live run-and-view gates in [development](development.md).
 
-## Demo
+## Fixture and headless development
 
 In separate terminals, with a new temporary fixture root:
 
@@ -21,14 +22,15 @@ cargo run --locked -p playtime-ui -- --connection-file /tmp/playtime-ui-demo/.pl
 The backend label explicitly says fixture replay. This exercises authentication,
 HTTP, SSE and verified content, without workers, Docker, inference or a model.
 The `playtime-test-support` fixture used by the process gate also simulates an
-accepted launch whose HTTP reply is lost. A production demo must use #20's real
-connection descriptor after its worker/archive adapter is implemented.
+accepted launch whose HTTP reply is lost. For production, use the real daemon's
+connection descriptor, such as
+`/home/data2/playtime/root/.playtime/connection.json` with `go.sh` defaults.
 
 To run the real workbench headlessly against the daemon's scripted simulation,
 take screenshots and press controls by their accessible names, use
 `./scripts/workbench-sandbox.sh start` and `scripts/workbench-drive.py`. Both keep
 the display, D-Bus session and accessibility settings private to one directory.
-The playbook is `.claude/skills/run-workbench/SKILL.md`.
+See the [workbench playbook](../.claude/skills/run-workbench/SKILL.md).
 
 Choose a recipe, review the frozen preview, then launch. The left pane contains
 recent runs and unresolved launch receipts. The run list refreshes every 5
@@ -151,27 +153,25 @@ completion.
 
 ## Checks and fixtures
 
+In addition to the [required workspace checks](development.md#required-checks-for-rust-changes):
+
 ```sh
 cargo test --locked -p playtime-ui
 ./scripts/test-rust-ui-e2e.sh --backend fixture
-./scripts/test-rust-ui-e2e.sh --backend simulation
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-python3 -m unittest discover -s tests -v
 ```
 
 The fixture process gate builds once, discovers actual Cargo executables, then
-uses #21's owned process support with fresh roots, port zero, isolated client
+uses shared owned-process support with fresh roots, port zero, isolated client
 state, readiness deadlines, 30-second cases and a 180-second suite. It launches
 through CLI and inspects through the desktop backend, then tests UI lost-reply
 recovery across closing/reopening. Assertions use public HTTP, never service
 archive files. Failure bundles allowlist diagnostics and redact credentials.
 
-The simulation command intentionally exits **1** with the missing #20/#43 adapter
-identified. #42 is merged, but production service supervision and worker-loss
-recovery are not connected here. No fixture fallback or skip is permitted. Both
-real simulation and fixture gates must pass before closing #22.
+The dedicated `./scripts/test-rust-ui-e2e.sh --backend simulation` command
+intentionally exits **1**. Its diagnostic names the original integration issues;
+normal production simulation and supervision now work through the separate
+service gate, but the full restart/worker-loss recovery matrix is incomplete.
+No fixture fallback or skip is permitted. See [gate scope](development.md#gates-that-are-not-implemented).
 
 `tests/support/generated.rs` produces 100,000 records across 100 sessions, over
 10,000 activity rows and under 64 MiB serialized input. It includes Unicode,
@@ -220,5 +220,6 @@ indexing the 100,000-record fixture. It reports frame quantiles, peak Linux RSS,
 cache maxima and laid-out rows. Network/disk wait and initial generation are
 excluded from frame timings. Hardware timing is deliberately outside ordinary CI.
 See [the recorded measurement](rust-ui-performance.txt). This is prepared-view
-performance evidence; production worker/service switching and image-heavy workloads
-still require the real #20 integration run before the whole #22 acceptance is met.
+performance evidence, not an end-to-end execution measurement. Service and
+Docker/live gates exercise real run inspection separately; the complete
+restart/recovery matrix remains unimplemented.

@@ -1,9 +1,10 @@
-# Backend ownership foundation — #60 / #23 O2a
+# Backend ownership guard
 
 `playtime-backend-guard` supplies a CPU-testable host ownership service/library.
 Its only executable is **`playtime-backend-guard-fixture`**, explicitly selected
 by the test harness. It cannot connect to Ollama, SSH, systemd, Docker, the public
-API or experimental archives. No managed host mode is installed by this slice.
+API or experimental archives. No managed host mode is installed. The
+[live-model path](rust-live-model.md) calls Ollama directly and does not use this guard.
 
 ```sh
 ./scripts/test-rust-backend-guard.sh
@@ -78,7 +79,8 @@ bytes. A protocol terminal is durably committed before the final stream control
 reply. It neither settles the experiment nor proves backend process exit.
 
 Normal terminal completion permits the same live lease's next unique request.
-The future runner must enforce its separate committed archive-settlement barrier.
+A future guarded runner integration must preserve the existing committed
+archive-settlement barrier.
 Normal release needs no pending request and retires the capability durably before
 another lease. Model residency alone does not require a restart. A worker that
 misses a terminal reply can still have an unresolved **full original allowance**
@@ -189,11 +191,12 @@ enforce deadlines across guard/SSH loss, install reviewed Rust-only access contr
 and provide explicit activation/rollback with a dedicated-host fault gate. O2c
 must join the unchanged #55 parser/transport, freeze worker inputs/capabilities,
 map host deadlines conservatively, preserve raw observations and archive settlement
-barriers, and join #59/#43 recovery ownership. The real Docker/Ollama two-session
-run-and-view and production cancellation/restart/worker-loss gates remain open.
-This foundation does not close #23, #20, #21 or #22.
+barriers, and join #59/#43 recovery ownership. Direct Docker/Ollama run-and-view
+already works; it does not establish these guarded host-ownership guarantees or
+complete the restart/worker-loss recovery matrix.
 
-Validation for this slice: formatting and locked all-target workspace Clippy;
+Historical validation of the original guard implementation (#60): formatting
+and locked all-target workspace Clippy;
 387 passing workspace Rust tests (14 explicitly ignored opt-in/helper cases);
 23 passing guard/protocol gate tests, included in that workspace total; Python
 96 tests with six Docker opt-in skips. The guard gate completes in about seven

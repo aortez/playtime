@@ -1,5 +1,9 @@
 # Prompt comparison in three chunks
 
+> **Historical Python study.** The Python controller is frozen. This plan and
+> its commands are retained as evidence; do not run or resume Python experiments.
+> See the [Rust operation guide](../docs/rust-mvp.md#run-it) for current execution.
+
 This exploratory comparison for [issue #15](https://github.com/aortez/playtime/issues/15)
 tests three invitations using the existing Python controller. It develops the
 [persona and discovery ideas](persona-and-discovery.md) while the Rust foundation

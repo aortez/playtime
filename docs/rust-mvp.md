@@ -1,13 +1,15 @@
-# Rust MVP
+# Rust architecture and operation
 
 The Rust MVP is the point where Playtime's daemon, CLI and workbench run a long
 real-model experiment unattended and let a person review it afterwards. #16
 defines it, and the [Rust MVP milestone](https://github.com/aortez/playtime/milestone/2)
 held its slices. It was released as v0.1.0. The soak's report on #75 and the
 follow-up checks on #16 give the evidence for each of #16's items. This
-document says how the parts fit, how a run goes and how to run it.
+document is the current architecture overview: how the parts fit, how a run goes,
+and how to run it. The filename is retained for existing links. Development setup
+and test-gate scope are in [development.md](development.md).
 
-## Goal
+## Supported experiment
 
 Run the reviewed `curiosity` recipe, 10 sessions of `gpt-oss:20b` with a seed
 pack and a 64K context, unattended, then browse every session's transcript,
@@ -160,26 +162,33 @@ Rules for live runs:
 - Recipe limits change only with the owner's review.
 - Keep every attempt as a record, including failed ones.
 
-CI runs the `foundation`, `worker-package`, `service-normal` and `ui-snapshots`
-jobs. The Docker, live-model and backend-guard gates in `scripts/` run by hand,
-on the machine with the locked image and the model host.
+See [development and test gates](development.md) for CI coverage, CPU simulation,
+Docker/live requirements, and the dedicated client simulation gates that still
+fail explicitly pending recovery integration.
 
-## Not in the MVP
+## Current limitations
 
-These issues come next, in an order the owner sets:
+The released execution path does not include the following capabilities. Issue
+numbers identify their design discussions; priorities belong to the owner:
 
 - Host enforcement or the guard in the run path (#67, #68 as written, #70).
 - Automatic recovery and reattaching to a running worker after a daemon
   restart (#43, #58, #59).
 - Remote access (#25), reports (#26), repeat and pilots (#27).
-- Legacy work (#44, and #28's parity matrix).
 - Research features (#2 to #15), including the launcher's recipe variations,
   parameter and model choice, seed upload and readiness checks (#2 to #7).
-- CI polish (#40), apart from the flake fixes.
 - The larger exec-schema measurement (#82). The MVP keeps schema A with a
   per-session parse-error cap.
 
+Rust does not read or repeat Python archives. The legacy parity matrix is retired;
+see [compatibility rules](rust-compatibility.md). Historical experiment plans and
+results under `experiments/` are retained as evidence, not active Rust recipes.
+
 ## Documents
+
+Start with [development.md](development.md) for builds and tests. Component guides
+below own their detailed contracts; fixture READMEs next to test data explain
+provenance. `workshop/docs/` contains the model-facing tool inventory and usage notes.
 
 | Area | Crates | Documents |
 | --- | --- | --- |
@@ -188,7 +197,7 @@ These issues come next, in an order the owner sets:
 | Archives and the run driver | `playtime-runner`, `playtime-storage` | [Storage](rust-storage.md), [archive driver](rust-archive-driver.md), [recovery contract](rust-recovery-contract.md) |
 | Recipes | `recipes/`, `playtime-runner`, `playtime-server` | [Recipes](rust-recipes.md) |
 | Workshop | `playtime-docker` | [Docker sandbox](rust-docker.md), [workspace capture](rust-workspace-capture.md) |
-| Model | `playtime-ollama` | [Live model](rust-live-model.md) |
+| Model | `playtime-ollama` | [Live model](rust-live-model.md), [adapter contract](../crates/playtime-ollama/README.md) |
 | Worker | `playtime-worker`, `playtime-worker-control`, `xtask` | [Worker package](rust-worker-package.md), [worker lifecycle](rust-worker-lifecycle.md) |
 | Daemon and API | `playtime-server` | [Daemon](rust-daemon.md), [HTTP API](rust-http-api.md), [run-and-view](rust-docker-run-and-view.md) |
 | Clients | `playtime-cli`, `playtime-client`, `playtime-local`, `playtime-ui` | [CLI](rust-cli.md), [workbench](rust-ui.md) |
