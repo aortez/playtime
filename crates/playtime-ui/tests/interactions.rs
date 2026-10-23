@@ -20,6 +20,7 @@ async fn named_recipe_preview_launch_and_double_click_controls() {
     app.model.connection = ConnectionState::Connected;
     app.model.modes = vec![RunMode::Simulation];
     app.model.recipes = vec![Recipe {
+        saved: None,
         recipe_id: preview.recipe_id.clone(),
         name: "Two fresh sessions".into(),
         modes: vec![RunMode::Simulation],
@@ -360,4 +361,72 @@ async fn reconnecting_from_the_launcher_leaves_the_last_run_closed() {
     h.get_by_label(&format!("Run {run} · Ended")).click();
     h.run();
     assert!(reconnect(&mut h, &run));
+}
+
+#[tokio::test]
+async fn recipe_editor_keyboard_and_narrow_save_keep_unsaved_text() {
+    let app = common::recipe_editor().await;
+    let mut h = Harness::builder()
+        .with_size([900.0, 600.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    h.get_by_label("Name").click();
+    h.run();
+    h.get_by_label("Name").type_text(" edited");
+    h.run();
+    h.get_by_label("Prompt").click();
+    h.run();
+    h.get_by_label("Prompt").type_text(" Keep a short journal.");
+    h.run();
+    assert!(
+        h.state()
+            .model
+            .authoring
+            .draft
+            .as_ref()
+            .unwrap()
+            .name
+            .contains("edited")
+    );
+    assert!(
+        h.state()
+            .model
+            .authoring
+            .draft
+            .as_ref()
+            .unwrap()
+            .prompt
+            .contains("short journal")
+    );
+    h.get_by_label("Launch experiment").click();
+    h.run();
+    assert!(
+        !h.state()
+            .model
+            .commands
+            .iter()
+            .any(|c| matches!(c.action, Action::Launch(_)))
+    );
+    h.get_by_label("Save revision").click();
+    h.run();
+    assert_eq!(
+        h.state()
+            .model
+            .commands
+            .iter()
+            .filter(|c| matches!(c.action, Action::SaveRecipe(_)))
+            .count(),
+        1
+    );
+    h.get_by_label("Save revision").click();
+    h.run();
+    assert_eq!(
+        h.state()
+            .model
+            .commands
+            .iter()
+            .filter(|c| matches!(c.action, Action::SaveRecipe(_)))
+            .count(),
+        1
+    );
 }

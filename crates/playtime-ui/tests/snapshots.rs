@@ -71,6 +71,14 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        ("recipe-editor", true, false, Inspector::Details, false),
+        (
+            "recipe-editor-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
         ("readable", false, false, Inspector::Details, false),
         ("image", false, false, Inspector::Files, false),
         ("memory", false, false, Inspector::Memory, false),
@@ -79,7 +87,11 @@ async fn reviewed_workbench_screens() {
         ("running", false, false, Inspector::Details, false),
         ("ended", false, false, Inspector::Details, false),
     ] {
-        let mut app = common::demo(launcher).await;
+        let mut app = if name.starts_with("recipe-editor") {
+            common::recipe_editor().await
+        } else {
+            common::demo(launcher).await
+        };
         if matches!(name, "running" | "ended") {
             progress_screen(&mut app, name == "ended");
         }

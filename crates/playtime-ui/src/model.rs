@@ -17,6 +17,8 @@ pub struct Tag {
     pub preview: u64,
     pub inspection: u64,
     pub launch: u64,
+    pub authoring: u64,
+    pub save: u64,
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Disclosure {
@@ -125,6 +127,10 @@ pub struct WindowRequest {
 pub enum Action {
     Connect(Options),
     Recipes(Option<String>),
+    Definition(RecipeId),
+    SaveRecipe(RecipeMutation),
+    RecoverRecipe(IdempotencyKey, bool),
+    RecipeSaveReceipts,
     Runs(Option<String>),
     Receipts(Option<IdempotencyKey>),
     Preview(RecipeId, RunMode),
@@ -154,6 +160,11 @@ pub enum Data {
     Connected(Capabilities, String),
     Preferences(Preferences),
     Recipes(Page<Recipe>),
+    Definition(Box<crate::authoring::DefinitionView>),
+    DefinitionError(String),
+    RecipeSaveProgress(Mutation),
+    RecipeSaved(Box<RecipeSaveResponse>),
+    RecipeSaveReceipts(Vec<playtime_client::recipes::RecipeSaveReceipt>),
     Runs(Page<RunView>),
     Receipts(Vec<LaunchReceipt>, Option<IdempotencyKey>),
     Preview(Box<PreviewView>),
@@ -186,6 +197,7 @@ pub struct Reply {
 }
 
 pub struct Model {
+    pub authoring: crate::authoring::Authoring,
     pub tag: Tag,
     pub connection: ConnectionState,
     pub service: Option<ServiceId>,
@@ -246,6 +258,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            authoring: Default::default(),
             tag: Tag::default(),
             connection: ConnectionState::Disconnected,
             service: None,
@@ -325,6 +338,9 @@ impl Model {
                 Action::Recover(..) => self.launch = Mutation::Unresolved(self.notice.clone()),
                 Action::Cancel(_) => self.cancellation = Mutation::Unresolved(self.notice.clone()),
                 Action::Preview(..) => self.previewing = false,
+                Action::SaveRecipe(_) | Action::RecoverRecipe(..) => {
+                    self.authoring.save = Mutation::Unresolved(self.notice.clone())
+                }
                 _ => (),
             }
             return;
@@ -337,12 +353,22 @@ impl Model {
                 Mutation::Submitting
             };
         }
+        if matches!(action, Action::SaveRecipe(_) | Action::RecoverRecipe(..)) {
+            self.tag.save += 1;
+            self.authoring.save = Mutation::Recording;
+        }
         self.commands.push_back(Command {
             tag: self.tag,
             action,
         });
     }
     pub fn connect(&mut self, options: Options) {
+        if matches!(
+            self.authoring.save,
+            Mutation::Recording | Mutation::Submitting
+        ) {
+            self.authoring.save = Mutation::Unresolved("Connection changed during save; refresh save receipts and look up the original request".into());
+        }
         if matches!(self.launch, Mutation::Recording | Mutation::Submitting) {
             self.launch = Mutation::Unresolved(
                 "Connection changed while launching; look up the saved request before retrying"
@@ -358,6 +384,19 @@ impl Model {
         self.command(Action::Connect(options));
     }
     pub fn choose_recipe(&mut self, recipe: RecipeId, mode: RunMode) {
+        if self.authoring.draft.is_some() || self.authoring.pending() {
+            self.notify(
+                "Save or discard the recipe edits before changing the selection",
+                None,
+            );
+            return;
+        }
+        self.tag.authoring += 1;
+        self.authoring.definition = None;
+        self.authoring.error.clear();
+        if self.authoring.enabled && mode == RunMode::Experiment {
+            self.command(Action::Definition(recipe.clone()));
+        }
         self.recipe = Some(recipe.clone());
         self.mode = mode;
         self.preview = None;
@@ -373,6 +412,8 @@ impl Model {
     }
     pub fn can_launch(&self) -> bool {
         self.connection == ConnectionState::Connected
+            && self.authoring.draft.is_none()
+            && !self.authoring.pending()
             && self.modes.contains(&self.mode)
             && !matches!(
                 self.launch,
@@ -467,6 +508,18 @@ impl Model {
         if reply.tag.connection != self.tag.connection {
             return;
         }
+        if matches!(&reply.data, Data::Definition(_) | Data::DefinitionError(_))
+            && reply.tag.authoring != self.tag.authoring
+        {
+            return;
+        }
+        if matches!(
+            &reply.data,
+            Data::RecipeSaved(_) | Data::RecipeSaveProgress(_) | Data::RecipeSaveReceipts(_)
+        ) && reply.tag.save != self.tag.save
+        {
+            return;
+        }
         if reply.run.is_some()
             && (reply.tag.selection != self.tag.selection || reply.run != self.selected)
         {
@@ -513,6 +566,10 @@ impl Model {
                     return;
                 }
                 self.service = Some(caps.service_id);
+                self.authoring.enabled = caps.features.iter().any(|f| f == RECIPE_AUTHORING);
+                if self.authoring.enabled {
+                    self.command(Action::RecipeSaveReceipts);
+                }
                 self.modes = caps.modes;
                 self.endpoint = endpoint;
                 self.backend = format!(
@@ -551,6 +608,49 @@ impl Model {
                 self.recipes = p.items;
                 self.recipe_next = p.next_cursor;
             }
+            Data::Definition(definition) => {
+                self.authoring.definition = Some(*definition);
+            }
+            Data::DefinitionError(error) => {
+                self.authoring.error = error;
+            }
+            Data::RecipeSaveProgress(state) => {
+                self.authoring.save = state;
+                if !matches!(
+                    self.authoring.save,
+                    Mutation::Recording | Mutation::Submitting
+                ) {
+                    self.command(Action::RecipeSaveReceipts);
+                }
+            }
+            Data::RecipeSaveReceipts(receipts) => {
+                self.authoring.receipts = receipts;
+            }
+            Data::RecipeSaved(response) => {
+                self.authoring.save = Mutation::Accepted;
+                self.authoring
+                    .receipts
+                    .retain(|r| r.pending.key != response.key);
+                let select = self
+                    .authoring
+                    .draft
+                    .as_ref()
+                    .is_none_or(|draft| draft.request() == response.request);
+                self.authoring.last_saved = Some(response.definition.execution_recipe_id.clone());
+                if select {
+                    self.authoring.draft = None;
+                    self.choose_recipe(
+                        response.definition.execution_recipe_id.clone(),
+                        RunMode::Experiment,
+                    );
+                }
+                self.notify(
+                    "Recipe revision saved. Launching requires a fresh preview.",
+                    None,
+                );
+                self.command(Action::Recipes(None));
+                self.command(Action::RecipeSaveReceipts);
+            }
             Data::Runs(p) => {
                 self.runs = p.items;
                 self.runs_next = p.next_cursor;
@@ -562,6 +662,7 @@ impl Model {
             Data::Preview(p) if reply.tag.preview == self.tag.preview => {
                 self.previewing = false;
                 self.preview = Some(*p);
+                self.authoring.error.clear();
             }
             Data::Preview(_) => (),
             Data::PreviewPage(source) => {
@@ -570,6 +671,9 @@ impl Model {
                 }
             }
             Data::PreviewError(error) => {
+                if self.authoring.enabled && self.mode == RunMode::Experiment {
+                    self.authoring.error = error.clone();
+                }
                 self.previewing = false;
                 self.preview = None;
                 self.notify(error, None);

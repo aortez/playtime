@@ -27,6 +27,7 @@ pub async fn demo(launcher: bool) -> Workbench {
     app.model.modes = vec![RunMode::Simulation];
     app.model.recipe = Some(preview.recipe_id.clone());
     app.model.recipes = vec![Recipe {
+        saved: None,
         recipe_id: preview.recipe_id.clone(),
         name: "Two-session workshop".into(),
         modes: vec![RunMode::Simulation],
@@ -117,5 +118,46 @@ pub async fn demo(launcher: bool) -> Workbench {
             });
         }
     }
+    app
+}
+
+#[allow(dead_code)]
+pub async fn recipe_editor() -> Workbench {
+    let root = playtime_test_support::TestRoot::new().unwrap();
+    let ledger = playtime_server::lifecycle::Ledger::open(&root.0)
+        .await
+        .unwrap();
+    let recipes = playtime_server::daemon::catalog::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../recipes"),
+    )
+    .unwrap();
+    let catalog = playtime_server::catalog::Catalog::new(ledger, recipes).unwrap();
+    let definition = catalog
+        .definition(&RecipeId::new("curiosity").unwrap())
+        .await
+        .unwrap();
+    let mut app = demo(true).await;
+    app.model.mode = RunMode::Experiment;
+    app.model.recipe = Some(definition.execution_recipe_id.clone());
+    app.model.recipes = vec![Recipe {
+        recipe_id: definition.execution_recipe_id.clone(),
+        name: definition.name.clone(),
+        modes: vec![RunMode::Experiment],
+        saved: None,
+    }];
+    app.model.preview = None;
+    app.model.authoring.enabled = true;
+    app.model.authoring.definition = Some(playtime_ui::authoring::DefinitionView {
+        inherited: serde_json::to_string_pretty(&definition.inherited).unwrap(),
+        value: definition,
+    });
+    app.model.notify(
+        "Execution unavailable: the saved configuration remains editable.",
+        None,
+    );
+    app.model.edit_recipe(true);
+    let draft = app.model.authoring.draft.as_mut().unwrap();
+    draft.name = "Curiosity: a different starting question".into();
+    draft.prompt = "Explore a question raised by the seed files. Record what you test, what you learn, and what remains uncertain. Leave a clear handoff for the next session.".into();
     app
 }

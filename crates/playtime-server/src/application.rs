@@ -33,6 +33,13 @@ impl ApiError {
             "unsupported_media_type" => "Use application/json without content encoding",
             "unsupported_capability" => "Capability is not supported by this backend",
             "invalid_parameters" => "Invalid requested parameters",
+            "source_conflict" => "The source definition changed; reload before cloning",
+            "head_conflict" => "A newer revision was saved; keep your edits and reload",
+            "catalog_full" => "The saved recipe catalog is full",
+            "catalog_corrupt" => "Saved recipe data failed verification",
+            "execution_unavailable" => {
+                "Execution is unavailable; saved recipes can still be edited"
+            }
             "too_many_observers" => {
                 "Observer capacity is exhausted; reconnect with the saved cursor"
             }
@@ -68,6 +75,9 @@ impl ApiError {
             | "cursor_ahead"
             | "evidence_not_ready"
             | "release_refused" => 409,
+            "source_conflict" | "head_conflict" => 409,
+            "catalog_full" => 413,
+            "catalog_corrupt" | "execution_unavailable" => 503,
             "limit_exceeded" => 413,
             "unsupported_media_type" => 415,
             "unsupported_capability" | "invalid_parameters" => 422,
@@ -114,6 +124,29 @@ pub trait Application: Send + Sync + 'static {
     /// Stable identity and cached capabilities; no remote probes here.
     fn capabilities(&self) -> Capabilities;
     async fn recipes(&self, query: PageQuery) -> Result<Page<Recipe>>;
+    async fn recipe_definition(&self, _id: RecipeId) -> Result<RecipeDefinition> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn recipe_save(
+        &self,
+        _key: IdempotencyKey,
+        _request: RecipeMutation,
+    ) -> Result<RecipeSaveResponse> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn recipe_save_lookup(&self, _key: IdempotencyKey) -> Result<RecipeSaveResponse> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn saved_recipes(
+        &self,
+        _query: PageQuery,
+        _history: Option<RecipeId>,
+    ) -> Result<Page<Recipe>> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn saved_recipe(&self, _id: RecipeId) -> Result<SavedRecipe> {
+        Err(ApiError::new("unsupported_capability"))
+    }
     async fn preview(&self, recipe: RecipeId, request: PreviewRequest) -> Result<Preview>;
     /// Must look up a prior key before today's preview/busy validation. A
     /// returned acceptance is durable in production. Own accepted work beyond

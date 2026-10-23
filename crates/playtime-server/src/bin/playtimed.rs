@@ -36,9 +36,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = root.ok_or("--root is required")?;
     // Every catalog recipe is checked here, before the daemon opens.
     let recipes = match &recipes {
-        Some(_) if ollama_endpoint.is_none() => {
-            return Err("--recipes needs --ollama-endpoint".into());
-        }
         Some(directory) => playtime_server::daemon::catalog::load(directory)
             .map_err(|e| format!("invalid recipe catalog: {e}"))?,
         None => vec![],

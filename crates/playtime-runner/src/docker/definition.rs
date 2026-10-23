@@ -1,0 +1,85 @@
+//! Immutable authoring snapshot. It contains no host bindings or credentials.
+use super::{IMAGE_LOCK, MODEL_LOCK, Recipe};
+use crate::{Error, Result};
+use playtime_protocol::api::{RecipeDefinition, RecipeId, RecipeSeed, RecipeSource, SavedRecipe};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrozenRecipe {
+    pub schema_version: u32,
+    pub harness: String,
+    pub recipe: Recipe,
+    pub model_lock: Value,
+    pub environment_lock: Value,
+    pub source: Option<RecipeSource>,
+}
+impl FrozenRecipe {
+    pub fn current(recipe: Recipe) -> Result<Self> {
+        let value = Self {
+            schema_version: 1,
+            harness: "memento_turns_v1".into(),
+            recipe,
+            model_lock: serde_json::from_slice(MODEL_LOCK)?,
+            environment_lock: serde_json::from_slice(IMAGE_LOCK)?,
+            source: None,
+        };
+        value.validate()?;
+        Ok(value)
+    }
+    /// Structural validation intentionally does not require current identities.
+    pub fn validate(&self) -> Result<()> {
+        if self.schema_version != 1
+            || self.harness.is_empty()
+            || !self.model_lock.is_object()
+            || !self.environment_lock.is_object()
+        {
+            return Err(Error::Invalid("unsupported recipe definition".into()));
+        }
+        self.recipe.check()
+    }
+    pub fn executable(&self) -> Result<()> {
+        self.validate()?;
+        if self.harness != "memento_turns_v1"
+            || self.model_lock != serde_json::from_slice::<Value>(MODEL_LOCK)?
+            || self.environment_lock != serde_json::from_slice::<Value>(IMAGE_LOCK)?
+        {
+            return Err(Error::Invalid(
+                "recipe execution identities are unavailable".into(),
+            ));
+        }
+        Ok(())
+    }
+    pub fn digest(&self) -> Result<String> {
+        Ok(playtime_storage::sha256(&serde_json::to_vec(self)?).to_string())
+    }
+    pub fn view(&self, saved: Option<SavedRecipe>) -> Result<RecipeDefinition> {
+        self.validate()?;
+        let mut inherited = serde_json::to_value(self)?;
+        let recipe = inherited["recipe"].as_object_mut().unwrap();
+        for field in ["id", "name", "prompt", "seeds"] {
+            recipe.remove(field);
+        }
+        Ok(RecipeDefinition {
+            schema_version: self.schema_version,
+            execution_recipe_id: RecipeId::new(&self.recipe.id)?,
+            definition_digest: self.digest()?,
+            saved,
+            source: self.source.clone(),
+            name: self.recipe.name.clone(),
+            prompt: self.recipe.prompt.clone(),
+            inherited,
+            seeds: self
+                .recipe
+                .seeds
+                .iter()
+                .map(|(path, content)| RecipeSeed {
+                    path: path.clone(),
+                    size_bytes: content.len() as u64,
+                    sha256: playtime_storage::sha256(content.as_bytes()).to_string(),
+                })
+                .collect(),
+        })
+    }
+}

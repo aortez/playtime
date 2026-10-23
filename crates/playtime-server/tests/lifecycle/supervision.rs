@@ -277,7 +277,7 @@ async fn v2_migration_preserves_history_and_adds_supervision_evidence() {
         [serde_json::to_string(&value).unwrap()],
     )
     .unwrap();
-    db.execute_batch("PRAGMA user_version=2;").unwrap();
+    db.execute_batch("DROP TABLE recipe_saves; DROP TABLE recipe_revisions; DROP TABLE recipe_heads; PRAGMA user_version=2;").unwrap();
     drop(db);
     let ledger = Ledger::open(&root.0).await.unwrap();
     let restored = ledger.get(&saved.run_id).await.unwrap();

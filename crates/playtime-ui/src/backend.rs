@@ -9,6 +9,7 @@ use crate::{
 use playtime_client::{
     Client, Error, Observation, RetryPolicy,
     config::{self, Environment, Options, Resolved},
+    recipes::{RecipeSaveReceipt, RecipeSaveStore},
     state::{LaunchReceipt, ReceiptStore},
 };
 use playtime_core::RunId;
@@ -364,6 +365,9 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
 }
 fn action_error(action: &Action, error: String) -> Data {
     match action {
+        Action::Definition(_) => Data::DefinitionError(error),
+        Action::SaveRecipe(_) => Data::RecipeSaveProgress(Mutation::Rejected(error)),
+        Action::RecoverRecipe(..) => Data::RecipeSaveProgress(Mutation::Unresolved(error)),
         Action::Preview(..) => Data::PreviewError(error),
         Action::Launch(..) => Data::LaunchProgress(Mutation::Rejected(error), None),
         Action::Recover(..) => Data::LaunchProgress(recovery_unresolved(error), None),
@@ -499,6 +503,65 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
     let tag = command.tag;
     let client = &s.client;
     match command.action {
+        Action::Definition(id) => {
+            let value = client.recipe_definition(&id).await.map_err(safe)?;
+            let inherited =
+                serde_json::to_string_pretty(&value.inherited).map_err(|e| e.to_string())?;
+            out.send(
+                tag,
+                None,
+                Data::Definition(Box::new(crate::authoring::DefinitionView {
+                    value,
+                    inherited,
+                })),
+            )
+            .await;
+        }
+        Action::RecipeSaveReceipts => {
+            let store = RecipeSaveStore::new(&s.resolved.state_dir);
+            let service = client.service_id().clone();
+            let receipts = local(move || {
+                store
+                    .list_service(Some(&service))
+                    .map_err(|e| e.to_string())
+            })
+            .await?;
+            out.send(tag, None, Data::RecipeSaveReceipts(receipts))
+                .await;
+        }
+        Action::SaveRecipe(request) => {
+            let pending = client.prepare_recipe_save(request).map_err(safe)?;
+            let store = RecipeSaveStore::new(&s.resolved.state_dir);
+            let endpoint = client.endpoint().to_owned();
+            let receipt =
+                local(move || store.save(&pending, &endpoint).map_err(|e| e.to_string())).await?;
+            recipe_save(s, out, tag, receipt, LaunchAttempt::New).await;
+        }
+        Action::RecoverRecipe(key, retry) => {
+            let store = RecipeSaveStore::new(&s.resolved.state_dir);
+            let receipt = local(move || {
+                store
+                    .read(&key)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "Saved recipe request not found".into())
+            })
+            .await?;
+            receipt
+                .check_target(client.service_id(), client.endpoint())
+                .map_err(|e| e.to_string())?;
+            recipe_save(
+                s,
+                out,
+                tag,
+                receipt,
+                if retry {
+                    LaunchAttempt::Retry
+                } else {
+                    LaunchAttempt::Lookup
+                },
+            )
+            .await;
+        }
         Action::PreviewPage(preview, offset) => {
             out.send(
                 tag,
@@ -916,6 +979,72 @@ async fn admission(
     }
     Ok(())
 }
+async fn recipe_save(
+    s: &Session,
+    out: &Out,
+    tag: Tag,
+    receipt: RecipeSaveReceipt,
+    attempt: LaunchAttempt,
+) {
+    out.send(tag, None, Data::RecipeSaveProgress(Mutation::Submitting))
+        .await;
+    let result = if attempt == LaunchAttempt::Lookup {
+        s.client.lookup_recipe_save(&receipt.pending).await
+    } else {
+        s.client.save_recipe(&receipt.pending).await
+    };
+    let data = match result {
+        Ok(response) => {
+            let store = RecipeSaveStore::new(&s.resolved.state_dir);
+            let saved = response.clone();
+            match local(move || {
+                store
+                    .acknowledge(&receipt, &saved)
+                    .map_err(|e| e.to_string())
+            })
+            .await
+            {
+                Ok(_) => Data::RecipeSaved(Box::new(response)),
+                Err(error) => Data::RecipeSaveProgress(Mutation::Unresolved(format!(
+                    "Saved remotely; receipt acknowledgment failed: {error}"
+                ))),
+            }
+        }
+        Err(error) => {
+            // Only a definitive refusal of this fresh request permits a new key.
+            // A lookup 404 or rejected retry cannot resolve an earlier submission.
+            let refused = attempt == LaunchAttempt::New
+                && matches!(
+                    error.api_code(),
+                    Some(
+                        "invalid_parameters"
+                            | "source_conflict"
+                            | "head_conflict"
+                            | "catalog_full"
+                            | "not_found"
+                            | "unsupported_capability"
+                    )
+                );
+            if refused {
+                let store = RecipeSaveStore::new(&s.resolved.state_dir);
+                match local(move || store.discard(&receipt).map_err(|e| e.to_string())).await {
+                    Ok(()) => Data::RecipeSaveProgress(Mutation::Rejected(format!(
+                        "{error}. Your edits are retained."
+                    ))),
+                    Err(local_error) => Data::RecipeSaveProgress(Mutation::Unresolved(format!(
+                        "{error}; receipt remains: {local_error}"
+                    ))),
+                }
+            } else {
+                Data::RecipeSaveProgress(Mutation::Unresolved(format!(
+                    "{error}. Look up or retry the same saved request."
+                )))
+            }
+        }
+    };
+    out.send(tag, None, data).await;
+}
+
 async fn content_bytes(
     client: &Client,
     run: &RunId,

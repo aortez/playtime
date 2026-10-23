@@ -308,6 +308,17 @@ impl Workbench {
         }
     }
     fn launcher(&mut self, ui: &mut egui::Ui) {
+        if self.model.authoring.enabled {
+            // Saved-revision metadata and readiness errors can make the editor
+            // taller than a narrow window. Keep its save controls reachable.
+            egui::ScrollArea::vertical()
+                .id_salt("authoring-launcher")
+                .show(ui, |ui| self.launcher_contents(ui));
+        } else {
+            self.launcher_contents(ui);
+        }
+    }
+    fn launcher_contents(&mut self, ui: &mut egui::Ui) {
         ui.add_space(12.0);
         ui.heading(RichText::new("New experiment").size(26.0));
         ui.label("Choose a recipe and review its frozen inputs before launching.");
@@ -364,10 +375,14 @@ impl Workbench {
                 self.model
                     .command(Action::Recipes(self.model.recipe_next.clone()));
             }
+            if self.model.authoring.enabled && ui.button("Refresh recipes").clicked() {
+                self.model.command(Action::Recipes(None));
+            }
         });
         if let Some((id, mode)) = choice {
             self.model.choose_recipe(id, mode);
         }
+        crate::authoring::draw(&mut self.model, ui);
         if self.model.previewing {
             ui.label("Loading read-only preview…");
         }
@@ -470,9 +485,13 @@ impl Workbench {
                 });
         } else {
             ui.add_space(30.0);
-            ui.label(
-                "Select a recipe to load its prompt, limits, model, workshop and seed summary.",
-            );
+            ui.label(if self.model.authoring.draft.is_some() {
+                "Unsaved edits: save a revision before previewing and launching."
+            } else if self.model.authoring.definition.is_some() {
+                "Refresh preview when execution is available."
+            } else {
+                "Select a recipe to load its prompt, limits, model, workshop and seed summary."
+            });
         }
         if let Some(offset) = preview_page
             && let Some(preview) = &self.model.preview

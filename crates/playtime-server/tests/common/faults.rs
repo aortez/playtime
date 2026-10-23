@@ -48,6 +48,31 @@ impl Application for Faults {
     async fn recipes(&self, q: PageQuery) -> Result<Page<Recipe>> {
         self.inner.recipes(q).await
     }
+    async fn recipe_definition(&self, id: RecipeId) -> Result<RecipeDefinition> {
+        self.inner.recipe_definition(id).await
+    }
+    async fn recipe_save(
+        &self,
+        key: IdempotencyKey,
+        request: RecipeMutation,
+    ) -> Result<RecipeSaveResponse> {
+        let result = self.inner.recipe_save(key, request).await;
+        tokio::time::sleep(self.admission_delay).await;
+        result
+    }
+    async fn recipe_save_lookup(&self, key: IdempotencyKey) -> Result<RecipeSaveResponse> {
+        self.inner.recipe_save_lookup(key).await
+    }
+    async fn saved_recipes(
+        &self,
+        query: PageQuery,
+        history: Option<RecipeId>,
+    ) -> Result<Page<Recipe>> {
+        self.inner.saved_recipes(query, history).await
+    }
+    async fn saved_recipe(&self, id: RecipeId) -> Result<SavedRecipe> {
+        self.inner.saved_recipe(id).await
+    }
     async fn preview(&self, r: RecipeId, q: PreviewRequest) -> Result<Preview> {
         let mut value = self.inner.preview(r, q).await?;
         if self.preview_size > 0 {

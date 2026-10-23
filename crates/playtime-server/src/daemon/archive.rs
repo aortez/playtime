@@ -29,6 +29,11 @@ pub(super) struct Archive {
     pub live: Option<Arc<Live>>,
     /// Reviewed catalog recipes, by id. They run on the live model.
     pub recipes: std::collections::BTreeMap<String, playtime_runner::docker::Recipe>,
+    pub authoring: Option<crate::catalog::Catalog>,
+    pub docker_options: Option<(PathBuf, PathBuf)>,
+    pub live_endpoint: Option<String>,
+    docker_transport: Arc<tokio::sync::Mutex<Option<playtime_docker::transport::Cli>>>,
+    execution_gate: Arc<tokio::sync::Mutex<()>>,
 }
 /// The live model as the daemon reaches it: host bindings frozen at startup
 /// and an adapter for read-only identity checks at admission.
@@ -144,6 +149,11 @@ impl Archive {
             docker_engine: None,
             live: None,
             recipes: Default::default(),
+            authoring: None,
+            docker_options: None,
+            live_endpoint: None,
+            docker_transport: Arc::new(tokio::sync::Mutex::new(None)),
+            execution_gate: Arc::new(tokio::sync::Mutex::new(())),
             bundle: Arc::new(bundle),
             scenario,
             bytes,
@@ -170,8 +180,17 @@ impl Archive {
                 "bundle does not implement this daemon's frozen Docker profile",
             ));
         }
-        let cli = Cli::resolve(executable, socket, &docker_config(&self.root)?)
-            .map_err(|_| Error::Invalid("invalid Docker executable/socket selection"))?;
+        let cli = {
+            let mut cached = self.docker_transport.lock().await;
+            if let Some(cli) = cached.as_ref() {
+                cli.clone()
+            } else {
+                let cli = Cli::resolve(executable, socket, &docker_config(&self.root)?)
+                    .map_err(|_| Error::Invalid("invalid Docker executable/socket selection"))?;
+                *cached = Some(cli.clone());
+                cli
+            }
+        };
         let selection = cli.selection().clone();
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
         let engine = Engine::connect(Arc::new(cli), deadline, CancellationToken::new())
@@ -194,9 +213,6 @@ impl Archive {
     }
     /// Live runs reuse the Docker workshop, so this needs `enable_docker` first.
     pub async fn enable_live(&mut self, endpoint: &str) -> life::Result<()> {
-        if self.docker.is_none() {
-            return Err(Error::Invalid("live runs need the Docker workshop"));
-        }
         let profiles = playtime_runner::docker::digest()
             .map_err(|_| Error::Invalid("invalid Docker profile"))?;
         if !self
@@ -221,6 +237,9 @@ impl Archive {
             .ok()
             .filter(|e| e.as_str().starts_with("http://"))
             .ok_or(Error::Invalid("live endpoint must be a plain HTTP URL"))?;
+        if self.docker.is_none() {
+            return Err(Error::Invalid("live runs need the Docker workshop"));
+        }
         let addresses = resolve(&endpoint).await?;
         let limits = playtime_ollama::Limits::default();
         let transport = playtime_ollama::NativeTransport::with_resolution(
@@ -249,7 +268,7 @@ impl Archive {
         self.live = Some(Arc::new(live));
         Ok(())
     }
-    /// Catalog recipes run on the live model, so this needs `enable_live` first.
+    /// Catalog definitions load independently of current execution readiness.
     pub fn enable_recipes(
         &mut self,
         recipes: Vec<playtime_runner::docker::Recipe>,
@@ -257,20 +276,109 @@ impl Archive {
         if recipes.is_empty() {
             return Ok(());
         }
-        if self.live.is_none() {
-            return Err(Error::Invalid("catalog recipes need the live model"));
-        }
         for recipe in recipes {
+            recipe
+                .check()
+                .map_err(|_| Error::Invalid("invalid catalog recipe"))?;
             self.recipes.insert(recipe.id.clone(), recipe);
         }
-        if self
-            .recipes
-            .keys()
-            .any(|id| self.recipe_profile(id).is_none())
-        {
-            return Err(Error::Invalid("invalid catalog recipe"));
-        }
         Ok(())
+    }
+    pub async fn execution(&self, mode: RunMode) -> life::Result<Self> {
+        let _guard = self.execution_gate.lock().await;
+        let mut ready = self.clone();
+        if ready.docker.is_none()
+            && let Some((executable, socket)) = &self.docker_options
+        {
+            ready.enable_docker(executable, socket).await?;
+        }
+        if mode != RunMode::ScriptedSmoke
+            && ready.live.is_none()
+            && let Some(endpoint) = &self.live_endpoint
+        {
+            ready.enable_live(endpoint).await?;
+        }
+        if let Some(engine) = &ready.docker_engine {
+            engine
+                .readiness(
+                    playtime_runner::docker::IMAGE_LOCK,
+                    tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+                    playtime_docker::CancellationToken::new(),
+                )
+                .await
+                .map_err(|_| Error::Invalid("locked Docker readiness changed"))?;
+        }
+        if ready.docker.is_none() {
+            return Err(Error::Invalid("execution unavailable"));
+        }
+        if mode != RunMode::ScriptedSmoke {
+            ready
+                .live
+                .as_ref()
+                .ok_or(Error::Invalid("execution unavailable"))?
+                .ready()
+                .await?;
+        }
+        Ok(ready)
+    }
+    async fn authored_profile(&self, id: &str) -> life::Result<playtime_runner::docker::Profile> {
+        if !id.starts_with("saved-") {
+            return self
+                .recipe_profile(id)
+                .ok_or(Error::Invalid("execution unavailable"));
+        }
+        let (definition, _) = self
+            .authoring
+            .as_ref()
+            .ok_or(Error::Invalid("execution unavailable"))?
+            .frozen(id)
+            .await
+            .map_err(|error| {
+                Error::Invalid(if error.code() == "not_found" {
+                    "unsupported recipe or mode"
+                } else {
+                    "invalid saved recipe"
+                })
+            })?;
+        definition
+            .executable()
+            .map_err(|_| Error::Invalid("execution unavailable"))?;
+        let (docker, live) = (
+            self.docker
+                .as_ref()
+                .ok_or(Error::Invalid("execution unavailable"))?,
+            self.live
+                .as_ref()
+                .ok_or(Error::Invalid("execution unavailable"))?,
+        );
+        let mut profile = playtime_runner::docker::Profile::freeze_recipe(
+            definition.recipe.clone(),
+            docker.selection.clone(),
+            docker.daemon.clone(),
+            live.host.clone(),
+        )
+        .map_err(|_| Error::Invalid("invalid saved recipe"))?;
+        profile.definition = Some(definition);
+        profile
+            .validate()
+            .map_err(|_| Error::Invalid("invalid saved recipe"))?;
+        Ok(profile)
+    }
+    pub async fn authored_preview(&self, id: &str) -> life::Result<Preview> {
+        let profile = self.authored_profile(id).await?;
+        let mut preview = self
+            .model_preview(&profile, id, RunMode::Experiment)
+            .ok_or(Error::Invalid("execution unavailable"))?;
+        let seeds = &profile.recipe.as_ref().ok_or(Error::Uncertain)?.seeds;
+        preview.seeds = SeedSummary {
+            files: seeds.len() as u64,
+            bytes: seeds.values().map(|s| s.len() as u64).sum(),
+            digests: seeds
+                .values()
+                .map(|s| digest(s.as_bytes()).to_string())
+                .collect(),
+        };
+        Ok(preview)
     }
     fn recipe_profile(&self, id: &str) -> Option<playtime_runner::docker::Profile> {
         let (docker, live) = (self.docker.as_ref()?, self.live.as_ref()?);
@@ -281,21 +389,6 @@ impl Archive {
             live.host.clone(),
         )
         .ok()
-    }
-    /// The effective recipe: the profile frozen at admission, seeds included.
-    pub fn recipe_preview(&self, id: &str) -> Option<Preview> {
-        let profile = self.recipe_profile(id)?;
-        let mut preview = self.model_preview(&profile, id, RunMode::Experiment)?;
-        let seeds = &profile.recipe.as_ref()?.seeds;
-        preview.seeds = SeedSummary {
-            files: seeds.len() as u64,
-            bytes: seeds.values().map(|s| s.len() as u64).sum(),
-            digests: seeds
-                .values()
-                .map(|s| digest(s.as_bytes()).to_string())
-                .collect(),
-        };
-        Some(preview)
     }
     fn live_profile(&self) -> Option<playtime_runner::docker::Profile> {
         let (docker, live) = (self.docker.as_ref()?, self.live.as_ref()?);
@@ -512,164 +605,28 @@ impl ConfirmationAuthority for Authority {
 #[async_trait]
 impl ArchivePort for Archive {
     async fn validate_preview(&self, request: &AdmissionRequest) -> life::Result<Selection> {
-        let docker_ready = || async {
-            self.docker_engine
-                .as_ref()
-                .ok_or(Error::Uncertain)?
-                .readiness(
-                    playtime_runner::docker::IMAGE_LOCK,
-                    tokio::time::Instant::now() + std::time::Duration::from_secs(20),
-                    playtime_docker::CancellationToken::new(),
-                )
-                .await
-                .map_err(|_| Error::Invalid("locked Docker readiness changed"))
-        };
-        // Busy while another live run holds the lock; then the workshop and
-        // the model must still be what was frozen.
-        let live_ready = || async {
-            let live = self.live.as_ref().ok_or(Error::Uncertain)?;
-            let path = live.host.live_lock.clone();
-            tokio::task::spawn_blocking(move || probe_live_lock(&path))
-                .await
-                .map_err(|_| Error::Uncertain)??;
-            docker_ready().await?;
-            live.ready().await
-        };
-        let preview = if request.recipe_id == playtime_runner::docker::RECIPE
-            && request.mode == RunMode::ScriptedSmoke
-        {
-            let preview = self
-                .docker_preview()
-                .ok_or(Error::Invalid("unsupported recipe or mode"))?;
-            docker_ready().await?;
-            preview
-        } else if request.recipe_id == playtime_runner::docker::LIVE_RECIPE
-            && request.mode == RunMode::LiveSmoke
-        {
-            let preview = self
-                .live_preview()
-                .ok_or(Error::Invalid("unsupported recipe or mode"))?;
-            live_ready().await?;
-            preview
-        } else if request.mode == RunMode::Experiment
-            && self.recipes.contains_key(&request.recipe_id)
-        {
-            let preview = self
-                .recipe_preview(&request.recipe_id)
-                .ok_or(Error::Invalid("unsupported recipe or mode"))?;
-            live_ready().await?;
-            preview
-        } else if request.recipe_id == "two-session" && request.mode == RunMode::Simulation {
-            self.preview()
+        let resolved;
+        let current = if request.mode == RunMode::Simulation {
+            self
         } else {
-            return Err(Error::Invalid("unsupported recipe or mode"));
+            resolved = self.execution(request.mode).await?;
+            &resolved
         };
-        if request.preview_revision != preview.preview_revision.as_str() {
-            return Err(Error::Invalid("stale preview"));
-        }
-        Ok(Selection {
-            executable_sha256: self.bundle.descriptor().worker.executable.sha256.clone(),
-            wall_ms: preview.parameters.limits.wall_seconds.get() * 1000,
-            token_limit: preview.parameters.limits.generated_tokens.get(),
-        })
+        current.validate_current_preview(request).await
     }
     async fn prepare(&self, admission: &Admission) -> life::Result<PreparedLaunch> {
-        // A Docker mode never falls back to simulation.
-        let docker = match launch(&admission.request)? {
-            Launch::Simulation => None,
-            Launch::ScriptedSmoke => Some(self.docker.clone()),
-            Launch::LiveSmoke => Some(self.live_profile()),
-            Launch::Catalog(id) => Some(self.recipe_profile(id)),
-        }
-        .map(|profile| profile.ok_or(Error::Invalid("unsupported recipe or mode")))
-        .transpose()?;
-        let (root, bundle, bytes, admission) = (
-            self.root.clone(),
-            self.bundle.clone(),
-            self.bytes.clone(),
-            admission.clone(),
-        );
-        tokio::task::spawn_blocking(move || {
-            create_private_dir(&root.join("runs"))?;
-            let private = root.join(".playtime/workers");
-            create_private_dir(&private)?;
-            let executable = bundle
-                .materialize(&private, &admission.run_id)
-                .map_err(|_| Error::Invalid("worker materialization failed"))?;
-            let directory = executable.parent().ok_or(Error::Uncertain)?.to_path_buf();
-            let path = root.join("runs").join(admission.run_id.as_str());
-            let kind = match &docker {
-                Some(profile) if profile.model.is_some() => WorkerKind::DockerLive,
-                Some(_) => WorkerKind::DockerScripted,
-                None => WorkerKind::ControllerSimulation,
-            };
-            let prepared = if let Some(profile) = &docker {
-                (*bundle)
-                    .clone()
-                    .prepare_docker(&path, admission.run_id.clone(), profile)
-            } else {
-                (*bundle)
-                    .clone()
-                    .prepare(&path, admission.run_id.clone(), &bytes)
-            }
-            .map_err(|_| Error::Invalid("archive preparation failed"))?;
-            let invocation_id = random_id()?;
-            let binding = Binding {
-                service_id: admission.service_id,
-                run_id: admission.run_id,
-                manifest_sha256: prepared.identity.input_manifest.sha256.clone(),
-                executable_sha256: admission.selection.executable_sha256,
-                grant_id: random_id()?,
-                worker_id: random_id()?,
-                unit: format!("playtime-{}.service", invocation_id.as_str()),
-                invocation_id,
-                boot_id: boot_id()?,
-                kind,
-            };
-            let socket = directory.join("control.sock");
-            if socket.as_os_str().len() >= 108 {
-                return Err(Error::Invalid("private socket path exceeds Unix limit"));
-            }
-            let bootstrap_path = directory.join("bootstrap.json");
-            let bootstrap = Bootstrap {
-                version: worker::VERSION,
-                binding: binding.clone(),
-                credential: Credential::generate()?,
-                root,
-                private_dir: directory.clone(),
-                socket: socket.clone(),
-                startup_deadline_boot_ms: boot_ms() + 60_000,
-                wall_ms: admission.selection.wall_ms,
-            };
-            write_once(
-                &directory.join("archive-identity.json"),
-                &serde_json::to_vec(&prepared.identity)?,
-            )?;
-            write_once(
-                &directory.join("reservation.json"),
-                &serde_json::to_vec(&binding)?,
-            )?;
-            write_once(&bootstrap_path, &serde_json::to_vec(&bootstrap)?)?;
-            let argv = vec![
-                "--bootstrap".into(),
-                bootstrap_path
-                    .to_str()
-                    .ok_or(Error::Invalid("UTF-8 root required"))?
-                    .into(),
-            ];
-            Ok(PreparedLaunch {
-                binding,
-                executable,
-                argv,
-                bootstrap: bootstrap_path,
-                private_dir: directory,
-                socket,
-                startup_deadline_boot_ms: bootstrap.startup_deadline_boot_ms,
-            })
-        })
-        .await
-        .map_err(|_| Error::Uncertain)?
+        let resolved;
+        let current = if admission.request.mode == RunMode::Simulation {
+            self
+        } else {
+            resolved = self.execution(admission.request.mode).await?;
+            &resolved
+        };
+        // Recheck the exact admission binding before creating the prepared writer.
+        current.validate_current_preview(&admission.request).await?;
+        current.prepare_current(admission).await
     }
+
     async fn verify_status(
         &self,
         prepared: &PreparedLaunch,
@@ -807,4 +764,152 @@ pub(super) fn ownership_journal(
         proposals.push(record.proposal);
     }
     Ok(proposals)
+}
+
+impl Archive {
+    async fn validate_current_preview(
+        &self,
+        request: &AdmissionRequest,
+    ) -> life::Result<Selection> {
+        // Busy while another live run holds the lock; then the workshop and
+        // the model must still be what was frozen.
+        let live_ready = || async {
+            let live = self.live.as_ref().ok_or(Error::Uncertain)?;
+            let path = live.host.live_lock.clone();
+            tokio::task::spawn_blocking(move || probe_live_lock(&path))
+                .await
+                .map_err(|_| Error::Uncertain)??;
+            Ok::<_, Error>(())
+        };
+        let preview = if request.recipe_id == playtime_runner::docker::RECIPE
+            && request.mode == RunMode::ScriptedSmoke
+        {
+            self.docker_preview()
+                .ok_or(Error::Invalid("unsupported recipe or mode"))?
+        } else if request.recipe_id == playtime_runner::docker::LIVE_RECIPE
+            && request.mode == RunMode::LiveSmoke
+        {
+            let preview = self
+                .live_preview()
+                .ok_or(Error::Invalid("unsupported recipe or mode"))?;
+            live_ready().await?;
+            preview
+        } else if request.mode == RunMode::Experiment
+            && (self.recipes.contains_key(&request.recipe_id)
+                || request.recipe_id.starts_with("saved-"))
+        {
+            let preview = self.authored_preview(&request.recipe_id).await?;
+            live_ready().await?;
+            preview
+        } else if request.recipe_id == "two-session" && request.mode == RunMode::Simulation {
+            self.preview()
+        } else {
+            return Err(Error::Invalid("unsupported recipe or mode"));
+        };
+        if request.preview_revision != preview.preview_revision.as_str() {
+            return Err(Error::Invalid("stale preview"));
+        }
+        Ok(Selection {
+            executable_sha256: self.bundle.descriptor().worker.executable.sha256.clone(),
+            wall_ms: preview.parameters.limits.wall_seconds.get() * 1000,
+            token_limit: preview.parameters.limits.generated_tokens.get(),
+        })
+    }
+    async fn prepare_current(&self, admission: &Admission) -> life::Result<PreparedLaunch> {
+        // A Docker mode never falls back to simulation.
+        let docker = match launch(&admission.request)? {
+            Launch::Simulation => None,
+            Launch::ScriptedSmoke => Some(self.docker.clone()),
+            Launch::LiveSmoke => Some(self.live_profile()),
+            Launch::Catalog(id) => Some(Some(self.authored_profile(id).await?)),
+        }
+        .map(|profile| profile.ok_or(Error::Invalid("unsupported recipe or mode")))
+        .transpose()?;
+        let (root, bundle, bytes, admission) = (
+            self.root.clone(),
+            self.bundle.clone(),
+            self.bytes.clone(),
+            admission.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            create_private_dir(&root.join("runs"))?;
+            let private = root.join(".playtime/workers");
+            create_private_dir(&private)?;
+            let executable = bundle
+                .materialize(&private, &admission.run_id)
+                .map_err(|_| Error::Invalid("worker materialization failed"))?;
+            let directory = executable.parent().ok_or(Error::Uncertain)?.to_path_buf();
+            let path = root.join("runs").join(admission.run_id.as_str());
+            let kind = match &docker {
+                Some(profile) if profile.model.is_some() => WorkerKind::DockerLive,
+                Some(_) => WorkerKind::DockerScripted,
+                None => WorkerKind::ControllerSimulation,
+            };
+            let prepared = if let Some(profile) = &docker {
+                (*bundle)
+                    .clone()
+                    .prepare_docker(&path, admission.run_id.clone(), profile)
+            } else {
+                (*bundle)
+                    .clone()
+                    .prepare(&path, admission.run_id.clone(), &bytes)
+            }
+            .map_err(|_| Error::Invalid("archive preparation failed"))?;
+            let invocation_id = random_id()?;
+            let binding = Binding {
+                service_id: admission.service_id,
+                run_id: admission.run_id,
+                manifest_sha256: prepared.identity.input_manifest.sha256.clone(),
+                executable_sha256: admission.selection.executable_sha256,
+                grant_id: random_id()?,
+                worker_id: random_id()?,
+                unit: format!("playtime-{}.service", invocation_id.as_str()),
+                invocation_id,
+                boot_id: boot_id()?,
+                kind,
+            };
+            let socket = directory.join("control.sock");
+            if socket.as_os_str().len() >= 108 {
+                return Err(Error::Invalid("private socket path exceeds Unix limit"));
+            }
+            let bootstrap_path = directory.join("bootstrap.json");
+            let bootstrap = Bootstrap {
+                version: worker::VERSION,
+                binding: binding.clone(),
+                credential: Credential::generate()?,
+                root,
+                private_dir: directory.clone(),
+                socket: socket.clone(),
+                startup_deadline_boot_ms: boot_ms() + 60_000,
+                wall_ms: admission.selection.wall_ms,
+            };
+            write_once(
+                &directory.join("archive-identity.json"),
+                &serde_json::to_vec(&prepared.identity)?,
+            )?;
+            write_once(
+                &directory.join("reservation.json"),
+                &serde_json::to_vec(&binding)?,
+            )?;
+            write_once(&bootstrap_path, &serde_json::to_vec(&bootstrap)?)?;
+            let argv = vec![
+                "--bootstrap".into(),
+                bootstrap_path
+                    .to_str()
+                    .ok_or(Error::Invalid("UTF-8 root required"))?
+                    .into(),
+            ];
+            Ok(PreparedLaunch {
+                binding,
+                executable,
+                argv,
+                bootstrap: bootstrap_path,
+                private_dir: directory,
+                socket,
+                startup_deadline_boot_ms: bootstrap.startup_deadline_boot_ms,
+            })
+        })
+        .await
+        .map_err(|_| Error::Uncertain)?
+    }
 }

@@ -342,6 +342,7 @@ impl Profile {
                 host,
             }),
             recipe: Some(recipe),
+            definition: None,
         })
     }
 }
@@ -505,6 +506,37 @@ mod tests {
                 .map(|i| (format!("{i}.txt"), "x".repeat(120_000)))
                 .collect()
         }));
+    }
+    #[test]
+    fn authored_definition_must_match_the_executable_scenario_and_locked_identities() {
+        let mut definition = super::super::FrozenRecipe::current(recipe()).unwrap();
+        definition.recipe.id = "saved-reviewed".into();
+        definition.recipe.prompt = "This exact saved prompt must execute.".into();
+        let mut profile =
+            Profile::freeze_recipe(definition.recipe.clone(), selection(), daemon(), host())
+                .unwrap();
+        profile.definition = Some(definition.clone());
+        profile.validate().unwrap();
+        assert_eq!(profile.scenario.prompt, definition.recipe.prompt);
+        for pointer in [
+            "/definition/recipe/prompt",
+            "/recipe/prompt",
+            "/scenario/prompt",
+        ] {
+            let mut json = serde_json::to_value(&profile).unwrap();
+            *json.pointer_mut(pointer).unwrap() = serde_json::json!("a newer head");
+            assert!(
+                serde_json::from_value::<Profile>(json)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+        definition.model_lock["digest"] = serde_json::json!("0".repeat(64));
+        definition.validate().unwrap(); // Still editable, but cannot execute.
+        assert!(definition.executable().is_err());
+        profile.definition = Some(definition);
+        assert!(profile.validate().is_err());
     }
     #[test]
     fn a_frozen_recipe_profile_must_match_its_recipe() {

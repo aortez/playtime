@@ -9,7 +9,9 @@ use playtime_storage::StorageLimits;
 use serde::{Deserialize, Serialize};
 use std::{net::IpAddr, path::PathBuf};
 
+mod definition;
 mod recipe;
+pub use definition::FrozenRecipe;
 pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
@@ -50,6 +52,9 @@ pub fn digest() -> Result<Sha256Digest> {
         Profile::freeze_live(selection.clone(), daemon.clone(), host.clone())?.template()?,
         Profile::freeze_recipe(Recipe::reference()?, selection, daemon, host)?.template()?,
         serde_json::to_value(&BOUNDS)?,
+        // A worker that predates authoring must not accept an authored profile
+        // merely because its ordinary recipe template is unchanged.
+        serde_json::json!({"immutable_recipe_definition": 1}),
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))
 }
@@ -106,6 +111,9 @@ pub struct Profile {
     /// The catalog recipe this profile was frozen from, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipe: Option<Recipe>,
+    /// Manifest-bound authored definition, checked against the executing recipe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<FrozenRecipe>,
 }
 impl Profile {
     pub fn freeze(selection: Selection, daemon: DaemonIdentity) -> Result<Self> {
@@ -132,6 +140,7 @@ impl Profile {
             command_return_ms: RETURN_OVERHEAD_MS,
             model: None,
             recipe: None,
+            definition: None,
         })
     }
     /// The same workshop and limits with the live model and its smoke prompt.
@@ -163,7 +172,7 @@ impl Profile {
     }
     pub fn validate(&self) -> Result<()> {
         let (selection, daemon) = (self.selection.clone(), self.daemon.clone());
-        let expected = match (&self.model, &self.recipe) {
+        let mut expected = match (&self.model, &self.recipe) {
             (None, None) => Self::freeze(selection, daemon)?,
             (Some(model), None) => Self::freeze_live(selection, daemon, model.host.clone())?,
             (Some(model), Some(recipe)) => {
@@ -175,6 +184,15 @@ impl Profile {
                 ));
             }
         };
+        if let Some(definition) = &self.definition {
+            definition.executable()?;
+            if self.recipe.as_ref() != Some(&definition.recipe) {
+                return Err(Error::Invalid(
+                    "definition differs from executing recipe".into(),
+                ));
+            }
+            expected.definition = Some(definition.clone());
+        }
         if serde_json::to_value(self)? != serde_json::to_value(expected)?
             || !self.selection.executable.is_absolute()
             || !self.selection.socket.is_absolute()
