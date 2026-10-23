@@ -18,6 +18,32 @@ pub struct PendingRecipeSave {
     pub request: RecipeMutation,
 }
 impl Client {
+    pub async fn recipe_model_settings(
+        &self,
+        definition: &RecipeDefinition,
+    ) -> Result<RecipeSettingsView> {
+        let value: RecipeSettingsView = self
+            .json(self.request(
+                Method::GET,
+                &format!("recipes/{}/model-settings", definition.execution_recipe_id),
+            ))
+            .await?;
+        if value.execution_recipe_id != definition.execution_recipe_id
+            || value.definition_digest != definition.definition_digest
+            || serde_json::to_value(&value.settings).map_err(|_| Error::InvalidResponse)?
+                != definition_settings(definition)
+            || definition.inherited["model_lock"]["digest"].as_str()
+                != Some(value.capabilities.model_digest.as_str())
+            || definition.inherited["model_lock"]["ollama_version"].as_str()
+                != Some(value.capabilities.backend_version.as_str())
+            || definition.inherited["recipe"]["parameters"]["limits"]["generated_tokens"].as_u64()
+                != Some(value.generated_tokens)
+        {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(value)
+    }
+
     pub async fn recipe_definition(&self, id: &RecipeId) -> Result<RecipeDefinition> {
         let value: RecipeDefinition = self
             .json(self.request(Method::GET, &format!("recipes/{id}/definition")))
@@ -144,10 +170,33 @@ fn validate_save(response: &RecipeSaveResponse, pending: &PendingRecipeSave) -> 
             (&request.name, &request.prompt)
         }
     };
+    let settings = match &pending.request {
+        RecipeMutation::Clone { request } => &request.model_settings,
+        RecipeMutation::Revise { request, .. } => &request.model_settings,
+    };
+    if let Some(settings) = settings {
+        let expected = definition_settings(definition);
+        if serde_json::to_value(settings).map_err(|_| Error::InvalidResponse)? != expected {
+            return Err(Error::InvalidResponse);
+        }
+    }
     if &definition.name != name || &definition.prompt != prompt {
         return Err(Error::InvalidResponse);
     }
     Ok(())
+}
+
+fn definition_settings(definition: &RecipeDefinition) -> serde_json::Value {
+    let recipe = &definition.inherited["recipe"];
+    let m = &recipe["model"];
+    let p = &recipe["parameters"];
+    let expected = serde_json::json!({
+        "reasoning": match m["thinking"].as_str() { Some("default") => "model_default", Some(v) => v, None => "" },
+        "temperature": m["temperature"], "context_tokens": p["limits"]["context_tokens"],
+        "tokens_per_call": p["limits"]["tokens_per_call"], "handoff_tokens": p["limits"]["handoff_tokens"],
+        "top_p": m["top_p"], "top_k": m["top_k"], "repeat_penalty": m["repeat_penalty"], "sampling_seed": p["sampling_seed"],
+    });
+    expected
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -8,6 +8,7 @@ use playtime_protocol::api::*;
 pub struct DefinitionView {
     pub value: RecipeDefinition,
     pub inherited: String,
+    pub settings: Option<RecipeSettingsView>,
 }
 #[derive(Clone, Debug)]
 pub struct Draft {
@@ -15,6 +16,7 @@ pub struct Draft {
     pub clone: bool,
     pub name: String,
     pub prompt: String,
+    pub settings: Option<crate::model_settings::SettingsDraft>,
 }
 impl Draft {
     pub fn request(&self) -> RecipeMutation {
@@ -24,6 +26,10 @@ impl Draft {
             RecipeMutation::Revise {
                 recipe_id: saved.recipe_id.clone(),
                 request: ReviseRecipeRequest {
+                    model_settings: self
+                        .settings
+                        .as_ref()
+                        .map(|s| s.value().expect("validated draft")),
                     expected_head: self.original.execution_recipe_id.clone(),
                     name: self.name.clone(),
                     prompt: self.prompt.clone(),
@@ -32,6 +38,10 @@ impl Draft {
         } else {
             RecipeMutation::Clone {
                 request: CloneRecipeRequest {
+                    model_settings: self
+                        .settings
+                        .as_ref()
+                        .map(|s| s.value().expect("validated draft")),
                     source: RecipeSource {
                         execution_recipe_id: self.original.execution_recipe_id.clone(),
                         definition_digest: self.original.definition_digest.clone(),
@@ -43,7 +53,8 @@ impl Draft {
         }
     }
     pub fn valid(&self) -> bool {
-        !self.name.trim().is_empty()
+        self.settings.as_ref().is_none_or(|s| s.value().is_ok())
+            && !self.name.trim().is_empty()
             && self.name.len() <= 128
             && !self.name.chars().any(char::is_control)
             && !self.prompt.trim().is_empty()
@@ -79,6 +90,10 @@ impl Model {
                 clone,
                 name: view.value.name.clone(),
                 prompt: view.value.prompt.clone(),
+                settings: view
+                    .settings
+                    .clone()
+                    .map(crate::model_settings::SettingsDraft::new),
             });
             self.preview = None;
         }
@@ -194,6 +209,32 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
             });
     });
     if model.authoring.draft.is_none() {
+        if let Some(view) = &definition.settings {
+            ui.collapsing("Saved model settings", |ui| {
+                let s = &view.settings;
+                ui.label(format!(
+                    "Reasoning: {} · temperature: {}",
+                    crate::model_settings::reasoning_label(s.reasoning),
+                    s.temperature
+                ));
+                ui.label(format!(
+                    "Context: {} · response: {} · handoff: {} tokens",
+                    s.context_tokens, s.tokens_per_call, s.handoff_tokens
+                ));
+                ui.label(format!(
+                    "Top-p: {} · top-k: {} · repeat penalty: {} · sampling seed: {}",
+                    s.top_p, s.top_k, s.repeat_penalty, s.sampling_seed
+                ));
+                ui.label(format!(
+                    "Whole-run generation budget: {} tokens",
+                    view.generated_tokens
+                ));
+                ui.small(format!(
+                    "Capability evidence: {}",
+                    view.capabilities.provenance
+                ));
+            });
+        }
         let saved = definition.value.saved.is_some();
         ui.collapsing("Saved prompt", |ui| {
             egui::ScrollArea::vertical()
@@ -248,6 +289,9 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
                 });
         });
         ui.label(format!("{} / 65,536 prompt bytes", draft.prompt.len()));
+        if let Some(settings) = &mut draft.settings {
+            ui.add_enabled_ui(!busy, |ui| settings.draw(ui));
+        }
         if !draft.clone && !busy && ui.button("Keep edits as a new recipe instead").clicked() {
             draft.clone = true;
         }

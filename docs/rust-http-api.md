@@ -271,3 +271,16 @@ The shared native client owns `RecipeSaveStore`, including private durable
 pending-save receipts and response/request validation. The workbench performs
 these operations outside render callbacks. See
 [saved recipe operation and bounds](rust-recipes.md#saved-recipes-and-prompt-editing).
+
+### Model settings authoring
+
+`recipe_model_settings_v1` advertises the identity-bound read endpoint
+`GET /recipes/{recipe_id}/model-settings`. It returns typed settings, the inherited
+whole-run generation budget, and capability provenance for the locked model.
+Reads require no inference or execution readiness. Clone/revise requests may add
+`model_settings`; omission retains inherited values. Unknown fields and invalid
+bounds are refused, and save also validates first-work context fit using shared
+controller rules. Invalid parameters return 422 with an actionable safe message.
+The saved definition, receipt replay and archive retain the exact settings; the
+new optional fields require no service database migration. See
+[model settings editor](rust-recipes.md#model-settings-editor).

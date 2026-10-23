@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::{net::IpAddr, path::PathBuf};
 
 mod definition;
+mod model_settings;
 mod recipe;
 pub use definition::FrozenRecipe;
 pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
@@ -54,7 +55,7 @@ pub fn digest() -> Result<Sha256Digest> {
         serde_json::to_value(&BOUNDS)?,
         // A worker that predates authoring must not accept an authored profile
         // merely because its ordinary recipe template is unchanged.
-        serde_json::json!({"immutable_recipe_definition": 1}),
+        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1}),
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))
 }

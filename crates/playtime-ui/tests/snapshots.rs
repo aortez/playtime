@@ -71,6 +71,14 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        ("model-settings", true, false, Inspector::Details, false),
+        (
+            "model-settings-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
         ("recipe-editor", true, false, Inspector::Details, false),
         (
             "recipe-editor-narrow",
@@ -87,7 +95,9 @@ async fn reviewed_workbench_screens() {
         ("running", false, false, Inspector::Details, false),
         ("ended", false, false, Inspector::Details, false),
     ] {
-        let mut app = if name.starts_with("recipe-editor") {
+        let mut app = if name.starts_with("model-settings") {
+            common::model_settings_editor().await
+        } else if name.starts_with("recipe-editor") {
             common::recipe_editor().await
         } else {
             common::demo(launcher).await
@@ -116,6 +126,18 @@ async fn reviewed_workbench_screens() {
             .wgpu_setup(setup())
             .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
         h.run();
+        if name.starts_with("model-settings") {
+            h.input_mut()
+                .events
+                .push(egui::Event::PointerMoved(egui::pos2(600.0, 500.0)));
+            h.input_mut().events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                phase: egui::TouchPhase::Move,
+                delta: egui::vec2(0.0, -420.0),
+                modifiers: egui::Modifiers::default(),
+            });
+            h.run_steps(60);
+        }
         results.add(h.try_snapshot(name));
     }
 }

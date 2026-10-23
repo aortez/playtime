@@ -13,8 +13,10 @@ and Docker/live run-and-view gates in [development](development.md).
 ## Recipe authoring
 
 A service with `recipe_authoring_v1` enables **Clone recipe** and **Edit recipe**.
-The editor changes a name and prompt while inherited settings and seeds stay
-read-only. Save creates an immutable revision and refreshes its execution preview.
+The editor changes the name, prompt and supported model settings. Model identity,
+whole-run budgets, protocol and seeds stay read-only. Model settings include
+reasoning, sampling, context capacity and ordinary-response/handoff caps; reset
+buttons restore values from when editing began and changes remain visible. Save creates an immutable revision and refreshes its execution preview.
 **Refresh recipes** updates listed heads without replacing the selected execution
 revision. Save receipts have their own recovery controls and persist across UI
 restarts; unsaved text does not. Editing remains available when execution preview
@@ -22,6 +24,8 @@ reports unavailable Docker or Ollama. See [saved recipes](rust-recipes.md#saved-
 
 Reviewed editor views: [wide](../crates/playtime-ui/tests/snapshots/recipe-editor.png)
 and [narrow](../crates/playtime-ui/tests/snapshots/recipe-editor-narrow.png).
+The model settings form has separate [wide](../crates/playtime-ui/tests/snapshots/model-settings.png)
+and [narrow](../crates/playtime-ui/tests/snapshots/model-settings-narrow.png) views.
 
 ## Fixture and headless development
 

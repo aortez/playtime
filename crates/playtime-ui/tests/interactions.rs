@@ -430,3 +430,72 @@ async fn recipe_editor_keyboard_and_narrow_save_keep_unsaved_text() {
         1
     );
 }
+
+#[tokio::test]
+async fn model_settings_keyboard_zero_invalid_value_and_resets() {
+    let app = common::model_settings_editor().await;
+    let mut h = Harness::builder()
+        .with_size([900.0, 600.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    h.get_by_label("Temperature").focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.get_by_label("Temperature").type_text("0");
+    h.run();
+    assert_eq!(
+        h.state()
+            .model
+            .authoring
+            .draft
+            .as_ref()
+            .unwrap()
+            .settings
+            .as_ref()
+            .unwrap()
+            .value()
+            .unwrap()
+            .temperature,
+        0.0
+    );
+    h.get_by_label("Reset Temperature").click_accesskit();
+    h.run();
+    assert_eq!(
+        h.state()
+            .model
+            .authoring
+            .draft
+            .as_ref()
+            .unwrap()
+            .settings
+            .as_ref()
+            .unwrap()
+            .value()
+            .unwrap()
+            .temperature,
+        0.8
+    );
+    h.get_by_label("Context capacity (tokens)").focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.get_by_label("Context capacity (tokens)")
+        .type_text("not a number");
+    h.run();
+    assert!(!h.state().model.authoring.draft.as_ref().unwrap().valid());
+    h.state_mut().model.save_recipe();
+    assert!(
+        !h.state()
+            .model
+            .commands
+            .iter()
+            .any(|c| matches!(c.action, Action::SaveRecipe(_)))
+    );
+    h.get_by_label("Reset model settings").click_accesskit();
+    h.run();
+    assert!(h.state().model.authoring.draft.as_ref().unwrap().valid());
+    h.get_by_label("Save revision").click_accesskit();
+    h.run();
+    assert!(h.state().model.commands.iter().any(|c| matches!(&c.action, Action::SaveRecipe(RecipeMutation::Clone { request }) if request.model_settings.as_ref().is_some_and(|s| s.context_tokens == 65536 && s.temperature == 0.8))));
+}

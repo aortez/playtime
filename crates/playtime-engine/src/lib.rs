@@ -11,6 +11,7 @@ pub mod evidence;
 pub mod simulation;
 mod types;
 
+pub use context::SessionInput;
 pub use control::*;
 pub use controller::Controller;
 pub use types::*;

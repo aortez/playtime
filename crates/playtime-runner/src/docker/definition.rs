@@ -14,6 +14,8 @@ pub struct FrozenRecipe {
     pub model_lock: Value,
     pub environment_lock: Value,
     pub source: Option<RecipeSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_capabilities: Option<playtime_protocol::api::RecipeModelCapabilities>,
 }
 impl FrozenRecipe {
     pub fn current(recipe: Recipe) -> Result<Self> {
@@ -24,6 +26,7 @@ impl FrozenRecipe {
             model_lock: serde_json::from_slice(MODEL_LOCK)?,
             environment_lock: serde_json::from_slice(IMAGE_LOCK)?,
             source: None,
+            model_capabilities: None,
         };
         value.validate()?;
         Ok(value)
@@ -37,7 +40,28 @@ impl FrozenRecipe {
         {
             return Err(Error::Invalid("unsupported recipe definition".into()));
         }
-        self.recipe.check()
+        self.recipe.check()?;
+        if let Some(c) = &self.model_capabilities {
+            // Retained evidence belongs to its own lock, not whichever model
+            // this build can currently execute. Old definitions remain readable.
+            if self.model_lock["digest"].as_str() != Some(c.model_digest.as_str())
+                || self.model_lock["ollama_version"].as_str() != Some(c.backend_version.as_str())
+                || c.provenance.is_empty()
+                || c.provenance.len() > 512
+                || c.reasoning.is_empty()
+                || c.reasoning.len() > 4
+                || c.reasoning
+                    .iter()
+                    .enumerate()
+                    .any(|(i, v)| c.reasoning[..i].contains(v))
+                || c.default_reasoning
+                    .is_some_and(|v| !c.reasoning.contains(&v))
+                || c.context_ceiling == Some(0)
+            {
+                return Err(Error::Invalid("invalid retained model capabilities".into()));
+            }
+        }
+        Ok(())
     }
     pub fn executable(&self) -> Result<()> {
         self.validate()?;
@@ -48,6 +72,11 @@ impl FrozenRecipe {
             return Err(Error::Invalid(
                 "recipe execution identities are unavailable".into(),
             ));
+        }
+        if let Some(capabilities) = &self.model_capabilities
+            && *capabilities != self.resolve_model_capabilities()?
+        {
+            return Err(Error::Invalid("unsupported model capabilities".into()));
         }
         Ok(())
     }

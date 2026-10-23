@@ -48,6 +48,9 @@ impl Application for Faults {
     async fn recipes(&self, q: PageQuery) -> Result<Page<Recipe>> {
         self.inner.recipes(q).await
     }
+    async fn recipe_model_settings(&self, id: RecipeId) -> Result<RecipeSettingsView> {
+        self.inner.recipe_model_settings(id).await
+    }
     async fn recipe_definition(&self, id: RecipeId) -> Result<RecipeDefinition> {
         self.inner.recipe_definition(id).await
     }

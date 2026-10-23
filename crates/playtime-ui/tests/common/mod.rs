@@ -148,6 +148,7 @@ pub async fn recipe_editor() -> Workbench {
     app.model.preview = None;
     app.model.authoring.enabled = true;
     app.model.authoring.definition = Some(playtime_ui::authoring::DefinitionView {
+        settings: None,
         inherited: serde_json::to_string_pretty(&definition.inherited).unwrap(),
         value: definition,
     });
@@ -159,5 +160,27 @@ pub async fn recipe_editor() -> Workbench {
     let draft = app.model.authoring.draft.as_mut().unwrap();
     draft.name = "Curiosity: a different starting question".into();
     draft.prompt = "Explore a question raised by the seed files. Record what you test, what you learn, and what remains uncertain. Leave a clear handoff for the next session.".into();
+    app
+}
+
+#[allow(dead_code)]
+pub async fn model_settings_editor() -> Workbench {
+    let mut app = recipe_editor().await;
+    app.model.authoring.draft = None;
+    let root = playtime_test_support::TestRoot::new().unwrap();
+    let ledger = playtime_server::lifecycle::Ledger::open(&root.0)
+        .await
+        .unwrap();
+    let recipes = playtime_server::daemon::catalog::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../recipes"),
+    )
+    .unwrap();
+    let catalog = playtime_server::catalog::Catalog::new(ledger, recipes).unwrap();
+    let settings = catalog
+        .model_settings(&RecipeId::new("curiosity").unwrap())
+        .await
+        .unwrap();
+    app.model.authoring.definition.as_mut().unwrap().settings = Some(settings);
+    app.model.edit_recipe(true);
     app
 }

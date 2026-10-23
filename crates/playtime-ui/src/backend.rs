@@ -163,6 +163,15 @@ async fn local<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static
         .map_err(|_| "Local client task failed".to_string())?
 }
 fn safe(error: Error) -> String {
+    if let Error::Api { response, .. } = &error
+        && response.code == "invalid_parameters"
+    {
+        return format!(
+            "{}: {}",
+            error,
+            response.message.chars().take(512).collect::<String>()
+        );
+    }
     error.to_string()
 }
 
@@ -505,14 +514,45 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
     match command.action {
         Action::Definition(id) => {
             let value = client.recipe_definition(&id).await.map_err(safe)?;
+            let settings = if client
+                .capabilities()
+                .features
+                .iter()
+                .any(|f| f == MODEL_SETTINGS)
+            {
+                match client.recipe_model_settings(&value).await {
+                    Ok(settings) => Some(settings),
+                    Err(error) if error.api_code() == Some("unsupported_capability") => None,
+                    Err(error) => return Err(safe(error)),
+                }
+            } else {
+                None
+            };
+            let mut inherited_value = value.inherited.clone();
+            if settings.is_some() {
+                if let Some(recipe) = inherited_value["recipe"].as_object_mut() {
+                    recipe.remove("model");
+                }
+                if let Some(parameters) = inherited_value["recipe"]["parameters"].as_object_mut() {
+                    parameters.remove("sampling_seed");
+                }
+                if let Some(limits) =
+                    inherited_value["recipe"]["parameters"]["limits"].as_object_mut()
+                {
+                    for key in ["context_tokens", "tokens_per_call", "handoff_tokens"] {
+                        limits.remove(key);
+                    }
+                }
+            }
             let inherited =
-                serde_json::to_string_pretty(&value.inherited).map_err(|e| e.to_string())?;
+                serde_json::to_string_pretty(&inherited_value).map_err(|e| e.to_string())?;
             out.send(
                 tag,
                 None,
                 Data::Definition(Box::new(crate::authoring::DefinitionView {
                     value,
                     inherited,
+                    settings,
                 })),
             )
             .await;
@@ -1025,6 +1065,7 @@ async fn recipe_save(
                             | "unsupported_capability"
                     )
                 );
+            let error = safe(error);
             if refused {
                 let store = RecipeSaveStore::new(&s.resolved.state_dir);
                 match local(move || store.discard(&receipt).map_err(|e| e.to_string())).await {
