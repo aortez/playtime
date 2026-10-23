@@ -335,6 +335,7 @@ struct State {
 }
 
 pub struct Fixture {
+    catalog: Option<crate::catalog::Catalog>,
     service: ServiceId,
     limits: ApiLimits,
     state: Mutex<State>,
@@ -345,6 +346,7 @@ impl Fixture {
     }
     pub fn with_limits(service: ServiceId, limits: ApiLimits) -> Self {
         Self {
+            catalog: None,
             service,
             limits,
             state: Mutex::new(State {
@@ -355,6 +357,12 @@ impl Fixture {
                 next_run: 1,
             }),
         }
+    }
+    /// Actual catalog persistence behind explicitly non-executing HTTP fixtures.
+    pub fn with_catalog(service: ServiceId, catalog: crate::catalog::Catalog) -> Self {
+        let mut fixture = Self::new(service);
+        fixture.catalog = Some(catalog);
+        fixture
     }
     pub fn calls(&self) -> Vec<Call> {
         self.state.lock().unwrap().calls.clone()
@@ -484,11 +492,15 @@ impl Application for Fixture {
             service_build: env!("CARGO_PKG_VERSION").into(),
             backend: identity(),
             modes: vec![RunMode::Simulation],
-            features: vec![
-                "scripted_fixture".into(),
-                "events".into(),
-                "downloads".into(),
-            ],
+            features: [
+                Some("scripted_fixture".into()),
+                Some("events".into()),
+                Some("downloads".into()),
+                self.catalog.as_ref().map(|_| RECIPE_AUTHORING.into()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
             unsupported_adapters: vec![
                 "controller".into(),
                 "model".into(),
@@ -498,7 +510,53 @@ impl Application for Fixture {
             limits: self.limits.clone(),
         }
     }
+    async fn recipe_definition(&self, id: RecipeId) -> Result<RecipeDefinition> {
+        self.catalog
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .definition(&id)
+            .await
+    }
+    async fn recipe_save(
+        &self,
+        key: IdempotencyKey,
+        request: RecipeMutation,
+    ) -> Result<RecipeSaveResponse> {
+        self.catalog
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .save(key, request)
+            .await
+    }
+    async fn recipe_save_lookup(&self, key: IdempotencyKey) -> Result<RecipeSaveResponse> {
+        self.catalog
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .lookup(&key)
+            .await
+    }
+    async fn saved_recipes(
+        &self,
+        query: PageQuery,
+        history: Option<RecipeId>,
+    ) -> Result<Page<Recipe>> {
+        self.catalog
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .page(query, history, None)
+            .await
+    }
+    async fn saved_recipe(&self, id: RecipeId) -> Result<SavedRecipe> {
+        self.catalog
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .head(&id)
+            .await
+    }
     async fn recipes(&self, query: PageQuery) -> Result<Page<Recipe>> {
+        if let Some(catalog) = &self.catalog {
+            return catalog.page(query, None, Some(vec![])).await;
+        }
         let cursor = list_cursor(&query, "recipes", self.service.as_str())?.unwrap_or(ListCursor {
             version: 1,
             kind: "recipes".into(),
@@ -514,6 +572,7 @@ impl Application for Fixture {
                 (
                     id.into(),
                     Recipe {
+                        saved: None,
                         recipe_id: RecipeId::new(id).unwrap(),
                         name: format!("Scripted {id}"),
                         modes: vec![RunMode::Simulation],
@@ -524,6 +583,12 @@ impl Application for Fixture {
         page(items, &query, cursor, &self.limits)
     }
     async fn preview(&self, recipe: RecipeId, request: PreviewRequest) -> Result<Preview> {
+        if let Some(catalog) = &self.catalog
+            && request.mode == RunMode::Experiment
+        {
+            catalog.definition(&recipe).await?;
+            return Err(ApiError::new("execution_unavailable"));
+        }
         if !matches!(recipe.as_str(), "fixture-empty" | "fixture-example") {
             return Err(ApiError::new("not_found"));
         }

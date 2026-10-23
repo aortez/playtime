@@ -213,3 +213,23 @@ run, so it still arrives, and stays, after another run opens. A failed download
 now names its destination. An accepted launch refreshes the run list at once
 instead of at the next 5-second poll. The reviewed screenshots, the HTTP and
 protocol goldens and the archive format are unchanged.
+
+### Immutable recipe authoring v1
+
+The `recipe_authoring_v1` capability adds strict definition, clone, revision,
+head/history, and save-lookup DTOs and routes. `Recipe.saved` is optional and omitted
+for existing sources, preserving old HTTP fixture responses. The reviewed OpenAPI
+golden adds these routes and schemas; launch DTOs and baseline controller goldens
+are unchanged. Service ledger version 6 transactionally adds retained recipe
+heads, revisions, and keyed save results; older binaries refuse the upgraded ledger.
+
+Saved revisions carry their own input bytes and execution identities. Definition
+reads and saves no longer require a ready live adapter. Unavailable execution
+returns a typed preview/admission limitation; corruption remains an error. Picker
+cursors now distinguish stable logical ordering from immutable execution handles.
+
+Authored Docker profiles embed a versioned definition that must agree with the
+executing recipe/scenario. The compiled profile digest now includes this capability,
+requiring a rebuilt worker bundle. Existing profiles omit the new optional field.
+See [saved recipes](rust-recipes.md#saved-recipes-and-prompt-editing) for bounds,
+recovery, and the native acceptance evidence.

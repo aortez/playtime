@@ -611,3 +611,34 @@ fn docker_ownership_journal_binds_records_to_the_exact_launch() {
     );
     assert!(super::archive::ownership_journal(&launch).is_err());
 }
+
+#[test]
+fn authoring_startup_tolerates_only_execution_limitations() {
+    for reason in [
+        "Docker readiness unavailable",
+        "locked Docker image unavailable",
+        "live model unavailable",
+        "live runs need the Docker workshop",
+    ] {
+        assert!(super::tolerate_unavailable(Err(Error::Invalid(reason))).is_ok());
+        let error = super::execution_unavailable(Error::Invalid(reason));
+        assert_eq!(error.code(), "execution_unavailable");
+        assert_eq!(error.0.details["reasons"].as_array().unwrap().len(), 1);
+    }
+    for reason in [
+        "invalid recipe catalog",
+        "damaged recipe catalog",
+        "invalid Docker CLI config directory",
+        "live endpoint must be a plain HTTP URL",
+    ] {
+        assert!(super::tolerate_unavailable(Err(Error::Invalid(reason))).is_err());
+        assert_ne!(
+            super::execution_unavailable(Error::Invalid(reason)).code(),
+            "execution_unavailable"
+        );
+    }
+    assert_eq!(
+        super::execution_unavailable(Error::Invalid("invalid saved recipe")).code(),
+        "catalog_corrupt"
+    );
+}

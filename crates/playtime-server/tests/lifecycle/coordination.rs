@@ -553,7 +553,7 @@ async fn v1_ledger_migration_preserves_identity_and_canonical_request() {
             [serde_json::to_string(&old).unwrap()],
         )
         .unwrap();
-        db.execute_batch("PRAGMA user_version=1;").unwrap();
+        db.execute_batch("DROP TABLE recipe_saves; DROP TABLE recipe_revisions; DROP TABLE recipe_heads; PRAGMA user_version=1;").unwrap();
     }
     let ledger = Ledger::open(&root.0).await.unwrap();
     let restored = ledger.lookup(&saved.key).await.unwrap().unwrap();
@@ -567,7 +567,7 @@ async fn v1_ledger_migration_preserves_identity_and_canonical_request() {
     assert_eq!(
         db.query_row::<u32, _, _>("PRAGMA user_version", [], |row| row.get(0))
             .unwrap(),
-        5
+        6
     );
 }
 

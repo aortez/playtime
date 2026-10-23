@@ -370,6 +370,55 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
                 limits.json_bytes,
             )
         }
+        ("GET", ["api", "v1", "recipes", id, "definition"]) => {
+            no_query(&request)?;
+            json(
+                &app.recipe_definition(recipe_id(id)?).await?,
+                200,
+                limits.json_bytes,
+            )
+        }
+        ("GET", ["api", "v1", "saved-recipes"]) => json(
+            &app.saved_recipes(query(&request, limits)?, None).await?,
+            200,
+            limits.json_bytes,
+        ),
+        ("GET", ["api", "v1", "saved-recipes", id]) => {
+            no_query(&request)?;
+            json(
+                &app.saved_recipe(recipe_id(id)?).await?,
+                200,
+                limits.json_bytes,
+            )
+        }
+        ("GET", ["api", "v1", "saved-recipes", id, "revisions"]) => json(
+            &app.saved_recipes(query(&request, limits)?, Some(recipe_id(id)?))
+                .await?,
+            200,
+            limits.json_bytes,
+        ),
+        ("POST", ["api", "v1", "saved-recipes"]) => {
+            no_query(&request)?;
+            let key = save_key(&request)?;
+            let mutation = RecipeMutation::Clone {
+                request: body(request, limits).await?,
+            };
+            save_recipe(server.clone(), key, mutation).await
+        }
+        ("POST", ["api", "v1", "saved-recipes", id, "revisions"]) => {
+            no_query(&request)?;
+            let key = save_key(&request)?;
+            let mutation = RecipeMutation::Revise {
+                recipe_id: recipe_id(id)?,
+                request: body(request, limits).await?,
+            };
+            save_recipe(server.clone(), key, mutation).await
+        }
+        ("GET", ["api", "v1", "recipe-saves", key]) => {
+            no_query(&request)?;
+            let key = IdempotencyKey::new(*key).map_err(|_| ApiError::new("malformed_data"))?;
+            json(&app.recipe_save_lookup(key).await?, 200, limits.json_bytes)
+        }
         ("POST", ["api", "v1", "runs"]) => {
             no_query(&request)?;
             let key = IdempotencyKey::new(
@@ -524,6 +573,40 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
         }
         _ => Err(ApiError::new("not_found")),
     }
+}
+
+fn recipe_id(id: &str) -> Result<RecipeId> {
+    RecipeId::new(id).map_err(|_| ApiError::new("malformed_data"))
+}
+fn save_key(request: &Request) -> Result<IdempotencyKey> {
+    IdempotencyKey::new(
+        single_header(request.headers(), "idempotency-key")?
+            .ok_or_else(|| ApiError::new("malformed_data"))?,
+    )
+    .map_err(|_| ApiError::new("malformed_data"))
+}
+async fn save_recipe(
+    server: Arc<Server>,
+    key: IdempotencyKey,
+    request: RecipeMutation,
+) -> Result<Response> {
+    let permit = server
+        .mutations
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| ApiError::new("backend_unavailable"))?;
+    let app = server.application.clone();
+    let reply = tokio::spawn(async move {
+        let _permit = permit;
+        app.recipe_save(key, request).await
+    })
+    .await
+    .map_err(|_| ApiError::new("internal_error"))??;
+    json(
+        &reply,
+        if reply.replayed { 200 } else { 201 },
+        server.limits().json_bytes,
+    )
 }
 fn decode_cursor(value: Option<&str>) -> Result<Option<EventCursor>> {
     value

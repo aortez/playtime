@@ -130,10 +130,16 @@ impl Ledger {
             }
             tx.execute_batch("PRAGMA user_version=5;")?;
             tx.commit()?;
-        } else if version != 5 {
+        } else if version != 5 && version != 6 {
             return Err(Error::Invalid(
                 "unsupported or incomplete service ledger; refusing to replace admission history",
             ));
+        }
+        if version < 6 {
+            let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            crate::catalog::migrate(&tx)?;
+            tx.execute_batch("PRAGMA user_version=6;")?;
+            tx.commit()?;
         }
         let check: String = connection.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         if check != "ok" {
@@ -188,7 +194,7 @@ impl Ledger {
 
     /// At most 16 admitted blocking operations; cancelled callers cannot drop a
     /// transaction or release the service lock underneath a pending commit.
-    async fn call<T: Send + 'static>(
+    pub(crate) async fn call<T: Send + 'static>(
         &self,
         operation: impl FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {

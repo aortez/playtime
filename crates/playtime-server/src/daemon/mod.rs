@@ -33,6 +33,7 @@ struct Inner {
     published: RwLock<BTreeMap<RunId, Published>>,
     reads: Arc<Semaphore>,
     test_supervision: bool,
+    catalog: crate::catalog::Catalog,
 }
 #[derive(Clone)]
 struct Published {
@@ -85,13 +86,22 @@ impl Daemon {
         .await
         .map_err(|_| life::Error::Uncertain)??;
         let mut archive = Archive::new(root, bundle)?;
+        let catalog = crate::catalog::Catalog::new(ledger.clone(), recipes.clone())
+            .map_err(|_| life::Error::Invalid("invalid recipe catalog"))?;
+        catalog
+            .check()
+            .await
+            .map_err(|_| life::Error::Invalid("damaged recipe catalog"))?;
+        archive.authoring = Some(catalog.clone());
+        archive.docker_options = docker.map(|(e, s)| (e.to_path_buf(), s.to_path_buf()));
+        archive.live_endpoint = live.map(str::to_owned);
+        archive.enable_recipes(recipes)?;
         if let Some((executable, socket)) = docker {
-            archive.enable_docker(executable, socket).await?;
+            tolerate_unavailable(archive.enable_docker(executable, socket).await)?;
         }
         if let Some(endpoint) = live {
-            archive.enable_live(endpoint).await?;
+            tolerate_unavailable(archive.enable_live(endpoint).await)?;
         }
-        archive.enable_recipes(recipes)?;
         let archive = Arc::new(archive);
         let coordinator =
             Coordinator::new(ledger, archive.clone(), supervisor, Arc::new(SystemClock));
@@ -102,6 +112,7 @@ impl Daemon {
                 published: RwLock::new(BTreeMap::new()),
                 reads: Arc::new(Semaphore::new(4)),
                 test_supervision,
+                catalog,
             }),
         };
         for record in this.inner.coordinator.ledger().list().await? {
@@ -323,7 +334,18 @@ fn lifecycle(error: life::Error) -> ApiError {
         life::Error::Invalid("unsupported recipe or mode") => {
             ApiError::new("unsupported_capability")
         }
-        life::Error::Invalid("live model unavailable") => ApiError::new("backend_unavailable"),
+        error @ life::Error::Invalid(
+            "live model unavailable"
+            | "execution unavailable"
+            | "Docker readiness unavailable"
+            | "locked Docker image unavailable"
+            | "locked Docker readiness changed"
+            | "invalid Docker executable/socket selection"
+            | "live runs need the Docker workshop"
+            | "bundle does not implement this daemon's frozen Docker profile"
+            | "bundle does not implement this daemon's live model profile",
+        ) => execution_unavailable(error),
+        life::Error::Invalid("invalid saved recipe") => ApiError::new("catalog_corrupt"),
         _ => ApiError::new("ownership_unresolved"),
     }
 }
@@ -375,20 +397,21 @@ impl Application for Daemon {
                 Some(RunMode::Simulation),
                 self.inner
                     .archive
-                    .docker
+                    .docker_options
                     .is_some()
                     .then_some(RunMode::ScriptedSmoke),
                 self.inner
                     .archive
-                    .live
+                    .live_endpoint
                     .is_some()
                     .then_some(RunMode::LiveSmoke),
-                (!self.inner.archive.recipes.is_empty()).then_some(RunMode::Experiment),
+                Some(RunMode::Experiment),
             ]
             .into_iter()
             .flatten()
             .collect(),
             features: vec![
+                RECIPE_AUTHORING.into(),
                 "keyed_launch".into(),
                 "event_stream".into(),
                 "verified_artifacts".into(),
@@ -414,82 +437,105 @@ impl Application for Daemon {
         }
     }
     async fn recipes(&self, query: PageQuery) -> Result<Page<Recipe>> {
-        let mut recipes = vec![(
+        let mut recipes: Vec<(String, Recipe)> = vec![(
             "two-session".into(),
             Recipe {
                 recipe_id: RecipeId::new("two-session").unwrap(),
                 name: "Two-session controller simulation".into(),
                 modes: vec![RunMode::Simulation],
+                saved: None,
             },
         )];
-        if self.inner.archive.docker.is_some() {
+        if self.inner.archive.docker_options.is_some() || self.inner.archive.docker.is_some() {
             recipes.push((
                 playtime_runner::docker::RECIPE.into(),
                 Recipe {
                     recipe_id: RecipeId::new(playtime_runner::docker::RECIPE).unwrap(),
                     name: "Two-session real Docker / scripted model".into(),
                     modes: vec![RunMode::ScriptedSmoke],
+                    saved: None,
                 },
             ));
         }
-        if self.inner.archive.live.is_some() {
+        if self.inner.archive.live_endpoint.is_some() || self.inner.archive.live.is_some() {
             recipes.push((
                 playtime_runner::docker::LIVE_RECIPE.into(),
                 Recipe {
                     recipe_id: RecipeId::new(playtime_runner::docker::LIVE_RECIPE).unwrap(),
                     name: "Two-session real Docker / live model".into(),
                     modes: vec![RunMode::LiveSmoke],
+                    saved: None,
                 },
             ));
         }
-        for (id, recipe) in &self.inner.archive.recipes {
-            recipes.push((
-                id.clone(),
-                Recipe {
-                    recipe_id: RecipeId::new(id.as_str()).unwrap(),
-                    name: recipe.name.clone(),
-                    modes: vec![RunMode::Experiment],
-                },
-            ));
-        }
-        paging::page(recipes, &query, "recipes", "catalog", None)
+        self.inner
+            .catalog
+            .page(
+                query,
+                None,
+                Some(recipes.into_iter().map(|(_, recipe)| recipe).collect()),
+            )
+            .await
+    }
+    async fn recipe_definition(&self, id: RecipeId) -> Result<RecipeDefinition> {
+        self.inner.catalog.definition(&id).await
+    }
+    async fn recipe_save(
+        &self,
+        key: IdempotencyKey,
+        request: RecipeMutation,
+    ) -> Result<RecipeSaveResponse> {
+        self.inner.catalog.save(key, request).await
+    }
+    async fn recipe_save_lookup(&self, key: IdempotencyKey) -> Result<RecipeSaveResponse> {
+        self.inner.catalog.lookup(&key).await
+    }
+    async fn saved_recipes(
+        &self,
+        query: PageQuery,
+        history: Option<RecipeId>,
+    ) -> Result<Page<Recipe>> {
+        self.inner.catalog.page(query, history, None).await
+    }
+    async fn saved_recipe(&self, id: RecipeId) -> Result<SavedRecipe> {
+        self.inner.catalog.head(&id).await
     }
     async fn preview(&self, recipe: RecipeId, request: PreviewRequest) -> Result<Preview> {
-        if recipe.as_str() == playtime_runner::docker::RECIPE
-            && request.mode == RunMode::ScriptedSmoke
-        {
-            return self
-                .inner
-                .archive
-                .docker_preview()
-                .ok_or_else(|| ApiError::new("unsupported_capability"));
-        }
-        if recipe.as_str() == playtime_runner::docker::LIVE_RECIPE
-            && request.mode == RunMode::LiveSmoke
-        {
-            return self
-                .inner
-                .archive
-                .live_preview()
-                .ok_or_else(|| ApiError::new("unsupported_capability"));
-        }
-        if self.inner.archive.recipes.contains_key(recipe.as_str()) {
-            return if request.mode == RunMode::Experiment {
-                self.inner
-                    .archive
-                    .recipe_preview(recipe.as_str())
-                    .ok_or_else(|| ApiError::new("unsupported_capability"))
+        if recipe.as_str() == "two-session" {
+            return if request.mode == RunMode::Simulation {
+                Ok(self.inner.archive.preview())
             } else {
                 Err(ApiError::new("unsupported_capability"))
             };
         }
-        if recipe.as_str() != "two-session" {
-            return Err(ApiError::new("not_found"));
-        }
-        if request.mode != RunMode::Simulation {
+        if request.mode == RunMode::Experiment {
+            self.inner.catalog.definition(&recipe).await?;
+        } else if !matches!(
+            (recipe.as_str(), request.mode),
+            (playtime_runner::docker::RECIPE, RunMode::ScriptedSmoke)
+                | (playtime_runner::docker::LIVE_RECIPE, RunMode::LiveSmoke)
+        ) {
             return Err(ApiError::new("unsupported_capability"));
         }
-        Ok(self.inner.archive.preview())
+        let archive = self
+            .inner
+            .archive
+            .execution(request.mode)
+            .await
+            .map_err(execution_unavailable)?;
+        match request.mode {
+            RunMode::Experiment => archive
+                .authored_preview(recipe.as_str())
+                .await
+                .map_err(execution_unavailable),
+            RunMode::ScriptedSmoke => archive
+                .docker_preview()
+                .ok_or_else(|| execution_unavailable(life::Error::Uncertain)),
+            RunMode::LiveSmoke => archive
+                .live_preview()
+                .ok_or_else(|| execution_unavailable(life::Error::Uncertain)),
+            _ => Err(ApiError::new("unsupported_capability")),
+        }
     }
     async fn admit(&self, key: IdempotencyKey, request: LaunchRequest) -> Result<LaunchResponse> {
         let this = self.clone();
@@ -748,3 +794,47 @@ impl Application for Daemon {
 
 #[cfg(test)]
 mod tests;
+
+fn tolerate_unavailable(result: life::Result<()>) -> life::Result<()> {
+    match result {
+        Err(life::Error::Invalid(
+            "Docker readiness unavailable"
+            | "locked Docker image unavailable"
+            | "invalid Docker executable/socket selection"
+            | "live model unavailable"
+            | "live runs need the Docker workshop"
+            | "bundle does not implement this daemon's frozen Docker profile"
+            | "bundle does not implement this daemon's live model profile",
+        )) => Ok(()),
+        other => other,
+    }
+}
+fn execution_unavailable(error: life::Error) -> ApiError {
+    let reason = match error {
+        life::Error::Busy => return ApiError::new("run_busy"),
+        life::Error::Invalid("invalid saved recipe") => return ApiError::new("catalog_corrupt"),
+        life::Error::Invalid("unsupported recipe or mode") => {
+            return ApiError::new("unsupported_capability");
+        }
+        life::Error::Invalid("live model unavailable") => "model_unavailable",
+        life::Error::Invalid("locked Docker image unavailable") => "workshop_image_unavailable",
+        life::Error::Invalid(
+            "Docker readiness unavailable"
+            | "locked Docker readiness changed"
+            | "invalid Docker executable/socket selection"
+            | "live runs need the Docker workshop",
+        ) => "workshop_unavailable",
+        life::Error::Invalid(
+            "bundle does not implement this daemon's frozen Docker profile"
+            | "bundle does not implement this daemon's live model profile",
+        ) => "worker_profile_unavailable",
+        life::Error::Invalid("execution unavailable") => "execution_configuration_unavailable",
+        _ => return ApiError::new("backend_unavailable"),
+    };
+    let mut error = ApiError::new("execution_unavailable");
+    error
+        .0
+        .details
+        .insert("reasons".into(), serde_json::json!([reason]));
+    error
+}

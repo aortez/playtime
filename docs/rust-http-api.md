@@ -255,3 +255,19 @@ live gates add native effects. The transport fixture's in-memory admission map
 does not prove SQLite durability, and its watch notifications do not prove
 authenticated worker publication. Restart and worker-loss recovery remain outside
 these implemented gates; see [development](development.md).
+
+## Recipe authoring v1
+
+`recipe_authoring_v1` advertises definition reads, cloning, immutable revision
+saves, logical head/history listing, and keyed save recovery. The route table and
+strict DTO schemas are in the generated OpenAPI document. Saves return 201 on
+commit and 200 on replay; `source_conflict`, `head_conflict`, and
+`idempotency_conflict` are 409. `catalog_full` is 413. Catalog verification failure
+is `catalog_corrupt`; an execution readiness/compatibility limitation is
+`execution_unavailable` (503, no preview token). Both use the ordinary authenticated
+application boundary; save keys have a separate namespace from launch keys.
+
+The shared native client owns `RecipeSaveStore`, including private durable
+pending-save receipts and response/request validation. The workbench performs
+these operations outside render callbacks. See
+[saved recipe operation and bounds](rust-recipes.md#saved-recipes-and-prompt-editing).

@@ -16,11 +16,13 @@ target/debug/playtime --connection-file /absolute/service-root/.playtime/connect
   run curiosity --mode experiment --idempotency-key my-retained-key --wait
 ```
 
-The workbench offers the same recipe. Catalog recipes run in `experiment` mode on
-the live model, so `--recipes` needs `--ollama-endpoint` (see
-[live model](rust-live-model.md)). If any recipe is invalid, the daemon refuses to
-start and names the file and the reason. To change a recipe, edit it and restart
-the daemon between runs, never during one.
+The workbench offers the same recipe. Execution uses `experiment` mode on the
+configured live model (see [live model](rust-live-model.md)). Loading and authoring
+recipes do not require `--ollama-endpoint` or a ready workshop. If any supplied
+recipe is invalid, the daemon refuses to start and names the file and reason.
+To change a file-backed source, edit it and restart the daemon between runs.
+[Saved prompt revisions](#saved-recipes-and-prompt-editing) can be created from
+the workbench without restarting.
 
 ## Format
 
@@ -167,3 +169,85 @@ checkpoint, the daemon does not treat cancellation as normal confirmed completio
 the run can remain `reconciling` (`worker_unavailable`). An operator can release
 it after verified worker termination and resource cleanup; see
 [daemon completion and release](rust-daemon.md#results-and-safe-completion).
+
+## Saved recipes and prompt editing
+
+Services advertise `recipe_authoring_v1`. In the workbench, select a catalog
+recipe, choose **Clone recipe**, edit its name and prompt, and **Save revision**.
+Select **Edit recipe** on a saved recipe to create its next revision. The model,
+harness, budgets, protocol, and seeds remain inherited and read-only. Unsaved
+edits disable launch and prevent changing the selection until explicitly saved
+or discarded. A conflicting edit keeps its text; it can be saved as a new recipe
+or discarded before selecting the current head.
+
+Saving selects an immutable execution ID and requests a fresh preview. A newer
+head never retargets a selected revision, preview, or pending launch. The existing
+launch request uses that execution ID as `recipe_id`; there is no implicit save
+on launch. Clients write a private receipt under `recipe-saves/` before sending a
+save. If its result is uncertain, **Look up save** and **Retry same save** retain
+the original service, request, and key. Reopening the workbench restores these
+pending receipts. Unsaved text is not persisted across process exit.
+
+The service stores revisions, logical heads, and keyed results atomically in its
+private SQLite ledger (version 6). Limits are 256 logical recipes, 4,096 retained
+revisions, 128 MiB of definition/request/result bytes, and 4 MiB per encoded row.
+Names allow 128 UTF-8 bytes and prompts 65,536 bytes. Existing seed and recipe
+bounds still apply. Exhaustion refuses a new save without losing old reads or
+replays. There is no deletion or garbage collection in this slice.
+
+Saving copies inherited bytes from the already loaded source or saved revision;
+it does not reopen TOML or seed paths. Saved recipes therefore survive removal of
+the original `--recipes` directory. Supplying an invalid catalog still fails
+startup, as does damaged saved history. Reading, cloning, and editing definitions
+work without ready Docker or Ollama, including at startup. Preview returns
+`execution_unavailable` without a launch token until the stored identities and
+current execution environment can be verified. A fresh preview after readiness
+returns does not change the saved revision. Accepted launch replay remains
+available independently of readiness.
+
+The combined picker lists source recipes and saved heads. Saved families keep
+creation-sequence order through renames and new revisions. A cursor fixes the
+initial creation cutoff, so later families appear on refresh. Each page observes
+current heads consistently; it is not a snapshot of all heads across pages.
+Source catalog/configuration changes invalidate combined-picker cursors; head
+changes and readiness changes do not. Revision history has its own high-water
+mark and service/family scope.
+
+An authored run freezes its complete definition and provenance inside
+`inputs/scenario.json`, alongside the effective recipe and scenario. Both daemon
+and worker validate their agreement and supported model/environment identities.
+The worker profile digest includes the definition-format capability, so an older
+bundle cannot silently accept the new field. Rebuild the static worker bundle
+when upgrading the daemon for authoring.
+
+### Authoring validation, 2026-10-22
+
+Automated coverage uses the real SQLite catalog and authenticated API/client:
+concurrent head conflicts, replay and restart without sources, source conflicts,
+rollback before save-result insertion, capacity refusal, stable head pagination,
+cursor scope/generation, and revision-history growth. Workbench tests cover offline
+editing, save/reopen/recovery, stale definition replies, keyboard editing, and
+narrow layouts. The two editor screenshots use the pinned software renderer.
+
+A native acceptance run cloned curiosity while Ollama was unavailable, restarted
+without the source catalog, recovered the save, then restored readiness. It
+previewed revision A, saved revision B, and launched A. Run
+`20261023T024125Z-d3693877` completed with `agent_finished`, cleanup complete,
+and a writer-confirmed terminal sequence of 91. Its first model request contains
+A's exact prompt; its archived definition, effective recipe, scenario, and seeds
+agree. Evidence is retained locally at
+`/tmp/playtime-authored-native-sc2vuat0/evidence` (not a portable repository fixture).
+
+An earlier probe was deliberately cancelled after its first tool and encountered
+the existing incomplete cancellation/recovery path. It was released after the
+service verified worker termination and absent resources; its evidence remains
+at `/tmp/playtime-authored-native-n_r0z6k3`. This work does not complete the deferred
+restart/recovery integration. The separate service-normal, Docker run-and-view,
+and live run-and-view gates also passed, including a normal live workbench launch.
+
+The same completed service was then restarted with a missing Docker socket and
+without sources. It saved another clone and replayed the accepted launch while
+preview was unavailable. Restoring the socket produced a fresh ready preview
+without restarting; the saved definition and picker listing stayed identical.
+That check is recorded in the same evidence directory as
+`readiness-restoration.json`.

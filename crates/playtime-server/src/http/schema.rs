@@ -11,7 +11,7 @@ use utoipa::{OpenApi, PartialSchema, ToSchema};
 pub fn openapi() -> Value {
     #[derive(OpenApi)]
     #[openapi(info(title = "Playtime native HTTP API", version = "1"), components(schemas(
-        Capabilities, Recipe, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
+        Capabilities, Recipe, RecipeDefinition, SavedRecipe, RecipeSaveResponse, CloneRecipeRequest, ReviseRecipeRequest, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
         RunView, Page<Recipe>, Page<RunView>, Page<Checkpoint>, Page<Artifact>, EventPage, EventEnvelope,
         Checkpoint, Artifact, EventCursor, StreamEnd, ErrorResponse, UsageSummary, Connection
     )))]
@@ -30,16 +30,16 @@ pub fn openapi() -> Value {
         (404, "not_found, unsupported_version"),
         (
             409,
-            "stale_preview, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready, release_refused",
+            "stale_preview, source_conflict, head_conflict, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready, release_refused",
         ),
-        (413, "limit_exceeded"),
+        (413, "limit_exceeded, catalog_full"),
         (415, "unsupported_media_type"),
         (422, "unsupported_capability, invalid_parameters"),
         (429, "too_many_observers"),
         (500, "archive_corrupt, content_mismatch, internal_error"),
         (
             503,
-            "ownership_unresolved, backend_unavailable, evidence_limit_exceeded",
+            "execution_unavailable, catalog_corrupt, ownership_unresolved, backend_unavailable, evidence_limit_exceeded",
         ),
         (504, "request_timeout"),
     ];
@@ -48,6 +48,62 @@ pub fn openapi() -> Value {
             "content":{"application/json":{"schema":{"$ref":"#/components/schemas/ErrorResponse"}}}});
     }
     let routes = [
+        (
+            "get",
+            "/recipes/{recipe_id}/definition",
+            "recipe_definition",
+            None,
+            RecipeDefinition::name().to_string(),
+            false,
+        ),
+        (
+            "get",
+            "/saved-recipes",
+            "saved_recipes",
+            None,
+            format!("Page_{}", Recipe::name()),
+            true,
+        ),
+        (
+            "get",
+            "/saved-recipes/{recipe_id}",
+            "saved_recipe",
+            None,
+            SavedRecipe::name().to_string(),
+            false,
+        ),
+        (
+            "get",
+            "/saved-recipes/{recipe_id}/revisions",
+            "recipe_revisions",
+            None,
+            format!("Page_{}", Recipe::name()),
+            true,
+        ),
+        (
+            "post",
+            "/saved-recipes",
+            "clone_recipe",
+            Some(CloneRecipeRequest::name().to_string()),
+            RecipeSaveResponse::name().to_string(),
+            false,
+        ),
+        (
+            "post",
+            "/saved-recipes/{recipe_id}/revisions",
+            "revise_recipe",
+            Some(ReviseRecipeRequest::name().to_string()),
+            RecipeSaveResponse::name().to_string(),
+            false,
+        ),
+        (
+            "get",
+            "/recipe-saves/{idempotency_key}",
+            "recipe_save_lookup",
+            None,
+            RecipeSaveResponse::name().to_string(),
+            false,
+        ),
         (
             "get",
             "/capabilities",
@@ -210,7 +266,7 @@ pub fn openapi() -> Value {
         if method == "post" {
             parameters.push(json!({"name":"X-Playtime-Service-ID","in":"header","required":true,"schema":{"$ref":"#/components/schemas/ServiceId"}}));
         }
-        if name == "launch" {
+        if matches!(name, "launch" | "clone_recipe" | "revise_recipe") {
             parameters.push(json!({"name":"Idempotency-Key","in":"header","required":true,"schema":{"$ref":"#/components/schemas/IdempotencyKey"}}));
         }
         let content = match name {
@@ -253,6 +309,13 @@ pub fn openapi() -> Value {
                 "X-Content-Type-Options".into(),
                 json!({"schema":{"type":"string","const":"nosniff"}}),
             );
+        }
+        if matches!(name, "clone_recipe" | "revise_recipe") {
+            operation["responses"]["201"] = operation["responses"]["200"].clone();
+            operation["responses"]["201"]["description"] =
+                json!("Immutable revision and keyed result committed atomically");
+            operation["responses"]["200"]["description"] =
+                json!("Replay of the original committed save");
         }
         if name == "launch" || name == "cancel" {
             operation["responses"]["202"] = operation["responses"]["200"].clone();

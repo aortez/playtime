@@ -1,7 +1,9 @@
 //! HTTP v1 contracts, independent of the runtime and archive implementation.
 
 pub mod cursor;
+pub mod recipes;
 pub mod schema;
+pub use recipes::*;
 
 use playtime_core::{RunId, RunMode, RunParameters, RunPhase, SessionId, StopReason, UtcTime};
 use serde::{Deserialize, Serialize};
@@ -140,6 +142,8 @@ pub struct Recipe {
     pub name: String,
     #[schema(value_type = Vec<schema::RunMode>)]
     pub modes: Vec<RunMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved: Option<SavedRecipe>,
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
