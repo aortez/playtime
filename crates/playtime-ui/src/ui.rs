@@ -210,11 +210,21 @@ impl Workbench {
                 });
             });
         });
-        ui.horizontal(|ui| {
-            ui.small(brief(&self.model.backend, 190));
+        ui.horizontal_wrapped(|ui| {
+            ui.small(
+                self.model
+                    .backend
+                    .split(" · ")
+                    .next()
+                    .unwrap_or("Backend unavailable"),
+            );
             if !self.model.endpoint.is_empty() {
                 ui.small(&self.model.endpoint);
             }
+            ui.menu_button("Backend details", |ui| {
+                ui.set_max_width(440.0);
+                ui.label(brief(&self.model.backend, 4096));
+            });
         });
         if let ConnectionState::Error(error) = &self.model.connection {
             ui.colored_label(Color32::YELLOW, brief(error, 150));
@@ -246,18 +256,47 @@ impl Workbench {
         egui::ScrollArea::vertical()
             .id_salt("runs")
             .max_height(310.0)
-            .show_rows(ui, 36.0, self.model.runs.len(), |ui, range| {
+            .show_rows(ui, 96.0, self.model.runs.len(), |ui, range| {
                 for i in range {
-                    let run = &self.model.runs[i];
-                    if ui
-                        .selectable_label(
-                            self.model.selected.as_ref() == Some(&run.run_id),
-                            format!("Run {} · {}", run.run_id, run_state(run)),
+                    ui.scope(|ui| {
+                        ui.set_min_height(96.0);
+                        let run = &self.model.runs[i];
+                        let recipe = self
+                            .model
+                            .recipes
+                            .iter()
+                            .find(|recipe| recipe.recipe_id == run.recipe_id)
+                            .map_or(run.recipe_id.as_str(), |recipe| recipe.name.as_str());
+                        let response = ui.add(
+                            egui::Button::new(brief(recipe, 60))
+                                .selected(self.model.selected.as_ref() == Some(&run.run_id))
+                                .wrap_mode(egui::TextWrapMode::Truncate),
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(
+                                egui::WidgetType::SelectableLabel,
+                                true,
+                                format!("Run {} · {}", run.run_id, run_state(run)),
+                            )
+                        });
+                        if response.clicked() {
+                            selected = Some(run.run_id.clone());
+                        }
+                        // Keep actionable state visible even when the recipe is ellipsized.
+                        ui.add(egui::Label::new(run_state(run)).wrap());
+                        ui.small(format!(
+                            "{} UTC",
+                            run.accepted_at
+                                .as_str()
+                                .trim_end_matches('Z')
+                                .replace('T', " ")
+                        ));
+                        ui.add(
+                            egui::Label::new(RichText::new(format!("Run {}", run.run_id)).small())
+                                .truncate(),
                         )
-                        .clicked()
-                    {
-                        selected = Some(run.run_id.clone());
-                    }
+                        .on_hover_text(run.run_id.as_str());
+                    });
                 }
             });
         if let Some(run) = selected {
@@ -449,46 +488,75 @@ impl Workbench {
         if let Some(preview) = &self.model.preview {
             egui::ScrollArea::vertical()
                 .id_salt("preview")
+                .auto_shrink([false, true])
                 .show(ui, |ui| {
                     ui.add_space(12.0);
                     ui.heading("Prompt");
-                    text(ui, &preview.value.prompt, &mut self.metrics);
-                    ui.separator();
-                    for line in &preview.summary {
-                        ui.label(brief(line, 1024));
+                    prose(ui, &preview.prompt, &mut self.metrics);
+                    if preview.prompt.len() < preview.value.prompt.len() {
+                        ui.small("Prompt excerpt · full text in Details");
                     }
+                    for section in &preview.sections {
+                        ui.add_space(12.0);
+                        ui.heading(section.title);
+                        for line in &section.lines {
+                            prose(ui, line, &mut self.metrics);
+                        }
+                    }
+                    ui.add_space(12.0);
+                    ui.label(format!(
+                        "Frozen revision {} · {}",
+                        preview.revision,
+                        if preview.value.readiness.ready {
+                            "Ready to launch"
+                        } else {
+                            "Execution unavailable"
+                        }
+                    ));
+                    for reason in &preview.value.readiness.reasons {
+                        ui.colored_label(Color32::YELLOW, brief(reason, 500));
+                    }
+                    egui::CollapsingHeader::new("Protocol").show(ui, |ui| {
+                        prose(ui, &preview.protocol, &mut self.metrics);
+                        if preview.protocol.len() < preview.value.protocol.len() {
+                            ui.small("Protocol excerpt · full text in Details");
+                        }
+                    });
+                    egui::CollapsingHeader::new("Workshop inventory")
+                        .show(ui, |ui| prose(ui, &preview.inventory, &mut self.metrics));
                     for warning in &preview.value.warnings {
                         ui.colored_label(Color32::YELLOW, brief(warning, 500));
                     }
-                    egui::CollapsingHeader::new("Full frozen preview and protocol").show(
-                        ui,
-                        |ui| {
-                            text(ui, &preview.source.text, &mut self.metrics);
-                            ui.horizontal(|ui| {
-                                if ui
-                                    .add_enabled(
-                                        preview.source.start > 0,
-                                        egui::Button::new("Previous preview page"),
-                                    )
-                                    .clicked()
-                                {
-                                    preview_page =
-                                        Some(preview.source.start.saturating_sub(TEXT_BYTES));
-                                }
-                                if ui
-                                    .add_enabled(
-                                        preview.source.start + preview.source.text.len()
-                                            < preview.source.total,
-                                        egui::Button::new("Next preview page"),
-                                    )
-                                    .clicked()
-                                {
-                                    preview_page =
-                                        Some(preview.source.start + preview.source.text.len());
-                                }
-                            });
-                        },
-                    );
+                    egui::CollapsingHeader::new("Details · full frozen preview").show(ui, |ui| {
+                        text(ui, &preview.source.text, &mut self.metrics);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(
+                                    preview.source.start > 0,
+                                    egui::Button::new("Previous preview page"),
+                                )
+                                .clicked()
+                            {
+                                preview_page = Some(
+                                    preview
+                                        .source
+                                        .start
+                                        .saturating_sub(crate::preview::SOURCE_BYTES),
+                                );
+                            }
+                            if ui
+                                .add_enabled(
+                                    preview.source.start + preview.source.text.len()
+                                        < preview.source.total,
+                                    egui::Button::new("Next preview page"),
+                                )
+                                .clicked()
+                            {
+                                preview_page =
+                                    Some(preview.source.start + preview.source.text.len());
+                            }
+                        });
+                    });
                 });
         } else {
             ui.add_space(30.0);
@@ -633,6 +701,9 @@ impl Workbench {
                     self.model.command(Action::Sessions(start));
                 }
             });
+        }
+        if self.model.archive_waiting {
+            ui.label("Waiting for archive publication…");
         }
         ui.small(&self.model.history);
         if self.model.preferences.disclosure != Disclosure::Compact
@@ -1003,8 +1074,18 @@ impl Workbench {
                             ui.separator(); ui.strong(brief(&file.name, 120)); ui.small(file_kind(&file.kind));
                             match &file.content {
                                 ContentAvailability::Available { artifact_id, content } => {
-                                    ui.small(format!("{} bytes · session {}", content.size_bytes, checkpoint.checkpoint.session_id)); ui.small(content.sha256.to_string());
-                                    if ui.button(format!("Inspect file {artifact_id}")).clicked() { open = Some(artifact_id.clone()); }
+                                    ui.small(format!("{} · session {}", crate::preview::bytes(content.size_bytes), checkpoint.checkpoint.session_id));
+                                    ui.push_id(artifact_id.as_str(), |ui| {
+                                        let response = ui.button(if crate::media::image_name(&file.name) { "Open image" } else { "Open file" });
+                                        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Inspect file {artifact_id}")));
+                                        if response.clicked() { open = Some(artifact_id.clone()); }
+                                        egui::CollapsingHeader::new("Details").show(ui, |ui| {
+                                            ui.label(brief(&file.name, 4096));
+                                            ui.label(format!("{} bytes · Recorded kind: {}", content.size_bytes, brief(&file.kind, 120)));
+                                            ui.label(format!("SHA-256: {}", content.sha256));
+                                            ui.label(format!("Artifact ID: {artifact_id}"));
+                                        });
+                                    });
                                 }
                                 ContentAvailability::Unavailable { reason } => { ui.label(format!("Unavailable: {}", brief(reason, 200))); }
                             }
@@ -1117,11 +1198,11 @@ fn run_state(run: &RunView) -> String {
 /// Captured workspace entries carry their tar type flag.
 fn file_kind(kind: &str) -> &str {
     match kind {
-        "0" | "\0" => "regular",
-        "1" => "hard link",
-        "2" => "symbolic link",
-        "5" => "directory",
-        other => brief(other, 120),
+        "0" | "\0" | "regular" => "file",
+        "1" | "hard_link" => "hard link",
+        "2" | "symlink" => "symbolic link",
+        "5" | "directory" => "directory",
+        _ => "unknown file kind",
     }
 }
 fn brief(text: &str, max: usize) -> &str {
@@ -1138,7 +1219,8 @@ fn trace_text(ui: &mut egui::Ui, label: &str, value: &str, metrics: &mut FrameMe
     let mut rich = RichText::new(visible).color(Color32::from_gray(220));
     if !matches!(
         label,
-        "Recorded thinking"
+        "Preview"
+            | "Recorded thinking"
             | "Model response"
             | "Submitted memento"
             | "Memory received"
@@ -1150,6 +1232,9 @@ fn trace_text(ui: &mut egui::Ui, label: &str, value: &str, metrics: &mut FrameMe
     if visible.len() < value.len() {
         ui.small("Text viewport limit · inspect source for continuation");
     }
+}
+fn prose(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
+    trace_text(ui, "Preview", value, metrics);
 }
 fn text(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
     let remaining = TEXT_BYTES.saturating_sub(metrics.text_bytes);

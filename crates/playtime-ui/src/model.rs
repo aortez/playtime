@@ -65,9 +65,18 @@ pub enum Mutation {
     Rejected(String),
 }
 #[derive(Clone, Debug)]
+pub struct PreviewSection {
+    pub title: &'static str,
+    pub lines: Vec<String>,
+}
+#[derive(Clone, Debug)]
 pub struct PreviewView {
     pub value: Preview,
-    pub summary: Vec<String>,
+    pub sections: Vec<PreviewSection>,
+    pub prompt: String,
+    pub protocol: String,
+    pub inventory: String,
+    pub revision: String,
     pub source: SourcePage,
 }
 #[derive(Clone, Debug)]
@@ -197,6 +206,7 @@ pub enum Data {
     GifFrame(Arc<crate::media::Pixels>, tokio::sync::oneshot::Sender<()>),
     GifStopped(String),
     Source(u64, SourcePage),
+    ArchiveWaiting(bool),
     Notice(String),
     Connection(ConnectionState),
     Error(String),
@@ -240,6 +250,7 @@ pub struct Model {
     pub location: Option<(u64, usize)>,
     trace_pending: std::collections::BTreeSet<u64>,
     pub history: String,
+    pub archive_waiting: bool,
     pub live_count: u64,
     pub seen_live: u64,
     pub following: bool,
@@ -305,6 +316,7 @@ impl Default for Model {
             location: None,
             trace_pending: Default::default(),
             history: String::new(),
+            archive_waiting: false,
             live_count: 0,
             seen_live: 0,
             following: true,
@@ -402,6 +414,7 @@ impl Model {
         self.trace.clear();
         self.location = None;
         self.tag.connection += 1;
+        self.archive_waiting = false;
         self.tag.selection += 1;
         self.tag.preview += 1;
         self.connection = ConnectionState::Connecting;
@@ -465,6 +478,7 @@ impl Model {
         self.command(Action::Launch(request));
     }
     pub fn select_run(&mut self, run: RunId) {
+        self.archive_waiting = false;
         self.tag.selection += 1;
         self.clear_run_notice();
         self.selected = Some(run.clone());
@@ -511,6 +525,7 @@ impl Model {
         }
     }
     pub fn new_experiment(&mut self) {
+        self.archive_waiting = false;
         self.tag.selection += 1;
         self.clear_run_notice();
         self.launcher = true;
@@ -867,10 +882,17 @@ impl Model {
                 self.source_sequence = sequence;
                 self.source = Some(source);
             }
+            Data::ArchiveWaiting(waiting) => self.archive_waiting = waiting,
             Data::Notice(message) => {
                 self.notify(message, reply.run);
             }
             Data::Connection(state) => {
+                if matches!(
+                    state,
+                    ConnectionState::Error(_) | ConnectionState::Disconnected
+                ) {
+                    self.archive_waiting = false;
+                }
                 self.stale = state != ConnectionState::Connected;
                 self.connection = state;
             }

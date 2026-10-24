@@ -27,6 +27,45 @@ and [narrow](../crates/playtime-ui/tests/snapshots/recipe-editor-narrow.png).
 The model settings form has separate [wide](../crates/playtime-ui/tests/snapshots/model-settings.png)
 and [narrow](../crates/playtime-ui/tests/snapshots/model-settings-narrow.png) views.
 
+## Frozen preview and file inspection
+
+The launcher groups its frozen preview into Prompt, Run limits, Model, Workshop,
+and Seed files. Model settings and host identity, workshop resources, all controller
+limits, and named seeds come from the selected preview, prepared outside rendering.
+Absent metadata says unavailable; a fixture or scripted adapter says that it does
+not perform inference/tool execution. Zero retries stays zero. Seed names and UTF-8
+byte sizes come from the frozen recipe map, with at most 64 names shown. Contents
+and full identities remain in the paged **Details · full frozen preview** source.
+**Protocol** and **Workshop inventory** expand as wrapped text. Prompt, protocol
+and inventory excerpts are bounded to 4 KiB each; source uses 24 KiB pages so
+expanded excerpts cannot consume the frame text budget and hide source bytes. Launch still sends
+the exact frozen revision, regardless of these display summaries.
+
+The connection bar keeps backend kind and endpoint visible; **Backend details**
+contains its description. Run rows lead with recipe name (or execution recipe ID
+when its catalog entry is unavailable), recorded admission time labeled UTC, and a
+secondary run ID. Run state has its own untruncated line, so a long recipe name
+cannot hide `needs release`, including at the minimum sidebar width. This does
+not infer the start of model execution.
+
+The Files inspector offers **Open image** or **Open file**, with readable size and
+file kind. Each available file's **Details** contains the full name, exact byte size,
+recorded kind, digest and opaque artifact ID. Opening, source pagination and verified
+downloads retain their original artifact selection and stale-reply checks.
+
+Before archive anchors exist, the timeline says **Waiting for archive publication**.
+Observation reads that receive `evidence_not_ready` retry the same run/cursor within
+the existing 60-second budget; they do not label a healthy connection as reconnecting.
+A transport failure still shows reconnecting, even if it follows an archive wait.
+Concurrent reads cannot clear one another's active waiting state. Success clears it;
+selection/reconnect invalidate old replies, and budget/fatal errors remain visible.
+
+Reviewed synthetic live-profile metadata: [preview](../crates/playtime-ui/tests/snapshots/live-preview.png),
+[narrow preview](../crates/playtime-ui/tests/snapshots/live-preview-narrow.png),
+[expanded protocol and inventory](../crates/playtime-ui/tests/snapshots/live-preview-details.png),
+and [narrow file inspector](../crates/playtime-ui/tests/snapshots/files-narrow.png).
+These fixtures render frozen example values without running inference or tools.
+
 ## Fixture and headless development
 
 In separate terminals, with a new temporary fixture root:
