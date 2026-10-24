@@ -116,6 +116,10 @@ fn budget(db: &Connection) -> Result<(u64, u64, u64)> {
     }
     Ok((rows, keys, bytes))
 }
+pub(crate) fn retained(db: &Connection, id: &ModelRegistrationId) -> Result<RegisteredModel> {
+    budget(db)?;
+    record(db, id)
+}
 fn record(db: &Connection, id: &ModelRegistrationId) -> Result<RegisteredModel> {
     let row: Option<(String, String, String)> = db
         .query_row(

@@ -2,6 +2,8 @@
 //! handles and the existing preview/admission protocol.
 use super::*;
 
+pub const RECIPE_MODEL_SELECTION: &str = "recipe_model_selection_v1";
+
 pub const MODEL_SETTINGS: &str = "recipe_model_settings_v1";
 
 pub const RECIPE_AUTHORING: &str = "recipe_authoring_v1";
@@ -46,6 +48,8 @@ pub struct RecipeDefinition {
     #[schema(value_type = Object)]
     pub inherited: Value,
     pub seeds: Vec<RecipeSeed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_registration: Option<ModelRegistrationSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -56,6 +60,9 @@ pub struct CloneRecipeRequest {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_settings: Option<RecipeModelSettings>,
+    /// Omission inherits the source revision’s model. Selection never changes settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_registration: Option<ModelRegistrationId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -66,6 +73,9 @@ pub struct ReviseRecipeRequest {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_settings: Option<RecipeModelSettings>,
+    /// Omission inherits the source revision’s model. Selection never changes settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_registration: Option<ModelRegistrationId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -98,6 +108,8 @@ pub enum RecipeReasoning {
     Low,
     Medium,
     High,
+    On,
+    Off,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]

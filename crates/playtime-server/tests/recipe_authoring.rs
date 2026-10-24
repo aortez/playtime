@@ -20,6 +20,7 @@ fn source_recipe() -> RunRecipe {
 fn clone_request(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Clone {
         request: CloneRecipeRequest {
+            model_registration: None,
             model_settings: None,
             source: RecipeSource {
                 execution_recipe_id: definition.execution_recipe_id.clone(),
@@ -34,6 +35,7 @@ fn revise(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Revise {
         recipe_id: definition.saved.as_ref().unwrap().recipe_id.clone(),
         request: ReviseRecipeRequest {
+            model_registration: None,
             model_settings: None,
             expected_head: definition.execution_recipe_id.clone(),
             name: name.into(),

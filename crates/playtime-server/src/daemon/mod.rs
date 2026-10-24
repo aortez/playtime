@@ -478,6 +478,7 @@ impl Application for Daemon {
                 MODEL_REGISTRATION.into(),
                 RECIPE_AUTHORING.into(),
                 MODEL_SETTINGS.into(),
+                RECIPE_MODEL_SELECTION.into(),
                 "keyed_launch".into(),
                 "event_stream".into(),
                 "verified_artifacts".into(),

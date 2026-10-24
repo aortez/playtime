@@ -121,6 +121,8 @@ pub fn inspection(value: ModelInspection) -> InspectionView {
                     RecipeReasoning::Low => "Low",
                     RecipeReasoning::Medium => "Medium",
                     RecipeReasoning::High => "High",
+                    RecipeReasoning::On => "On",
+                    RecipeReasoning::Off => "Off",
                 })
                 .collect::<Vec<_>>()
                 .join(", ")

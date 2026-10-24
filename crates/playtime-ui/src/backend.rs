@@ -658,6 +658,12 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 None
             };
             let mut inherited_value = value.inherited.clone();
+            if let Some(registration) = inherited_value
+                .get_mut("model_registration")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                registration.remove("definition");
+            }
             if settings.is_some() {
                 if let Some(recipe) = inherited_value["recipe"].as_object_mut() {
                     recipe.remove("model");
@@ -680,10 +686,16 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 None,
                 Data::Definition(Box::new(crate::authoring::DefinitionView {
                     model_name: value
-                        .inherited
-                        .pointer("/model_lock/name")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned),
+                        .model_registration
+                        .as_ref()
+                        .map(|m| m.identity.name.clone())
+                        .or_else(|| {
+                            value
+                                .inherited
+                                .pointer("/model_lock/name")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        }),
                     value,
                     inherited,
                     settings,

@@ -574,6 +574,7 @@ impl Application for Fixture {
                 Some("downloads".into()),
                 self.catalog.as_ref().map(|_| RECIPE_AUTHORING.into()),
                 self.catalog.as_ref().map(|_| MODEL_SETTINGS.into()),
+                self.catalog.as_ref().map(|_| RECIPE_MODEL_SELECTION.into()),
             ]
             .into_iter()
             .flatten()

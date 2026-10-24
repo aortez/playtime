@@ -18,8 +18,27 @@ pub struct Draft {
     pub name: String,
     pub prompt: String,
     pub settings: Option<crate::model_settings::SettingsDraft>,
+    pub model_registration: Option<ModelRegistrationSummary>,
 }
 impl Draft {
+    pub fn select_model(&mut self, model: ModelRegistrationSummary) {
+        if let Some(settings) = &mut self.settings {
+            settings.select_model(Some(&model));
+        }
+        self.model_registration = Some(model);
+    }
+    pub fn reset_model(&mut self) {
+        self.model_registration = self.original.model_registration.clone();
+        if let Some(settings) = &mut self.settings {
+            settings.select_model(self.model_registration.as_ref());
+        }
+    }
+    pub fn reset_model_settings(&mut self) {
+        self.reset_model();
+        if let Some(settings) = &mut self.settings {
+            settings.reset();
+        }
+    }
     pub fn request(&self) -> Result<RecipeMutation, String> {
         let model_settings = self.settings.as_ref().map(|s| s.value()).transpose()?;
         let request = if !self.clone
@@ -28,6 +47,10 @@ impl Draft {
             RecipeMutation::Revise {
                 recipe_id: saved.recipe_id.clone(),
                 request: ReviseRecipeRequest {
+                    model_registration: self
+                        .model_registration
+                        .as_ref()
+                        .map(|m| m.registration_id.clone()),
                     model_settings,
                     expected_head: self.original.execution_recipe_id.clone(),
                     name: self.name.clone(),
@@ -37,6 +60,10 @@ impl Draft {
         } else {
             RecipeMutation::Clone {
                 request: CloneRecipeRequest {
+                    model_registration: self
+                        .model_registration
+                        .as_ref()
+                        .map(|m| m.registration_id.clone()),
                     model_settings,
                     source: RecipeSource {
                         execution_recipe_id: self.original.execution_recipe_id.clone(),
@@ -61,6 +88,7 @@ impl Draft {
 #[derive(Default)]
 pub struct Authoring {
     pub enabled: bool,
+    pub model_selection_enabled: bool,
     pub definition: Option<DefinitionView>,
     pub draft: Option<Draft>,
     pub save: Mutation,
@@ -83,6 +111,7 @@ impl Model {
         }
         if let Some(view) = &self.authoring.definition {
             self.authoring.draft = Some(Draft {
+                model_registration: view.value.model_registration.clone(),
                 original: view.value.clone(),
                 clone,
                 name: view.value.name.clone(),
@@ -93,6 +122,9 @@ impl Model {
                     .map(crate::model_settings::SettingsDraft::new),
             });
             self.preview = None;
+            if self.authoring.model_selection_enabled {
+                self.refresh_registrations();
+            }
         }
     }
     pub fn save_recipe(&mut self) {
@@ -258,6 +290,12 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
             }
         });
     } else {
+        if model.authoring.model_selection_enabled
+            && ui.button("Refresh recipe model choices").clicked()
+        {
+            model.refresh_registrations();
+        }
+        let definition = model.authoring.definition.as_ref().unwrap();
         let draft = model.authoring.draft.as_mut().unwrap();
         ui.label(if draft.clone {
             "Clone into a new saved recipe"
@@ -287,8 +325,26 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
                 });
         });
         ui.label(format!("{} / 65,536 prompt bytes", draft.prompt.len()));
+        if model.authoring.model_selection_enabled {
+            if model.registrations.loading {
+                ui.label("Reading registered model choices…");
+            }
+            crate::recipe_models::draw(
+                ui,
+                draft,
+                definition.model_name.as_deref(),
+                &model.registrations.items,
+                busy,
+            );
+            if !model.registrations.list_error.is_empty() {
+                ui.label(&model.registrations.list_error);
+            }
+        }
         if let Some(settings) = &mut draft.settings {
-            ui.add_enabled_ui(!busy, |ui| settings.draw(ui));
+            let reset = ui.add_enabled_ui(!busy, |ui| settings.draw(ui)).inner;
+            if reset {
+                draft.reset_model_settings();
+            }
         }
         if !draft.clone && !busy && ui.button("Keep edits as a new recipe instead").clicked() {
             draft.clone = true;

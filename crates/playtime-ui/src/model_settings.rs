@@ -4,6 +4,8 @@ use playtime_protocol::api::*;
 #[derive(Clone, Debug)]
 pub struct SettingsDraft {
     original: RecipeSettingsView,
+    capabilities: Option<RecipeModelCapabilities>,
+    model_error: Option<String>,
     reasoning: RecipeReasoning,
     fields: Vec<Field>,
 }
@@ -37,6 +39,8 @@ impl SettingsDraft {
         })
         .collect();
         Self {
+            capabilities: Some(view.capabilities.clone()),
+            model_error: None,
             reasoning: s.reasoning,
             fields,
             original: view,
@@ -64,16 +68,21 @@ impl SettingsDraft {
         if let Some(error) = s.validation_error() {
             return Err(error.into());
         }
-        if !self.original.capabilities.reasoning.contains(&s.reasoning) {
-            return Err("This reasoning choice is unsupported by the locked model.".into());
+        if let Some(error) = &self.model_error {
+            return Err(error.clone());
         }
-        if self
-            .original
+        let capabilities = self
             .capabilities
+            .as_ref()
+            .ok_or("This model's reasoning/context support is unreviewed.")?;
+        if !capabilities.reasoning.contains(&s.reasoning) {
+            return Err("This reasoning choice is unsupported by the selected model.".into());
+        }
+        if capabilities
             .context_ceiling
             .is_some_and(|n| s.context_tokens > n)
         {
-            return Err("Context capacity exceeds the locked model's reported ceiling.".into());
+            return Err("Context capacity exceeds the selected model's reported ceiling.".into());
         }
         if s.handoff_tokens >= self.original.generated_tokens {
             return Err(
@@ -82,15 +91,51 @@ impl SettingsDraft {
         }
         Ok(s)
     }
-    pub fn draw(&mut self, ui: &mut egui::Ui) {
+    pub fn select_model(&mut self, model: Option<&ModelRegistrationSummary>) {
+        if let Some(model) = model {
+            self.capabilities = model.identity.reviewed_capabilities.clone();
+            self.model_error = if !["completion", "tools"].iter().all(|required| {
+                model
+                    .identity
+                    .advertised_capabilities
+                    .iter()
+                    .any(|c| c == required)
+            }) {
+                Some("This harness requires a model with completion and tool support.".into())
+            } else if self
+                .capabilities
+                .as_ref()
+                .is_some_and(|c| c.context_ceiling.is_none())
+            {
+                Some("This model's context capacity is unreviewed.".into())
+            } else {
+                None
+            };
+        } else {
+            self.capabilities = Some(self.original.capabilities.clone());
+            self.model_error = None;
+        }
+    }
+    pub fn reset(&mut self) {
+        *self = Self::new(self.original.clone());
+    }
+    /// The owner resets model selection together with settings when this returns true.
+    pub fn draw(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut reset = false;
         ui.separator();
         ui.strong("Model settings");
         ui.horizontal_wrapped(|ui| {
             egui::ComboBox::from_label("Reasoning")
                 .selected_text(reasoning_label(self.reasoning))
                 .show_ui(ui, |ui| {
-                    for choice in &self.original.capabilities.reasoning {
-                        ui.selectable_value(&mut self.reasoning, *choice, reasoning_label(*choice));
+                    if let Some(capabilities) = &self.capabilities {
+                        for choice in &capabilities.reasoning {
+                            ui.selectable_value(
+                                &mut self.reasoning,
+                                *choice,
+                                reasoning_label(*choice),
+                            );
+                        }
                     }
                 });
             if ui.button("Reset reasoning").clicked() {
@@ -99,13 +144,23 @@ impl SettingsDraft {
         });
         if self.reasoning != self.original.settings.reasoning {
             ui.label(format!(
-                "Reasoning: {} → {}",
+                "Reasoning: {} to {}",
                 reasoning_label(self.original.settings.reasoning),
                 reasoning_label(self.reasoning)
             ));
         }
+        if let Err(error) = self.value() {
+            ui.colored_label(egui::Color32::YELLOW, error);
+        }
         if self.reasoning == RecipeReasoning::ModelDefault {
-            ui.small("Omit the reasoning setting; use the locked model/backend default. The exact default is not advertised by this capability record.");
+            if let Some(default) = self.capabilities.as_ref().and_then(|c| c.default_reasoning) {
+                ui.small(format!(
+                    "Omit the reasoning setting; reported model default: {}.",
+                    reasoning_label(default)
+                ));
+            } else {
+                ui.small("Omit the reasoning setting; use the locked model/backend default. The exact default is not advertised by this capability record.");
+            }
         }
         for field in &mut self.fields[..4] {
             field.draw(ui);
@@ -121,11 +176,9 @@ impl SettingsDraft {
             ui.small("The controller advances the numeric sampling seed per request. Matching seeds do not guarantee identical results. Seed files are separate inputs.");
         });
         if ui.button("Reset model settings").clicked() {
-            *self = Self::new(self.original.clone());
+            reset = true;
         }
-        if let Err(error) = self.value() {
-            ui.colored_label(egui::Color32::YELLOW, error);
-        }
+        reset
     }
 }
 impl Field {
@@ -135,6 +188,9 @@ impl Field {
             ui.horizontal(|ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.text)
+                        // Validation text above the fields changes layout while typing.
+                        // Keep focus on this field through those changes.
+                        .id(egui::Id::new(("recipe-model-setting", self.label)))
                         .desired_width(150.0)
                         .char_limit(32),
                 )
@@ -144,7 +200,7 @@ impl Field {
                 }
             });
             if self.text != self.original {
-                ui.small(format!("{} → {}", self.original, self.text));
+                ui.small(format!("{} to {}", self.original, self.text));
             }
         });
     }
@@ -155,5 +211,7 @@ pub(crate) fn reasoning_label(value: RecipeReasoning) -> &'static str {
         RecipeReasoning::Low => "Low",
         RecipeReasoning::Medium => "Medium",
         RecipeReasoning::High => "High",
+        RecipeReasoning::On => "On",
+        RecipeReasoning::Off => "Off",
     }
 }

@@ -465,6 +465,7 @@ impl Model {
             );
         }
         self.registrations.enabled = false;
+        self.authoring.model_selection_enabled = false;
         self.registrations.receipts_ready = false;
         self.registrations.items.clear();
         self.registrations.notice.clear();
@@ -809,6 +810,8 @@ impl Model {
                     return;
                 }
                 self.registrations.enabled = caps.features.iter().any(|f| f == MODEL_REGISTRATION);
+                self.authoring.model_selection_enabled =
+                    caps.features.iter().any(|f| f == RECIPE_MODEL_SELECTION);
                 if self.registrations.enabled {
                     self.command(Action::ModelRegistrationReceipts);
                 }

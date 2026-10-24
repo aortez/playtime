@@ -108,6 +108,12 @@ impl Recipe {
     /// Checks the bounds, including that every session's capture of a full
     /// workspace fits the archive.
     pub fn check(&self) -> Result<()> {
+        self.check_bounds(false)
+    }
+    pub(super) fn check_registered(&self) -> Result<()> {
+        self.check_bounds(true)
+    }
+    fn check_bounds(&self, registered: bool) -> Result<()> {
         let invalid = |what: &str| Err(Error::Invalid(format!("recipe {}: {what}", self.id)));
         let (b, p) = (&BOUNDS, &self.parameters);
         let (l, w) = (&p.limits, &p.workshop);
@@ -171,7 +177,9 @@ impl Recipe {
             return invalid("the archive can't hold a full workspace for every session");
         }
         let m = &self.model;
-        let sampling = (m.thinking == "default" || b.thinking.contains(&m.thinking.as_str()))
+        let sampling = (m.thinking == "default"
+            || b.thinking.contains(&m.thinking.as_str())
+            || (registered && matches!(m.thinking.as_str(), "on" | "off")))
             && (0.0..=2.0).contains(&m.temperature)
             && m.top_p > 0.0
             && m.top_p <= 1.0

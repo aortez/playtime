@@ -17,3 +17,5 @@ mod preview;
 pub mod models;
 
 pub mod registrations;
+
+mod recipe_models;

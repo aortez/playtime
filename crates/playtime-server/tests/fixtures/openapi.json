@@ -600,6 +600,17 @@
       "CloneRecipeRequest": {
         "additionalProperties": false,
         "properties": {
+          "model_registration": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelRegistrationId",
+                "description": "Omission inherits the source revision’s model. Selection never changes settings."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "model_settings": {
             "oneOf": [
               {
@@ -1980,6 +1991,16 @@
             "description": "Stored inherited settings, without seed bytes or operational credentials.",
             "type": "object"
           },
+          "model_registration": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelRegistrationSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -2188,7 +2209,9 @@
           "model_default",
           "low",
           "medium",
-          "high"
+          "high",
+          "on",
+          "off"
         ],
         "type": "string"
       },
@@ -2484,6 +2507,17 @@
         "properties": {
           "expected_head": {
             "$ref": "#/components/schemas/RecipeId"
+          },
+          "model_registration": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelRegistrationId",
+                "description": "Omission inherits the source revision’s model. Selection never changes settings."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "model_settings": {
             "oneOf": [

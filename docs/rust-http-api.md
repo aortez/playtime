@@ -382,3 +382,28 @@ controller rules. Invalid parameters return 422 with an actionable safe message.
 The saved definition, receipt replay and archive retain the exact settings; the
 new optional fields require no service database migration. See
 [model settings editor](rust-recipes.md#model-settings-editor).
+
+### Registered model selection authoring
+
+`recipe_model_selection_v1` adds optional `model_registration` to clone/revise
+requests. The value is an immutable registration ID from this service; omission
+inherits the source revision's selected model. The service resolves the retained
+record inside the save transaction, without live inspection. Missing registrations,
+unreviewed capabilities, unsupported tool/reasoning settings and invalid context
+return `invalid_parameters` (422) without moving the head or accepting the key.
+All saves validate inherited settings too. `RecipeReasoning` now includes distinct
+`on` and `off` values; no named level is implicitly converted to either.
+
+Definitions with an explicit selection use schema version 2 and expose a typed
+`model_registration` summary. Their inherited frozen definition retains the full
+record and original `model_lock` separately. The settings endpoint reports the
+selected registration's reviewed capabilities. Client readback and save receipts
+validate the selected identity; omission in old request JSON stays omitted.
+Existing schema-1 definitions and keys are unchanged, and the ledger stays at 7.
+
+This feature flag certifies authoring only. Registered-model execution remains
+unavailable pending the remaining #134 verification work. Even selection of the
+original locked identity receives no executable preview. Synthetic HTTP/UI tests
+cover preservation, explicit High-to-On/Off corrections, offline edits, optimistic
+conflicts and save recovery; they do not establish native capability or inference
+support. See [registered model selection](rust-recipes.md#registered-model-selection).
