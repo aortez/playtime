@@ -10,6 +10,11 @@ pub fn event(index: usize) -> EventEnvelope {
         "identity":{"effect_id":index / 10 + 1,"request_id":format!("r{}", index / 10 + 1),"tool_request_sequence":null},
         "data":{"storage":"inline","value":{"call":1,"chunk":{"message":{"content":"Recorded Unicode: café 日本語 🦀"}}}}
     });
+    if index.is_multiple_of(1000) {
+        data["observation_kind"] = json!("memory_received");
+        data["identity"] = json!({"effect_id":null,"request_id":null,"tool_request_sequence":null});
+        data["data"]["value"] = json!({"ordinal":index / 1000 + 1,"context":"fresh","memory_condition":"self", "memory":{"status":"loaded","content":"Recorded handoff for this synthetic session."},"evidence":null});
+    }
     let mut kind = "controller_observation";
     if index % 10 == 9 {
         data["observation_kind"] = json!("model_response");

@@ -255,15 +255,18 @@ fn checkpoint_markers_name_the_files_and_images_each_session_saved() {
     );
     assert_eq!(
         files["s2"],
-        "4 files, 1 image · new or changed: art.png, notes.md, unretained.txt"
+        "4 files, 1 image · change classification unavailable"
     );
     assert_eq!(
         files["s3"],
-        "9 files, 1 image · new or changed: f1.txt, f2.txt, f3.txt, f4.txt and 2 more"
+        "9 files, 1 image · change classification unavailable"
     );
     // Without the whole list, the earliest checkpoint has nothing to compare.
     let partial = checkpoint_files(&checkpoints, false);
-    assert_eq!(partial["s1"], "2 files, 1 image");
+    assert_eq!(
+        partial["s1"],
+        "2 files, 1 image · change classification unavailable"
+    );
     assert_eq!(partial["s2"], files["s2"]);
 }
 

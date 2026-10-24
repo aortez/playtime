@@ -344,7 +344,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     }
                     continue;
                 }
-                if matches!(command.action, Action::Window(..) | Action::Source(..)) {
+                if matches!(command.action, Action::Window(..) | Action::Source(..) | Action::Sessions(..) | Action::Locate(..) | Action::CancelNavigation) {
                     if let Some((_, tx, _)) = &observer { tokio::select! { _ = stop.cancelled() => break, _ = tx.send(command) => () } }
                     continue;
                 }
@@ -355,7 +355,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     // A download reports on the saved file, not the open run, so
                     // its result still arrives and stays after another run opens.
                     let run = match &command.action {
-                        Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
+                        Action::Trace(run, ..) | Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
                     };
                     let action = command.action.clone();
                     let result = perform(&session, &out, command, previews).await;
@@ -374,6 +374,13 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
 }
 fn action_error(action: &Action, error: String) -> Data {
     match action {
+        Action::Trace(_, sequence, _) => Data::Trace(
+            *sequence,
+            TraceView {
+                notice: format!("Unavailable: {}", transcript::excerpt(&error, 512)),
+                ..Default::default()
+            },
+        ),
         Action::Definition(_) => Data::DefinitionError(error),
         Action::SaveRecipe(_) => Data::RecipeSaveProgress(Mutation::Rejected(error)),
         Action::RecoverRecipe(..) => Data::RecipeSaveProgress(Mutation::Unresolved(error)),
@@ -485,7 +492,10 @@ pub fn checkpoint_files(checkpoints: &[Checkpoint], complete: bool) -> BTreeMap<
                 if images == 1 { "image" } else { "images" }
             ));
         }
-        if let Some(previous) = &previous {
+        if let Some(previous) = &previous
+            && files.values().all(Option::is_some)
+            && previous.values().all(Option::is_some)
+        {
             let changed = files
                 .iter()
                 .filter(|(name, digest)| previous.get(**name) != Some(*digest))
@@ -502,12 +512,46 @@ pub fn checkpoint_files(checkpoints: &[Checkpoint], complete: bool) -> BTreeMap<
                     text.push_str(&format!(" and {} more", changed.len() - 4));
                 }
             }
+        } else {
+            text.push_str(" · change classification unavailable");
         }
         summaries.insert(checkpoint.checkpoint.session_id.as_str().to_owned(), text);
-        previous = Some(files);
+        previous = complete.then_some(files);
     }
     summaries
 }
+/// A bounded file list from one published checkpoint; no adjacent-version claims.
+pub fn checkpoint_file_list(checkpoint: &Checkpoint) -> String {
+    let files: Vec<_> = checkpoint
+        .files
+        .iter()
+        .filter(|f| !matches!(f.kind.as_str(), "5" | "directory"))
+        .collect();
+    let images = files.iter().filter(|f| media::image_name(&f.name)).count();
+    let names = files
+        .iter()
+        .take(4)
+        .map(|f| transcript::excerpt(&f.name, 80))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{} saved {} · {}{}{}",
+        files.len(),
+        if files.len() == 1 { "file" } else { "files" },
+        progress::count(images as u64, "image", "images"),
+        if names.is_empty() {
+            String::new()
+        } else {
+            format!(": {names}")
+        },
+        if files.len() > 4 {
+            format!(" and {} more", files.len() - 4)
+        } else {
+            String::new()
+        }
+    )
+}
+
 async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semaphore>) -> Result<()> {
     let tag = command.tag;
     let client = &s.client;
@@ -727,6 +771,51 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 .await;
             }
         },
+        Action::Trace(run, sequence, kind) => {
+            let _permit = previews.acquire_owned().await.map_err(|e| e.to_string())?;
+            let mut view = TraceView::default();
+            match kind {
+                transcript::TraceContent::Incoming(expected) => {
+                    let artifact = retained_artifact(client, &run, &expected).await?;
+                    let bytes = content_bytes(client, &run, &artifact, 256 << 10).await?;
+                    let text =
+                        String::from_utf8(bytes).map_err(|_| "Delivered memory is not UTF-8")?;
+                    view.sections.push(transcript::Section {
+                        label: "Memory received".into(),
+                        text: if text.is_empty() {
+                            "Available empty memento".into()
+                        } else {
+                            transcript::excerpt(&text, 2048)
+                        },
+                    });
+                }
+                transcript::TraceContent::Checkpoint(session) => {
+                    let checkpoint = client.checkpoint(&run, &session).await.map_err(safe)?;
+                    if checkpoint.checkpoint.published_sequence != sequence {
+                        return Err("Checkpoint publication identity mismatch".into());
+                    }
+                    for (label, content) in [
+                        ("Memory received", &checkpoint.incoming_memory),
+                        ("Published memento", &checkpoint.outgoing_memory),
+                    ] {
+                        let text = memory(client, &run, content)
+                            .await
+                            .unwrap_or_else(|error| error);
+                        view.sections.push(transcript::Section {
+                            label: label.into(),
+                            text: if text.is_empty() {
+                                "Available empty memento".into()
+                            } else {
+                                transcript::excerpt(&text, 2048)
+                            },
+                        });
+                    }
+                    view.files = checkpoint_file_list(&checkpoint);
+                    view.notice = "Saved checkpoint versions · model claims are not verified. Compare memory or browse files for exact sources.".into();
+                }
+            }
+            out.send(tag, Some(run), Data::Trace(sequence, view)).await;
+        }
         Action::Checkpoints(run, cursor) => {
             let first = cursor.is_none();
             let page = match client
@@ -845,32 +934,9 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
         }
         Action::Retained(run, expected) => {
             let _permit = previews.acquire_owned().await.map_err(|e| e.to_string())?;
-            let mut cursor = None;
-            let mut found = None;
-            for _ in 0..64 {
-                let page = client
-                    .artifacts(
-                        &run,
-                        &PageQuery {
-                            limit: Some(200),
-                            cursor,
-                        },
-                    )
-                    .await
-                    .map_err(safe)?;
-                found = page
-                    .items
-                    .into_iter()
-                    .find(|artifact| artifact.content == expected);
-                if found.is_some() || page.next_cursor.is_none() {
-                    break;
-                }
-                cursor = page.next_cursor;
-            }
-            let artifact = found.ok_or("Retained payload has no matching opaque content ID in the first 12,800 published artifacts; source reference remains available")?;
+            let artifact = retained_artifact(client, &run, &expected).await?;
             let bytes = content_bytes(client, &run, &artifact, 64 << 20).await?;
-            let text =
-                String::from_utf8(bytes).map_err(|_| "Retained observation is not UTF-8 JSON")?;
+            let text = String::from_utf8(bytes).map_err(|_| "Retained source is not UTF-8 text")?;
             out.send(
                 tag,
                 Some(run),
@@ -878,7 +944,7 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                     artifact,
                     source: Some(transcript::source_page(&text, 0)),
                     image: None,
-                    notice: "Verified retained observation source".into(),
+                    notice: "Verified retained source".into(),
                     animated: false,
                 }),
             )
@@ -1105,6 +1171,37 @@ async fn content_bytes(
         .map_err(safe)?;
     Ok(bytes)
 }
+async fn retained_artifact(
+    client: &Client,
+    run: &RunId,
+    expected: &playtime_protocol::archive::ContentRef,
+) -> Result<Artifact> {
+    let mut cursor = None;
+    let mut found = None;
+    for _ in 0..64 {
+        let page = client
+            .artifacts(
+                run,
+                &PageQuery {
+                    limit: Some(200),
+                    cursor,
+                },
+            )
+            .await
+            .map_err(safe)?;
+        found = page
+            .items
+            .into_iter()
+            .find(|artifact| &artifact.content == expected);
+        if found.is_some() || page.next_cursor.is_none() {
+            break;
+        }
+        cursor = page.next_cursor;
+    }
+    let artifact = found.ok_or("Retained payload has no matching opaque content ID in the first 12,800 published artifacts; source reference remains available")?;
+    Ok(artifact)
+}
+
 async fn memory(client: &Client, run: &RunId, content: &ContentAvailability) -> Result<String> {
     match content {
         ContentAvailability::Unavailable { reason } => Err(format!("Unavailable: {reason}")),
@@ -1303,6 +1400,8 @@ async fn observe(
         };
         let mut dirty = true;
         let mut history_done = false;
+        let mut session_page = 0;
+        let mut location = None;
         let mut live = 0;
         let mut redraw = interval(Duration::from_millis(50));
         loop {
@@ -1324,7 +1423,12 @@ async fn observe(
                     Input::Error(error) => return Err(error),
                     Input::End(end) => { out.send(tag, Some(run.clone()), Data::Notice(format!("Stream reconciled: {}; lifecycle and cleanup are shown separately", transcript::words(&end.status)))).await; }
                 },
-                Some(command) = requests.recv() => match command.action {
+                Some(command) = requests.recv() => {
+                    if command.tag.connection != tag.connection || command.tag.selection != tag.selection { continue; }
+                    match command.action {
+                    Action::CancelNavigation => { location = None; range.anchor = None; }
+                    Action::Locate(sequence, view) => { location = Some((sequence, view)); range.anchor = None; dirty = true; reload_failed = false; }
+                    Action::Sessions(start) => { session_page = start; dirty = true; }
                     Action::Window(request) => {
                         // A later request in the same view keeps a row still to locate.
                         let anchor = request.anchor.or(range.anchor.filter(|_| range.view == request.view));
@@ -1340,6 +1444,7 @@ async fn observe(
                         }
                     }
                     _ => (),
+                    }
                 },
                 _ = redraw.tick(), if dirty => {
                     index.metrics.inbox_bytes_high_water = reload_budget.high_bytes.load(Ordering::Relaxed);
@@ -1351,11 +1456,21 @@ async fn observe(
                         window = index.window(range.view, range.start, range.count);
                         window.anchor = Some((id, at));
                     }
+                    if let Some((sequence, view)) = location
+                        && let Some(id) = index.row_for(sequence)
+                        && let Some(at) = index.position(view, id) {
+                        range.view = view;
+                        range.start = at.saturating_sub(2);
+                        window = index.window(view, range.start, range.count);
+                        window.location = Some((sequence, id, at));
+                        location = None;
+                    }
                     if !reloading && (!reload_failed || pending_source.is_some()) {
                         let request = pending_source.take().or_else(|| window.rows.iter().flat_map(|row| index.sources(row.id)).find(|seq| !index.contains(*seq)).map(|sequence| Reload { tag: None, sequence, offset: 0, cursor: index.cursor_for(sequence).map(str::to_owned) }));
                         if let Some(request) = request { reloading = true; jobs.spawn(reload(reads.clone(), tx.clone(), reload_budget.clone(), request)); }
                     }
                     window.progress = index.progress(history_done);
+                    window.sessions = index.sessions(session_page, history_done);
                     let status = format!("{} records indexed · {}", index.metrics.records, if history_done { "Earlier history loaded" } else { "Loading earlier history independently of live activity" });
                     out.send(tag, Some(run.clone()), Data::Window(window, status, live)).await; dirty = false;
                 }

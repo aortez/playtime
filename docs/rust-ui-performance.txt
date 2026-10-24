@@ -1,4 +1,4 @@
-Prepared-view release measurement, 2026-10-23 UTC
+Prepared-view release measurement, 2026-10-24 UTC
 Ubuntu 26.04 x86_64; Rust 1.94.1; egui/eframe/egui_kittest 0.34.3
 Command: cargo run --release --locked -p playtime-ui --example ui-perf
 60 seconds; preindexed synthetic transcript; 100 generated live records/s.
@@ -6,18 +6,20 @@ Includes egui prepared-view work, disclosure and window/selection changes.
 Excludes initial generation, network/disk, production service switching and GPU rendering.
 Zero inbox high-water values here mean no HTTP inbox was used; HTTP tests measure that path.
 
-Includes #124 call/tool projection and sparse content-height virtualization.
+Includes #124 call/tool projection and #125 session indexing/navigation.
+The generator now includes recorded memory boundaries for its 100 initial sessions.
+Inline checkpoint HTTP/download work is excluded from this prepared-view workload.
 At most 2,048 UI height measurements are retained (separate from transcript index).
 
 cpu=model name	: AMD Ryzen 7 9800X3D 8-Core Processor
-seconds=60.005
-frames=5769
+seconds=60.004
+frames=5774
 live_records=5999
-serialized_initial_bytes=46991015
-p50_ms=0.213
-p95_ms=0.372
-p99_ms=0.551
-peak_rss_kib=59876
+serialized_initial_bytes=46998831
+p50_ms=0.177
+p95_ms=0.333
+p99_ms=0.409
+peak_rss_kib=61740
 max_laid_out_rows=11
-max_text_bytes=343
-metrics=Metrics { inbox_bytes_high_water: 0, inbox_records_high_water: 0, records: 105999, rows: 10707, payload_bytes: 16776841, payload_high_water: 16777216, index_bytes: 32624741, index_high_water: 32624741 }
+max_text_bytes=294
+metrics=Metrics { inbox_bytes_high_water: 0, inbox_records_high_water: 0, records: 105999, rows: 10813, payload_bytes: 16777194, payload_high_water: 16777216, index_bytes: 33203709, index_high_water: 33203709 }

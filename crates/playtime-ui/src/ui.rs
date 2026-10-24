@@ -32,11 +32,15 @@ pub struct Workbench {
     heights: crate::timeline_layout::Heights,
     /// The row a view change was made around, until the backend locates it.
     view_anchor: Option<usize>,
+    navigation: Option<(u64, f32)>,
+    navigation_sent: bool,
 }
 /// The last timeline layout, so a row-height or view change can keep a row in
 /// place.
 struct TimelineView {
     run: Option<RunId>,
+    connection: u64,
+    sequence: Option<u64>,
     view: View,
     width: f32,
     disclosure: Disclosure,
@@ -579,6 +583,57 @@ impl Workbench {
                 self.model.jump_live();
             }
         });
+        let current_session = self
+            .timeline
+            .as_ref()
+            .and_then(|t| t.top)
+            .and_then(|(id, _, _)| self.model.window.rows.iter().find(|r| r.id == id))
+            .or_else(|| self.model.window.rows.first())
+            .and_then(|r| r.session.clone());
+        let mut jump_session = None;
+        if self.model.window.sessions.total > 0 {
+            ui.horizontal_wrapped(|ui| {
+                let sessions = &self.model.window.sessions;
+                egui::ComboBox::from_id_salt("session-chooser")
+                    .selected_text(current_session.as_ref().map_or_else(
+                        || "Choose session".into(),
+                        |s| format!("Session {}", s.ordinal),
+                    ))
+                    .height(240.0)
+                    .show_ui(ui, |ui| {
+                        for session in &sessions.items {
+                            if ui
+                                .selectable_label(
+                                    current_session
+                                        .as_ref()
+                                        .is_some_and(|s| s.session == session.session),
+                                    format!("Session {} · {}", session.ordinal, session.session),
+                                )
+                                .clicked()
+                            {
+                                jump_session = Some(session.sequence);
+                            }
+                        }
+                    });
+                let mut page = None;
+                if sessions.start > 0 && ui.small_button("Earlier sessions").clicked() {
+                    page = Some(sessions.start.saturating_sub(WINDOW_ROWS));
+                }
+                if sessions.start + sessions.items.len() < sessions.total
+                    && ui.small_button("More sessions").clicked()
+                {
+                    page = Some(sessions.start + WINDOW_ROWS);
+                }
+                ui.small(if sessions.complete {
+                    "Recorded sessions"
+                } else {
+                    "Session list incomplete · loading history"
+                });
+                if let Some(start) = page {
+                    self.model.command(Action::Sessions(start));
+                }
+            });
+        }
         ui.small(&self.model.history);
         if self.model.preferences.disclosure != Disclosure::Compact
             && self
@@ -602,6 +657,8 @@ impl Workbench {
         let mut range = (0, 32);
         let mut selection = None;
         let mut expansion = None;
+        let mut checkpoint_selection = None;
+        let mut memory_source = None;
         let mut area = egui::ScrollArea::vertical()
             .id_salt(("timeline", self.model.selected.clone()))
             .stick_to_bottom(self.model.following);
@@ -612,6 +669,16 @@ impl Workbench {
                 self.heights.clear();
                 self.view_anchor = None;
                 self.requested_range = None;
+                self.navigation = None;
+                self.navigation_sent = false;
+            } else if last.connection != self.model.tag.connection {
+                self.navigation = self
+                    .navigation
+                    .or_else(|| last.sequence.zip(last.top.map(|(_, _, within)| within)));
+                self.navigation_sent = false;
+                self.view_anchor = None;
+                self.heights.clear();
+                self.requested_range = None;
             } else {
                 let order_changed =
                     last.total != total
@@ -619,6 +686,7 @@ impl Workbench {
                             !self.heights.matches(self.model.window.start + i, row.id)
                         });
                 if !self.model.following
+                    && self.navigation.is_none()
                     && let Some((id, index, within)) = last.top
                 {
                     let located = self
@@ -656,6 +724,30 @@ impl Workbench {
         {
             anchor = Some((self.model.window.start + index, within));
         }
+        if let Some(sequence) = jump_session {
+            self.model.location = None;
+            self.model.following = false;
+            self.navigation = Some((sequence, 0.0));
+            self.navigation_sent = false;
+            self.view_anchor = None;
+            anchor = None;
+        }
+        if self.model.following {
+            self.navigation = None;
+        }
+        if let Some((sequence, within)) = self.navigation {
+            if !self.navigation_sent && self.model.connection == ConnectionState::Connected {
+                self.model.command(Action::Locate(sequence, view));
+                self.navigation_sent = true;
+            }
+            if let Some((located, _, at)) = self.model.location
+                && located == sequence
+            {
+                anchor = Some((at, within));
+                self.model.location = None;
+                self.navigation = None;
+            }
+        }
         if let Some((index, within)) = anchor {
             area = area.vertical_scroll_offset((self.heights.top(index) + within).max(0.0));
         }
@@ -681,6 +773,10 @@ impl Workbench {
                         ui.push_id(row.id, |ui| {
                             let expanded = self.model.expanded.contains(&row.id);
                             let nested = row.nested;
+                            let trace = self.model.trace.get(&row.first_sequence);
+                            let sections = if view == View::Readable {
+                                trace.map_or(row.sections.as_slice(), |v| v.sections.as_slice())
+                            } else { row.sections.as_slice() };
                             egui::Frame::new().inner_margin(10).corner_radius(5)
                                 .outer_margin(egui::Margin { left: if nested { 22 } else { 0 }, ..Default::default() })
                                 .fill(if self.model.selected_row == Some(row.id) { Color32::from_rgb(31, 57, 57) } else { Color32::from_rgb(29, 34, 42) })
@@ -690,9 +786,9 @@ impl Workbench {
                                 ui.horizontal_wrapped(|ui| {
                                     ui.label(RichText::new(&row.title).color(ACCENT).strong());
                                     if let Some(files) = row.checkpoint.as_ref().and_then(|session| self.model.checkpoint_files.get(session)) { ui.label(files); }
-                                    let more = row.sections.len() > 6 || row.sections.iter().any(|s| s.text.len() > 512)
+                                    let more = sections.len() > 6 || sections.iter().any(|s| s.text.len() > 512)
                                         || self.model.preferences.disclosure == Disclosure::Compact;
-                                    if !row.marker && (more || expanded) {
+                                    if more || expanded {
                                     let button = ui.small_button(if expanded { "Show less" } else { "Show more" });
                                     button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{} activity {}", if expanded { "Collapse" } else { "Expand" }, row.first_sequence)));
                                     if button.clicked() { expansion = Some((row.id, viewport.min.y - y)); }
@@ -707,20 +803,38 @@ impl Workbench {
                                     } else { ui.small(&row.status); }
                                 }
                                 let show = self.model.preferences.disclosure != Disclosure::Compact || expanded;
-                                if show && !row.marker {
-                                    if row.sections.is_empty() && !row.nested && !row.excerpt.is_empty() { text(ui, &row.excerpt, &mut self.metrics); }
+                                if show {
+                                    if sections.is_empty() && !row.marker && !row.nested && !row.excerpt.is_empty() { text(ui, &row.excerpt, &mut self.metrics); }
                                     let limit = if expanded || view == View::Full { 4096 } else { 512 };
                                     // The backend prepares a bounded window. A single block
                                     // also caps its displayed sections; exact continuation
                                     // remains available through the paged source inspector.
                                     let count = if expanded { 16 } else { 6 };
-                                    for section in row.sections.iter().take(count) {
+                                    for section in sections.iter().take(count) {
                                         ui.strong(brief(&section.label, 120));
                                         let value = crate::transcript::excerpt(&section.text, limit);
                                         trace_text(ui, &section.label, &value, &mut self.metrics);
                                         if value.len() < section.text.len() { ui.small("Excerpt · Show more or inspect source for continuation"); }
                                     }
-                                    if row.sections.len() > count { ui.small("More recorded sections · Show more or inspect source"); }
+                                    if sections.len() > count { ui.small("More recorded sections · Show more or inspect source"); }
+                                }
+                                if let Some(kind) = &row.trace {
+                                    if let Some(trace) = trace {
+                                        if !trace.files.is_empty() {
+                                            ui.label(&trace.files);
+                                            if row.checkpoint.as_ref().is_none_or(|session| !self.model.checkpoint_files.contains_key(session)) { ui.small("Change classification unavailable"); }
+                                        }
+                                        if !trace.notice.is_empty() { ui.small(&trace.notice); }
+                                    } else { ui.small("Loading boundary content…"); }
+                                    ui.horizontal_wrapped(|ui| match kind {
+                                        crate::transcript::TraceContent::Checkpoint(session) => {
+                                            if ui.small_button("Compare memory").clicked() { checkpoint_selection = Some((session.clone(), Inspector::Memory)); }
+                                            if ui.small_button("Browse files").clicked() { checkpoint_selection = Some((session.clone(), Inspector::Files)); }
+                                        }
+                                        crate::transcript::TraceContent::Incoming(reference) => {
+                                            if ui.small_button("Read full memory").clicked() { memory_source = Some(reference.clone()); }
+                                        }
+                                    });
                                 }
                                 if row.needs_loading { ui.small("Earlier content is loading or unavailable · inspect source"); }
                                 if view == View::Full { ui.small(&row.sources); }
@@ -749,6 +863,15 @@ impl Workbench {
         }
         self.timeline = Some(TimelineView {
             run: self.model.selected.clone(),
+            connection: self.model.tag.connection,
+            sequence: top.and_then(|(id, _, _)| {
+                self.model
+                    .window
+                    .rows
+                    .iter()
+                    .find(|r| r.id == id)
+                    .map(|r| r.first_sequence)
+            }),
             view,
             width,
             disclosure: self.model.preferences.disclosure,
@@ -785,6 +908,16 @@ impl Workbench {
         }
         if let Some((id, seq)) = selection {
             self.model.inspect(id, seq);
+        }
+        if let Some((session, inspector)) = checkpoint_selection {
+            self.model.inspect_checkpoint(session, inspector);
+        }
+        if let Some(reference) = memory_source
+            && let Some(run) = self.model.selected.clone()
+        {
+            self.model.inspector = Inspector::Files;
+            self.model.show_inspector = true;
+            self.model.inspect_action(Action::Retained(run, reference));
         }
     }
     fn inspector(&mut self, ui: &mut egui::Ui) {
@@ -998,7 +1131,11 @@ fn trace_text(ui: &mut egui::Ui, label: &str, value: &str, metrics: &mut FrameMe
     let mut rich = RichText::new(visible).color(Color32::from_gray(220));
     if !matches!(
         label,
-        "Recorded thinking" | "Model response" | "Submitted memento"
+        "Recorded thinking"
+            | "Model response"
+            | "Submitted memento"
+            | "Memory received"
+            | "Published memento"
     ) {
         rich = rich.monospace();
     }
