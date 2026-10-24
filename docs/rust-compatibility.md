@@ -354,3 +354,19 @@ PR #130 review correction: run state now occupies its own untruncated line benea
 the recipe button. Long recipe names cannot hide `needs release`; fixed run-row
 height includes the extra line. Regression and pinned-renderer coverage exercise
 default and minimum sidebar widths with running, ended and release-needed runs.
+
+
+## Explicit Ollama identity registration (#133)
+
+Adds opt-in `model_registration_v1` review/register/list/read/keyed-lookup routes,
+immutable version-1 identity DTOs and private shared-client receipts. The HTTP
+OpenAPI golden deliberately adds these schemas/routes and full/corrupt/busy errors.
+Existing discovery DTOs, recipe locks, worker verification, archives, controller
+behavior and frozen Python remain unchanged. New acceptance re-inspects complete
+identity; accepted-key replay returns retained evidence without live metadata.
+
+Ledger version 7 adds registrations and keyed acceptances transactionally to
+version 6, preserving existing run/recipe rows; older binaries refuse it. No reset
+is required, and this does not decide a general development migration policy.
+New pinned screenshots cover wide/narrow registration, offline readback and receipt
+recovery. Existing discovery-only and workbench baselines remain unchanged.

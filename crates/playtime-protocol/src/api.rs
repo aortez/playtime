@@ -3,7 +3,9 @@
 pub mod cursor;
 pub mod models;
 pub mod recipes;
+pub mod registrations;
 pub use models::*;
+pub use registrations::*;
 pub mod schema;
 pub use recipes::*;
 
@@ -57,6 +59,7 @@ macro_rules! id {
 }
 id!(ServiceId);
 id!(RecipeId);
+id!(ModelRegistrationId);
 id!(ArtifactId);
 id!(PreviewRevision);
 id!(IdempotencyKey);

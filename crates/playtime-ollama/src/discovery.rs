@@ -28,6 +28,7 @@ pub struct Detail {
     pub inventory: Inventory,
     pub show: Option<Value>,
     pub definition_sha256: Option<String>,
+    pub definition: Option<Value>,
     pub rejected: bool,
 }
 
@@ -188,6 +189,7 @@ impl<T: Transport> Discovery<T> {
             inventory,
             show: None,
             definition_sha256: None,
+            definition: None,
             rejected: false,
         };
         let Some(entry) = detail.inventory.entries.iter().find(|e| e.name == name) else {
@@ -225,6 +227,7 @@ impl<T: Transport> Discovery<T> {
                 &definition,
                 self.limits.metadata_bytes,
             )?));
+            detail.definition = Some(definition);
         }
         // Refuse an inventory/show race. This is still an observation, not a lease.
         let after = entries(

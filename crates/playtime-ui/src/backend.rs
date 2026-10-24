@@ -10,6 +10,7 @@ use playtime_client::{
     Client, Error, Observation, RetryPolicy,
     config::{self, Environment, Options, Resolved},
     recipes::{RecipeSaveReceipt, RecipeSaveStore},
+    registrations::{ModelRegistrationReceipt, ModelRegistrationStore},
     state::{LaunchReceipt, ReceiptStore},
 };
 use playtime_core::RunId;
@@ -302,6 +303,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
     let mut connection_tag = 0;
     let mut pinned_service = None;
     let mut jobs = JoinSet::new();
+    let registration_gate = Arc::new(Semaphore::new(1));
     let previews = Arc::new(Semaphore::new(2));
     let mut animation: Option<CancellationToken> = None;
     let mut model_job: Option<tokio::task::JoinHandle<()>> = None;
@@ -375,8 +377,20 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     continue;
                 }
                 if jobs.len() >= 16 { out.send(tag, None, action_error(&command.action, "Client work limit reached; retry the explicit action".into())).await; continue; }
+                // Reserve before spawning: reconnect receipt scans must not race
+                // a mutation that has not yet written its durable local receipt.
+                let registration_permit = if matches!(command.action, Action::RegisterModel(_) | Action::RecoverModelRegistration(..) | Action::ModelRegistrationReceipts) {
+                    match registration_gate.clone().try_acquire_owned() {
+                        Ok(permit) => Some(permit),
+                        Err(_) => {
+                            out.send(tag,None,action_error(&command.action,"Registration work is still in progress; refresh receipts after it finishes".into())).await;
+                            continue;
+                        }
+                    }
+                } else { None };
                 let session = s.clone(); let out = out.clone(); let previews = previews.clone();
                 jobs.spawn(async move {
+                    let _registration_permit = registration_permit;
                     // A download reports on the saved file, not the open run, so
                     // its result still arrives and stays after another run opens.
                     let run = match &command.action {
@@ -403,6 +417,15 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
 }
 fn action_error(action: &Action, error: String) -> Data {
     match action {
+        Action::RegisterModel(_) => Data::ModelRegistrationProgress(Mutation::Rejected(error)),
+        Action::RecoverModelRegistration(..) => {
+            Data::ModelRegistrationProgress(Mutation::Unresolved(error))
+        }
+        Action::ModelRegistrations => Data::ModelRegistryError(error),
+        Action::ModelRegistration(_) | Action::ModelRegistrationPage(..) => {
+            Data::ModelRegistrationReadError(error)
+        }
+        Action::ModelRegistrationReceipts => Data::ModelRegistrationReceiptsError(error),
         Action::ModelInventory | Action::InspectModel(_) => Data::ModelError(error),
         Action::Trace(_, sequence, _) => Data::Trace(
             *sequence,
@@ -538,11 +561,82 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
             .await;
         }
         Action::InspectModel(request) => {
-            let value = client.inspect_model(&request).await.map_err(safe)?;
+            let view = if client
+                .capabilities()
+                .features
+                .iter()
+                .any(|f| f == MODEL_REGISTRATION)
+            {
+                let review = client.review_model(&request).await.map_err(safe)?;
+                crate::models::review(review)
+            } else {
+                crate::models::inspection(client.inspect_model(&request).await.map_err(safe)?)
+            };
+            out.send(tag, None, Data::ModelInspection(view)).await;
+        }
+        Action::ModelRegistrations => {
+            let value = client.registered_models().await.map_err(safe)?;
+            out.send(tag, None, Data::ModelRegistrations(value)).await;
+        }
+        Action::ModelRegistration(id) => {
+            let value = client.registered_model(&id).await.map_err(safe)?;
             out.send(
                 tag,
                 None,
-                Data::ModelInspection(crate::models::inspection(value)),
+                Data::ModelRegistration(crate::registrations::prepare(Arc::new(value), 0)),
+            )
+            .await;
+        }
+        Action::ModelRegistrationPage(value, offset) => {
+            out.send(
+                tag,
+                None,
+                Data::ModelRegistration(crate::registrations::prepare(value, offset)),
+            )
+            .await;
+        }
+        Action::ModelRegistrationReceipts => {
+            let store = ModelRegistrationStore::new(&s.resolved.state_dir);
+            let service = client.service_id().clone();
+            let receipts = local(move || {
+                store
+                    .list_service(Some(&service))
+                    .map_err(|e| e.to_string())
+            })
+            .await?;
+            out.send(tag, None, Data::ModelRegistrationReceipts(receipts))
+                .await;
+        }
+        Action::RegisterModel(request) => {
+            let pending = client.prepare_model_registration(request).map_err(safe)?;
+            let store = ModelRegistrationStore::new(&s.resolved.state_dir);
+            let endpoint = client.endpoint().to_owned();
+            let receipt =
+                local(move || store.save(&pending, &endpoint).map_err(|e| e.to_string())).await?;
+            model_registration(s, out, tag, receipt, LaunchAttempt::New).await;
+        }
+        Action::RecoverModelRegistration(key, retry) => {
+            let store = ModelRegistrationStore::new(&s.resolved.state_dir);
+            let receipt = local(move || {
+                store
+                    .read(&key)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "Saved registration request not found".into())
+            })
+            .await?;
+            receipt
+                .check_target(client.service_id(), client.endpoint())
+                .map_err(|e| e.to_string())?;
+            model_registration(
+                s,
+                out,
+                tag,
+                receipt,
+                if retry {
+                    LaunchAttempt::Retry
+                } else {
+                    LaunchAttempt::Lookup
+                },
             )
             .await;
         }
@@ -1140,6 +1234,76 @@ async fn recipe_save(
                 }
             } else {
                 Data::RecipeSaveProgress(Mutation::Unresolved(format!(
+                    "{error}. Look up or retry the same saved request."
+                )))
+            }
+        }
+    };
+    out.send(tag, None, data).await;
+}
+
+async fn model_registration(
+    s: &Session,
+    out: &Out,
+    tag: Tag,
+    receipt: ModelRegistrationReceipt,
+    attempt: LaunchAttempt,
+) {
+    out.send(
+        tag,
+        None,
+        Data::ModelRegistrationProgress(Mutation::Submitting),
+    )
+    .await;
+    let result = if attempt == LaunchAttempt::Lookup {
+        s.client.lookup_model_registration(&receipt.pending).await
+    } else {
+        s.client.register_model(&receipt.pending).await
+    };
+    let data = match result {
+        Ok(response) => {
+            let store = ModelRegistrationStore::new(&s.resolved.state_dir);
+            let saved = response.clone();
+            match local(move || {
+                store
+                    .acknowledge(&receipt, &saved)
+                    .map_err(|e| e.to_string())
+            })
+            .await
+            {
+                Ok(_) => Data::ModelRegistered(Box::new(response)),
+                Err(error) => Data::ModelRegistrationProgress(Mutation::Unresolved(format!(
+                    "Registered remotely; receipt acknowledgment failed: {error}"
+                ))),
+            }
+        }
+        Err(error) => {
+            // Only a definitive refusal of this fresh request permits a new key.
+            // A lookup 404 or rejected retry cannot resolve an earlier submission.
+            let refused = attempt == LaunchAttempt::New
+                && matches!(
+                    error.api_code(),
+                    Some(
+                        "invalid_parameters"
+                            | "model_metadata_changed"
+                            | "model_registry_full"
+                            | "limit_exceeded"
+                            | "unsupported_capability"
+                    )
+                );
+            let error = safe(error);
+            if refused {
+                let store = ModelRegistrationStore::new(&s.resolved.state_dir);
+                match local(move || store.discard(&receipt).map_err(|e| e.to_string())).await {
+                    Ok(()) => Data::ModelRegistrationProgress(Mutation::Rejected(format!(
+                        "{error}. The inspected identity is retained."
+                    ))),
+                    Err(local_error) => Data::ModelRegistrationProgress(Mutation::Unresolved(
+                        format!("{error}; receipt remains: {local_error}"),
+                    )),
+                }
+            } else {
+                Data::ModelRegistrationProgress(Mutation::Unresolved(format!(
                     "{error}. Look up or retry the same saved request."
                 )))
             }

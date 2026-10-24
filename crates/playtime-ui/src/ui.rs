@@ -181,7 +181,9 @@ impl Workbench {
             ui.label(RichText::new("PLAYTIME").size(21.0).strong().color(ACCENT));
             ui.separator();
             ui.label(self.model.connection.label());
-            if self.model.models.enabled && ui.button("Models").clicked() {
+            if (self.model.models.enabled || self.model.registrations.enabled)
+                && ui.button("Models").clicked()
+            {
                 self.model.browse_models();
             }
             if narrow && ui.button("Runs").clicked() {

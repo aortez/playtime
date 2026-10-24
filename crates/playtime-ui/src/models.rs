@@ -26,6 +26,7 @@ impl InventoryView {
 }
 #[derive(Clone, Debug)]
 pub struct InspectionView {
+    pub review: Option<Box<ModelRegistrationRequest>>,
     pub value: ModelInspection,
     pub lines: Vec<String>,
 }
@@ -136,7 +137,19 @@ pub fn inspection(value: ModelInspection) -> InspectionView {
     if let Some(reason) = &value.reason {
         lines.push(reason.clone());
     }
-    InspectionView { value, lines }
+    InspectionView {
+        value,
+        lines,
+        review: None,
+    }
+}
+pub fn review(value: ModelRegistrationReview) -> InspectionView {
+    let mut view = inspection(value.inspection);
+    if view.value.status == ModelMetadataStatus::Candidate {
+        view.lines[0] = "Identity candidate".into();
+    }
+    view.review = value.request.map(Box::new);
+    view
 }
 impl Model {
     pub fn browse_models(&mut self) {
@@ -152,6 +165,11 @@ impl Model {
                 name,
                 expected_digest: None,
             });
+        }
+        if self.registrations.enabled {
+            self.registrations.show_saved = !self.models.enabled;
+            self.refresh_registrations();
+            self.command(Action::ModelRegistrationReceipts);
         }
         self.refresh_models();
     }
@@ -192,7 +210,7 @@ pub fn draw(ui: &egui::Ui, model: &mut Model) {
     let mut open = true;
     let max_size =
         (ui.ctx().content_rect().size() - egui::vec2(32.0, 120.0)).max(egui::vec2(260.0, 260.0));
-    egui::Window::new("Installed Ollama models")
+    egui::Window::new(if model.registrations.enabled { "Ollama models" } else { "Installed Ollama models" })
         .open(&mut open)
         .default_size([820.0, 620.0])
         .max_size(max_size)
@@ -200,7 +218,13 @@ pub fn draw(ui: &egui::Ui, model: &mut Model) {
         .vscroll(true)
         .show(ui.ctx(), |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            ui.label("Browse metadata only. Registration and recipe model selection are not available yet.");
+            if model.registrations.enabled {
+                crate::registrations::toolbar(ui,model);
+                if model.registrations.show_saved {crate::registrations::saved(ui,model);return;}
+                ui.label("Inspect an installed model and explicitly register its reviewed identity.");
+            } else {
+                ui.label("Browse metadata only. Registration and recipe model selection are not available yet.");
+            }
             ui.label("Loaded state is advisory; it does not establish GPU fit.");
             if ui.add_enabled(model.models.enabled, egui::Button::new("Refresh installed models")).clicked() {
                 model.refresh_models();
@@ -258,6 +282,7 @@ pub fn draw(ui: &egui::Ui, model: &mut Model) {
                 ui.heading(&detail.value.name);
                 egui::ScrollArea::vertical()
                     .id_salt("model-detail")
+                    .auto_shrink([!model.registrations.enabled, true])
                     .max_height(300.0)
                     .show(ui, |ui| {
                         for line in &detail.lines {
@@ -265,6 +290,7 @@ pub fn draw(ui: &egui::Ui, model: &mut Model) {
                         }
                     });
             }
+            if model.registrations.enabled {crate::registrations::review(ui,model);}
         });
     if !open {
         model.close_models();

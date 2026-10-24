@@ -38,6 +38,7 @@ toml.workspace = true
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] }
 
 [dev-dependencies]
+playtime-test-support.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 rustix = { workspace = true, features = ["process"] }
 playtime-client = { path = "../playtime-client" }

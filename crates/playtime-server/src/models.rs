@@ -119,6 +119,59 @@ impl ModelBrowser {
         })
     }
     pub async fn inspect(&self, request: ModelInspectRequest) -> Result<ModelInspection> {
+        self.inspect_definition(request)
+            .await
+            .map(|(value, _)| value)
+    }
+    pub(crate) fn binding(&self, service: &ServiceId) -> String {
+        playtime_ollama::json::hash(
+            &serde_json::to_vec(&(service, self.endpoint.as_str())).expect("endpoint identity"),
+        )
+    }
+    pub async fn review(
+        &self,
+        service: &ServiceId,
+        request: ModelInspectRequest,
+    ) -> Result<ModelRegistrationReview> {
+        let (inspection, _) = self.inspect_definition(request).await?;
+        let request = RegisteredModelIdentity::from_inspection(&inspection).map(|identity| {
+            ModelRegistrationRequest {
+                endpoint_binding: self.binding(service),
+                identity,
+            }
+        });
+        Ok(ModelRegistrationReview {
+            inspection,
+            request,
+        })
+    }
+    pub(crate) async fn accept(
+        &self,
+        service: &ServiceId,
+        request: &ModelRegistrationRequest,
+    ) -> Result<serde_json::Value> {
+        if !request.valid() {
+            return Err(ApiError::new("invalid_parameters"));
+        }
+        if request.endpoint_binding != self.binding(service) {
+            return Err(ApiError::new("model_metadata_changed"));
+        }
+        let (inspection, definition) = self
+            .inspect_definition(ModelInspectRequest {
+                name: request.identity.name.clone(),
+                expected_digest: Some(request.identity.digest.clone()),
+            })
+            .await?;
+        if RegisteredModelIdentity::from_inspection(&inspection).as_ref() != Some(&request.identity)
+        {
+            return Err(ApiError::new("model_metadata_changed"));
+        }
+        definition.ok_or_else(|| ApiError::new("model_metadata_changed"))
+    }
+    async fn inspect_definition(
+        &self,
+        request: ModelInspectRequest,
+    ) -> Result<(ModelInspection, Option<serde_json::Value>)> {
         let _permit = self
             .reads
             .try_acquire()
@@ -197,6 +250,6 @@ impl ModelBrowser {
                     Some("Capability metadata is missing or malformed; support is unknown".into());
             }
         }
-        Ok(value)
+        Ok((value, detail.definition))
     }
 }

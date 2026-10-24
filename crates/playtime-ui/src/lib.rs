@@ -15,3 +15,5 @@ mod timeline_layout;
 mod preview;
 
 pub mod models;
+
+pub mod registrations;

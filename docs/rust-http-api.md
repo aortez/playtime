@@ -42,6 +42,68 @@ fixture does not advertise discovery; the focused test opts into an ephemeral
 fake Ollama server and exercises the actual reader, routes and client. This is
 metadata-contract evidence, not live inference or registration evidence.
 
+## Explicit model registration
+
+The daemon advertises `model_registration_v1` even without a configured Ollama
+endpoint, so stored registrations remain readable offline. These authenticated
+routes keep registration separate from recipe saving and execution:
+
+| Operation | Route | Shared client |
+| --- | --- | --- |
+| Review exact installed identity | `POST /api/v1/models/review` | `review_model()` |
+| Register reviewed identity with `Idempotency-Key` | `POST /api/v1/models/registrations` | `prepare_model_registration()`, `register_model()` |
+| List immutable summaries | `GET /api/v1/models/registrations` | `registered_models()` |
+| Read frozen definition | `GET /api/v1/models/registrations/{registration_id}` | `registered_model()` |
+| Recover original acceptance | `GET /api/v1/model-registration-requests/{idempotency_key}` | `lookup_model_registration()` |
+
+Review takes the same request as inspection and returns its metadata plus an
+eligible acceptance request, bound to this service and configured endpoint.
+Register re-inspects before **new** acceptance and compares every identity field.
+Changed, missing, incomplete, unsupported-backend or remotely delegated metadata
+cannot be accepted. Unknown reasoning/context support or missing tool capability
+remains explicit; registration alone does not certify harness compatibility.
+
+An immutable version-1 record retains the opaque registration ID, exact request
+name, digest, backend version, canonical definition and fingerprint, advertised
+capabilities and reviewed capability evidence/provenance. The canonical definition
+contains template, parameters, model_info, details and capabilities. Generated
+Modelfile paths, observation timestamps, loaded state and operational endpoint
+bindings are not model identity. No service credentials are stored in records.
+Exact complete identities deduplicate; aliases retain distinct request names.
+A newly reviewed definition or capability change requires explicit acceptance.
+
+The registration and its keyed result commit atomically. Same key/request replays
+its historical result without contacting Ollama; a different request conflicts.
+New acceptance requires successful live inspection even when its identity already
+exists. Client receipts are written privately in `state/model-registrations`
+before POST, bound to service and service endpoint, then acknowledged with the
+registration ID. Lost responses and acknowledgment failures retain the original
+request for lookup/retry. Lookup absence or a failed retry never authorizes a new
+key. Refresh, draft discard and failed recipe saves do not delete registrations.
+
+Bounds: 256 immutable records, 4,096 keyed acceptances, 128 MiB aggregate serialized
+records/requests, 1 MiB canonical definitions, 2 MiB encoded records and 12 KiB
+encoded acceptance requests. The list is one bounded snapshot ordered by creation;
+there are no mutable heads or pagination cursors. These bounds keep its summaries
+below the default 4 MiB HTTP response limit. New acceptance is serialized with no
+waiting queue (`model_registration_busy`); metadata retains the existing read and
+time limits. Full capacity reports `model_registry_full`; invalid retained data
+reports `model_registry_corrupt`; unavailable metadata or storage I/O reports
+`backend_unavailable` (metadata deadlines remain `request_timeout`). Accepted keys
+still replay at capacity. There is no automatic garbage collection/deletion UI.
+
+Service ledger version 7 transactionally adds two tables to version 6; existing
+run and recipe rows are preserved. Older binaries refuse version 7. This additive
+upgrade requires no reset and does not establish a general historical-migration
+policy. Registration records are service definitions, not archive writer receipts.
+The existing locked model/recipe execution path remains unchanged; #134 owns
+recipe model selection and generalized worker verification.
+
+Focused server/UI tests use ephemeral metadata-only Ollama and HTTP fixtures,
+including drift, alias identity, offline replay/restart, capacity, corruption,
+concurrent acceptance, disconnected responses and private receipt recovery. They
+establish registration behavior, not live inference or worker-recovery evidence.
+
 ## Run the transport fixtures
 
 In one terminal, choose a new data directory:

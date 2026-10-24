@@ -130,7 +130,7 @@ impl Ledger {
             }
             tx.execute_batch("PRAGMA user_version=5;")?;
             tx.commit()?;
-        } else if version != 5 && version != 6 {
+        } else if !(5..=7).contains(&version) {
             return Err(Error::Invalid(
                 "unsupported or incomplete service ledger; refusing to replace admission history",
             ));
@@ -139,6 +139,12 @@ impl Ledger {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             crate::catalog::migrate(&tx)?;
             tx.execute_batch("PRAGMA user_version=6;")?;
+            tx.commit()?;
+        }
+        if version < 7 {
+            let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            crate::registrations::migrate(&tx)?;
+            tx.execute_batch("PRAGMA user_version=7;")?;
             tx.commit()?;
         }
         let check: String = connection.query_row("PRAGMA quick_check", [], |row| row.get(0))?;

@@ -356,6 +356,54 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
             no_query(&request)?;
             json(&openapi(), status, limits.json_bytes)
         }
+        ("POST", ["api", "v1", "models", "review"]) => {
+            no_query(&request)?;
+            json(
+                &app.model_review(body(request, limits).await?).await?,
+                200,
+                limits.json_bytes,
+            )
+        }
+        ("GET", ["api", "v1", "models", "registrations"]) => {
+            no_query(&request)?;
+            json(&app.model_registrations().await?, 200, limits.json_bytes)
+        }
+        ("GET", ["api", "v1", "models", "registrations", id]) => {
+            no_query(&request)?;
+            let id = ModelRegistrationId::new(*id).map_err(|_| ApiError::new("malformed_data"))?;
+            json(&app.model_registration(id).await?, 200, limits.json_bytes)
+        }
+        ("GET", ["api", "v1", "model-registration-requests", key]) => {
+            no_query(&request)?;
+            let key = IdempotencyKey::new(*key).map_err(|_| ApiError::new("malformed_data"))?;
+            json(
+                &app.model_registration_lookup(key).await?,
+                200,
+                limits.json_bytes,
+            )
+        }
+        ("POST", ["api", "v1", "models", "registrations"]) => {
+            no_query(&request)?;
+            let key = save_key(&request)?;
+            let request: ModelRegistrationRequest = body(request, limits).await?;
+            let permit = server
+                .mutations
+                .clone()
+                .try_acquire_owned()
+                .map_err(|_| ApiError::new("backend_unavailable"))?;
+            let app = server.application.clone();
+            let reply = tokio::spawn(async move {
+                let _permit = permit;
+                app.register_model(key, request).await
+            })
+            .await
+            .map_err(|_| ApiError::new("internal_error"))??;
+            json(
+                &reply,
+                if reply.replayed { 200 } else { 201 },
+                limits.json_bytes,
+            )
+        }
         ("GET", ["api", "v1", "models"]) => {
             no_query(&request)?;
             json(&app.model_inventory().await?, 200, limits.json_bytes)

@@ -336,7 +336,8 @@ struct State {
 
 pub struct Fixture {
     catalog: Option<crate::catalog::Catalog>,
-    models: Option<crate::models::ModelBrowser>,
+    models: Option<std::sync::Arc<crate::models::ModelBrowser>>,
+    registrations: Option<crate::registrations::Registry>,
     service: ServiceId,
     limits: ApiLimits,
     state: Mutex<State>,
@@ -349,6 +350,7 @@ impl Fixture {
         Self {
             catalog: None,
             models: None,
+            registrations: None,
             service,
             limits,
             state: Mutex::new(State {
@@ -368,7 +370,12 @@ impl Fixture {
     }
     /// Connect metadata reads to an explicitly supplied fake model server.
     pub fn with_model_browser(mut self, browser: crate::models::ModelBrowser) -> Self {
-        self.models = Some(browser);
+        self.models = Some(std::sync::Arc::new(browser));
+        self
+    }
+    pub fn with_model_registry(mut self, registry: crate::registrations::Registry) -> Self {
+        self.models = registry.browser();
+        self.registrations = Some(registry);
         self
     }
     pub fn calls(&self) -> Vec<Call> {
@@ -490,6 +497,49 @@ fn page<T: Serialize>(
 
 #[async_trait]
 impl Application for Fixture {
+    async fn model_review(&self, request: ModelInspectRequest) -> Result<ModelRegistrationReview> {
+        self.registrations
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .review(request)
+            .await
+    }
+    async fn model_registrations(&self) -> Result<ModelRegistrations> {
+        self.registrations
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .list()
+            .await
+    }
+    async fn model_registration(&self, id: ModelRegistrationId) -> Result<RegisteredModel> {
+        self.registrations
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .get(id)
+            .await
+    }
+    async fn register_model(
+        &self,
+        key: IdempotencyKey,
+        request: ModelRegistrationRequest,
+    ) -> Result<ModelRegistrationResponse> {
+        self.registrations
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .register(key, request)
+            .await
+    }
+    async fn model_registration_lookup(
+        &self,
+        key: IdempotencyKey,
+    ) -> Result<ModelRegistrationResponse> {
+        self.registrations
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .lookup(key)
+            .await
+    }
+
     async fn model_inventory(&self) -> Result<ModelInventory> {
         self.models
             .as_ref()
@@ -516,6 +566,9 @@ impl Application for Fixture {
             modes: vec![RunMode::Simulation],
             features: [
                 self.models.as_ref().map(|_| MODEL_DISCOVERY.into()),
+                self.registrations
+                    .as_ref()
+                    .map(|_| MODEL_REGISTRATION.into()),
                 Some("scripted_fixture".into()),
                 Some("events".into()),
                 Some("downloads".into()),

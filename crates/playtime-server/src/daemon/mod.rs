@@ -34,7 +34,8 @@ struct Inner {
     reads: Arc<Semaphore>,
     test_supervision: bool,
     catalog: crate::catalog::Catalog,
-    models: Option<crate::models::ModelBrowser>,
+    models: Option<Arc<crate::models::ModelBrowser>>,
+    registrations: crate::registrations::Registry,
 }
 #[derive(Clone)]
 struct Published {
@@ -104,6 +105,19 @@ impl Daemon {
             tolerate_unavailable(archive.enable_live(endpoint).await)?;
         }
         let archive = Arc::new(archive);
+        let models = live
+            .map(crate::models::ModelBrowser::new)
+            .transpose()
+            .map_err(|_| life::Error::Invalid("invalid discovery endpoint"))?
+            .map(Arc::new);
+        let registrations = crate::registrations::Registry::new(ledger.clone(), models.clone());
+        registrations.check().await.map_err(|error| {
+            life::Error::Invalid(if error.code() == "model_registry_corrupt" {
+                "damaged model registry"
+            } else {
+                "model registry unavailable"
+            })
+        })?;
         let coordinator =
             Coordinator::new(ledger, archive.clone(), supervisor, Arc::new(SystemClock));
         let this = Self {
@@ -113,10 +127,8 @@ impl Daemon {
                 published: RwLock::new(BTreeMap::new()),
                 reads: Arc::new(Semaphore::new(4)),
                 test_supervision,
-                models: live
-                    .map(crate::models::ModelBrowser::new)
-                    .transpose()
-                    .map_err(|_| life::Error::Invalid("invalid discovery endpoint"))?,
+                models,
+                registrations,
                 catalog,
             }),
         };
@@ -383,6 +395,29 @@ fn historical(
 }
 #[async_trait]
 impl Application for Daemon {
+    async fn model_review(&self, request: ModelInspectRequest) -> Result<ModelRegistrationReview> {
+        self.inner.registrations.review(request).await
+    }
+    async fn model_registrations(&self) -> Result<ModelRegistrations> {
+        self.inner.registrations.list().await
+    }
+    async fn model_registration(&self, id: ModelRegistrationId) -> Result<RegisteredModel> {
+        self.inner.registrations.get(id).await
+    }
+    async fn register_model(
+        &self,
+        key: IdempotencyKey,
+        request: ModelRegistrationRequest,
+    ) -> Result<ModelRegistrationResponse> {
+        self.inner.registrations.register(key, request).await
+    }
+    async fn model_registration_lookup(
+        &self,
+        key: IdempotencyKey,
+    ) -> Result<ModelRegistrationResponse> {
+        self.inner.registrations.lookup(key).await
+    }
+
     async fn model_inventory(&self) -> Result<ModelInventory> {
         self.inner
             .models
@@ -440,6 +475,7 @@ impl Application for Daemon {
             .into_iter()
             .flatten()
             .chain(vec![
+                MODEL_REGISTRATION.into(),
                 RECIPE_AUTHORING.into(),
                 MODEL_SETTINGS.into(),
                 "keyed_launch".into(),

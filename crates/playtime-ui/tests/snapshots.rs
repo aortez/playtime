@@ -4,6 +4,8 @@ mod common;
 mod model_scenes;
 #[path = "support/preview_scene.rs"]
 mod preview_scene;
+#[path = "support/registration_scenes.rs"]
+mod registration_scenes;
 #[path = "support/session_scenes.rs"]
 mod session_scenes;
 #[path = "support/trace_scenes.rs"]
@@ -80,6 +82,36 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        ("model-register", true, false, Inspector::Details, false),
+        (
+            "model-register-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        ("model-registered", true, false, Inspector::Details, false),
+        (
+            "model-registered-source-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "model-registered-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "model-registration-pending",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
         ("model-browser", true, false, Inspector::Details, false),
         (
             "model-browser-narrow",
@@ -209,6 +241,9 @@ async fn reviewed_workbench_screens() {
         } else {
             common::demo(launcher).await
         };
+        if name.starts_with("model-register") || name == "model-registration-pending" {
+            registration_scenes::prepare(&mut app, name);
+        }
         if name.starts_with("model-browser") {
             model_scenes::prepare(&mut app, name.contains("missing"), name.contains("offline"));
             if name == "model-browser-removed" {
@@ -341,6 +376,29 @@ async fn reviewed_workbench_screens() {
                 modifiers: Default::default(),
             });
             h.run_steps(60);
+        }
+        if name.starts_with("model-register") && !name.starts_with("model-registered") {
+            h.input_mut()
+                .events
+                .push(egui::Event::PointerMoved(egui::pos2(500.0, 430.0)));
+            h.input_mut().events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                phase: egui::TouchPhase::Move,
+                delta: egui::vec2(0.0, -700.0),
+                modifiers: Default::default(),
+            });
+            h.run_steps(60);
+        }
+        if name == "model-registration-pending" {
+            use egui_kittest::kittest::Queryable;
+            h.get_by_label("Unresolved model registrations").click();
+            h.run();
+        }
+        if name == "model-registered-source-narrow" {
+            use egui_kittest::kittest::Queryable;
+            h.get_by_label("Frozen identity and canonical definition")
+                .click();
+            h.run();
         }
         results.add(h.try_snapshot(name));
     }

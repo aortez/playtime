@@ -3487,6 +3487,7 @@ dependencies = [
  "playtime-protocol",
  "playtime-runner",
  "playtime-storage",
+ "playtime-test-support",
  "playtime-worker",
  "playtime-worker-control",
  "reqwest",
@@ -3521,6 +3522,7 @@ name = "playtime-test-support"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "playtime-client",
  "playtime-core",
  "playtime-docker",

@@ -45,6 +45,24 @@ impl Application for Faults {
     fn capabilities(&self) -> Capabilities {
         self.inner.capabilities()
     }
+    async fn model_review(&self, request: ModelInspectRequest) -> Result<ModelRegistrationReview> {
+        self.inner.model_review(request).await
+    }
+    async fn register_model(
+        &self,
+        key: IdempotencyKey,
+        request: ModelRegistrationRequest,
+    ) -> Result<ModelRegistrationResponse> {
+        let result = self.inner.register_model(key, request).await;
+        tokio::time::sleep(self.admission_delay).await;
+        result
+    }
+    async fn model_registration_lookup(
+        &self,
+        key: IdempotencyKey,
+    ) -> Result<ModelRegistrationResponse> {
+        self.inner.model_registration_lookup(key).await
+    }
     async fn recipes(&self, q: PageQuery) -> Result<Page<Recipe>> {
         self.inner.recipes(q).await
     }

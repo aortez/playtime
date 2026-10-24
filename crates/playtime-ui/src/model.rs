@@ -20,6 +20,10 @@ pub struct Tag {
     pub authoring: u64,
     pub save: u64,
     pub models: u64,
+    pub registry_list: u64,
+    pub registration_read: u64,
+    pub registration: u64,
+    pub registration_receipts: u64,
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Disclosure {
@@ -136,6 +140,12 @@ pub struct WindowRequest {
 }
 #[derive(Clone, Debug)]
 pub enum Action {
+    ModelRegistrations,
+    ModelRegistration(ModelRegistrationId),
+    ModelRegistrationPage(Arc<RegisteredModel>, usize),
+    ModelRegistrationReceipts,
+    RegisterModel(ModelRegistrationRequest),
+    RecoverModelRegistration(IdempotencyKey, bool),
     ModelInventory,
     InspectModel(ModelInspectRequest),
     StopModelDiscovery,
@@ -181,6 +191,14 @@ pub struct TraceView {
     pub notice: String,
 }
 pub enum Data {
+    ModelRegistrations(ModelRegistrations),
+    ModelRegistryError(String),
+    ModelRegistration(crate::registrations::RegistrationView),
+    ModelRegistrationReadError(String),
+    ModelRegistrationReceipts(Vec<playtime_client::registrations::ModelRegistrationReceipt>),
+    ModelRegistrationReceiptsError(String),
+    ModelRegistrationProgress(Mutation),
+    ModelRegistered(Box<ModelRegistrationResponse>),
     ModelInventory(crate::models::InventoryView),
     ModelInspection(crate::models::InspectionView),
     ModelError(String),
@@ -227,6 +245,7 @@ pub struct Reply {
 
 pub struct Model {
     pub models: crate::models::Browser,
+    pub registrations: crate::registrations::Registrations,
     pub authoring: crate::authoring::Authoring,
     pub tag: Tag,
     pub connection: ConnectionState,
@@ -295,6 +314,7 @@ impl Default for Model {
     fn default() -> Self {
         Self {
             models: Default::default(),
+            registrations: Default::default(),
             authoring: Default::default(),
             tag: Tag::default(),
             connection: ConnectionState::Disconnected,
@@ -376,6 +396,24 @@ impl Model {
                 None,
             );
             match action {
+                Action::RegisterModel(_) => {
+                    self.registrations.mutation = Mutation::Rejected(self.notice.clone())
+                }
+                Action::RecoverModelRegistration(..) => {
+                    self.registrations.mutation = Mutation::Unresolved(self.notice.clone())
+                }
+                Action::ModelRegistrations => {
+                    self.registrations.loading = false;
+                    self.registrations.list_error = self.notice.clone();
+                }
+                Action::ModelRegistration(_) | Action::ModelRegistrationPage(..) => {
+                    self.registrations.reading = false;
+                    self.registrations.read_error = self.notice.clone();
+                }
+                Action::ModelRegistrationReceipts => {
+                    self.registrations.receipts_ready = false;
+                    self.registrations.receipt_error = self.notice.clone();
+                }
                 Action::Launch(_) => self.launch = Mutation::Rejected(self.notice.clone()),
                 Action::Recover(..) => self.launch = Mutation::Unresolved(self.notice.clone()),
                 Action::Cancel(_) => self.cancellation = Mutation::Unresolved(self.notice.clone()),
@@ -386,6 +424,18 @@ impl Model {
                 _ => (),
             }
             return;
+        }
+        if matches!(
+            action,
+            Action::RegisterModel(_) | Action::RecoverModelRegistration(..)
+        ) {
+            self.tag.registration += 1;
+            self.tag.registration_receipts += 1;
+            self.registrations.mutation = Mutation::Recording;
+        }
+        if matches!(action, Action::ModelRegistrationReceipts) {
+            self.tag.registration_receipts += 1;
+            self.registrations.receipts_ready = false;
         }
         if matches!(action, Action::Launch(_) | Action::Recover(..)) {
             self.tag.launch += 1;
@@ -409,6 +459,22 @@ impl Model {
     }
     pub fn connect(&mut self, options: Options) {
         self.close_models();
+        if self.registrations.busy() {
+            self.registrations.mutation = Mutation::Unresolved(
+                "Connection changed during registration; recover the original receipt".into(),
+            );
+        }
+        self.registrations.enabled = false;
+        self.registrations.receipts_ready = false;
+        self.registrations.items.clear();
+        self.registrations.notice.clear();
+        self.registrations.list_error.clear();
+        self.registrations.read_error.clear();
+        self.registrations.receipt_error.clear();
+        self.registrations.selected = None;
+        self.registrations.definition = None;
+        self.registrations.loading = false;
+        self.registrations.reading = false;
         self.models.enabled = false;
         self.models.selection = None;
         self.models.inventory = None;
@@ -625,7 +691,84 @@ impl Model {
         {
             return;
         }
+        if matches!(
+            &reply.data,
+            Data::ModelRegistrations(_) | Data::ModelRegistryError(_)
+        ) && reply.tag.registry_list != self.tag.registry_list
+        {
+            return;
+        }
+        if matches!(
+            &reply.data,
+            Data::ModelRegistration(_) | Data::ModelRegistrationReadError(_)
+        ) && reply.tag.registration_read != self.tag.registration_read
+        {
+            return;
+        }
+        if matches!(
+            &reply.data,
+            Data::ModelRegistered(_) | Data::ModelRegistrationProgress(_)
+        ) && reply.tag.registration != self.tag.registration
+        {
+            return;
+        }
+        if matches!(
+            &reply.data,
+            Data::ModelRegistrationReceipts(_) | Data::ModelRegistrationReceiptsError(_)
+        ) && (reply.tag.registration_receipts != self.tag.registration_receipts
+            || reply.tag.registration != self.tag.registration)
+        {
+            return;
+        }
         match reply.data {
+            Data::ModelRegistrations(value) => {
+                self.registrations.items = value.items;
+                self.registrations.loading = false;
+                self.registrations.list_error.clear();
+            }
+            Data::ModelRegistryError(error) => {
+                self.registrations.loading = false;
+                self.registrations.list_error = error;
+            }
+            Data::ModelRegistration(value) => {
+                self.registrations.reading = false;
+                self.registrations.read_error.clear();
+                self.registrations.definition = Some(value);
+            }
+            Data::ModelRegistrationReadError(error) => {
+                self.registrations.reading = false;
+                self.registrations.read_error = error;
+            }
+            Data::ModelRegistrationReceiptsError(error) => {
+                self.registrations.receipts_ready = false;
+                self.registrations.receipt_error = error;
+            }
+            Data::ModelRegistrationReceipts(receipts) => {
+                self.registrations.receipts_ready = true;
+                self.registrations.receipt_error.clear();
+                self.registrations.receipts = receipts;
+                if self.registrations.receipts.is_empty()
+                    && matches!(self.registrations.mutation, Mutation::Unresolved(_))
+                {
+                    self.registrations.mutation = Mutation::Idle;
+                }
+            }
+            Data::ModelRegistrationProgress(state) => {
+                let done = matches!(state, Mutation::Rejected(_) | Mutation::Unresolved(_));
+                self.registrations.mutation = state;
+                if done {
+                    self.command(Action::ModelRegistrationReceipts);
+                }
+            }
+            Data::ModelRegistered(response) => {
+                self.registrations.mutation = Mutation::Accepted;
+                self.registrations.notice = format!(
+                    "Registered {} as {}. Recipe selection is unchanged.",
+                    response.registration.identity.name, response.registration.registration_id
+                );
+                self.command(Action::ModelRegistrationReceipts);
+                self.refresh_registrations();
+            }
             Data::ModelInventory(value) => {
                 self.models.pending = false;
                 self.models.stale = false;
@@ -664,6 +807,10 @@ impl Model {
                     );
                     self.stale = true;
                     return;
+                }
+                self.registrations.enabled = caps.features.iter().any(|f| f == MODEL_REGISTRATION);
+                if self.registrations.enabled {
+                    self.command(Action::ModelRegistrationReceipts);
                 }
                 self.models.enabled = caps.features.iter().any(|f| f == MODEL_DISCOVERY);
                 self.service = Some(caps.service_id);
