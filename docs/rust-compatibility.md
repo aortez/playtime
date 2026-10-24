@@ -17,6 +17,23 @@ and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
 
+## Registered-model recipe authoring (#134, first slice, 2026-10-24)
+
+Adds `recipe_model_selection_v1`, an optional registration ID on clone/revise
+requests, a typed selected summary on definitions, and explicit On/Off reasoning.
+The reviewed OpenAPI golden includes those additive fields and enum variants.
+Selected frozen definitions use schema version 2 and retain their immutable
+registration separately from base model-lock provenance. Old schema-1 definitions
+and omitted request fields keep their original bytes/digests; ledger version 7
+is unchanged. Older binaries reject selected schema-2 definitions.
+
+Every new save validates selected capabilities and inherited settings/context.
+No second native profile is approved; boolean-profile tests are synthetic. The
+worker rejects selected registrations rather than using the base lock. Native
+execution verification and the two-model acceptance required by #134 remain
+incomplete. Four new pinned-renderer screenshots cover model selection, preserved
+unsupported reasoning and explicit corrections; existing baselines are unchanged.
+
 ## Read-only model discovery (#131, 2026-10-24)
 
 Adds opt-in `model_discovery_v1`, two authenticated metadata routes and bounded
@@ -45,8 +62,8 @@ bit-identical rebuild.
 
 Limit DTOs name explicit byte units, and `cpu_cores` retains fractional CPU
 values without rounding. The daemon freezes model/recipe fields and preview
-revisions as described in [recipes](rust-recipes.md). Interactive recipe/model
-overrides are not implemented.
+revisions as described in [recipes](rust-recipes.md). Interactive edits create
+immutable saved revisions; launch never applies an unsaved override.
 
 ## Rust CLI command map
 

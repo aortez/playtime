@@ -241,3 +241,6 @@ pub async fn run_command(
 
 /// Bounded metadata-only fake; never performs inference.
 pub mod model_metadata;
+
+/// Synthetic retained registrations for authoring tests, never native model evidence.
+pub mod recipe_models;

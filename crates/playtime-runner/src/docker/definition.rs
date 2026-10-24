@@ -16,6 +16,9 @@ pub struct FrozenRecipe {
     pub source: Option<RecipeSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_capabilities: Option<playtime_protocol::api::RecipeModelCapabilities>,
+    /// Selected immutable authority. model_lock remains the base recipe provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_registration: Option<playtime_protocol::api::RegisteredModel>,
 }
 impl FrozenRecipe {
     pub fn current(recipe: Recipe) -> Result<Self> {
@@ -27,25 +30,52 @@ impl FrozenRecipe {
             environment_lock: serde_json::from_slice(IMAGE_LOCK)?,
             source: None,
             model_capabilities: None,
+            model_registration: None,
         };
         value.validate()?;
         Ok(value)
     }
     /// Structural validation intentionally does not require current identities.
     pub fn validate(&self) -> Result<()> {
-        if self.schema_version != 1
-            || self.harness.is_empty()
+        if !matches!(
+            (self.schema_version, self.model_registration.is_some()),
+            (1, false) | (2, true)
+        ) || self.harness.is_empty()
             || !self.model_lock.is_object()
             || !self.environment_lock.is_object()
         {
             return Err(Error::Invalid("unsupported recipe definition".into()));
         }
-        self.recipe.check()?;
+        if let Some(model) = &self.model_registration {
+            if model.schema_version != 1
+                || !model.summary.identity.valid()
+                || !model.definition.is_object()
+                || self.model_capabilities != model.summary.identity.reviewed_capabilities
+            {
+                return Err(Error::Invalid("invalid retained model registration".into()));
+            }
+            self.recipe.check_registered()?;
+        } else {
+            self.recipe.check()?;
+        }
         if let Some(c) = &self.model_capabilities {
             // Retained evidence belongs to its own lock, not whichever model
             // this build can currently execute. Old definitions remain readable.
-            if self.model_lock["digest"].as_str() != Some(c.model_digest.as_str())
-                || self.model_lock["ollama_version"].as_str() != Some(c.backend_version.as_str())
+            let (digest, backend) = self
+                .model_registration
+                .as_ref()
+                .map(|m| {
+                    (
+                        Some(m.summary.identity.digest.as_str()),
+                        Some(m.summary.identity.backend_version.as_str()),
+                    )
+                })
+                .unwrap_or((
+                    self.model_lock["digest"].as_str(),
+                    self.model_lock["ollama_version"].as_str(),
+                ));
+            if digest != Some(c.model_digest.as_str())
+                || backend != Some(c.backend_version.as_str())
                 || c.provenance.is_empty()
                 || c.provenance.len() > 512
                 || c.reasoning.is_empty()
@@ -65,6 +95,13 @@ impl FrozenRecipe {
     }
     pub fn executable(&self) -> Result<()> {
         self.validate()?;
+        // Authoring a registered identity does not widen the locked worker.
+        // The next execution slice must verify this authority at every boundary.
+        if self.model_registration.is_some() {
+            return Err(Error::Invalid(
+                "registered model execution is unavailable".into(),
+            ));
+        }
         if self.harness != "memento_turns_v1"
             || self.model_lock != serde_json::from_slice::<Value>(MODEL_LOCK)?
             || self.environment_lock != serde_json::from_slice::<Value>(IMAGE_LOCK)?
@@ -99,6 +136,7 @@ impl FrozenRecipe {
             name: self.recipe.name.clone(),
             prompt: self.recipe.prompt.clone(),
             inherited,
+            model_registration: self.model_registration.as_ref().map(|m| m.summary.clone()),
             seeds: self
                 .recipe
                 .seeds

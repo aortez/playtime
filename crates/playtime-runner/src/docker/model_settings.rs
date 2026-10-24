@@ -6,6 +6,18 @@ use std::num::NonZeroU64;
 
 impl FrozenRecipe {
     pub fn resolve_model_capabilities(&self) -> Result<RecipeModelCapabilities> {
+        if let Some(model) = &self.model_registration {
+            return model
+                .summary
+                .identity
+                .reviewed_capabilities
+                .clone()
+                .ok_or_else(|| {
+                    Error::Invalid(
+                        "The selected model has no reviewed reasoning/context capabilities.".into(),
+                    )
+                });
+        }
         reviewed_model_capabilities(&self.model_lock)
     }
     pub fn model_settings(&self) -> Result<RecipeModelSettings> {
@@ -17,6 +29,8 @@ impl FrozenRecipe {
                 "low" => RecipeReasoning::Low,
                 "medium" => RecipeReasoning::Medium,
                 "high" => RecipeReasoning::High,
+                "on" => RecipeReasoning::On,
+                "off" => RecipeReasoning::Off,
                 _ => return Err(Error::Invalid("unsupported reasoning setting".into())),
             },
             temperature: m.temperature,
@@ -39,25 +53,15 @@ impl FrozenRecipe {
         })
     }
     pub fn apply_model_settings(&mut self, settings: &RecipeModelSettings) -> Result<()> {
-        if let Some(error) = settings.validation_error() {
-            return Err(Error::Invalid(error.into()));
-        }
-        let capabilities = self.resolve_model_capabilities()?;
-        if !capabilities.reasoning.contains(&settings.reasoning)
-            || capabilities
-                .context_ceiling
-                .is_some_and(|n| settings.context_tokens > n)
-        {
-            return Err(Error::Invalid(
-                "settings exceed the locked model capabilities".into(),
-            ));
-        }
+        let capabilities = self.check_model_settings(settings)?;
         let m = &mut self.recipe.model;
         m.thinking = match settings.reasoning {
             RecipeReasoning::ModelDefault => "default",
             RecipeReasoning::Low => "low",
             RecipeReasoning::Medium => "medium",
             RecipeReasoning::High => "high",
+            RecipeReasoning::On => "on",
+            RecipeReasoning::Off => "off",
         }
         .into();
         m.temperature = settings.temperature;
@@ -72,6 +76,54 @@ impl FrozenRecipe {
         self.model_capabilities = Some(capabilities);
         self.validate()?;
         self.check_initial_context()
+    }
+    pub fn select_registered_model(&mut self, model: RegisteredModel) -> Result<()> {
+        self.schema_version = 2;
+        self.model_capabilities = model.summary.identity.reviewed_capabilities.clone();
+        self.model_registration = Some(model);
+        self.validate()
+    }
+    /// Called on every new save, including when settings were inherited.
+    pub fn check_model_settings(
+        &self,
+        settings: &RecipeModelSettings,
+    ) -> Result<RecipeModelCapabilities> {
+        if let Some(error) = settings.validation_error() {
+            return Err(Error::Invalid(error.into()));
+        }
+        if let Some(model) = &self.model_registration
+            && (self.harness != "memento_turns_v1"
+                || !["completion", "tools"].iter().all(|required| {
+                    model
+                        .summary
+                        .identity
+                        .advertised_capabilities
+                        .iter()
+                        .any(|c| c == required)
+                }))
+        {
+            return Err(Error::Invalid(
+                "The selected model must advertise completion and tools for this harness.".into(),
+            ));
+        }
+        let capabilities = self.resolve_model_capabilities()?;
+        if self.model_registration.is_some() && capabilities.context_ceiling.is_none() {
+            return Err(Error::Invalid(
+                "The selected model's context capacity is unreviewed.".into(),
+            ));
+        }
+        if !capabilities.reasoning.contains(&settings.reasoning) {
+            return Err(Error::Invalid("Reasoning is unsupported by the selected model. Choose an explicitly supported value; settings were not translated.".into()));
+        }
+        if capabilities
+            .context_ceiling
+            .is_some_and(|n| settings.context_tokens > n)
+        {
+            return Err(Error::Invalid(
+                "Context capacity exceeds the selected model's reviewed ceiling.".into(),
+            ));
+        }
+        Ok(capabilities)
     }
     pub fn check_initial_context(&self) -> Result<()> {
         let required = playtime_engine::SessionInput {

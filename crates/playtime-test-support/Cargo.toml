@@ -6,6 +6,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+rusqlite.workspace = true
+playtime-ollama.workspace = true
 axum.workspace = true
 playtime-docker.workspace = true
 playtime-worker-control.workspace = true

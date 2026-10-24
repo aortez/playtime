@@ -82,6 +82,34 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        (
+            "recipe-model-invalid",
+            true,
+            false,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "recipe-model-invalid-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "recipe-model-menu-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "recipe-model-corrected",
+            true,
+            false,
+            Inspector::Details,
+            false,
+        ),
         ("model-register", true, false, Inspector::Details, false),
         (
             "model-register-narrow",
@@ -234,7 +262,7 @@ async fn reviewed_workbench_screens() {
     ] {
         let mut app = if name.starts_with("long-recipe-runs") {
             common::long_recipe_runs().await
-        } else if name.starts_with("model-settings") {
+        } else if name.starts_with("model-settings") || name.starts_with("recipe-model") {
             common::model_settings_editor().await
         } else if name.starts_with("recipe-editor") {
             common::recipe_editor().await
@@ -259,6 +287,19 @@ async fn reviewed_workbench_screens() {
                     ),
                 });
             }
+        }
+        if name.starts_with("recipe-model") {
+            let model = playtime_test_support::recipe_models::boolean_model().summary;
+            app.model.authoring.model_selection_enabled = true;
+            app.model.registrations.items = vec![model.clone()];
+            app.model
+                .authoring
+                .draft
+                .as_mut()
+                .unwrap()
+                .select_model(model);
+            app.model.backend =
+                "Synthetic authoring fixture · no native model capability evidence".into();
         }
         if matches!(name, "running" | "ended") {
             progress_screen(&mut app, name == "ended");
@@ -329,6 +370,44 @@ async fn reviewed_workbench_screens() {
             .wgpu_setup(setup())
             .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
         h.run();
+        if name.starts_with("recipe-model") {
+            use egui_kittest::kittest::Queryable;
+            if name == "recipe-model-corrected" {
+                h.get_by_label("Reasoning").scroll_to_me();
+                h.run();
+                h.get_by_label("Reasoning").click();
+                h.run();
+                h.get_by_label("On").click();
+                h.run();
+                let label = "Context capacity (tokens)";
+                h.get_by_label(label).focus();
+                h.run();
+                h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+                h.run();
+                h.get_by_label(label).type_text("49152");
+                h.run();
+                assert!(h.state().model.authoring.draft.as_ref().unwrap().valid());
+                h.ctx.memory_mut(|memory| {
+                    memory.surrender_focus(egui::Id::new(("recipe-model-setting", label)));
+                });
+            }
+            h.input_mut()
+                .events
+                .push(egui::Event::PointerMoved(egui::pos2(600.0, 500.0)));
+            h.input_mut().events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                phase: egui::TouchPhase::Move,
+                delta: egui::vec2(0.0, -440.0),
+                modifiers: Default::default(),
+            });
+            h.run_steps(60);
+            if name == "recipe-model-menu-narrow" {
+                h.get_by_label("Registered model").scroll_to_me();
+                h.run();
+                h.get_by_label("Registered model").click();
+                h.run();
+            }
+        }
         if name.starts_with("files-") {
             use egui_kittest::kittest::Queryable;
             h.get_by_label("Inspector").click();
