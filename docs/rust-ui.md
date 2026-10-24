@@ -86,8 +86,34 @@ Timeline blocks size to their displayed content. A sparse cache retains at most
 2,048 measured heights, with estimates for unmeasured blocks; only visible blocks
 are laid out. Expansion, resize, late history and disclosure changes preserve the
 reader's activity. Follow controls scrolling only; pausing it prevents later
-records from moving the reader to the end. Session jump navigation and inline
-incoming/published memory comparisons remain the separate #125 follow-up.
+records from moving the reader to the end.
+
+The session chooser jumps to recorded session boundaries and pauses following.
+It shows at most 64 entries in a scrollable popup, with Earlier/More controls for
+longer runs. The list says when earlier history is incomplete; configured session
+limits never create entries. The current session follows the visible activity.
+Jump to live cancels pending navigation and resumes following. Reconnect restores
+a paused position by its archived event sequence, independent of rebuilt row IDs.
+
+At each session start, **Memory received** shows the exact recorded delivery,
+including an explicitly available empty memento, no memento supplied, or unavailable
+content. When both the controller observation and canonical start are present,
+Readable shows the boundary once; Full retains both sources. A standalone canonical
+start loads only its explicit delivery reference, never a previous workspace's
+memento. Referenced observations remain inspectable even when their inline ordinal
+or content is unavailable.
+
+Published checkpoints show a stacked comparison of received memory and the
+**Published memento**, plus a compact list of checkpoint files/images.
+**Compare memory** and **Browse files** select that exact session in the existing
+inspector. Background excerpt reads never change inspector selection. Submitted
+mementos remain on their tool request; a request, successful tool result or controller
+checkpoint intent does not create a published checkpoint. Reused memory remains
+exactly as delivered, and an interrupted session gains no invented final capture.
+File-change classification requires complete adjacent-checkpoint metadata and known
+hashes; missing hashes or partial lists explicitly make classification unavailable.
+Session controls describe the current memento harness, not a new harness contract.
+Whole-run usage accounting is unchanged; this slice adds no per-session estimates.
 
 The run header leads with progress against the run's frozen limits: the session,
 the work turn within it, tokens charged of the token budget, controller time of
@@ -127,6 +153,13 @@ are explicitly unavailable where the current API does not project them.
   snapshots reject older `updated_at` values and preserve terminal/cancellation
   facts even at equal timestamps. A cancellation reply installs a fully prepared
   view so the status, summary and source agree; no lifecycle outcome is inferred.
+- Inline boundary excerpts use at most two background reads, sharing the existing
+  preview semaphore. Each memory source is verified through the shared client,
+  limited to 256 KiB for preview, then excerpted to 2 KiB. At most 64 boundary
+  views remain cached for the current window (under 512 KiB including metadata);
+  offscreen results are discarded. Larger/exact sources remain available through
+  the inspector. Publication sequence, connection, run and selection checks keep
+  stale replies from replacing newer navigation or inspection.
 - `backend.rs` owns one cancellable client runtime, one selected observer and at
   most two preview/decoder jobs. Private files, HTTP, JSON, hashes, comparisons and
   image decode stay outside egui callbacks. Closing the client cancels/joins its
@@ -158,6 +191,8 @@ are explicitly unavailable where the current API does not project them.
 | Event inbox | 64 records and 4 MiB serialized bytes, backpressured |
 | Transcript payload / index | 16 MiB / 32 MiB, conservative index accounting |
 | Prepared timeline window / laid-out source | 64 rows / 64 KiB |
+| Prepared session chooser | 64 entries per page; session index included in 32 MiB transcript bound |
+| Inline boundary previews | 64 current-window entries; ≤512 KiB; 2 reads concurrently |
 | Sparse timeline height cache | 2,048 measurements; ≤256 KiB |
 | Apply work per frame | 100 prepared rows/replies or 4 ms, with deferred replies |
 | Control queue / concurrent client tasks | 64 / 16 |
@@ -244,12 +279,21 @@ activity, memory/file image inspection, connection error/stale information,
 remain visible; screenshots are not evidence of real execution. The `trace-handoff`,
 `trace-streaming` and `trace-long` pairs cover failed reads, an unpublished handoff,
 provisional thinking and bounded long excerpts at both viewport sizes. Their
-commands are synthetic data and never execute.
+commands are synthetic data and never execute. The `session-memory` and
+`session-interrupted` pairs show delivered/published memory with contextual file
+controls, and a submitted handoff without a published checkpoint. These are
+focused synthetic trace views, without the run-header fixture.
 
 The #124 projection was also inspected against retained native live archive
 `20261023T054921Z-728c128b`: five calls, their associated commands/end-session
 requests, the verification output `persistence-ok`, and exact source access. This
 was read-only review of an existing run, not new inference or recovery evidence.
+
+The #125 projection was additionally checked against retained Rust run
+`20261023T052240Z-b3bdbbc6`: ten recorded sessions and ten published checkpoints,
+including unchanged memory delivered again after a handoff. Navigation and source
+rehydration agreed with reverse history, and checkpoint memento bytes matched their
+archived digests. No archived commands or new inference were executed.
 
 ## Performance measurement
 

@@ -91,6 +91,36 @@ async fn desktop_client_launch_observe_inspect_and_reopen_uses_only_public_http(
         1
     );
     let session = model.checkpoints[0].checkpoint.session_id.clone();
+    // Inline checkpoint reads use verified public content, retain publication
+    // identity, and do not change the inspector. This fixture's event is an
+    // explicitly unknown fixture marker, so request its projection directly.
+    model.command(Action::Trace(
+        run.clone(),
+        3,
+        playtime_ui::transcript::TraceContent::Checkpoint(session.clone()),
+    ));
+    until(&mut model, &mut backend, |m| m.trace.contains_key(&3)).await;
+    let trace = &model.trace[&3];
+    assert!(
+        trace
+            .sections
+            .iter()
+            .any(|s| s.label == "Published memento" && s.text.contains("fixture saved memory"))
+    );
+    assert!(trace.files.contains("saved files"));
+    model.command(Action::Locate(3, playtime_ui::transcript::View::Readable));
+    until(&mut model, &mut backend, |m| {
+        m.location.is_some_and(|(seq, _, _)| seq == 3)
+    })
+    .await;
+    model.command(Action::Trace(
+        run.clone(),
+        2,
+        playtime_ui::transcript::TraceContent::Checkpoint(session.clone()),
+    ));
+    until(&mut model, &mut backend, |m| m.trace.contains_key(&2)).await;
+    assert!(model.trace[&2].notice.contains("identity mismatch"));
+
     model.inspect_action(Action::Checkpoint(run.clone(), session));
     until(&mut model, &mut backend, |m| m.memory.is_some()).await;
     assert!(

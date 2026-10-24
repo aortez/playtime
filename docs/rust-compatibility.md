@@ -294,3 +294,18 @@ keeps its source-oriented presentation. No protocol, archive, controller or serv
 ledger version changes. Existing rendering baselines change deliberately for the
 trace layout, with new wide/narrow failure-handoff, streaming and long-text
 fixtures. Session navigation and contextual published-memory summaries remain #125.
+
+## Session navigation and memory handoffs (#125)
+
+The workbench now indexes recorded session boundaries independently of payload
+eviction and offers a paged chooser. Paused reconnect navigation uses stable event
+sequences. Readable coalesces the canonical session-start repeat when an exact
+controller delivery observation is present; Full and source inspection retain both.
+Delivered-memory excerpts and verified published-checkpoint excerpts stay distinct
+from submitted tool text. Inline controls select the corresponding checkpoint in
+the existing inspector, with late selection/inspection replies rejected.
+
+File-change summaries no longer treat absent hashes as evidence of unchanged files
+or classify changes across incomplete checkpoint lists. Reviewed UI screenshots
+add wide/narrow memory and interrupted-handoff scenes and update the running/ended
+trace views. No API, archive, controller, service-ledger or recipe schema changes.

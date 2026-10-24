@@ -155,7 +155,16 @@ pub(super) fn observation(o: &DecodedObservation) -> (Display, Vec<Section>) {
     };
     match known.as_ref() {
         KnownObservation::MemoryReceived { memory, .. } => {
-            push(&mut parts, "Exact delivered memory", &memory.content);
+            let text = match memory.status.as_str() {
+                "loaded" if memory.content.is_empty() => "Available empty memento",
+                "loaded" => &memory.content,
+                "missing" => "No memento supplied.",
+                _ if memory.content.is_empty() => {
+                    "Delivered content unavailable; inspect source for the recorded status."
+                }
+                _ => &memory.content,
+            };
+            push(&mut parts, "Memory received", text);
         }
         KnownObservation::ControllerCheckpoint { .. } => {
             push(

@@ -125,6 +125,10 @@ pub struct WindowRequest {
 }
 #[derive(Clone, Debug)]
 pub enum Action {
+    Sessions(usize),
+    Locate(u64, View),
+    CancelNavigation,
+    Trace(RunId, u64, crate::transcript::TraceContent),
     Connect(Options),
     Recipes(Option<String>),
     Definition(RecipeId),
@@ -156,7 +160,14 @@ pub struct Command {
     pub tag: Tag,
     pub action: Action,
 }
+#[derive(Clone, Debug, Default)]
+pub struct TraceView {
+    pub sections: Vec<crate::transcript::Section>,
+    pub files: String,
+    pub notice: String,
+}
 pub enum Data {
+    Trace(u64, TraceView),
     Connected(Capabilities, String),
     Preferences(Preferences),
     Recipes(Page<Recipe>),
@@ -224,6 +235,9 @@ pub struct Model {
     pub run: Option<RunViewData>,
     pub launcher: bool,
     pub window: Window,
+    pub trace: BTreeMap<u64, TraceView>,
+    pub location: Option<(u64, usize, usize)>,
+    trace_pending: std::collections::BTreeSet<u64>,
     pub history: String,
     pub live_count: u64,
     pub seen_live: u64,
@@ -237,6 +251,7 @@ pub struct Model {
     /// What each checkpoint saved, by session, for the timeline's markers.
     pub checkpoint_files: BTreeMap<String, String>,
     pub checkpoint: Option<Checkpoint>,
+    checkpoint_target: Option<SessionId>,
     pub file_page: usize,
     pub memory: Option<MemoryView>,
     pub content: Option<ContentView>,
@@ -285,6 +300,9 @@ impl Default for Model {
             run: None,
             launcher: true,
             window: Window::default(),
+            trace: BTreeMap::new(),
+            location: None,
+            trace_pending: Default::default(),
             history: String::new(),
             live_count: 0,
             seen_live: 0,
@@ -297,6 +315,7 @@ impl Default for Model {
             checkpoints_next: None,
             checkpoint_files: BTreeMap::new(),
             checkpoint: None,
+            checkpoint_target: None,
             file_page: 0,
             memory: None,
             content: None,
@@ -357,6 +376,9 @@ impl Model {
             self.tag.save += 1;
             self.authoring.save = Mutation::Recording;
         }
+        if let Action::Checkpoint(_, session) = &action {
+            self.checkpoint_target = Some(session.clone());
+        }
         self.commands.push_back(Command {
             tag: self.tag,
             action,
@@ -375,6 +397,9 @@ impl Model {
                     .into(),
             );
         }
+        self.trace_pending.clear();
+        self.trace.clear();
+        self.location = None;
         self.tag.connection += 1;
         self.tag.selection += 1;
         self.tag.preview += 1;
@@ -445,12 +470,17 @@ impl Model {
         self.launcher = false;
         self.run = None;
         self.window = Window::default();
+        self.trace.clear();
+        self.location = None;
+        self.trace_pending.clear();
         self.selected_row = None;
         self.expanded.clear();
         self.source = None;
         self.checkpoints.clear();
         self.checkpoint_files.clear();
         self.checkpoint = None;
+        self.checkpoint_target = None;
+        self.checkpoints_next = None;
         self.memory = None;
         self.content = None;
         self.playing = false;
@@ -498,6 +528,8 @@ impl Model {
         self.command(Action::Source(id, sequence, 0));
     }
     pub fn jump_live(&mut self) {
+        self.location = None;
+        self.command(Action::CancelNavigation);
         self.following = true;
         self.seen_live = self.live_count;
     }
@@ -518,6 +550,9 @@ impl Model {
             Data::RecipeSaved(_) | Data::RecipeSaveProgress(_) | Data::RecipeSaveReceipts(_)
         ) && reply.tag.save != self.tag.save
         {
+            return;
+        }
+        if matches!(reply.data, Data::Trace(..)) && reply.tag.selection != self.tag.selection {
             return;
         }
         if reply.run.is_some()
@@ -717,8 +752,25 @@ impl Model {
                 self.cancellation = Mutation::Unresolved(error.clone());
                 self.notify(error, reply.run);
             }
+            Data::Trace(sequence, view) => {
+                self.trace_pending.remove(&sequence);
+                // A late result for an offscreen boundary never grows the cache.
+                if self
+                    .window
+                    .rows
+                    .iter()
+                    .any(|r| r.first_sequence == sequence)
+                {
+                    self.trace.insert(sequence, view);
+                }
+                self.prepare_trace();
+            }
             Data::Window(window, history, live) => {
+                if window.location.is_some() {
+                    self.location = window.location;
+                }
                 self.window = window;
+                self.prepare_trace();
                 self.history = history;
                 self.live_count = live;
                 if self.following {
@@ -727,6 +779,7 @@ impl Model {
             }
             Data::Checkpoints(page, files) => {
                 if self.checkpoint.is_none()
+                    && self.checkpoint_target.is_none()
                     && self.selected_row.is_none()
                     && let Some(checkpoint) = page.items.first()
                     && let Some(run) = self.selected.clone()
@@ -741,6 +794,13 @@ impl Model {
                 self.checkpoint_files.extend(files);
             }
             Data::Checkpoint(c, memory) => {
+                if self
+                    .checkpoint_target
+                    .as_ref()
+                    .is_some_and(|target| *target != c.checkpoint.session_id)
+                {
+                    return;
+                }
                 if self.content.is_none()
                     && let Some(run) = self.selected.clone()
                     && let Some(id) = c.files.iter().find_map(|file| {
@@ -880,10 +940,50 @@ impl Model {
         self.stale = self.connection != ConnectionState::Connected;
         self.last_update = self.clock;
     }
+    /// At most two background content reads, and only the current bounded
+    /// window retained. Completion never changes the inspector selection.
+    fn prepare_trace(&mut self) {
+        self.trace
+            .retain(|seq, _| self.window.rows.iter().any(|r| r.first_sequence == *seq));
+        let Some(run) = self.selected.clone() else {
+            return;
+        };
+        let requests: Vec<_> = self
+            .window
+            .rows
+            .iter()
+            .filter(|r| {
+                !self.trace.contains_key(&r.first_sequence)
+                    && !self.trace_pending.contains(&r.first_sequence)
+            })
+            .filter_map(|r| r.trace.clone().map(|kind| (r.first_sequence, kind)))
+            .take(2usize.saturating_sub(self.trace_pending.len()))
+            .collect();
+        for (sequence, kind) in requests {
+            if self.commands.len() >= 64 {
+                break;
+            }
+            self.trace_pending.insert(sequence);
+            self.command(Action::Trace(run.clone(), sequence, kind));
+        }
+    }
+    pub fn inspect_checkpoint(&mut self, session: playtime_core::SessionId, inspector: Inspector) {
+        if let Some(run) = self.selected.clone() {
+            self.inspector = inspector;
+            self.show_inspector = true;
+            self.checkpoint = None;
+            self.memory = None;
+            self.inspect_action(Action::Checkpoint(run, session));
+        }
+    }
     pub fn inspect_action(&mut self, action: Action) {
         self.stop_animation();
         self.tag.inspection += 1;
         self.following = false;
+        if matches!(action, Action::Checkpoint(..)) {
+            self.checkpoint = None;
+            self.memory = None;
+        }
         if matches!(
             action,
             Action::Checkpoint(..) | Action::Content(..) | Action::Retained(..)

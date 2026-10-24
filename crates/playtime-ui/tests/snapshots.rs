@@ -1,5 +1,7 @@
 #![cfg(feature = "ui-snapshots")]
 mod common;
+#[path = "support/session_scenes.rs"]
+mod session_scenes;
 #[path = "support/trace_scenes.rs"]
 mod trace_scenes;
 use egui_kittest::Harness;
@@ -67,6 +69,7 @@ fn progress_screen(app: &mut Workbench, ended: bool) {
     app.model.run = Some(prepare_run(view));
     app.model.window = transcript.window(View::Readable, 0, 64);
     app.model.window.progress = transcript.progress(true);
+    app.model.window.sessions = transcript.sessions(0, true);
 }
 #[tokio::test]
 async fn reviewed_workbench_screens() {
@@ -85,6 +88,28 @@ async fn reviewed_workbench_screens() {
         (
             "recipe-editor-narrow",
             true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        ("session-memory", false, false, Inspector::Details, false),
+        (
+            "session-memory-narrow",
+            false,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "session-interrupted",
+            false,
+            false,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "session-interrupted-narrow",
+            false,
             true,
             Inspector::Details,
             false,
@@ -135,6 +160,9 @@ async fn reviewed_workbench_screens() {
             run.controller_phase = Some(RunPhase::Working);
             app.model.runs = vec![run.clone()];
             app.model.run = Some(prepare_run(run));
+        }
+        if name.starts_with("session-") {
+            session_scenes::prepare(&mut app, name.contains("interrupted"));
         }
         app.model.inspector = inspector;
         if name != "image" {

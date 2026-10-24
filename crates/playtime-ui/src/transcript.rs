@@ -44,6 +44,27 @@ pub enum View {
     /// Every record as a card.
     Full,
 }
+/// A boundary whose exact published content is prepared separately from events.
+#[derive(Clone, Debug)]
+pub enum TraceContent {
+    Incoming(playtime_protocol::archive::ContentRef),
+    Checkpoint(playtime_core::SessionId),
+}
+#[derive(Clone, Debug)]
+pub struct SessionLink {
+    pub session: String,
+    pub ordinal: u32,
+    pub row: usize,
+    pub sequence: u64,
+    observed: bool,
+}
+#[derive(Clone, Debug, Default)]
+pub struct Sessions {
+    pub start: usize,
+    pub total: usize,
+    pub items: Vec<SessionLink>,
+    pub complete: bool,
+}
 #[derive(Clone, Debug, Default)]
 pub struct Row {
     pub id: usize,
@@ -61,6 +82,8 @@ pub struct Row {
     /// A tool block belonging to the preceding model call; virtualized independently.
     pub nested: bool,
     pub parent: Option<String>,
+    pub session: Option<SessionLink>,
+    pub trace: Option<TraceContent>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Window {
@@ -72,6 +95,8 @@ pub struct Window {
     pub anchor: Option<(usize, usize)>,
     /// The run's progress, for the header.
     pub progress: Progress,
+    pub sessions: Sessions,
+    pub location: Option<(u64, usize, usize)>,
 }
 #[derive(Clone, Debug)]
 pub struct SourcePage {
@@ -102,6 +127,8 @@ struct Group {
     final_sequence: Option<u64>,
     role: Role,
     display: Display,
+    trace: Option<TraceContent>,
+    session_id: Option<String>,
 }
 /// How the readable view shows a group. Full shows every group as a card.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -130,6 +157,8 @@ pub struct Transcript {
     readable: Vec<usize>,
     families: BTreeMap<String, Family>,
     ended: bool,
+    sessions: BTreeMap<u64, SessionLink>,
+    session_keys: BTreeMap<String, u64>,
     pages: Vec<String>,
     cache: BTreeMap<u64, Cached>,
     lru: VecDeque<u64>,
@@ -264,6 +293,10 @@ struct Projection {
     display: Display,
     readable: Vec<Section>,
     finished: bool,
+    session: Option<(String, u32)>,
+    observed_session: bool,
+    trace: Option<TraceContent>,
+    session_id: Option<String>,
 }
 fn project(event: &EventEnvelope) -> Result<Projection, String> {
     let decoded = decode_event(&serde_json::to_string(event).map_err(|e| e.to_string())?)
@@ -280,9 +313,14 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
         display: Display::default(),
         readable: vec![],
         finished: false,
+        session: None,
+        observed_session: false,
+        trace: None,
+        session_id: None,
     };
     if let EventPayload::Observation(observation) = decoded.payload() {
         let o = observation.observation();
+        p.session_id = o.session_id.as_ref().map(|id| id.as_str().to_owned());
         p.progress = Update::observation(observation);
         (p.display, p.readable) = presentation::observation(observation);
         let session = o
@@ -318,7 +356,13 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
                 KnownObservation::MemoryReceived {
                     memory, ordinal, ..
                 } => {
-                    p.status = format!("Session {ordinal} incoming memory: {}", memory.status);
+                    p.title = format!("Session {ordinal}");
+                    p.observed_session = true;
+                    p.session = o
+                        .session_id
+                        .as_ref()
+                        .map(|id| (id.as_str().to_owned(), ordinal.get()));
+                    p.status = format!("Memory received · {}", memory.status);
                     p.parts.push(Section {
                         label: "Exact delivered memory".into(),
                         text: memory.content.clone(),
@@ -462,6 +506,39 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
                 p.finished = matches!(known.as_ref(), KnownEvent::RunFinished { .. });
                 p.role = role(known);
                 p.progress = Update::event(known);
+                match known.as_ref() {
+                    KnownEvent::SessionStarted {
+                        session_id,
+                        ordinal,
+                        memento,
+                        delivery,
+                        ..
+                    } => {
+                        p.session = Some((session_id.as_str().to_owned(), ordinal.get()));
+                        // Only the explicit delivery describes what this session
+                        // actually received. An older workspace memento is not a substitute.
+                        p.trace = delivery
+                            .as_ref()
+                            .map(|d| TraceContent::Incoming(d.memento.content.clone()));
+                        p.readable.push(Section {
+                            label: "Memory received".into(),
+                            text: match (memento, delivery) {
+                                (MemoryRef::Missing, _) => "No memento supplied.".into(),
+                                (MemoryRef::Unavailable { reason }, _) => format!("Unavailable: {}", excerpt(reason, 512)),
+                                (_, Some(d)) if d.memento.status != "loaded" => format!("Delivery status: {}", excerpt(&d.memento.status, 120)),
+                                (_, Some(_)) => "Loading exact delivered memory…".into(),
+                                _ => "Exact delivery unavailable in this record; see recorded memory observations if present.".into(),
+                            },
+                        });
+                        if !matches!(memento, MemoryRef::Available { .. }) {
+                            p.trace = None;
+                        }
+                    }
+                    KnownEvent::CheckpointPublished { checkpoint } => {
+                        p.trace = Some(TraceContent::Checkpoint(checkpoint.session_id.clone()));
+                    }
+                    _ => (),
+                }
             }
             EventPayload::Control(_) if event.kind == "effect_intent" => {
                 p.role = Role::Bookkeeping;
@@ -482,7 +559,11 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
             240,
         );
     }
-    if p.display.family.is_none() && p.readable.is_empty() && !p.parts.is_empty() {
+    if p.role == Role::Activity
+        && p.display.family.is_none()
+        && p.readable.is_empty()
+        && !p.parts.is_empty()
+    {
         p.readable.push(Section {
             label: "Recorded data".into(),
             text: "Inspect source for recorded details.".into(),
@@ -535,6 +616,17 @@ impl Transcript {
         let mut p = project(&event)?;
         let update = std::mem::take(&mut p.progress);
         let existing = self.keys.get(&p.key).copied();
+        if let Some((session, ordinal)) = &p.session
+            && let Some(sequence) = self.session_keys.get(session)
+        {
+            let old = &self.sessions[sequence];
+            if old.ordinal != *ordinal {
+                return Err("Conflicting recorded session ordinal".into());
+            }
+            if old.observed && !p.observed_session {
+                p.role = Role::Bookkeeping;
+            }
+        }
         if existing.is_some_and(|id| self.groups[id].display.family != p.display.family) {
             return Err("Conflicting originating model request for activity".into());
         }
@@ -546,8 +638,21 @@ impl Transcript {
         // indexes. Strings are counted separately; full source lives in the LRU.
         let cost = 192
             + update.tracked_bytes()
+            + p.session.as_ref().map_or(0, |(id, _)| 512 + id.len() * 4)
+            + match &p.trace {
+                Some(TraceContent::Incoming(content)) => {
+                    256 + content.path.as_str().len() + content.sha256.as_str().len()
+                }
+                Some(TraceContent::Checkpoint(id)) => 128 + id.as_str().len(),
+                None => 0,
+            }
             + if existing.is_none() {
-                384 + p.key.len() * 2 + p.title.len() + 256 + 176 + marker
+                384 + p.key.len() * 2
+                    + p.title.len()
+                    + 256
+                    + 176
+                    + marker
+                    + p.session_id.as_ref().map_or(0, |id| 32 + id.len() * 2)
             } else {
                 0
             };
@@ -579,6 +684,8 @@ impl Transcript {
                 final_sequence: None,
                 role: p.role.clone(),
                 display: p.display.clone(),
+                trace: p.trace.clone(),
+                session_id: p.session_id.clone(),
             });
             if let Some(family) = &p.display.family {
                 self.families
@@ -593,6 +700,32 @@ impl Transcript {
             self.place(id);
             id
         });
+        if let Some((session, ordinal)) = p.session {
+            let old = self.session_keys.get(&session).copied();
+            if old.is_none_or(|old| {
+                (!self.sessions[&old].observed && p.observed_session)
+                    || (self.sessions[&old].observed == p.observed_session && seq < old)
+            }) {
+                if let Some(old) = old {
+                    let old = self.sessions.remove(&old).unwrap();
+                    if !old.observed && p.observed_session {
+                        self.groups[old.row].role = Role::Bookkeeping;
+                        self.readable.retain(|id| *id != old.row);
+                    }
+                }
+                self.session_keys.insert(session.clone(), seq);
+                self.sessions.insert(
+                    seq,
+                    SessionLink {
+                        session,
+                        ordinal,
+                        row: id,
+                        sequence: seq,
+                        observed: p.observed_session,
+                    },
+                );
+            }
+        }
         if p.finished {
             self.ended = true;
         }
@@ -845,6 +978,18 @@ impl Transcript {
                     marker: marker.is_some(),
                     checkpoint: marker.and_then(|(_, checkpoint)| checkpoint.clone()),
                     nested: view == View::Readable && g.display.tool,
+                    session: if let Some(id) = &g.session_id {
+                        self.session_keys
+                            .get(id)
+                            .and_then(|seq| self.sessions.get(seq))
+                            .cloned()
+                    } else {
+                        self.sessions
+                            .range(..=g.first)
+                            .next_back()
+                            .map(|(_, session)| session.clone())
+                    },
+                    trace: g.trace.clone(),
                     parent: (view == View::Readable && g.display.tool)
                         .then(|| parent.unwrap_or_else(|| "Call details unavailable".into())),
                 }
@@ -857,6 +1002,23 @@ impl Transcript {
             metrics: self.metrics.clone(),
             anchor: None,
             progress: Progress::default(),
+            sessions: self.sessions(0, false),
+            location: None,
+        }
+    }
+    pub fn sessions(&self, start: usize, complete: bool) -> Sessions {
+        let start = start.min(self.sessions.len().saturating_sub(1)) / WINDOW_ROWS * WINDOW_ROWS;
+        Sessions {
+            start,
+            total: self.sessions.len(),
+            items: self
+                .sessions
+                .values()
+                .skip(start)
+                .take(WINDOW_ROWS)
+                .cloned()
+                .collect(),
+            complete,
         }
     }
     pub fn sources(&self, id: usize) -> Vec<u64> {
