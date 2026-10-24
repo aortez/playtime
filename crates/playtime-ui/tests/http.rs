@@ -110,7 +110,7 @@ async fn desktop_client_launch_observe_inspect_and_reopen_uses_only_public_http(
     assert!(trace.files.contains("saved files"));
     model.command(Action::Locate(3, playtime_ui::transcript::View::Readable));
     until(&mut model, &mut backend, |m| {
-        m.location.is_some_and(|(seq, _, _)| seq == 3)
+        m.location.is_some_and(|(seq, _)| seq == 3)
     })
     .await;
     model.command(Action::Trace(

@@ -106,6 +106,22 @@ fn canonical_start_and_observed_delivery_have_one_readable_heading_in_either_ord
         assert_eq!(window.sessions.items[0].sequence, 6);
         assert_eq!(transcript.window(View::Full, 0, 64).total, 2);
         assert!(transcript.raw(9, 0).is_some());
+        transcript
+            .apply(memory(2, 20, "loaded", "next session"), None)
+            .unwrap();
+        // A jump requested before coalescing still names canonical sequence 9.
+        // Resolve it to this session's delivery, not the following session.
+        let (id, at) = transcript.location(View::Readable, 9).unwrap();
+        assert_eq!(at, 0);
+        assert_eq!(transcript.window(View::Readable, at, 1).rows[0].id, id);
+        assert_eq!(
+            transcript.window(View::Readable, at, 1).rows[0].first_sequence,
+            6
+        );
+        assert_eq!(
+            transcript.location(View::Full, 9).unwrap().0,
+            transcript.row_for(9).unwrap()
+        );
     }
 }
 #[test]
@@ -211,7 +227,7 @@ fn trace_reads_are_bounded_and_do_not_replace_a_newer_run_or_inspector() {
         data: Data::Window(
             Window {
                 total: 100,
-                location: Some((40, 3, 3)),
+                location: Some((40, 3)),
                 ..Default::default()
             },
             "stale navigation".into(),
@@ -273,7 +289,7 @@ fn session_chooser_locates_a_cold_target_and_reconnect_uses_stable_sequence() {
     );
     let target = transcript.sessions(0, true).items[7].clone();
     let mut window = transcript.window(View::Readable, 5, 20);
-    window.location = Some((80, target.row, 7));
+    window.location = Some((80, target.row));
     reply(
         &mut h.state_mut().model,
         Data::Window(window, "complete".into(), 0),
@@ -436,4 +452,114 @@ fn partial_history_never_assigns_an_unseen_session_to_the_previous_one() {
     assert!(window.rows[0].status.contains("Retained"));
     assert!(window.rows[0].session.is_none());
     assert!(transcript.raw(20, 0).unwrap().retained.is_some());
+}
+
+#[test]
+fn a_pending_session_jump_uses_the_latest_history_window() {
+    for target_still_visible in [true, false] {
+        let mut transcript = Transcript::default();
+        for n in 25..=60 {
+            transcript
+                .apply(memory(n, n as u64 * 10, "loaded", "session memory"), None)
+                .unwrap();
+        }
+        let mut app = Workbench::default();
+        app.model.launcher = false;
+        app.model.connection = ConnectionState::Connected;
+        app.model.selected = Some(RunId::new("simulation").unwrap());
+        app.model.following = false;
+        app.model.window = transcript.window(View::Readable, 0, 4);
+        let mut h = Harness::builder()
+            .with_size([900.0, 600.0])
+            .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+        h.run();
+        h.get_by_role(egui::accesskit::Role::ComboBox).click();
+        h.run();
+        h.get_by_label("Session 30 · s30").click();
+        h.run();
+        let target = transcript.sessions(0, false).items[5].clone();
+        let mut located = transcript.window(View::Readable, 3, 20);
+        located.location = Some((300, target.row));
+        reply(
+            &mut h.state_mut().model,
+            Data::Window(located, "located".into(), 0),
+        );
+        // Both replies are applied before the UI renders. Earlier sessions move
+        // Session 30 from row 5 to row 29; the old absolute position is invalid.
+        for n in 1..25 {
+            transcript
+                .apply(memory(n, n as u64 * 10, "missing", ""), None)
+                .unwrap();
+        }
+        let start = if target_still_visible { 27 } else { 3 };
+        reply(
+            &mut h.state_mut().model,
+            Data::Window(
+                transcript.window(View::Readable, start, 20),
+                "backfilled".into(),
+                0,
+            ),
+        );
+        h.state_mut().model.commands.clear();
+        h.run_steps(20);
+        if !target_still_visible {
+            assert!(
+                h.state()
+                    .model
+                    .commands
+                    .iter()
+                    .any(|c| matches!(c.action, Action::Locate(300, View::Readable))),
+                "a displaced target needs a fresh location, not completion at the stale index"
+            );
+            let mut located = transcript.window(View::Readable, 27, 20);
+            located.location = Some((300, target.row));
+            reply(
+                &mut h.state_mut().model,
+                Data::Window(located, "relocated".into(), 0),
+            );
+            h.run_steps(20);
+        }
+        h.get_by_label("Inspect source 300");
+        assert!(
+            h.query_by_label("Inspect source 290").is_none(),
+            "the target session must be the top activity"
+        );
+        assert!(!h.state().model.following);
+    }
+}
+
+#[test]
+fn a_checkpoint_waits_for_its_own_session_boundary_during_backfill() {
+    let mut transcript = Transcript::default();
+    transcript.apply(memory(1, 1, "missing", ""), None).unwrap();
+    let mut checkpoint: EventEnvelope = serde_json::from_str(
+        include_str!("../../playtime-protocol/tests/fixtures/two-session/events.jsonl")
+            .lines()
+            .nth(12)
+            .unwrap(),
+    )
+    .unwrap();
+    checkpoint.run_id = RunId::new("simulation").unwrap();
+    assert_eq!(checkpoint.data["checkpoint"]["session_id"], "s2");
+    let sequence = checkpoint.sequence.get();
+    transcript.apply(checkpoint, None).unwrap();
+    let id = transcript.row_for(sequence).unwrap();
+    for view in [View::Readable, View::Full] {
+        let at = transcript.position(view, id).unwrap();
+        let row = &transcript.window(view, at, 1).rows[0];
+        assert!(
+            row.session.is_none(),
+            "an s2 checkpoint must not inherit s1's ordinal"
+        );
+        assert!(matches!(&row.trace, Some(TraceContent::Checkpoint(s)) if s.as_str() == "s2"));
+    }
+    transcript
+        .apply(memory(2, sequence - 1, "loaded", "delivered to s2"), None)
+        .unwrap();
+    for view in [View::Readable, View::Full] {
+        let at = transcript.position(view, id).unwrap();
+        let row = &transcript.window(view, at, 1).rows[0];
+        assert_eq!(row.session.as_ref().unwrap().session, "s2");
+        assert_eq!(row.session.as_ref().unwrap().ordinal, 2);
+    }
 }

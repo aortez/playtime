@@ -96,7 +96,8 @@ pub struct Window {
     /// The run's progress, for the header.
     pub progress: Progress,
     pub sessions: Sessions,
-    pub location: Option<(u64, usize, usize)>,
+    /// Requested sequence and resolved row identity; never cache a row position.
+    pub location: Option<(u64, usize)>,
 }
 #[derive(Clone, Debug)]
 pub struct SourcePage {
@@ -129,6 +130,7 @@ struct Group {
     display: Display,
     trace: Option<TraceContent>,
     session_id: Option<String>,
+    session_start: bool,
 }
 /// How the readable view shows a group. Full shows every group as a card.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -506,6 +508,16 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
                 p.finished = matches!(known.as_ref(), KnownEvent::RunFinished { .. });
                 p.role = role(known);
                 p.progress = Update::event(known);
+                p.session_id = match known.as_ref() {
+                    KnownEvent::SessionStarted { session_id, .. }
+                    | KnownEvent::SessionEnded { session_id, .. }
+                    | KnownEvent::RequestFinished { session_id, .. }
+                    | KnownEvent::CommandFinished { session_id, .. } => Some(session_id),
+                    KnownEvent::PhaseChanged { session_id, .. } => session_id.as_ref(),
+                    KnownEvent::CheckpointPublished { checkpoint } => Some(&checkpoint.session_id),
+                    _ => None,
+                }
+                .map(|id| id.as_str().to_owned());
                 match known.as_ref() {
                     KnownEvent::SessionStarted {
                         session_id,
@@ -686,6 +698,7 @@ impl Transcript {
                 display: p.display.clone(),
                 trace: p.trace.clone(),
                 session_id: p.session_id.clone(),
+                session_start: p.session.is_some(),
             });
             if let Some(family) = &p.display.family {
                 self.families
@@ -835,6 +848,21 @@ impl Transcript {
                 .unwrap_or(order.len())
         });
         (!order.is_empty()).then(|| index.min(order.len() - 1))
+    }
+    /// Resolve a sequence to a visible row. A canonical session start can be
+    /// replaced in Readable by its exact delivery observation during backfill.
+    pub fn location(&self, view: View, sequence: u64) -> Option<(usize, usize)> {
+        let mut id = self.row_for(sequence)?;
+        let group = &self.groups[id];
+        if view == View::Readable
+            && group.session_start
+            && let Some(session) = group.session_id.as_ref()
+            && let Some(sequence) = self.session_keys.get(session)
+        {
+            id = self.sessions[sequence].row;
+        }
+        let at = self.position(view, id)?;
+        Some((*self.order(view).get(at)?, at))
     }
     fn put(&mut self, seq: u64, raw: Arc<str>, parts: Vec<Section>, readable: Vec<Section>) {
         if let Some(old) = self.cache.remove(&seq) {
