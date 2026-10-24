@@ -191,7 +191,7 @@ struct Reads {
     run: RunId,
     tag: Tag,
     out: Out,
-    outages: Arc<Mutex<usize>>,
+    activity: Arc<Mutex<[usize; 2]>>,
 }
 impl Reads {
     async fn retry<T, F, R>(&self, request: F) -> Result<T>
@@ -199,39 +199,56 @@ impl Reads {
         F: FnMut() -> R,
         R: std::future::Future<Output = playtime_client::Result<T>>,
     {
-        let mut recovering = false;
-        let result = crate::read_retry::read(observation_retry(), request, || {
-            recovering = true;
-            async {
-                let mut outages = self.outages.lock().await;
-                *outages += 1;
-                if *outages == 1 {
-                    self.out
-                        .send(
-                            self.tag,
-                            Some(self.run.clone()),
-                            Data::Connection(ConnectionState::Reconnecting),
-                        )
-                        .await;
-                }
-            }
+        let mut recovering = None;
+        let result = crate::read_retry::read(observation_retry(), request, |waiting| {
+            let previous = recovering.replace(waiting);
+            self.activity(previous, Some(waiting))
         })
         .await;
-        if recovering {
-            let mut outages = self.outages.lock().await;
-            *outages -= 1;
-            let state = match &result {
-                Err(error) => Some(ConnectionState::Error(error.to_string())),
-                Ok(_) if *outages == 0 => Some(ConnectionState::Connected),
-                _ => None,
-            };
-            if let Some(state) = state {
+        if recovering.is_some() {
+            self.activity(recovering, None).await;
+            if let Err(error) = &result {
                 self.out
-                    .send(self.tag, Some(self.run.clone()), Data::Connection(state))
+                    .send(
+                        self.tag,
+                        Some(self.run.clone()),
+                        Data::Connection(ConnectionState::Error(error.to_string())),
+                    )
                     .await;
             }
         }
         result.map_err(safe)
+    }
+    // Shared counts prevent a successful poll from clearing another read's
+    // waiting/reconnecting state. Category changes retain the original deadline.
+    async fn activity(&self, previous: Option<bool>, next: Option<bool>) {
+        let mut activity = self.activity.lock().await;
+        let before = *activity;
+        if let Some(waiting) = previous {
+            activity[usize::from(waiting)] -= 1;
+        }
+        if let Some(waiting) = next {
+            activity[usize::from(waiting)] += 1;
+        }
+        if (before[1] == 0) != (activity[1] == 0) {
+            self.out
+                .send(
+                    self.tag,
+                    Some(self.run.clone()),
+                    Data::ArchiveWaiting(activity[1] > 0),
+                )
+                .await;
+        }
+        if (before[0] == 0) != (activity[0] == 0) {
+            let state = if activity[0] > 0 {
+                ConnectionState::Reconnecting
+            } else {
+                ConnectionState::Connected
+            };
+            self.out
+                .send(self.tag, Some(self.run.clone()), Data::Connection(state))
+                .await;
+        }
     }
     async fn run(&self) -> Result<RunView> {
         self.retry(|| self.client.run(&self.run)).await
@@ -391,65 +408,7 @@ fn action_error(action: &Action, error: String) -> Data {
         _ => Data::Error(error),
     }
 }
-pub fn prepare_preview(value: Preview) -> PreviewView {
-    let limits = &value.parameters.limits;
-    let workshop = &value.parameters.workshop;
-    let summary = vec![
-        format!(
-            "Mode: {} · revision {}",
-            progress::mode_words(value.mode),
-            value.preview_revision
-        ),
-        format!(
-            "Seeds: {} files · {} bytes",
-            value.seeds.files, value.seeds.bytes
-        ),
-        format!(
-            "Limits: {} sessions · {} turns/session · {} seconds",
-            limits.sessions, limits.work_turns_per_session, limits.wall_seconds
-        ),
-        format!(
-            "Tokens: {} total · {} per call · {} handoff · {} context",
-            limits.generated_tokens,
-            limits.tokens_per_call,
-            limits.handoff_tokens,
-            limits.context_tokens
-        ),
-        format!(
-            "Timeouts: {}s model · {}s command",
-            limits.model_seconds, limits.command_seconds
-        ),
-        format!(
-            "Output: {} bytes · memory: {} bytes · log: {} bytes",
-            limits.output_bytes, limits.memento_bytes, limits.log_bytes
-        ),
-        format!(
-            "Workshop resources: {} cores · {} MiB RAM · {} MiB workspace · {} PIDs",
-            workshop.cpu_cores,
-            workshop.memory_bytes.get() / (1 << 20),
-            workshop.workspace_bytes.get() / (1 << 20),
-            workshop.pids
-        ),
-        format!(
-            "Sampling seed: {} · memory condition: {}",
-            value.parameters.sampling_seed,
-            progress::memory_words(value.parameters.memory_condition)
-        ),
-        format!("Model: {}", value.model_identity),
-        format!("Workshop: {}", value.workshop_identity),
-        if value.readiness.ready {
-            "Ready to launch".into()
-        } else {
-            format!("Not ready: {}", value.readiness.reasons.join("; "))
-        },
-    ];
-    let source = transcript::source_page(&serde_json::to_string_pretty(&value).unwrap(), 0);
-    PreviewView {
-        value,
-        summary,
-        source,
-    }
-}
+pub use crate::preview::prepare as prepare_preview;
 pub fn prepare_run(value: RunView) -> RunViewData {
     let summary = progress::details(&value);
     let source = transcript::source_page(&serde_json::to_string_pretty(&value).unwrap(), 0);
@@ -650,7 +609,7 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
             out.send(
                 tag,
                 None,
-                Data::PreviewPage(transcript::source_page(
+                Data::PreviewPage(crate::preview::source_page(
                     &serde_json::to_string_pretty(&preview).map_err(|e| e.to_string())?,
                     offset,
                 )),
@@ -1289,8 +1248,9 @@ async fn observe(
             run: run.clone(),
             tag,
             out: out.clone(),
-            outages: Arc::new(Mutex::new(0)),
+            activity: Arc::new(Mutex::new([0; 2])),
         };
+        let mut waiting = false;
         let anchors = loop {
             let view = reads.run().await?;
             let anchors = view.event_anchors.clone();
@@ -1301,7 +1261,14 @@ async fn observe(
             )
             .await;
             if let Some(anchors) = anchors {
+                if waiting {
+                    reads.activity(Some(true), None).await;
+                }
                 break anchors;
+            }
+            if !waiting {
+                reads.activity(None, Some(true)).await;
+                waiting = true;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         };

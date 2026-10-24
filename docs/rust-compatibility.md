@@ -317,3 +317,18 @@ Canonical events retain their explicit session IDs, so an s2 checkpoint stays
 unresolved until s2's boundary is indexed rather than inheriting s1's ordinal.
 Regression coverage includes backfill between reply application and rendering,
 a target displaced out of the window, and a coalesced canonical session start.
+
+
+## Readable launcher and file inspection (#129)
+
+Frozen previews now have prepared sections with explicit unavailable metadata,
+named seed sizes, wrapped protocol/inventory and paged full-source disclosure.
+Run rows show recipe and UTC admission time; connection descriptions and per-file
+identities move to Details. Fixture/scripted provenance remains explicit.
+Observation reads treat `evidence_not_ready` as bounded archive waiting while
+transport, identity and authorization failures retain their distinct behavior.
+These changes affect only UI presentation/read retries, with no API, archive,
+controller, service ledger or frozen Python changes. Rendering baselines change
+intentionally for the connection bar/run list and launcher/files; new wide/narrow
+live-profile previews, expanded text, file drawer and archive-wait views cover the
+new states with synthetic inputs on the pinned software Vulkan renderer.
