@@ -6,32 +6,7 @@ use std::num::NonZeroU64;
 
 impl FrozenRecipe {
     pub fn resolve_model_capabilities(&self) -> Result<RecipeModelCapabilities> {
-        // This reviewed fallback is scoped to the complete lock, including the
-        // backend version. Model discovery/registration will extend this resolver.
-        let locked: Value = serde_json::from_slice(MODEL_LOCK)?;
-        if self.model_lock != locked {
-            return Err(Error::Invalid(
-                "model settings are unavailable for this identity".into(),
-            ));
-        }
-        let info = &locked["definition"]["model_info"];
-        let architecture = info["general.architecture"].as_str().unwrap_or("");
-        Ok(RecipeModelCapabilities {
-            model_digest: locked["digest"].as_str().unwrap().into(),
-            backend_version: locked["ollama_version"].as_str().unwrap().into(),
-            provenance: "reviewed-gpt-oss-ollama-0.32.3-v1; context ceiling from locked model_info"
-                .into(),
-            reasoning: vec![
-                RecipeReasoning::ModelDefault,
-                RecipeReasoning::Low,
-                RecipeReasoning::Medium,
-                RecipeReasoning::High,
-            ],
-            default_reasoning: None,
-            context_ceiling: info[format!("{architecture}.context_length")]
-                .as_u64()
-                .filter(|n| *n > 0),
-        })
+        reviewed_model_capabilities(&self.model_lock)
     }
     pub fn model_settings(&self) -> Result<RecipeModelSettings> {
         let m = &self.recipe.model;
@@ -113,6 +88,36 @@ impl FrozenRecipe {
         }
         Ok(())
     }
+}
+
+/// Read-only capability evidence, scoped to the complete reviewed lock.
+pub fn reviewed_model_capabilities(model_lock: &Value) -> Result<RecipeModelCapabilities> {
+    // This reviewed fallback is scoped to the complete lock, including the
+    // backend version. Model discovery/registration will extend this resolver.
+    let locked: Value = serde_json::from_slice(MODEL_LOCK)?;
+    if *model_lock != locked {
+        return Err(Error::Invalid(
+            "model settings are unavailable for this identity".into(),
+        ));
+    }
+    let info = &locked["definition"]["model_info"];
+    let architecture = info["general.architecture"].as_str().unwrap_or("");
+    Ok(RecipeModelCapabilities {
+        model_digest: locked["digest"].as_str().unwrap().into(),
+        backend_version: locked["ollama_version"].as_str().unwrap().into(),
+        provenance: "reviewed-gpt-oss-ollama-0.32.3-v1; context ceiling from locked model_info"
+            .into(),
+        reasoning: vec![
+            RecipeReasoning::ModelDefault,
+            RecipeReasoning::Low,
+            RecipeReasoning::Medium,
+            RecipeReasoning::High,
+        ],
+        default_reasoning: None,
+        context_ceiling: info[format!("{architecture}.context_length")]
+            .as_u64()
+            .filter(|n| *n > 0),
+    })
 }
 
 #[cfg(test)]

@@ -49,7 +49,7 @@
             }
           }
         },
-        "description": "stale_preview, source_conflict, head_conflict, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready, release_refused"
+        "description": "stale_preview, model_metadata_changed, source_conflict, head_conflict, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready, release_refused"
       },
       "Error413": {
         "content": {
@@ -89,7 +89,7 @@
             }
           }
         },
-        "description": "too_many_observers"
+        "description": "too_many_observers, model_discovery_busy"
       },
       "Error500": {
         "content": {
@@ -754,6 +754,38 @@
         ],
         "type": "object"
       },
+      "DiscoveredModel": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "loaded": {
+            "$ref": "#/components/schemas/ModelLoaded"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ModelMetadataStatus"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "loaded"
+        ],
+        "type": "object"
+      },
       "Enforcement": {
         "enum": [
           "requested",
@@ -1079,6 +1111,148 @@
         "enum": [
           "self",
           "self_plus_evidence"
+        ],
+        "type": "string"
+      },
+      "ModelInspectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "ModelInspection": {
+        "additionalProperties": false,
+        "properties": {
+          "advertised_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "backend_version": {
+            "type": "string"
+          },
+          "capability_provenance": {
+            "type": "string"
+          },
+          "definition_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reviewed_capabilities": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RecipeModelCapabilities"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ModelMetadataStatus"
+          }
+        },
+        "required": [
+          "schema_version",
+          "observed_at",
+          "name",
+          "backend_version",
+          "status",
+          "advertised_capabilities",
+          "capability_provenance"
+        ],
+        "type": "object"
+      },
+      "ModelInventory": {
+        "additionalProperties": false,
+        "properties": {
+          "backend_version": {
+            "type": "string"
+          },
+          "loaded_warning": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredModel"
+            },
+            "type": "array"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "observed_at",
+          "backend_version",
+          "models"
+        ],
+        "type": "object"
+      },
+      "ModelLoaded": {
+        "enum": [
+          "loaded",
+          "not_loaded",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "ModelMetadataStatus": {
+        "enum": [
+          "unverified",
+          "rejected",
+          "missing",
+          "changed",
+          "candidate"
         ],
         "type": "string"
       },
@@ -2682,6 +2856,169 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LaunchResponse"
+                }
+              }
+            },
+            "description": "Successful response",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Playtime-Service-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/api/v1/models": {
+      "get": {
+        "operationId": "model_inventory",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelInventory"
+                }
+              }
+            },
+            "description": "Successful response",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Playtime-Service-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/api/v1/models/inspect": {
+      "post": {
+        "operationId": "inspect_model",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Playtime-Service-ID",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ServiceId"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelInspectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelInspection"
                 }
               }
             },

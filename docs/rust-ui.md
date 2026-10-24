@@ -27,6 +27,30 @@ and [narrow](../crates/playtime-ui/tests/snapshots/recipe-editor-narrow.png).
 The model settings form has separate [wide](../crates/playtime-ui/tests/snapshots/model-settings.png)
 and [narrow](../crates/playtime-ui/tests/snapshots/model-settings-narrow.png) views.
 
+## Installed model browser
+
+With a configured Ollama endpoint, choose **Models** in the connection bar.
+**Refresh installed models** reads a bounded inventory; choose an exact model
+name to inspect its digest, definition fingerprint and capability evidence.
+Equal-digest aliases are labeled. Installed state and advisory loaded state are
+separate, and loaded does not imply GPU fit. Unknown reasoning/context support
+stays unknown; remote/cloud models are rejected.
+
+The browser never changes the recipe or its execution identity. Registration and
+recipe model selection are subsequent work (#133/#134). A selected recipe model
+that is absent remains visibly missing, without a fallback. An inspection that
+disproves the cached inventory marks it stale until an explicit inventory refresh.
+Metadata failures retain stale inventory with an explicit notice and timestamp. Refresh, close and
+reconnect supersede pending replies; work runs outside rendering and observation
+continues independently. Reopening refreshes; there is no background polling.
+
+Reviewed views: [wide](../crates/playtime-ui/tests/snapshots/model-browser.png),
+[narrow](../crates/playtime-ui/tests/snapshots/model-browser-narrow.png),
+[missing selection](../crates/playtime-ui/tests/snapshots/model-browser-missing.png),
+[removed after refresh](../crates/playtime-ui/tests/snapshots/model-browser-removed.png),
+and [unavailable metadata](../crates/playtime-ui/tests/snapshots/model-browser-offline.png).
+See the [metadata API contract](rust-http-api.md#read-only-ollama-model-discovery).
+
 ## Frozen preview and file inspection
 
 The launcher groups its frozen preview into Prompt, Run limits, Model, Workshop,

@@ -356,6 +356,18 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
             no_query(&request)?;
             json(&openapi(), status, limits.json_bytes)
         }
+        ("GET", ["api", "v1", "models"]) => {
+            no_query(&request)?;
+            json(&app.model_inventory().await?, 200, limits.json_bytes)
+        }
+        ("POST", ["api", "v1", "models", "inspect"]) => {
+            no_query(&request)?;
+            json(
+                &app.inspect_model(body(request, limits).await?).await?,
+                200,
+                limits.json_bytes,
+            )
+        }
         ("GET", ["api", "v1", "recipes"]) => json(
             &app.recipes(query(&request, limits)?).await?,
             status,

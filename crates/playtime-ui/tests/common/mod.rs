@@ -148,6 +148,7 @@ pub async fn recipe_editor() -> Workbench {
     app.model.preview = None;
     app.model.authoring.enabled = true;
     app.model.authoring.definition = Some(playtime_ui::authoring::DefinitionView {
+        model_name: Some("gpt-oss:20b".into()),
         settings: None,
         inherited: serde_json::to_string_pretty(&definition.inherited).unwrap(),
         value: definition,

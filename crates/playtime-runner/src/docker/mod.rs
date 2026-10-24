@@ -11,6 +11,7 @@ use std::{net::IpAddr, path::PathBuf};
 
 mod definition;
 mod model_settings;
+pub use model_settings::reviewed_model_capabilities;
 mod recipe;
 pub use definition::FrozenRecipe;
 pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};

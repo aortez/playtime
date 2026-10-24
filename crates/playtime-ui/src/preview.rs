@@ -256,6 +256,11 @@ pub fn prepare(value: Preview) -> PreviewView {
         .unwrap_or_else(|| "Inventory text unavailable in this preview.".into());
     let revision = excerpt(value.preview_revision.as_str(), 12);
     let source = source_page(&serde_json::to_string_pretty(&value).unwrap(), 0);
+    let model_name = value
+        .model_identity
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let prompt = excerpt(&value.prompt, EXCERPT_BYTES);
     let protocol = excerpt(&value.protocol, EXCERPT_BYTES);
     PreviewView {
@@ -264,6 +269,7 @@ pub fn prepare(value: Preview) -> PreviewView {
         prompt,
         protocol,
         inventory,
+        model_name,
         revision,
         source,
     }

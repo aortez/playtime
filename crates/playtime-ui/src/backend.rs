@@ -304,6 +304,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
     let mut jobs = JoinSet::new();
     let previews = Arc::new(Semaphore::new(2));
     let mut animation: Option<CancellationToken> = None;
+    let mut model_job: Option<tokio::task::JoinHandle<()>> = None;
     let mut observer: Option<(
         CancellationToken,
         mpsc::Sender<Command>,
@@ -331,6 +332,8 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                 let tag = command.tag;
                 if matches!(command.action, Action::Connect(_) | Action::StopObservation | Action::Observe(_) | Action::StopGif | Action::PlayGif(..) | Action::Checkpoint(..) | Action::Content(..) | Action::Retained(..))
                     && let Some(token) = animation.take() { token.cancel(); }
+                if matches!(command.action,Action::Connect(_)|Action::StopModelDiscovery|Action::ModelInventory|Action::InspectModel(_)) && let Some(job)=model_job.take() {job.abort();let _=job.await;}
+                if matches!(command.action,Action::StopModelDiscovery) {continue;}
                 if let Action::Connect(options) = command.action {
                     if jobs.len() >= 16 { out.send(tag, None, Data::Connection(ConnectionState::Error("Client work limit reached; retry Reconnect after current work finishes".into()))).await; continue; }
                     connection_tag = tag.connection;
@@ -366,6 +369,11 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     continue;
                 }
                 let Some(s) = &session else { out.send(tag, None, action_error(&command.action, "Connect to a service first".into())).await; continue; };
+                if matches!(command.action,Action::ModelInventory|Action::InspectModel(_)) {
+                    let session=s.clone();let out=out.clone();let previews=previews.clone();
+                    model_job=Some(tokio::spawn(async move {let action=command.action.clone();if let Err(error)=perform(&session,&out,command,previews).await {out.send(tag,None,action_error(&action,error)).await;}}));
+                    continue;
+                }
                 if jobs.len() >= 16 { out.send(tag, None, action_error(&command.action, "Client work limit reached; retry the explicit action".into())).await; continue; }
                 let session = s.clone(); let out = out.clone(); let previews = previews.clone();
                 jobs.spawn(async move {
@@ -386,11 +394,16 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
         cancel.cancel();
         let _ = handle.await;
     }
+    if let Some(job) = model_job {
+        job.abort();
+        let _ = job.await;
+    }
     jobs.abort_all();
     while jobs.join_next().await.is_some() {}
 }
 fn action_error(action: &Action, error: String) -> Data {
     match action {
+        Action::ModelInventory | Action::InspectModel(_) => Data::ModelError(error),
         Action::Trace(_, sequence, _) => Data::Trace(
             *sequence,
             TraceView {
@@ -515,6 +528,25 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
     let tag = command.tag;
     let client = &s.client;
     match command.action {
+        Action::ModelInventory => {
+            let value = client.model_inventory().await.map_err(safe)?;
+            out.send(
+                tag,
+                None,
+                Data::ModelInventory(crate::models::inventory(value)),
+            )
+            .await;
+        }
+        Action::InspectModel(request) => {
+            let value = client.inspect_model(&request).await.map_err(safe)?;
+            out.send(
+                tag,
+                None,
+                Data::ModelInspection(crate::models::inspection(value)),
+            )
+            .await;
+        }
+
         Action::Definition(id) => {
             let value = client.recipe_definition(&id).await.map_err(safe)?;
             let settings = if client
@@ -553,6 +585,11 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 tag,
                 None,
                 Data::Definition(Box::new(crate::authoring::DefinitionView {
+                    model_name: value
+                        .inherited
+                        .pointer("/model_lock/name")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
                     value,
                     inherited,
                     settings,
