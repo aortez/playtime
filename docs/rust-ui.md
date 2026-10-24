@@ -38,14 +38,16 @@ stays unknown; remote/cloud models are rejected.
 
 The browser never changes the recipe or its execution identity. Registration and
 recipe model selection are subsequent work (#133/#134). A selected recipe model
-that is absent remains visibly missing, without a fallback. Metadata failures
-retain stale inventory with an explicit notice and timestamp. Refresh, close and
+that is absent remains visibly missing, without a fallback. An inspection that
+disproves the cached inventory marks it stale until an explicit inventory refresh.
+Metadata failures retain stale inventory with an explicit notice and timestamp. Refresh, close and
 reconnect supersede pending replies; work runs outside rendering and observation
 continues independently. Reopening refreshes; there is no background polling.
 
 Reviewed views: [wide](../crates/playtime-ui/tests/snapshots/model-browser.png),
 [narrow](../crates/playtime-ui/tests/snapshots/model-browser-narrow.png),
 [missing selection](../crates/playtime-ui/tests/snapshots/model-browser-missing.png),
+[removed after refresh](../crates/playtime-ui/tests/snapshots/model-browser-removed.png),
 and [unavailable metadata](../crates/playtime-ui/tests/snapshots/model-browser-offline.png).
 See the [metadata API contract](rust-http-api.md#read-only-ollama-model-discovery).
 

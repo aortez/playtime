@@ -635,8 +635,17 @@ impl Model {
             }
             Data::ModelInspection(value) => {
                 self.models.pending = false;
-                self.models.notice =
-                    "Read-only inspection complete. Recipe selection is unchanged.".into();
+                self.models.stale |= self
+                    .models
+                    .inventory
+                    .as_ref()
+                    .is_some_and(|inventory| inventory.conflicts_with(&value.value));
+                self.models.notice = if self.models.stale {
+                    "Cached inventory needs refresh; inspection reflects the latest read."
+                } else {
+                    "Read-only inspection complete. Recipe selection is unchanged."
+                }
+                .into();
                 self.models.inspection = Some(value);
             }
             Data::ModelError(error) => {

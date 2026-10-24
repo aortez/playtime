@@ -144,6 +144,55 @@ async fn authenticated_browser_keeps_metadata_separate_from_execution() {
     assert_eq!(again.digest, inspected.digest);
     assert_eq!(again.definition_sha256, inspected.definition_sha256);
     assert_eq!(again.reviewed_capabilities, inspected.reviewed_capabilities);
+    // Generated Modelfiles include local paths, which are not model identity.
+    // Every execution identity field still has to match the reviewed profile.
+    let original_show = metadata.0.lock().unwrap().show.clone();
+    for changed_field in ["modelfile", "digest", "version", "template", "capabilities"] {
+        {
+            let mut state = metadata.0.lock().unwrap();
+            match changed_field {
+                "modelfile" => {
+                    state.show["modelfile"] = json!(lock["modelfile"].as_str().unwrap().replace(
+                        "/usr/share/ollama/.ollama/models",
+                        "/home/operator/.ollama/models"
+                    ));
+                    let mut relocated_lock = lock.clone();
+                    relocated_lock["modelfile"] = state.show["modelfile"].clone();
+                    assert_ne!(relocated_lock, lock);
+                    // Discovery must not relax frozen recipe validation.
+                    assert!(
+                        playtime_runner::docker::reviewed_model_capabilities(&relocated_lock)
+                            .is_err()
+                    );
+                }
+                "digest" => state.tags["models"][0]["digest"] = json!("f".repeat(64)),
+                "version" => state.version = "unreviewed-version".into(),
+                "template" => state.show["template"] = json!("changed template"),
+                "capabilities" => state.show["capabilities"] = json!(["completion", "tools"]),
+                _ => unreachable!(),
+            }
+        }
+        let detail = client
+            .inspect_model(&ModelInspectRequest {
+                name: Profile::MODEL.into(),
+                expected_digest: None,
+            })
+            .await
+            .unwrap();
+        if changed_field == "modelfile" {
+            assert_eq!(detail.definition_sha256, inspected.definition_sha256);
+            assert_eq!(
+                detail.reviewed_capabilities,
+                inspected.reviewed_capabilities
+            );
+        } else {
+            assert!(detail.reviewed_capabilities.is_none(), "{changed_field}");
+        }
+        let mut state = metadata.0.lock().unwrap();
+        state.show = original_show.clone();
+        state.version = Profile::VERSION.into();
+        state.tags["models"][0]["digest"] = json!(Profile::DIGEST);
+    }
     let alias = client
         .inspect_model(&request("alias/quoted\"model:latest"))
         .await

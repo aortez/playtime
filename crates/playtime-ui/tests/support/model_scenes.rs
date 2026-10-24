@@ -52,6 +52,15 @@ pub fn inspection(name: &str) -> ModelInspection {
         reviewed_capabilities: None,
     }
 }
+pub fn missing_inspection(name: &str) -> ModelInspection {
+    let mut value = inspection(name);
+    value.status = ModelMetadataStatus::Missing;
+    value.digest = None;
+    value.definition_sha256 = None;
+    value.advertised_capabilities.clear();
+    value.reason = Some("Selected model is not installed; no replacement was selected".into());
+    value
+}
 pub fn prepare(app: &mut Workbench, missing: bool, offline: bool) {
     app.model.models.enabled = true;
     app.model.models.open = true;

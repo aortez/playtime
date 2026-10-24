@@ -25,6 +25,21 @@ fn failure(error: Failure) -> ApiError {
         _ => "backend_unavailable",
     })
 }
+fn reviewed_capabilities(value: &ModelInspection) -> Option<RecipeModelCapabilities> {
+    let locked: serde_json::Value =
+        serde_json::from_slice(playtime_runner::docker::MODEL_LOCK).ok()?;
+    // Discovery has already fingerprinted the canonical definition. Match the
+    // same identity fields the execution adapter verifies, not the generated
+    // Modelfile's host-specific blob path. Keep the reviewed lock itself intact.
+    if locked["name"].as_str() != Some(value.name.as_str())
+        || locked["digest"].as_str() != value.digest.as_deref()
+        || locked["ollama_version"].as_str() != Some(value.backend_version.as_str())
+        || locked["definition_sha256"].as_str() != value.definition_sha256.as_deref()
+    {
+        return None;
+    }
+    playtime_runner::docker::reviewed_model_capabilities(&locked).ok()
+}
 impl ModelBrowser {
     pub fn new(endpoint: &str) -> Result<Self> {
         let endpoint = Endpoint::parse(endpoint).map_err(failure)?;
@@ -173,26 +188,7 @@ impl ModelBrowser {
                         "Current memento harness requires tools; model does not advertise tools"
                     }.into()
                 );
-                let definition = serde_json::Value::Object(
-                    [
-                        "template",
-                        "parameters",
-                        "model_info",
-                        "details",
-                        "capabilities",
-                    ]
-                    .into_iter()
-                    .map(|k| {
-                        (
-                            k.into(),
-                            show.get(k).cloned().unwrap_or(serde_json::Value::Null),
-                        )
-                    })
-                    .collect(),
-                );
-                let lock = serde_json::json!({"name":value.name,"digest":value.digest,"ollama_version":value.backend_version,"definition_sha256":value.definition_sha256,"definition":definition,"modelfile":show.get("modelfile")});
-                value.reviewed_capabilities =
-                    playtime_runner::docker::reviewed_model_capabilities(&lock).ok();
+                value.reviewed_capabilities = reviewed_capabilities(&value);
                 if let Some(c) = &value.reviewed_capabilities {
                     value.capability_provenance = c.provenance.clone();
                 }

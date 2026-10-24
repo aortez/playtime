@@ -20,8 +20,10 @@ The separate metadata reader calls only version, tags, show and ps. It preserves
 exact names, including aliases, and fingerprints the canonical definition using
 the existing identity rules. Inspection rechecks tags and backend version after
 show. Missing, changed, incomplete, unsupported-version and remote/cloud identities
-remain explicit; remote markers in either tags or show are rejected. The current
-complete reviewed lock alone supplies reviewed reasoning/context claims. Other
+remain explicit; remote markers in either tags or show are rejected. Only an exact
+match for the reviewed execution identity supplies reasoning/context claims;
+generated Modelfile blob paths are host observations.
+The frozen recipe resolver still validates its complete lock. Other
 capability lists are advertised metadata, not inferred support.
 
 Inventory is one bounded snapshot (256 entries, sorted by exact name), not an

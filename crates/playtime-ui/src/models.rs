@@ -7,6 +7,23 @@ pub struct InventoryView {
     pub value: ModelInventory,
     pub rows: Vec<(String, String)>,
 }
+impl InventoryView {
+    pub(crate) fn conflicts_with(&self, inspection: &ModelInspection) -> bool {
+        if self.value.backend_version != inspection.backend_version {
+            return true;
+        }
+        let cached = self.value.models.iter().find(|m| m.name == inspection.name);
+        match (cached, inspection.status) {
+            (None, ModelMetadataStatus::Missing) => false,
+            (Some(_), ModelMetadataStatus::Missing) | (None, _) => true,
+            (Some(model), _) => {
+                model.digest != inspection.digest
+                    || (model.status == ModelMetadataStatus::Rejected)
+                        != (inspection.status == ModelMetadataStatus::Rejected)
+            }
+        }
+    }
+}
 #[derive(Clone, Debug)]
 pub struct InspectionView {
     pub value: ModelInspection,

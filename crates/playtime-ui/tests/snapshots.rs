@@ -96,6 +96,13 @@ async fn reviewed_workbench_screens() {
             false,
         ),
         (
+            "model-browser-removed",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        (
             "model-browser-offline",
             true,
             false,
@@ -204,6 +211,19 @@ async fn reviewed_workbench_screens() {
         };
         if name.starts_with("model-browser") {
             model_scenes::prepare(&mut app, name.contains("missing"), name.contains("offline"));
+            if name == "model-browser-removed" {
+                app.model
+                    .inspect_model(app.model.models.selection.clone().unwrap());
+                app.model.apply(playtime_ui::model::Reply {
+                    tag: app.model.tag,
+                    run: None,
+                    data: playtime_ui::model::Data::ModelInspection(
+                        playtime_ui::models::inspection(model_scenes::missing_inspection(
+                            "gpt-oss:20b",
+                        )),
+                    ),
+                });
+            }
         }
         if matches!(name, "running" | "ended") {
             progress_screen(&mut app, name == "ended");

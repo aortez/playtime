@@ -26,6 +26,14 @@ The workbench adds reviewed wide/narrow, missing-model and stale-metadata browse
 screenshots. Discovery does not register models or expand execution support; the
 shared reviewed capability resolver still requires the exact existing lock.
 
+Review fixes match discovery capabilities by the exact execution identity fields
+(request name, digest, backend version and canonical definition fingerprint), so
+a host-specific path in the generated Modelfile cannot hide known support. The
+frozen recipe resolver keeps its complete-lock comparison. Inspection that
+contradicts cached inventory now marks it stale until an explicit inventory
+refresh; the removed-model screenshot records this behavior. Wire schemas and
+execution identities are unchanged.
+
 ## Contract notes
 
 Rust references use opaque IDs rather than exposing path semantics. HTTP, event

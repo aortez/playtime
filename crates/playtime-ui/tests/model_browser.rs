@@ -100,6 +100,66 @@ async fn missing_selection_and_equal_digest_aliases_remain_explicit() {
 }
 
 #[tokio::test]
+async fn inspection_conflicts_mark_cached_inventory_stale_until_refresh() {
+    for change in ["missing", "digest", "version", "remote", "unchanged"] {
+        let mut app = common::recipe_editor().await;
+        model_scenes::prepare(&mut app, false, false);
+        let m = &mut app.model;
+        let draft = m.authoring.draft.as_ref().unwrap().request().unwrap();
+        let inventory = m.models.inventory.as_ref().unwrap().value.clone();
+        let selection = m.models.selection.clone();
+        m.inspect_model(selection.clone().unwrap());
+        let mut detail = model_scenes::inspection("gpt-oss:20b");
+        match change {
+            "missing" => detail = model_scenes::missing_inspection("gpt-oss:20b"),
+            "digest" => {
+                detail.digest = Some("b".repeat(64));
+                detail.status = ModelMetadataStatus::Changed;
+            }
+            "version" => {
+                detail.backend_version = "unreviewed-version".into();
+                detail.status = ModelMetadataStatus::Unverified;
+            }
+            "remote" => detail.status = ModelMetadataStatus::Rejected,
+            "unchanged" => (),
+            _ => unreachable!(),
+        }
+        m.apply(Reply {
+            tag: m.tag,
+            run: None,
+            data: Data::ModelInspection(models::inspection(detail)),
+        });
+        assert_eq!(m.models.stale, change != "unchanged", "{change}");
+        assert_eq!(m.models.inventory.as_ref().unwrap().value, inventory);
+        assert_eq!(m.models.selection, selection);
+        assert_eq!(
+            m.authoring.draft.as_ref().unwrap().request().unwrap(),
+            draft
+        );
+        if change != "unchanged" {
+            assert!(m.models.notice.contains("needs refresh"));
+            // A subsequent successful inspection cannot refresh the inventory.
+            m.inspect_model(selection.unwrap());
+            m.apply(Reply {
+                tag: m.tag,
+                run: None,
+                data: Data::ModelInspection(models::inspection(model_scenes::inspection(
+                    "gpt-oss:20b",
+                ))),
+            });
+            assert!(m.models.stale);
+        }
+        m.refresh_models();
+        m.apply(Reply {
+            tag: m.tag,
+            run: None,
+            data: Data::ModelInventory(models::inventory(inventory)),
+        });
+        assert!(!m.models.stale);
+    }
+}
+
+#[tokio::test]
 async fn model_buttons_only_enqueue_metadata_reads() {
     use egui_kittest::{Harness, kittest::Queryable};
     let mut app = common::demo(true).await;
