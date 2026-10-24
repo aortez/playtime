@@ -738,3 +738,47 @@ async fn unpublished_archive_waits_and_clears_without_connection_failure() {
     transient_attachment_failure(1, "evidence_not_ready", false).await;
     transient_attachment_failure(0, "evidence_not_ready", true).await;
 }
+
+#[tokio::test]
+async fn long_recipe_names_cannot_hide_run_state_or_release_action() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    for width in [240.0, 180.0] {
+        let mut app = common::long_recipe_runs().await;
+        app.model.preferences.left_width = width;
+        let mut h = Harness::builder()
+            .with_size([1440.0, 900.0])
+            .build_ui_state(|ui, app: &mut playtime_ui::ui::Workbench| app.draw(ui), app);
+        h.run();
+        let right = h
+            .get_all_by_label("New experiment")
+            .map(|node| node.rect())
+            .min_by(|a, b| a.left().total_cmp(&b.left()))
+            .unwrap()
+            .right();
+        let mut bottom = h.get_by_label("Refresh runs").rect().bottom();
+        for (id, state) in [
+            ("needs-release", "Reconciling · needs release"),
+            ("running", "Running"),
+            ("ended", "Ended"),
+        ] {
+            // A visible, untruncated label, separate from the button's accessible name.
+            let label = h.get_by_label(state).rect();
+            assert!(
+                label.right() <= right,
+                "{state} exceeds the sidebar at {width}"
+            );
+            assert!(label.top() > bottom, "run rows overlap at {width}");
+            bottom = label.bottom();
+            let button = h.get_by_label(&format!("Run {id} · {state}")).rect();
+            assert!(button.bottom() <= label.top());
+        }
+        assert!(bottom < h.get_by_label("Pending launches").rect().top());
+        h.get_by_label("Run needs-release · Reconciling · needs release")
+            .click();
+        h.run();
+        assert_eq!(
+            h.state().model.selected.as_ref().unwrap().as_str(),
+            "needs-release"
+        );
+    }
+}

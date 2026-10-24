@@ -78,6 +78,14 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        ("long-recipe-runs", true, false, Inspector::Details, false),
+        (
+            "long-recipe-runs-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
         ("live-preview", true, false, Inspector::Details, false),
         ("live-preview-narrow", true, true, Inspector::Details, false),
         (
@@ -161,7 +169,9 @@ async fn reviewed_workbench_screens() {
         ("running", false, false, Inspector::Details, false),
         ("ended", false, false, Inspector::Details, false),
     ] {
-        let mut app = if name.starts_with("model-settings") {
+        let mut app = if name.starts_with("long-recipe-runs") {
+            common::long_recipe_runs().await
+        } else if name.starts_with("model-settings") {
             common::model_settings_editor().await
         } else if name.starts_with("recipe-editor") {
             common::recipe_editor().await
@@ -212,6 +222,9 @@ async fn reviewed_workbench_screens() {
             app.model.archive_waiting = true;
             app.model.window = Default::default();
             app.model.history = "Attaching live stream and loading history".into();
+        }
+        if name == "long-recipe-runs-narrow" {
+            app.model.preferences.left_width = 180.0;
         }
         app.model.inspector = inspector;
         if name != "image" {

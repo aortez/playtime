@@ -256,10 +256,10 @@ impl Workbench {
         egui::ScrollArea::vertical()
             .id_salt("runs")
             .max_height(310.0)
-            .show_rows(ui, 72.0, self.model.runs.len(), |ui, range| {
+            .show_rows(ui, 96.0, self.model.runs.len(), |ui, range| {
                 for i in range {
                     ui.scope(|ui| {
-                        ui.set_min_height(72.0);
+                        ui.set_min_height(96.0);
                         let run = &self.model.runs[i];
                         let recipe = self
                             .model
@@ -268,13 +268,9 @@ impl Workbench {
                             .find(|recipe| recipe.recipe_id == run.recipe_id)
                             .map_or(run.recipe_id.as_str(), |recipe| recipe.name.as_str());
                         let response = ui.add(
-                            egui::Button::new(format!(
-                                "{} · {}",
-                                brief(recipe, 60),
-                                run_state(run)
-                            ))
-                            .selected(self.model.selected.as_ref() == Some(&run.run_id))
-                            .wrap_mode(egui::TextWrapMode::Truncate),
+                            egui::Button::new(brief(recipe, 60))
+                                .selected(self.model.selected.as_ref() == Some(&run.run_id))
+                                .wrap_mode(egui::TextWrapMode::Truncate),
                         );
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(
@@ -286,6 +282,8 @@ impl Workbench {
                         if response.clicked() {
                             selected = Some(run.run_id.clone());
                         }
+                        // Keep actionable state visible even when the recipe is ellipsized.
+                        ui.add(egui::Label::new(run_state(run)).wrap());
                         ui.small(format!(
                             "{} UTC",
                             run.accepted_at

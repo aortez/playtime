@@ -332,3 +332,8 @@ controller, service ledger or frozen Python changes. Rendering baselines change
 intentionally for the connection bar/run list and launcher/files; new wide/narrow
 live-profile previews, expanded text, file drawer and archive-wait views cover the
 new states with synthetic inputs on the pinned software Vulkan renderer.
+
+PR #130 review correction: run state now occupies its own untruncated line beneath
+the recipe button. Long recipe names cannot hide `needs release`; fixed run-row
+height includes the extra line. Regression and pinned-renderer coverage exercise
+default and minimum sidebar widths with running, ended and release-needed runs.

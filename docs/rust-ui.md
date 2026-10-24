@@ -44,7 +44,9 @@ the exact frozen revision, regardless of these display summaries.
 The connection bar keeps backend kind and endpoint visible; **Backend details**
 contains its description. Run rows lead with recipe name (or execution recipe ID
 when its catalog entry is unavailable), recorded admission time labeled UTC, and a
-secondary run ID. This does not infer the start of model execution.
+secondary run ID. Run state has its own untruncated line, so a long recipe name
+cannot hide `needs release`, including at the minimum sidebar width. This does
+not infer the start of model execution.
 
 The Files inspector offers **Open image** or **Open file**, with readable size and
 file kind. Each available file's **Details** contains the full name, exact byte size,

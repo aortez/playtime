@@ -184,3 +184,31 @@ pub async fn model_settings_editor() -> Workbench {
     app.model.edit_recipe(true);
     app
 }
+
+#[allow(dead_code)]
+pub async fn long_recipe_runs() -> Workbench {
+    let mut app = demo(true).await;
+    app.model.recipes[0].name = "Curiosity: compare how persistent workspace notes affect exploration across repeated sessions".into();
+    let template = app.model.runs[0].clone();
+    app.model.runs = [
+        (
+            "needs-release",
+            OrchestrationState::Reconciling,
+            Some("worker_unavailable"),
+        ),
+        ("running", OrchestrationState::Running, None),
+        ("ended", OrchestrationState::Terminal, None),
+    ]
+    .into_iter()
+    .map(|(id, state, reason)| {
+        let mut run = template.clone();
+        run.run_id = playtime_core::RunId::new(id).unwrap();
+        run.orchestration = Orchestration {
+            state,
+            reason: reason.map(str::to_owned),
+        };
+        run
+    })
+    .collect();
+    app
+}
