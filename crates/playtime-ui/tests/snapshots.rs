@@ -1,5 +1,7 @@
 #![cfg(feature = "ui-snapshots")]
 mod common;
+#[path = "support/preview_scene.rs"]
+mod preview_scene;
 #[path = "support/session_scenes.rs"]
 mod session_scenes;
 #[path = "support/trace_scenes.rs"]
@@ -76,6 +78,33 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        ("long-recipe-runs", true, false, Inspector::Details, false),
+        (
+            "long-recipe-runs-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        ("live-preview", true, false, Inspector::Details, false),
+        ("live-preview-narrow", true, true, Inspector::Details, false),
+        (
+            "live-preview-details",
+            true,
+            false,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "live-preview-details-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        ("files-narrow", false, true, Inspector::Files, false),
+        ("files-details-narrow", false, true, Inspector::Files, false),
+        ("archive-waiting", false, false, Inspector::Details, false),
         ("model-settings", true, false, Inspector::Details, false),
         (
             "model-settings-narrow",
@@ -140,7 +169,9 @@ async fn reviewed_workbench_screens() {
         ("running", false, false, Inspector::Details, false),
         ("ended", false, false, Inspector::Details, false),
     ] {
-        let mut app = if name.starts_with("model-settings") {
+        let mut app = if name.starts_with("long-recipe-runs") {
+            common::long_recipe_runs().await
+        } else if name.starts_with("model-settings") {
             common::model_settings_editor().await
         } else if name.starts_with("recipe-editor") {
             common::recipe_editor().await
@@ -164,6 +195,37 @@ async fn reviewed_workbench_screens() {
         if name.starts_with("session-") {
             session_scenes::prepare(&mut app, name.contains("interrupted"));
         }
+        if name.starts_with("live-preview") {
+            let preview = preview_scene::live(app.model.preview.take().unwrap().value);
+            app.model.preview = Some(playtime_ui::backend::prepare_preview(preview));
+            app.model.backend =
+                "Synthetic preview · live-profile metadata only; no inference or tool execution"
+                    .into();
+        }
+        if name == "archive-waiting" {
+            let mut view = app.model.run.take().unwrap().value;
+            view.orchestration.state = OrchestrationState::Preparing;
+            view.outcome = None;
+            view.cleanup = Cleanup::Unknown;
+            view.controller_phase = None;
+            view.usage = None;
+            view.checkpoint = None;
+            view.input_manifest = None;
+            view.accounting_coverage = None;
+            view.event_anchors = None;
+            view.last_confirmed_frontier = None;
+            view.evidence = EvidenceAvailability::Unavailable {
+                reason: "Archive identity is not prepared".into(),
+            };
+            app.model.runs = vec![view.clone()];
+            app.model.run = Some(prepare_run(view));
+            app.model.archive_waiting = true;
+            app.model.window = Default::default();
+            app.model.history = "Attaching live stream and loading history".into();
+        }
+        if name == "long-recipe-runs-narrow" {
+            app.model.preferences.left_width = 180.0;
+        }
         app.model.inspector = inspector;
         if name != "image" {
             app.model.content = None;
@@ -185,6 +247,15 @@ async fn reviewed_workbench_screens() {
             .wgpu_setup(setup())
             .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
         h.run();
+        if name.starts_with("files-") {
+            use egui_kittest::kittest::Queryable;
+            h.get_by_label("Inspector").click();
+            h.run();
+            if name == "files-details-narrow" {
+                h.get_all_by_label("Details").last().unwrap().click();
+                h.run();
+            }
+        }
         if name.starts_with("model-settings") {
             h.input_mut()
                 .events
@@ -194,6 +265,33 @@ async fn reviewed_workbench_screens() {
                 phase: egui::TouchPhase::Move,
                 delta: egui::vec2(0.0, -420.0),
                 modifiers: egui::Modifiers::default(),
+            });
+            h.run_steps(60);
+        }
+        if name.starts_with("live-preview-details") {
+            h.input_mut()
+                .events
+                .push(egui::Event::PointerMoved(egui::pos2(600.0, 500.0)));
+            h.input_mut().events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                phase: egui::TouchPhase::Move,
+                delta: egui::vec2(0.0, -560.0),
+                modifiers: Default::default(),
+            });
+            h.run_steps(60);
+            use egui_kittest::kittest::Queryable;
+            h.get_by_label("Protocol").click();
+            h.run();
+            h.get_by_label("Workshop inventory").click();
+            h.run();
+            h.input_mut()
+                .events
+                .push(egui::Event::PointerMoved(egui::pos2(600.0, 500.0)));
+            h.input_mut().events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                phase: egui::TouchPhase::Move,
+                delta: egui::vec2(0.0, -260.0),
+                modifiers: Default::default(),
             });
             h.run_steps(60);
         }

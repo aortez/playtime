@@ -11,3 +11,5 @@ pub mod ui;
 mod model_settings;
 
 mod timeline_layout;
+
+mod preview;

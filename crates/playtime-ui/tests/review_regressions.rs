@@ -292,6 +292,8 @@ async fn late_cancel_reply_must_not_replace_newer_terminal_status() {
 struct TransientFailure {
     inner: Fixture,
     run_once: AtomicBool,
+    error_code: &'static str,
+    anchors_once: AtomicBool,
     history_failure_at: usize,
     history_attempts: AtomicUsize,
     history_cursors: Mutex<Vec<Option<EventCursor>>>,
@@ -318,9 +320,18 @@ impl Application for TransientFailure {
     }
     async fn run(&self, id: RunId) -> Result<RunView> {
         if self.run_once.swap(false, Ordering::SeqCst) {
-            return Err(ApiError::new("backend_unavailable"));
+            return Err(ApiError::new(self.error_code));
         }
-        self.inner.run(id).await
+        let mut view = self.inner.run(id).await?;
+        if self.anchors_once.swap(false, Ordering::SeqCst) {
+            view.event_anchors = None;
+            view.last_confirmed_frontier = None;
+            view.accounting_coverage = None;
+            view.evidence = EvidenceAvailability::Unavailable {
+                reason: "Archive identity is not prepared".into(),
+            };
+        }
+        Ok(view)
     }
     async fn cancel(&self, id: RunId) -> Result<CancelResponse> {
         self.inner.cancel(id).await
@@ -337,7 +348,7 @@ impl Application for TransientFailure {
             self.history_cursors.lock().unwrap().push(cursor.clone());
             let attempt = self.history_attempts.fetch_add(1, Ordering::SeqCst) + 1;
             if attempt == self.history_failure_at {
-                return Err(ApiError::new("backend_unavailable"));
+                return Err(ApiError::new(self.error_code));
             }
         }
         // Force multiple fixed pages when testing a failure after progress.
@@ -368,7 +379,11 @@ impl Application for TransientFailure {
     }
 }
 
-async fn transient_attachment_failure(history_failure_at: usize) {
+async fn transient_attachment_failure(
+    history_failure_at: usize,
+    error_code: &'static str,
+    no_anchors: bool,
+) {
     let root = playtime_test_support::TestRoot::new().unwrap();
     let credentials = playtime_local::Credentials::initialize(&root.join("service")).unwrap();
     let service = ServiceId::new("review-transient").unwrap();
@@ -376,6 +391,8 @@ async fn transient_attachment_failure(history_failure_at: usize) {
         inner: Fixture::new(service.clone()),
         run_once: AtomicBool::new(history_failure_at == 0),
         history_failure_at,
+        error_code,
+        anchors_once: AtomicBool::new(no_anchors),
         history_attempts: AtomicUsize::new(0),
         history_cursors: Mutex::new(Vec::new()),
     });
@@ -446,10 +463,12 @@ async fn transient_attachment_failure(history_failure_at: usize) {
     .unwrap();
     model.select_run(admitted.run_id);
     let mut reconnecting = false;
+    let mut waiting = false;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             backend.pump(&mut model);
             reconnecting |= model.connection == ConnectionState::Reconnecting;
+            waiting |= model.archive_waiting;
             if model.window.metrics.records == 4
                 || matches!(model.connection, ConnectionState::Error(_))
             {
@@ -464,10 +483,9 @@ async fn transient_attachment_failure(history_failure_at: usize) {
     let state = model.connection.clone();
     drop(backend);
     server.stop().await.unwrap();
-    assert!(
-        reconnecting,
-        "transient failure was not shown as reconnecting"
-    );
+    assert_eq!(reconnecting, error_code == "backend_unavailable");
+    assert_eq!(waiting, no_anchors || error_code == "evidence_not_ready");
+    assert!(!model.archive_waiting, "archive waiting did not clear");
     assert_eq!(state, ConnectionState::Connected);
     assert_eq!(
         records,
@@ -493,17 +511,17 @@ async fn transient_attachment_failure(history_failure_at: usize) {
 
 #[tokio::test]
 async fn one_transient_history_failure_must_reconnect() {
-    transient_attachment_failure(1).await;
+    transient_attachment_failure(1, "backend_unavailable", false).await;
 }
 
 #[tokio::test]
 async fn one_transient_initial_run_failure_must_reconnect() {
-    transient_attachment_failure(0).await;
+    transient_attachment_failure(0, "backend_unavailable", false).await;
 }
 
 #[tokio::test]
 async fn later_history_failure_retries_the_same_page_after_progress() {
-    transient_attachment_failure(2).await;
+    transient_attachment_failure(2, "backend_unavailable", false).await;
 }
 
 fn unresolved_receipt(
@@ -713,4 +731,54 @@ async fn a_busy_refusal_names_the_run_holding_the_slot() {
             .iter()
             .any(|c| matches!(c.action, Action::Receipts(None)))
     );
+}
+
+#[tokio::test]
+async fn unpublished_archive_waits_and_clears_without_connection_failure() {
+    transient_attachment_failure(1, "evidence_not_ready", false).await;
+    transient_attachment_failure(0, "evidence_not_ready", true).await;
+}
+
+#[tokio::test]
+async fn long_recipe_names_cannot_hide_run_state_or_release_action() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    for width in [240.0, 180.0] {
+        let mut app = common::long_recipe_runs().await;
+        app.model.preferences.left_width = width;
+        let mut h = Harness::builder()
+            .with_size([1440.0, 900.0])
+            .build_ui_state(|ui, app: &mut playtime_ui::ui::Workbench| app.draw(ui), app);
+        h.run();
+        let right = h
+            .get_all_by_label("New experiment")
+            .map(|node| node.rect())
+            .min_by(|a, b| a.left().total_cmp(&b.left()))
+            .unwrap()
+            .right();
+        let mut bottom = h.get_by_label("Refresh runs").rect().bottom();
+        for (id, state) in [
+            ("needs-release", "Reconciling · needs release"),
+            ("running", "Running"),
+            ("ended", "Ended"),
+        ] {
+            // A visible, untruncated label, separate from the button's accessible name.
+            let label = h.get_by_label(state).rect();
+            assert!(
+                label.right() <= right,
+                "{state} exceeds the sidebar at {width}"
+            );
+            assert!(label.top() > bottom, "run rows overlap at {width}");
+            bottom = label.bottom();
+            let button = h.get_by_label(&format!("Run {id} · {state}")).rect();
+            assert!(button.bottom() <= label.top());
+        }
+        assert!(bottom < h.get_by_label("Pending launches").rect().top());
+        h.get_by_label("Run needs-release · Reconciling · needs release")
+            .click();
+        h.run();
+        assert_eq!(
+            h.state().model.selected.as_ref().unwrap().as_str(),
+            "needs-release"
+        );
+    }
 }
