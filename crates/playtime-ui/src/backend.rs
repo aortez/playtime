@@ -1457,12 +1457,11 @@ async fn observe(
                         window.anchor = Some((id, at));
                     }
                     if let Some((sequence, view)) = location
-                        && let Some(id) = index.row_for(sequence)
-                        && let Some(at) = index.position(view, id) {
+                        && let Some((id, at)) = index.location(view, sequence) {
                         range.view = view;
                         range.start = at.saturating_sub(2);
                         window = index.window(view, range.start, range.count);
-                        window.location = Some((sequence, id, at));
+                        window.location = Some((sequence, id));
                         location = None;
                     }
                     if !reloading && (!reload_failed || pending_source.is_some()) {

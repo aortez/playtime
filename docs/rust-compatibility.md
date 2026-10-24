@@ -309,3 +309,11 @@ File-change summaries no longer treat absent hashes as evidence of unchanged fil
 or classify changes across incomplete checkpoint lists. Reviewed UI screenshots
 add wide/narrow memory and interrupted-handoff scenes and update the running/ended
 trace views. No API, archive, controller, service-ledger or recipe schema changes.
+
+PR #127 review fixes: navigation acknowledgments retain sequence/row identity,
+not an absolute position across history updates. The UI resolves that row in
+the current window or requests a fresh location without completing the jump.
+Canonical events retain their explicit session IDs, so an s2 checkpoint stays
+unresolved until s2's boundary is indexed rather than inheriting s1's ordinal.
+Regression coverage includes backfill between reply application and rendering,
+a target displaced out of the window, and a coalesced canonical session start.

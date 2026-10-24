@@ -236,7 +236,8 @@ pub struct Model {
     pub launcher: bool,
     pub window: Window,
     pub trace: BTreeMap<u64, TraceView>,
-    pub location: Option<(u64, usize, usize)>,
+    /// Requested sequence and resolved row identity; never cache a row position.
+    pub location: Option<(u64, usize)>,
     trace_pending: std::collections::BTreeSet<u64>,
     pub history: String,
     pub live_count: u64,

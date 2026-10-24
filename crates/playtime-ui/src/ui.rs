@@ -740,12 +740,19 @@ impl Workbench {
                 self.model.command(Action::Locate(sequence, view));
                 self.navigation_sent = true;
             }
-            if let Some((located, _, at)) = self.model.location
+            if let Some((located, id)) = self.model.location
                 && located == sequence
             {
-                anchor = Some((at, within));
                 self.model.location = None;
-                self.navigation = None;
+                // History can replace the location reply's window before a
+                // frame renders. Resolve its stable row identity in the current
+                // window, or keep the jump pending and ask for that target again.
+                if let Some(offset) = self.model.window.rows.iter().position(|row| row.id == id) {
+                    anchor = Some((self.model.window.start + offset, within));
+                    self.navigation = None;
+                } else {
+                    self.model.command(Action::Locate(sequence, view));
+                }
             }
         }
         if let Some((index, within)) = anchor {
