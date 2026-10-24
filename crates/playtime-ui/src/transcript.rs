@@ -1,10 +1,13 @@
 //! Bounded transcript index and payload working set. Used only by background work.
+#[path = "trace_presentation.rs"]
+mod presentation;
 use crate::progress::{self, Progress, Tracker, Update};
 use playtime_protocol::{
     api::EventCursor,
     events::{CleanupOutcome, EventEnvelope, EventPayload, KnownEvent, MemoryRef, decode_event},
     observations::{KnownObservation, ObservationPayload},
 };
+use presentation::Display;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -55,6 +58,9 @@ pub struct Row {
     pub marker: bool,
     /// The session whose checkpoint the marker announces.
     pub checkpoint: Option<String>,
+    /// A tool block belonging to the preceding model call; virtualized independently.
+    pub nested: bool,
+    pub parent: Option<String>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Window {
@@ -78,6 +84,7 @@ pub struct SourcePage {
 struct Cached {
     raw: Arc<str>,
     parts: Vec<Section>,
+    readable: Vec<Section>,
     bytes: usize,
 }
 struct Record {
@@ -94,6 +101,7 @@ struct Group {
     sources: Vec<u64>,
     final_sequence: Option<u64>,
     role: Role,
+    display: Display,
 }
 /// How the readable view shows a group. Full shows every group as a card.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -108,6 +116,10 @@ enum Role {
         checkpoint: Option<String>,
     },
 }
+struct Family {
+    first: u64,
+    members: Vec<usize>,
+}
 #[derive(Default)]
 pub struct Transcript {
     run_id: Option<playtime_core::RunId>,
@@ -116,6 +128,8 @@ pub struct Transcript {
     keys: BTreeMap<String, usize>,
     order: Vec<usize>,
     readable: Vec<usize>,
+    families: BTreeMap<String, Family>,
+    ended: bool,
     pages: Vec<String>,
     cache: BTreeMap<u64, Cached>,
     lru: VecDeque<u64>,
@@ -247,6 +261,9 @@ struct Projection {
     final_response: bool,
     role: Role,
     progress: Update,
+    display: Display,
+    readable: Vec<Section>,
+    finished: bool,
 }
 fn project(event: &EventEnvelope) -> Result<Projection, String> {
     let decoded = decode_event(&serde_json::to_string(event).map_err(|e| e.to_string())?)
@@ -260,10 +277,14 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
         final_response: false,
         role: Role::Activity,
         progress: Update::default(),
+        display: Display::default(),
+        readable: vec![],
+        finished: false,
     };
     if let EventPayload::Observation(observation) = decoded.payload() {
         let o = observation.observation();
         p.progress = Update::observation(observation);
+        (p.display, p.readable) = presentation::observation(observation);
         let session = o
             .session_id
             .as_ref()
@@ -278,6 +299,13 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
         }
         match observation.payload() {
             ObservationPayload::Known(known) => match known.as_ref() {
+                KnownObservation::ControllerFinished { .. } => {
+                    p.finished = true;
+                    p.parts.push(Section {
+                        label: "Controller finished".into(),
+                        text: json(&observation.record().map(|r| &r.data)),
+                    });
+                }
                 KnownObservation::ControllerStarted { mode, .. } => {
                     p.excerpt = format!(
                         "Controller started in {} mode. Frozen parameters are retained in source.",
@@ -431,6 +459,7 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
         });
         match decoded.payload() {
             EventPayload::Known(known) => {
+                p.finished = matches!(known.as_ref(), KnownEvent::RunFinished { .. });
                 p.role = role(known);
                 p.progress = Update::event(known);
             }
@@ -452,6 +481,12 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
             &section.text.lines().take(3).collect::<Vec<_>>().join("\n"),
             240,
         );
+    }
+    if p.display.family.is_none() && p.readable.is_empty() && !p.parts.is_empty() {
+        p.readable.push(Section {
+            label: "Recorded data".into(),
+            text: "Inspect source for recorded details.".into(),
+        });
     }
     Ok(p)
 }
@@ -491,7 +526,7 @@ impl Transcript {
                 return Err("Conflicting duplicate event".into());
             }
             let p = project(&event)?;
-            self.put(seq, raw, p.parts);
+            self.put(seq, raw, p.parts, p.readable);
             if let Some(page) = page {
                 self.records.get_mut(&seq).unwrap().page = Some(page);
             }
@@ -500,6 +535,9 @@ impl Transcript {
         let mut p = project(&event)?;
         let update = std::mem::take(&mut p.progress);
         let existing = self.keys.get(&p.key).copied();
+        if existing.is_some_and(|id| self.groups[id].display.family != p.display.family) {
+            return Err("Conflicting originating model request for activity".into());
+        }
         let marker = match &p.role {
             Role::Marker { text, .. } => text.len() + 64,
             Role::Activity | Role::Bookkeeping => 0,
@@ -513,7 +551,21 @@ impl Transcript {
             } else {
                 0
             };
-        self.reserve(cost)?;
+        self.reserve(
+            cost + if existing.is_none() {
+                p.display.tracked_bytes()
+            } else {
+                0
+            },
+        )?;
+        let mut family_moved = false;
+        if let Some(key) = &p.display.family
+            && let Some(family) = self.families.get_mut(key)
+            && seq < family.first
+        {
+            family.first = seq;
+            family_moved = true;
+        }
         let id = existing.unwrap_or_else(|| {
             let id = self.groups.len();
             self.keys.insert(p.key.clone(), id);
@@ -526,11 +578,26 @@ impl Transcript {
                 sources: vec![],
                 final_sequence: None,
                 role: p.role.clone(),
+                display: p.display.clone(),
             });
+            if let Some(family) = &p.display.family {
+                self.families
+                    .entry(family.clone())
+                    .or_insert_with(|| Family {
+                        first: seq,
+                        members: vec![],
+                    })
+                    .members
+                    .push(id);
+            }
             self.place(id);
             id
         });
+        if p.finished {
+            self.ended = true;
+        }
         let group = &mut self.groups[id];
+        group.display.merge(&p.display, seq);
         let slot = group.sources.partition_point(|old| *old < seq);
         group.sources.insert(slot, seq);
         if p.final_response {
@@ -550,6 +617,9 @@ impl Transcript {
             self.readable.retain(|old| *old != id);
             self.place(id);
         }
+        if family_moved {
+            self.place_family(id);
+        }
         self.records.insert(
             seq,
             Record {
@@ -558,7 +628,7 @@ impl Transcript {
                 page,
             },
         );
-        self.put(seq, raw, p.parts);
+        self.put(seq, raw, p.parts, p.readable);
         self.progress.apply(seq, update, page.is_none());
         self.metrics.records = self.records.len();
         self.metrics.rows = self.groups.len();
@@ -574,7 +644,39 @@ impl Transcript {
         if self.groups[id].role != Role::Bookkeeping {
             let slot = self
                 .readable
-                .partition_point(|old| self.groups[*old].first < first);
+                .partition_point(|old| self.readable_key(*old) < self.readable_key(id));
+            self.readable.insert(slot, id);
+        }
+    }
+    fn readable_key(&self, id: usize) -> (u64, bool, u64) {
+        let group = &self.groups[id];
+        let first = group
+            .display
+            .family
+            .as_ref()
+            .and_then(|key| self.families.get(key))
+            .map(|family| family.first)
+            .unwrap_or(group.first);
+        (first, group.display.tool, group.first)
+    }
+    fn place_family(&mut self, id: usize) {
+        let Some(ids) = self.groups[id]
+            .display
+            .family
+            .as_ref()
+            .and_then(|key| self.families.get(key))
+            .map(|family| family.members.clone())
+        else {
+            return;
+        };
+        // Reposition only this call's independently virtualized blocks. This also
+        // handles tools arriving before their model request/history.
+        self.readable.retain(|old| ids.binary_search(old).is_err());
+        for id in ids {
+            let key = self.readable_key(id);
+            let slot = self
+                .readable
+                .partition_point(|old| self.readable_key(*old) < key);
             self.readable.insert(slot, id);
         }
     }
@@ -593,16 +695,25 @@ impl Transcript {
     pub fn position(&self, view: View, id: usize) -> Option<usize> {
         let first = self.groups.get(id)?.first;
         let order = self.order(view);
-        let index = order.partition_point(|old| self.groups[*old].first < first);
+        let index = order.iter().position(|old| *old == id).unwrap_or_else(|| {
+            order
+                .iter()
+                .position(|old| self.groups[*old].first >= first)
+                .unwrap_or(order.len())
+        });
         (!order.is_empty()).then(|| index.min(order.len() - 1))
     }
-    fn put(&mut self, seq: u64, raw: Arc<str>, parts: Vec<Section>) {
+    fn put(&mut self, seq: u64, raw: Arc<str>, parts: Vec<Section>, readable: Vec<Section>) {
         if let Some(old) = self.cache.remove(&seq) {
             self.metrics.payload_bytes -= old.bytes;
             self.lru.retain(|old| *old != seq);
         }
         let bytes = raw.len()
             + parts
+                .iter()
+                .map(|p| p.label.capacity() + p.text.capacity() + 64)
+                .sum::<usize>()
+            + readable
                 .iter()
                 .map(|p| p.label.capacity() + p.text.capacity() + 64)
                 .sum::<usize>()
@@ -620,7 +731,15 @@ impl Transcript {
             .metrics
             .payload_high_water
             .max(self.metrics.payload_bytes);
-        self.cache.insert(seq, Cached { raw, parts, bytes });
+        self.cache.insert(
+            seq,
+            Cached {
+                raw,
+                parts,
+                readable,
+                bytes,
+            },
+        );
         self.lru.push_back(seq);
     }
     pub fn window(&self, view: View, start: usize, count: usize) -> Window {
@@ -644,7 +763,12 @@ impl Transcript {
                         missing = true;
                         continue;
                     };
-                    for section in &cached.parts {
+                    let parts = if view == View::Readable {
+                        &cached.readable
+                    } else {
+                        &cached.parts
+                    };
+                    for section in parts {
                         let model_text = matches!(
                             section.label.as_str(),
                             "Model response" | "Recorded thinking"
@@ -663,7 +787,12 @@ impl Transcript {
                             && let Some(old) =
                                 sections.iter_mut().find(|s| s.label == section.label)
                         {
-                            old.text.push_str(&text);
+                            let remaining = 4096usize.saturating_sub(old.text.len());
+                            if remaining > 8 {
+                                old.text.push_str(&excerpt(&text, remaining - 8));
+                            } else if remaining >= 4 && !old.text.ends_with(" …") {
+                                old.text.push_str(" …");
+                            }
                         } else {
                             sections.push(Section {
                                 label: section.label.clone(),
@@ -676,11 +805,34 @@ impl Transcript {
                     Some((text, _)) => (text.clone(), String::new(), String::new()),
                     None => (g.title.clone(), g.excerpt.clone(), g.status.clone()),
                 };
+                let parent = g
+                    .display
+                    .family
+                    .as_ref()
+                    .and_then(|key| self.families.get(key))
+                    .and_then(|ids| {
+                        ids.members.iter().find_map(|id| {
+                            let display = &self.groups[*id].display;
+                            (!display.tool).then(|| display.heading()).flatten()
+                        })
+                    });
+                let (title, status) = if view == View::Readable {
+                    (
+                        g.display.heading().unwrap_or(title),
+                        g.display.status(self.ended).unwrap_or(status),
+                    )
+                } else {
+                    (title, status)
+                };
                 Row {
                     id: *id,
                     first_sequence: g.first,
                     title,
-                    excerpt,
+                    excerpt: if view == View::Readable && g.display.family.is_some() {
+                        String::new()
+                    } else {
+                        excerpt
+                    },
                     status,
                     sources: format!(
                         "{} source records · first {} · last {}",
@@ -692,6 +844,9 @@ impl Transcript {
                     needs_loading: missing,
                     marker: marker.is_some(),
                     checkpoint: marker.and_then(|(_, checkpoint)| checkpoint.clone()),
+                    nested: view == View::Readable && g.display.tool,
+                    parent: (view == View::Readable && g.display.tool)
+                        .then(|| parent.unwrap_or_else(|| "Call details unavailable".into())),
                 }
             })
             .collect();

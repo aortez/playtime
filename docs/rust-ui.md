@@ -58,20 +58,37 @@ authorize a fresh launch; resolution requires a validated response for the
 original request and a saved acknowledgment. A fresh launch that the service
 refuses before admission (`run_busy` or `stale_preview`) has nothing to recover,
 so its receipt is removed; a `run_busy` refusal names the run holding the slot.
-The default Readable timeline groups #42 observations by stable
-session/request/tool identities. Compact and Readable show each step once: they
-leave out the archive records that repeat the observations (`run_started`,
-`phase_changed`, `effect_intent`, `request_finished`, `command_finished` and
-`session_ended`), and show `session_started`, `checkpoint_published` and
-`run_finished` as one-line markers. A session marker says whether the session
-received a memento, a checkpoint marker lists the files and images it saved and
-which are new or changed, and the run's marker gives the outcome, cleanup and
-tokens charged. Full lists every record as a card, as stored. Unknown records keep
-their source-retained card in every view. Full and individual expansion reveal
-recorded sections; source inspection pages exact JSON for every row, markers
-included. Follow controls scrolling only. Expanding, collapsing or changing
-disclosure keeps the toggled row, or else the top row, in place; moving between
-Full and the other views asks the backend where that row is in the new list.
+The default Readable timeline groups observations by archived session and model
+request identity, with each call's tools indented underneath it. Calls use their
+recorded number and explicitly label forced handoff requests. Each tool remains
+an independently virtualized block, including when a call has many tools or its
+parent request has not loaded yet. Compact uses the same associations; Full keeps
+the existing source-oriented ordering and sections.
+
+Readable shows recorded thinking and response text, commands with exit status and
+separate output/error fields, file operations with their requested/read content,
+and submitted mementos with the requested finish flag. Short content is visible;
+long sections start with a 512-byte excerpt. **Show more** expands a block to at
+most 16 prepared sections, each bounded to 4 KiB. **Inspect source** pages exact
+records and retained payloads for continuation. Empty sections disappear; missing
+fields, incomplete inference, not-dispatched actions and upstream truncation stay
+explicit. A request with no result says it is awaiting a recorded result while
+live, or has no recorded result after the run ends. A write result does not claim
+checkpoint publication, and a submitted memento does not verify model claims.
+
+Compact and Readable leave out the archive records that repeat observations
+(`run_started`, `phase_changed`, `effect_intent`, `request_finished`,
+`command_finished` and `session_ended`). Session, checkpoint and run-end records
+remain concise markers. Unknown observations stay inspectable. Source IDs,
+metadata and raw JSON are available through Details/Inspect source.
+
+Timeline blocks size to their displayed content. A sparse cache retains at most
+2,048 measured heights, with estimates for unmeasured blocks; only visible blocks
+are laid out. Expansion, resize, late history and disclosure changes preserve the
+reader's activity. Follow controls scrolling only; pausing it prevents later
+records from moving the reader to the end. Session jump navigation and inline
+incoming/published memory comparisons remain the separate #125 follow-up.
+
 The run header leads with progress against the run's frozen limits: the session,
 the work turn within it, tokens charged of the token budget, controller time of
 the wall-time limit, and what the run is doing, such as thinking, running a
@@ -141,6 +158,7 @@ are explicitly unavailable where the current API does not project them.
 | Event inbox | 64 records and 4 MiB serialized bytes, backpressured |
 | Transcript payload / index | 16 MiB / 32 MiB, conservative index accounting |
 | Prepared timeline window / laid-out source | 64 rows / 64 KiB |
+| Sparse timeline height cache | 2,048 measurements; ≤256 KiB |
 | Apply work per frame | 100 prepared rows/replies or 4 ms, with deferred replies |
 | Control queue / concurrent client tasks | 64 / 16 |
 | Preview/decode jobs / live streams | 2 / 1 selected stream |
@@ -223,7 +241,15 @@ UPDATE_SNAPSHOTS=1 VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json cargo te
 Never update images just to make a check pass. Baselines cover launcher, readable
 activity, memory/file image inspection, connection error/stale information,
 900×600 layout, and the header of a running and an ended run. Their fixture labels
-remain visible; screenshots are not evidence of real execution.
+remain visible; screenshots are not evidence of real execution. The `trace-handoff`,
+`trace-streaming` and `trace-long` pairs cover failed reads, an unpublished handoff,
+provisional thinking and bounded long excerpts at both viewport sizes. Their
+commands are synthetic data and never execute.
+
+The #124 projection was also inspected against retained native live archive
+`20261023T054921Z-728c128b`: five calls, their associated commands/end-session
+requests, the verification output `persistence-ok`, and exact source access. This
+was read-only review of an existing run, not new inference or recovery evidence.
 
 ## Performance measurement
 

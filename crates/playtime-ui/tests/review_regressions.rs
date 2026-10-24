@@ -573,8 +573,8 @@ fn expanding_an_activity_keeps_it_in_place() {
                 status: "Recorded".into(),
                 sources: "1 source record".into(),
                 sections: vec![Section {
-                    label: "Recorded model request".into(),
-                    text: "{}".into(),
+                    label: "Recorded thinking".into(),
+                    text: "Long recorded thinking. ".repeat(30),
                 }],
                 needs_loading: false,
                 ..Default::default()

@@ -1,5 +1,7 @@
 #![cfg(feature = "ui-snapshots")]
 mod common;
+#[path = "support/trace_scenes.rs"]
+mod trace_scenes;
 use egui_kittest::Harness;
 use playtime_core::RunPhase;
 use playtime_protocol::{api::*, events::EventEnvelope, v1::UsageSummary};
@@ -88,6 +90,24 @@ async fn reviewed_workbench_screens() {
             false,
         ),
         ("readable", false, false, Inspector::Details, false),
+        ("trace-handoff", false, false, Inspector::Details, false),
+        (
+            "trace-handoff-narrow",
+            false,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        ("trace-streaming", false, false, Inspector::Details, false),
+        (
+            "trace-streaming-narrow",
+            false,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        ("trace-long", false, false, Inspector::Details, false),
+        ("trace-long-narrow", false, true, Inspector::Details, false),
         ("image", false, false, Inspector::Files, false),
         ("memory", false, false, Inspector::Memory, false),
         ("disconnected", false, false, Inspector::Details, true),
@@ -104,6 +124,17 @@ async fn reviewed_workbench_screens() {
         };
         if matches!(name, "running" | "ended") {
             progress_screen(&mut app, name == "ended");
+        }
+        if name.starts_with("trace-") {
+            app.model.window = trace_scenes::scene(name);
+            app.model.history = "Synthetic reading fixture · no commands executed".into();
+            let mut run = app.model.run.as_ref().unwrap().value.clone();
+            run.orchestration.state = OrchestrationState::Running;
+            run.outcome = None;
+            run.cleanup = Cleanup::Unknown;
+            run.controller_phase = Some(RunPhase::Working);
+            app.model.runs = vec![run.clone()];
+            app.model.run = Some(prepare_run(run));
         }
         app.model.inspector = inspector;
         if name != "image" {
