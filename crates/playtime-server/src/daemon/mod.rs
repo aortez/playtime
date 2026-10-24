@@ -34,6 +34,7 @@ struct Inner {
     reads: Arc<Semaphore>,
     test_supervision: bool,
     catalog: crate::catalog::Catalog,
+    models: Option<crate::models::ModelBrowser>,
 }
 #[derive(Clone)]
 struct Published {
@@ -112,6 +113,10 @@ impl Daemon {
                 published: RwLock::new(BTreeMap::new()),
                 reads: Arc::new(Semaphore::new(4)),
                 test_supervision,
+                models: live
+                    .map(crate::models::ModelBrowser::new)
+                    .transpose()
+                    .map_err(|_| life::Error::Invalid("invalid discovery endpoint"))?,
                 catalog,
             }),
         };
@@ -378,6 +383,23 @@ fn historical(
 }
 #[async_trait]
 impl Application for Daemon {
+    async fn model_inventory(&self) -> Result<ModelInventory> {
+        self.inner
+            .models
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .inventory()
+            .await
+    }
+    async fn inspect_model(&self, request: ModelInspectRequest) -> Result<ModelInspection> {
+        self.inner
+            .models
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .inspect(request)
+            .await
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             api_versions: vec![1],
@@ -410,7 +432,14 @@ impl Application for Daemon {
             .into_iter()
             .flatten()
             .collect(),
-            features: vec![
+            features: [self
+                .inner
+                .models
+                .as_ref()
+                .map(|_| MODEL_DISCOVERY.to_owned())]
+            .into_iter()
+            .flatten()
+            .chain(vec![
                 RECIPE_AUTHORING.into(),
                 MODEL_SETTINGS.into(),
                 "keyed_launch".into(),
@@ -425,7 +454,8 @@ impl Application for Daemon {
                     "systemd_supervision"
                 }
                 .into(),
-            ],
+            ])
+            .collect(),
             unsupported_adapters: [
                 self.inner.archive.live.is_none().then(|| "ollama".into()),
                 self.inner.archive.docker.is_none().then(|| "docker".into()),

@@ -6,6 +6,7 @@ use playtime_protocol::api::*;
 
 #[derive(Clone, Debug)]
 pub struct DefinitionView {
+    pub model_name: Option<String>,
     pub value: RecipeDefinition,
     pub inherited: String,
     pub settings: Option<RecipeSettingsView>,

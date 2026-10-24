@@ -291,7 +291,7 @@ impl<T: Transport> Adapter<T> {
         }
     }
 }
-fn encoding(response: &HttpResponse) -> Result<()> {
+pub(crate) fn encoding(response: &HttpResponse) -> Result<()> {
     if response
         .content_encoding
         .as_deref()
@@ -305,7 +305,7 @@ fn encoding(response: &HttpResponse) -> Result<()> {
         Ok(())
     }
 }
-fn check(deadline: Instant, cancel: &CancellationToken) -> Result<()> {
+pub(crate) fn check(deadline: Instant, cancel: &CancellationToken) -> Result<()> {
     if cancel.is_cancelled() {
         Err(Failure::new(
             FailureKind::Cancelled,
@@ -320,7 +320,7 @@ fn check(deadline: Instant, cancel: &CancellationToken) -> Result<()> {
         Ok(())
     }
 }
-async fn bounded<F: Future<Output = Result<T>>, T>(
+pub(crate) async fn bounded<F: Future<Output = Result<T>>, T>(
     future: F,
     deadline: Instant,
     cancel: &CancellationToken,
@@ -329,7 +329,7 @@ async fn bounded<F: Future<Output = Result<T>>, T>(
     tokio::select! {biased;_ = cancel.cancelled()=>Err(Failure::new(FailureKind::Cancelled,"local request cancelled; remote completion may be unknown")),
     _ = tokio::time::sleep_until(deadline)=>Err(Failure::new(FailureKind::Timeout,"absolute request deadline expired")),result=future=>result}
 }
-async fn read_body(
+pub(crate) async fn read_body(
     response: &mut HttpResponse,
     bytes: &mut Vec<u8>,
     limit: usize,

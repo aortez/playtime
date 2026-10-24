@@ -1,6 +1,7 @@
 //! Native external I/O for the exact locked Ollama compatibility profile.
 //! No tool execution, retries, canonical accounting or backend stop authority.
 mod adapter;
+pub mod discovery;
 mod identity;
 pub mod json;
 mod observation;

@@ -153,6 +153,7 @@ impl Workbench {
                 .show(ui.ctx(), |ui| self.inspector(ui));
             self.model.show_inspector = open;
         }
+        crate::models::draw(ui, &mut self.model);
         if self.model.enlarged {
             let mut open = true;
             egui::Window::new("Saved image enlargement")
@@ -180,6 +181,9 @@ impl Workbench {
             ui.label(RichText::new("PLAYTIME").size(21.0).strong().color(ACCENT));
             ui.separator();
             ui.label(self.model.connection.label());
+            if self.model.models.enabled && ui.button("Models").clicked() {
+                self.model.browse_models();
+            }
             if narrow && ui.button("Runs").clicked() {
                 self.model.show_runs = !self.model.show_runs;
             }

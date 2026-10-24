@@ -2,6 +2,7 @@
 mod checkpoints;
 pub mod config;
 mod downloads;
+mod models;
 pub use checkpoints::CheckpointIndexRead;
 mod events;
 pub mod recipes;

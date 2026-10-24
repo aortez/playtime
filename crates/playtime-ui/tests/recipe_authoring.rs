@@ -146,6 +146,7 @@ async fn edit_save_reopen_and_recover_offline_through_actual_catalog_and_http() 
         tag: stale,
         run: None,
         data: Data::Definition(Box::new(playtime_ui::authoring::DefinitionView {
+            model_name: Some("gpt-oss:20b".into()),
             settings: None,
             value: a,
             inherited: String::new(),

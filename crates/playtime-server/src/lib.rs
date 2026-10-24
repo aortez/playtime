@@ -9,3 +9,5 @@ pub mod daemon;
 pub mod fixture;
 pub mod http;
 pub mod lifecycle;
+
+pub mod models;

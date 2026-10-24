@@ -17,6 +17,15 @@ and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
 
+## Read-only model discovery (#131, 2026-10-24)
+
+Adds opt-in `model_discovery_v1`, two authenticated metadata routes and bounded
+inventory/inspection DTOs. The OpenAPI golden adds these routes, schemas and metadata error codes;
+existing routes, fixtures, recipe revisions and launch identities are unchanged.
+The workbench adds reviewed wide/narrow, missing-model and stale-metadata browser
+screenshots. Discovery does not register models or expand execution support; the
+shared reviewed capability resolver still requires the exact existing lock.
+
 ## Contract notes
 
 Rust references use opaque IDs rather than exposing path semantics. HTTP, event

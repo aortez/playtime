@@ -9,6 +9,8 @@ async fn every_surface_requires_bearer_and_rejects_browser_origins() {
     let routes = [
         ("GET", "capabilities"),
         ("GET", "openapi.json"),
+        ("GET", "models"),
+        ("POST", "models/inspect"),
         ("GET", "recipes"),
         ("POST", "recipes/fixture-example/preview"),
         ("POST", "runs"),

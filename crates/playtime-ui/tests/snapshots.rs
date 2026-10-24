@@ -1,5 +1,7 @@
 #![cfg(feature = "ui-snapshots")]
 mod common;
+#[path = "support/model_scenes.rs"]
+mod model_scenes;
 #[path = "support/preview_scene.rs"]
 mod preview_scene;
 #[path = "support/session_scenes.rs"]
@@ -78,6 +80,28 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        ("model-browser", true, false, Inspector::Details, false),
+        (
+            "model-browser-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "model-browser-missing",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        (
+            "model-browser-offline",
+            true,
+            false,
+            Inspector::Details,
+            false,
+        ),
         ("long-recipe-runs", true, false, Inspector::Details, false),
         (
             "long-recipe-runs-narrow",
@@ -178,6 +202,9 @@ async fn reviewed_workbench_screens() {
         } else {
             common::demo(launcher).await
         };
+        if name.starts_with("model-browser") {
+            model_scenes::prepare(&mut app, name.contains("missing"), name.contains("offline"));
+        }
         if matches!(name, "running" | "ended") {
             progress_screen(&mut app, name == "ended");
         }

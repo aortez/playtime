@@ -1,7 +1,9 @@
 //! HTTP v1 contracts, independent of the runtime and archive implementation.
 
 pub mod cursor;
+pub mod models;
 pub mod recipes;
+pub use models::*;
 pub mod schema;
 pub use recipes::*;
 

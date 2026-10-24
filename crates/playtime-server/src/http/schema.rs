@@ -11,7 +11,7 @@ use utoipa::{OpenApi, PartialSchema, ToSchema};
 pub fn openapi() -> Value {
     #[derive(OpenApi)]
     #[openapi(info(title = "Playtime native HTTP API", version = "1"), components(schemas(
-        Capabilities, Recipe, RecipeSettingsView, RecipeDefinition, SavedRecipe, RecipeSaveResponse, CloneRecipeRequest, ReviseRecipeRequest, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
+        ModelInventory, ModelInspection, ModelInspectRequest, Capabilities, Recipe, RecipeSettingsView, RecipeDefinition, SavedRecipe, RecipeSaveResponse, CloneRecipeRequest, ReviseRecipeRequest, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
         RunView, Page<Recipe>, Page<RunView>, Page<Checkpoint>, Page<Artifact>, EventPage, EventEnvelope,
         Checkpoint, Artifact, EventCursor, StreamEnd, ErrorResponse, UsageSummary, Connection
     )))]
@@ -30,12 +30,12 @@ pub fn openapi() -> Value {
         (404, "not_found, unsupported_version"),
         (
             409,
-            "stale_preview, source_conflict, head_conflict, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready, release_refused",
+            "stale_preview, model_metadata_changed, source_conflict, head_conflict, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready, release_refused",
         ),
         (413, "limit_exceeded, catalog_full"),
         (415, "unsupported_media_type"),
         (422, "unsupported_capability, invalid_parameters"),
-        (429, "too_many_observers"),
+        (429, "too_many_observers, model_discovery_busy"),
         (500, "archive_corrupt, content_mismatch, internal_error"),
         (
             503,
@@ -48,6 +48,22 @@ pub fn openapi() -> Value {
             "content":{"application/json":{"schema":{"$ref":"#/components/schemas/ErrorResponse"}}}});
     }
     let routes = [
+        (
+            "get",
+            "/models",
+            "model_inventory",
+            None,
+            ModelInventory::name().to_string(),
+            false,
+        ),
+        (
+            "post",
+            "/models/inspect",
+            "inspect_model",
+            Some(ModelInspectRequest::name().to_string()),
+            ModelInspection::name().to_string(),
+            false,
+        ),
         (
             "get",
             "/recipes/{recipe_id}/model-settings",

@@ -33,6 +33,12 @@ impl ApiError {
             "unsupported_media_type" => "Use application/json without content encoding",
             "unsupported_capability" => "Capability is not supported by this backend",
             "invalid_parameters" => "Invalid requested parameters",
+            "model_metadata_changed" => {
+                "Model metadata changed or could not be verified; refresh and inspect again"
+            }
+            "model_discovery_busy" => {
+                "Model metadata requests are busy; retry after the current reads finish"
+            }
             "source_conflict" => "The source definition changed; reload before cloning",
             "head_conflict" => "A newer revision was saved; keep your edits and reload",
             "catalog_full" => "The saved recipe catalog is full",
@@ -75,13 +81,13 @@ impl ApiError {
             | "cursor_ahead"
             | "evidence_not_ready"
             | "release_refused" => 409,
-            "source_conflict" | "head_conflict" => 409,
+            "source_conflict" | "head_conflict" | "model_metadata_changed" => 409,
             "catalog_full" => 413,
             "catalog_corrupt" | "execution_unavailable" => 503,
             "limit_exceeded" => 413,
             "unsupported_media_type" => 415,
             "unsupported_capability" | "invalid_parameters" => 422,
-            "too_many_observers" => 429,
+            "too_many_observers" | "model_discovery_busy" => 429,
             "ownership_unresolved" | "backend_unavailable" | "evidence_limit_exceeded" => 503,
             "request_timeout" => 504,
             _ => 500,
@@ -123,6 +129,12 @@ pub struct Download {
 pub trait Application: Send + Sync + 'static {
     /// Stable identity and cached capabilities; no remote probes here.
     fn capabilities(&self) -> Capabilities;
+    async fn model_inventory(&self) -> Result<ModelInventory> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn inspect_model(&self, _request: ModelInspectRequest) -> Result<ModelInspection> {
+        Err(ApiError::new("unsupported_capability"))
+    }
     async fn recipes(&self, query: PageQuery) -> Result<Page<Recipe>>;
     async fn recipe_definition(&self, _id: RecipeId) -> Result<RecipeDefinition> {
         Err(ApiError::new("unsupported_capability"))

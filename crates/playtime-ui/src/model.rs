@@ -19,6 +19,7 @@ pub struct Tag {
     pub launch: u64,
     pub authoring: u64,
     pub save: u64,
+    pub models: u64,
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Disclosure {
@@ -76,6 +77,7 @@ pub struct PreviewView {
     pub prompt: String,
     pub protocol: String,
     pub inventory: String,
+    pub model_name: Option<String>,
     pub revision: String,
     pub source: SourcePage,
 }
@@ -134,6 +136,9 @@ pub struct WindowRequest {
 }
 #[derive(Clone, Debug)]
 pub enum Action {
+    ModelInventory,
+    InspectModel(ModelInspectRequest),
+    StopModelDiscovery,
     Sessions(usize),
     Locate(u64, View),
     CancelNavigation,
@@ -176,6 +181,9 @@ pub struct TraceView {
     pub notice: String,
 }
 pub enum Data {
+    ModelInventory(crate::models::InventoryView),
+    ModelInspection(crate::models::InspectionView),
+    ModelError(String),
     Trace(u64, TraceView),
     Connected(Capabilities, String),
     Preferences(Preferences),
@@ -218,6 +226,7 @@ pub struct Reply {
 }
 
 pub struct Model {
+    pub models: crate::models::Browser,
     pub authoring: crate::authoring::Authoring,
     pub tag: Tag,
     pub connection: ConnectionState,
@@ -285,6 +294,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            models: Default::default(),
             authoring: Default::default(),
             tag: Tag::default(),
             connection: ConnectionState::Disconnected,
@@ -398,6 +408,11 @@ impl Model {
         });
     }
     pub fn connect(&mut self, options: Options) {
+        self.close_models();
+        self.models.enabled = false;
+        self.models.selection = None;
+        self.models.inventory = None;
+        self.models.inspection = None;
         if matches!(
             self.authoring.save,
             Mutation::Recording | Mutation::Submitting
@@ -603,7 +618,32 @@ impl Model {
         {
             return;
         }
+        if matches!(
+            &reply.data,
+            Data::ModelInventory(_) | Data::ModelInspection(_) | Data::ModelError(_)
+        ) && (reply.tag.models != self.tag.models || !self.models.open)
+        {
+            return;
+        }
         match reply.data {
+            Data::ModelInventory(value) => {
+                self.models.pending = false;
+                self.models.stale = false;
+                self.models.notice =
+                    "Choose a model to inspect its identity. Recipe selection is unchanged.".into();
+                self.models.inventory = Some(value);
+            }
+            Data::ModelInspection(value) => {
+                self.models.pending = false;
+                self.models.notice =
+                    "Read-only inspection complete. Recipe selection is unchanged.".into();
+                self.models.inspection = Some(value);
+            }
+            Data::ModelError(error) => {
+                self.models.pending = false;
+                self.models.stale = true;
+                self.models.notice = format!("Metadata unavailable: {error}");
+            }
             Data::Connected(caps, endpoint) => {
                 if self
                     .service
@@ -616,6 +656,7 @@ impl Model {
                     self.stale = true;
                     return;
                 }
+                self.models.enabled = caps.features.iter().any(|f| f == MODEL_DISCOVERY);
                 self.service = Some(caps.service_id);
                 self.authoring.enabled = caps.features.iter().any(|f| f == RECIPE_AUTHORING);
                 if self.authoring.enabled {

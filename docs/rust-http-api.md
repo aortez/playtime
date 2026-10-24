@@ -6,6 +6,40 @@ connects these handlers to durable admission, packaged workers, and verified
 archives. A separate scripted application fixture exercises transport contracts
 without executing a controller, worker, model, or Docker command.
 
+## Read-only Ollama model discovery
+
+When `--ollama-endpoint` is configured, the daemon advertises
+`model_discovery_v1`. Authenticated `GET /api/v1/models` reads installed tags,
+backend version and advisory loaded state; `POST /api/v1/models/inspect` accepts
+`{ "name": "exact request name", "expected_digest": "optional observed digest" }`.
+The shared client exposes `model_inventory()` and `inspect_model()`. Inspection
+is read-only despite POST and requires the normal service-identity header. Neither
+route accepts an endpoint override or grants registration/execution authority.
+
+The separate metadata reader calls only version, tags, show and ps. It preserves
+exact names, including aliases, and fingerprints the canonical definition using
+the existing identity rules. Inspection rechecks tags and backend version after
+show. Missing, changed, incomplete, unsupported-version and remote/cloud identities
+remain explicit; remote markers in either tags or show are rejected. The current
+complete reviewed lock alone supplies reviewed reasoning/context claims. Other
+capability lists are advertised metadata, not inferred support.
+
+Inventory is one bounded snapshot (256 entries, sorted by exact name), not an
+unbounded catalog traversal. Each metadata response is capped at 16 MiB, each
+operation at 15 seconds, and the service request at 25 seconds in aggregate
+(the reusable reader also enforces a 45-second ceiling). At most two service
+metadata requests run concurrently; excess requests fail explicitly. Over-limit
+inventories fail instead of truncating silently. Loaded-state errors retain the
+installed inventory and report unknown with a warning. Observation timestamps and
+loaded status are separate from candidate identity. Refresh is explicit, without
+background polling or inference, pull, load or unload operations.
+
+Discovery is independent of workshop/model execution readiness. Saved editing and
+run observation remain usable when metadata is unavailable. The default HTTP
+fixture does not advertise discovery; the focused test opts into an ephemeral
+fake Ollama server and exercises the actual reader, routes and client. This is
+metadata-contract evidence, not live inference or registration evidence.
+
 ## Run the transport fixtures
 
 In one terminal, choose a new data directory:

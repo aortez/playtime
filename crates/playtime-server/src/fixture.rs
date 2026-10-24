@@ -336,6 +336,7 @@ struct State {
 
 pub struct Fixture {
     catalog: Option<crate::catalog::Catalog>,
+    models: Option<crate::models::ModelBrowser>,
     service: ServiceId,
     limits: ApiLimits,
     state: Mutex<State>,
@@ -347,6 +348,7 @@ impl Fixture {
     pub fn with_limits(service: ServiceId, limits: ApiLimits) -> Self {
         Self {
             catalog: None,
+            models: None,
             service,
             limits,
             state: Mutex::new(State {
@@ -363,6 +365,11 @@ impl Fixture {
         let mut fixture = Self::new(service);
         fixture.catalog = Some(catalog);
         fixture
+    }
+    /// Connect metadata reads to an explicitly supplied fake model server.
+    pub fn with_model_browser(mut self, browser: crate::models::ModelBrowser) -> Self {
+        self.models = Some(browser);
+        self
     }
     pub fn calls(&self) -> Vec<Call> {
         self.state.lock().unwrap().calls.clone()
@@ -483,6 +490,21 @@ fn page<T: Serialize>(
 
 #[async_trait]
 impl Application for Fixture {
+    async fn model_inventory(&self) -> Result<ModelInventory> {
+        self.models
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .inventory()
+            .await
+    }
+    async fn inspect_model(&self, request: ModelInspectRequest) -> Result<ModelInspection> {
+        self.models
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .inspect(request)
+            .await
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             api_versions: vec![1],
@@ -493,6 +515,7 @@ impl Application for Fixture {
             backend: identity(),
             modes: vec![RunMode::Simulation],
             features: [
+                self.models.as_ref().map(|_| MODEL_DISCOVERY.into()),
                 Some("scripted_fixture".into()),
                 Some("events".into()),
                 Some("downloads".into()),
