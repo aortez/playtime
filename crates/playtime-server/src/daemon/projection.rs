@@ -88,6 +88,7 @@ pub(super) struct Evidence {
 }
 fn base(record: &Admission) -> RunView {
     RunView {
+        harness: None,
         run_id: record.run_id.clone(),
         mode: record.request.mode,
         accepted_at: record.accepted.utc.clone(),
@@ -156,6 +157,15 @@ pub(super) fn unprepared(record: &Admission) -> RunView {
 }
 pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Evidence> {
     let mut view = base(record);
+    let configuration = queries.inputs().configuration.clone();
+    let value = serde_json::from_slice(&queries.content(&configuration).map_err(evidence)?)
+        .map_err(evidence)?;
+    view.harness = HarnessView::from_configuration(&value)
+        .map_err(evidence)?
+        .map(|harness| ArchivedHarness {
+            configuration,
+            harness,
+        });
     let run = queries.run().map_err(evidence)?;
     let f = frontier(&run.frontier);
     view.controller_phase = run.phase;

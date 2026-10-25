@@ -17,6 +17,29 @@ and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
 
+## Harness identity and readback (#109 step A, 2026-10-25)
+
+Adds `recipe_harness_selection_v1`, a bounded offline built-in catalog, typed
+definition readback, and optional clone/revise selection. Omission still inherits
+and serializes identically for old save requests; explicit IDs are exact and
+unsupported choices fail without mutation. Existing schema-1/2 memento definition
+bytes/digests remain unchanged. Unknown retained IDs can be read and edited,
+including registered-model definitions; execution still rejects them.
+
+New Docker/native profiles explicitly freeze `memento_turns_v1`. Their compiled
+profile digest changes, so a new worker bundle is required. Preview and worker
+verification cover the selection and all existing parameters. This does not
+change memento policy, allocations, locks, behavioral traces, or the service
+ledger. Old archives are read without rewriting; authored profiles can supply
+their retained definition identity, while configurations without an ID remain
+unrecorded. Run readback verifies its manifest-bound configuration before projection.
+
+The HTTP OpenAPI golden adds two routes, six harness DTOs and optional selection,
+preview and archived-run fields. Existing HTTP fixture responses remain unchanged.
+Four new pinned screenshots cover editor, narrow layout, preview and archived
+inspection; existing screenshots remain unchanged. No frozen Python changes.
+Policy extraction and session-neutral records remain #109's subsequent steps.
+
 ## Registered-model execution (#134, 2026-10-25)
 
 Adds `recipe_model_execution_v1` for compiled, reviewed identity profiles. Selected

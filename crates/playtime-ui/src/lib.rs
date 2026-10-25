@@ -1,6 +1,7 @@
 //! Native workbench. Background clients prepare bounded data; drawing has no I/O.
 pub mod authoring;
 pub mod backend;
+pub mod harness;
 pub mod media;
 pub mod model;
 pub mod progress;

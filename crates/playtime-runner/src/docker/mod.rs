@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::{net::IpAddr, path::PathBuf};
 
 mod definition;
+mod harness;
+pub use harness::harness_catalog;
 mod model_settings;
 pub use model_settings::reviewed_model_capabilities;
 mod recipe;
@@ -58,7 +60,7 @@ pub fn digest() -> Result<Sha256Digest> {
         serde_json::to_value(&BOUNDS)?,
         // A worker that predates authoring must not accept an authored profile
         // merely because its ordinary recipe template is unchanged.
-        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1}),
+        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1}),
         serde_json::from_slice(QWEN_MODEL_LOCK)?,
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))
@@ -100,6 +102,9 @@ pub struct LiveModel {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
+    /// Explicit for new profiles; historical archives can lack this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
     pub version: u32,
     pub profile: String,
     pub mode: RunMode,
@@ -125,6 +130,7 @@ pub struct Profile {
 impl Profile {
     pub fn freeze(selection: Selection, daemon: DaemonIdentity) -> Result<Self> {
         Ok(Self {
+            harness: Some(playtime_protocol::api::MEMENTO_TURNS_V1.into()),
             version: 1,
             profile: PROFILE.into(),
             mode: RunMode::ScriptedSmoke,

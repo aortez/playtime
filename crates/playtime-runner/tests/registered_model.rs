@@ -1,6 +1,6 @@
 #[path = "common/registered.rs"]
 mod registered;
-use playtime_protocol::api::RecipeReasoning;
+use playtime_protocol::api::{HarnessId, HarnessView, MEMENTO_TURNS_V1, RecipeReasoning};
 use playtime_runner::docker::*;
 use serde_json::json;
 
@@ -112,6 +112,8 @@ fn coherent_stored_claims_cannot_approve_a_model_or_change_the_execution_project
     }
     let frozen = profile(definition());
     for pointer in [
+        "/harness",
+        "/definition/harness",
         "/model/lock/name",
         "/model/settings/thinking",
         "/model/registration/registration_id",
@@ -126,4 +128,73 @@ fn coherent_stored_claims_cannot_approve_a_model_or_change_the_execution_project
             "{pointer}"
         );
     }
+}
+
+#[test]
+fn selection_preserves_definition_bytes_and_unknown_harness_is_readable_only() {
+    let mut recipe = definition().recipe;
+    recipe.model.thinking = "high".into();
+    let legacy = FrozenRecipe::current(recipe).unwrap();
+    for mut definition in [legacy, definition()] {
+        let bytes = serde_json::to_vec(&definition).unwrap();
+        let digest = definition.digest().unwrap();
+        definition
+            .select_harness(&HarnessId::new(MEMENTO_TURNS_V1).unwrap())
+            .unwrap();
+        assert_eq!(serde_json::to_vec(&definition).unwrap(), bytes);
+        assert_eq!(definition.digest().unwrap(), digest);
+        assert!(
+            definition
+                .select_harness(&HarnessId::new("future_v2").unwrap())
+                .is_err()
+        );
+        assert_eq!(serde_json::to_vec(&definition).unwrap(), bytes);
+        definition.harness = "future_v2".into();
+        definition.validate().unwrap();
+        assert!(!definition.harness_view().unwrap().harness.supported);
+        assert!(
+            definition
+                .harness_view()
+                .unwrap()
+                .harness
+                .settings
+                .is_none()
+        );
+        assert!(definition.executable().is_err());
+        definition
+            .check_model_settings(&definition.model_settings().unwrap())
+            .unwrap();
+    }
+}
+
+#[test]
+fn archive_identity_is_explicit_and_independent_of_current_support() {
+    let mut profile = profile(definition());
+    let mut value = serde_json::to_value(&profile).unwrap();
+    let view = HarnessView::from_configuration(&value).unwrap().unwrap();
+    assert_eq!(
+        view,
+        profile
+            .definition
+            .as_ref()
+            .unwrap()
+            .harness_view()
+            .unwrap()
+            .harness
+    );
+    value.as_object_mut().unwrap().remove("harness");
+    // Older authored profiles retain identity in their saved definition.
+    assert_eq!(HarnessView::from_configuration(&value).unwrap(), Some(view));
+    value.as_object_mut().unwrap().remove("definition");
+    assert!(HarnessView::from_configuration(&value).unwrap().is_none());
+    profile.harness = None;
+    assert!(profile.validate().is_err()); // historical readback is not admission
+    let mut value = serde_json::to_value(profile).unwrap();
+    value["harness"] = json!("future_v2");
+    assert!(HarnessView::from_configuration(&value).is_err());
+    value["definition"]["harness"] = json!("future_v2");
+    let view = HarnessView::from_configuration(&value).unwrap().unwrap();
+    assert_eq!(view.id, "future_v2");
+    assert!(!view.supported);
+    assert!(view.settings.is_none());
 }

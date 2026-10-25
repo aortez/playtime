@@ -260,7 +260,7 @@ narrow contract below.
 | Select and register Ollama models | [#7](https://github.com/aortez/playtime/issues/7) | #108, #5 |
 | Select and freeze seed files | [#6](https://github.com/aortez/playtime/issues/6) | #108 |
 | Select prepared environments and inspect readiness | [#4](https://github.com/aortez/playtime/issues/4) | #108; integrate #7 |
-| Select versioned internal harnesses | [#109](https://github.com/aortez/playtime/issues/109) | #108 |
+| Select versioned internal harnesses | [#109](https://github.com/aortez/playtime/issues/109): A exposes existing identity; B extracts policy; C removes session-only assumptions | #108 |
 | Run continuous conversation with compaction | [#110](https://github.com/aortez/playtime/issues/110) | #109, #5 |
 | Inspect context transformations and budgets | [#111](https://github.com/aortez/playtime/issues/111) | #109 observations, #110 |
 | Review and launch the exact effective revision | [#3](https://github.com/aortez/playtime/issues/3) | #108; integrate controls incrementally |

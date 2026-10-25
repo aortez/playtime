@@ -92,15 +92,14 @@ impl FrozenRecipe {
             return Err(Error::Invalid(error.into()));
         }
         if let Some(model) = &self.model_registration
-            && (self.harness != "memento_turns_v1"
-                || !["completion", "tools"].iter().all(|required| {
-                    model
-                        .summary
-                        .identity
-                        .advertised_capabilities
-                        .iter()
-                        .any(|c| c == required)
-                }))
+            && !["completion", "tools"].iter().all(|required| {
+                model
+                    .summary
+                    .identity
+                    .advertised_capabilities
+                    .iter()
+                    .any(|c| c == required)
+            })
         {
             return Err(Error::Invalid(
                 "The selected model must advertise completion and tools for this harness.".into(),

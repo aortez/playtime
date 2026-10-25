@@ -87,6 +87,7 @@ pub struct PreviewView {
 }
 #[derive(Clone, Debug)]
 pub struct RunViewData {
+    pub harness: Vec<String>,
     pub value: RunView,
     pub summary: Vec<String>,
     pub source: SourcePage,

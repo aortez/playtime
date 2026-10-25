@@ -101,3 +101,26 @@ These are actual local CPU/Qwen workbench captures, not synthetic test baselines
 ![Selected Qwen preview with explicit Off and frozen identity](images/registered-model-preview.png)
 
 ![Completed two-session workbench run and saved memory](images/registered-model-run.png)
+
+
+## Harness readback verification (#109 step A, 2026-10-25)
+
+The registered-model gate now explicitly selects `memento_turns_v1`, checks typed
+saved-definition readback against preview, and compares each run inspector's
+harness and configuration reference with the verified downloaded archive. The
+existing local Qwen identity, explicit Off reasoning, and reviewed smoke budgets
+are unchanged.
+
+Sequential native API run `20261025T210256Z-8e98dd2a` and workbench run
+`20261025T210311Z-c00926f6` both ended `agent_finished` after two sessions with
+complete cleanup. They reported 137 and 133 generated tokens respectively, with
+zero unknown requests/reservations. Both retained the same harness version and
+effective settings across save, preview, frozen worker configuration and run
+inspection. Accepted launch-key replay returned the original run. Local evidence,
+including both verified configurations and screenshots, is retained under
+`/home/data2/pt/pr.1QsTrJdj/`.
+
+![Actual local Qwen archived harness inspection](images/harness-archive.png)
+
+This verifies the existing memento selection/readback path. It does not establish
+compaction, restart/recovery, or #134's outstanding GPT-OSS/two-model acceptance.

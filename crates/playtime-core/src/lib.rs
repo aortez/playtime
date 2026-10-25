@@ -7,5 +7,7 @@ mod vocabulary;
 
 pub use accounting::{AccountingOverflow, GenerationUsage, UsageTotals};
 pub use limits::{ResourceLimits, RunParameters, WorkshopLimits};
-pub use values::{ArchivePath, InvalidValue, RequestId, RunId, SessionId, Sha256Digest, UtcTime};
+pub use values::{
+    ArchivePath, HarnessId, InvalidValue, RequestId, RunId, SessionId, Sha256Digest, UtcTime,
+};
 pub use vocabulary::{CommandOutcome, MemoryCondition, RunMode, RunPhase, StopReason};

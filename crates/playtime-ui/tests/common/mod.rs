@@ -148,6 +148,7 @@ pub async fn recipe_editor() -> Workbench {
     app.model.preview = None;
     app.model.authoring.enabled = true;
     app.model.authoring.definition = Some(playtime_ui::authoring::DefinitionView {
+        harness: None,
         model_name: Some("gpt-oss:20b".into()),
         settings: None,
         inherited: serde_json::to_string_pretty(&definition.inherited).unwrap(),
@@ -183,6 +184,33 @@ pub async fn model_settings_editor() -> Workbench {
         .unwrap();
     app.model.authoring.definition.as_mut().unwrap().settings = Some(settings);
     app.model.edit_recipe(true);
+    app
+}
+
+#[allow(dead_code)]
+pub async fn harness_editor() -> Workbench {
+    let root = playtime_test_support::TestRoot::new().unwrap();
+    let ledger = playtime_server::lifecycle::Ledger::open(&root.0)
+        .await
+        .unwrap();
+    let service = ServiceId::new(ledger.service_id().as_str()).unwrap();
+    let catalog = playtime_server::catalog::Catalog::new(ledger, vec![]).unwrap();
+    let catalog = Fixture::with_catalog(service, catalog)
+        .harnesses()
+        .await
+        .unwrap();
+    let mut app = recipe_editor().await;
+    let view = app.model.authoring.definition.as_mut().unwrap();
+    let parameters =
+        serde_json::from_value(view.value.inherited["recipe"]["parameters"].clone()).unwrap();
+    view.harness = Some(playtime_ui::harness::RecipeHarness::new(
+        RecipeHarnessView {
+            execution_recipe_id: view.value.execution_recipe_id.clone(),
+            definition_digest: view.value.definition_digest.clone(),
+            harness: HarnessView::project(MEMENTO_TURNS_V1, &parameters),
+        },
+        catalog,
+    ));
     app
 }
 

@@ -11,7 +11,7 @@ use utoipa::{OpenApi, PartialSchema, ToSchema};
 pub fn openapi() -> Value {
     #[derive(OpenApi)]
     #[openapi(info(title = "Playtime native HTTP API", version = "1"), components(schemas(
-        ModelRegistrationReview, ModelRegistrations, RegisteredModel, ModelRegistrationRequest, ModelRegistrationResponse, ModelInventory, ModelInspection, ModelInspectRequest, Capabilities, Recipe, RecipeSettingsView, RecipeDefinition, SavedRecipe, RecipeSaveResponse, CloneRecipeRequest, ReviseRecipeRequest, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
+        HarnessCatalog, RecipeHarnessView, ModelRegistrationReview, ModelRegistrations, RegisteredModel, ModelRegistrationRequest, ModelRegistrationResponse, ModelInventory, ModelInspection, ModelInspectRequest, Capabilities, Recipe, RecipeSettingsView, RecipeDefinition, SavedRecipe, RecipeSaveResponse, CloneRecipeRequest, ReviseRecipeRequest, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
         RunView, Page<Recipe>, Page<RunView>, Page<Checkpoint>, Page<Artifact>, EventPage, EventEnvelope,
         Checkpoint, Artifact, EventCursor, StreamEnd, ErrorResponse, UsageSummary, Connection
     )))]
@@ -51,6 +51,22 @@ pub fn openapi() -> Value {
             "content":{"application/json":{"schema":{"$ref":"#/components/schemas/ErrorResponse"}}}});
     }
     let routes = [
+        (
+            "get",
+            "/harnesses",
+            "harnesses",
+            None,
+            HarnessCatalog::name().to_string(),
+            false,
+        ),
+        (
+            "get",
+            "/recipes/{recipe_id}/harness",
+            "recipe_harness",
+            None,
+            RecipeHarnessView::name().to_string(),
+            false,
+        ),
         (
             "post",
             "/models/review",

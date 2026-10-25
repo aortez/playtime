@@ -6,6 +6,7 @@ use playtime_protocol::api::*;
 
 #[derive(Clone, Debug)]
 pub struct DefinitionView {
+    pub harness: Option<crate::harness::RecipeHarness>,
     pub model_name: Option<String>,
     pub value: RecipeDefinition,
     pub inherited: String,
@@ -13,6 +14,8 @@ pub struct DefinitionView {
 }
 #[derive(Clone, Debug)]
 pub struct Draft {
+    /// None inherits verbatim and preserves legacy save-receipt requests.
+    pub harness: Option<HarnessId>,
     pub original: RecipeDefinition,
     pub clone: bool,
     pub name: String,
@@ -47,6 +50,7 @@ impl Draft {
             RecipeMutation::Revise {
                 recipe_id: saved.recipe_id.clone(),
                 request: ReviseRecipeRequest {
+                    harness: self.harness.clone(),
                     model_registration: self
                         .model_registration
                         .as_ref()
@@ -60,6 +64,7 @@ impl Draft {
         } else {
             RecipeMutation::Clone {
                 request: CloneRecipeRequest {
+                    harness: self.harness.clone(),
                     model_registration: self
                         .model_registration
                         .as_ref()
@@ -112,6 +117,7 @@ impl Model {
         }
         if let Some(view) = &self.authoring.definition {
             self.authoring.draft = Some(Draft {
+                harness: None,
                 model_registration: view.value.model_registration.clone(),
                 original: view.value.clone(),
                 clone,
@@ -224,6 +230,9 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
             "Saved recipe {} · revision {}",
             saved.recipe_id, saved.revision
         ));
+    }
+    if let Some(harness) = &definition.harness {
+        crate::harness::draw(ui, harness, model.authoring.draft.as_mut(), busy);
     }
     ui.collapsing("Inherited settings and seeds (read only)", |ui| {
         egui::ScrollArea::vertical()

@@ -163,6 +163,12 @@ pub trait Application: Send + Sync + 'static {
         Err(ApiError::new("unsupported_capability"))
     }
     async fn recipes(&self, query: PageQuery) -> Result<Page<Recipe>>;
+    async fn harnesses(&self) -> Result<HarnessCatalog> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn recipe_harness(&self, _id: RecipeId) -> Result<RecipeHarnessView> {
+        Err(ApiError::new("unsupported_capability"))
+    }
     async fn recipe_definition(&self, _id: RecipeId) -> Result<RecipeDefinition> {
         Err(ApiError::new("unsupported_capability"))
     }

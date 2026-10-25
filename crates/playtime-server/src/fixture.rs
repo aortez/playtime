@@ -200,6 +200,7 @@ impl Run {
             records.clear();
         }
         let view = RunView {
+            harness: None,
             accounting_coverage: None,
             run_id: id,
             mode: request.mode,
@@ -573,6 +574,9 @@ impl Application for Fixture {
                 Some("events".into()),
                 Some("downloads".into()),
                 self.catalog.as_ref().map(|_| RECIPE_AUTHORING.into()),
+                self.catalog
+                    .as_ref()
+                    .map(|_| RECIPE_HARNESS_SELECTION.into()),
                 self.catalog.as_ref().map(|_| MODEL_SETTINGS.into()),
                 self.catalog.as_ref().map(|_| RECIPE_MODEL_SELECTION.into()),
             ]
@@ -593,6 +597,19 @@ impl Application for Fixture {
             .as_ref()
             .ok_or_else(|| ApiError::new("unsupported_capability"))?
             .model_settings(&id)
+            .await
+    }
+    async fn harnesses(&self) -> Result<HarnessCatalog> {
+        self.catalog
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?;
+        playtime_runner::docker::harness_catalog().map_err(|_| ApiError::new("internal_error"))
+    }
+    async fn recipe_harness(&self, id: RecipeId) -> Result<RecipeHarnessView> {
+        self.catalog
+            .as_ref()
+            .ok_or_else(|| ApiError::new("unsupported_capability"))?
+            .harness(&id)
             .await
     }
     async fn recipe_definition(&self, id: RecipeId) -> Result<RecipeDefinition> {
@@ -687,6 +704,7 @@ impl Application for Fixture {
         ))
         .unwrap();
         Ok(Preview {
+            harness: None,
             recipe_id: recipe,
             mode: request.mode,
             preview_revision: state.revision.clone(),

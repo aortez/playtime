@@ -42,7 +42,10 @@ impl From<Error> for Failure {
             Error::Transport | Error::Timeout | Error::RetryBudgetExhausted => 3,
             Error::IdentityMismatch => 5,
             Error::UnsupportedEndpoint => 2,
-            Error::InvalidResponse | Error::LimitExceeded | Error::ContentMismatch => 6,
+            Error::InvalidResponse
+            | Error::LimitExceeded
+            | Error::ContentMismatch
+            | Error::UnsupportedCapability => 6,
             Error::Io => 7,
             Error::AmbiguousMutation(_) => 3,
             Error::Cancelled => 130,

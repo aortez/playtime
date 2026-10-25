@@ -2,6 +2,7 @@
 mod checkpoints;
 pub mod config;
 mod downloads;
+mod harnesses;
 mod models;
 pub use checkpoints::CheckpointIndexRead;
 mod events;
@@ -38,6 +39,7 @@ pub enum Error {
     LimitExceeded,
     IdentityMismatch,
     UnsupportedEndpoint,
+    UnsupportedCapability,
     Cancelled,
     RetryBudgetExhausted,
     UnacknowledgedRecord,
@@ -90,6 +92,7 @@ impl std::fmt::Display for Error {
             Self::LimitExceeded => "Response exceeded the client limit",
             Self::IdentityMismatch => "Service identity changed",
             Self::UnsupportedEndpoint => "Only loopback HTTP endpoints are supported",
+            Self::UnsupportedCapability => "This service does not support the requested capability",
             Self::Cancelled => "Observation detached",
             Self::RetryBudgetExhausted => "Reconnect budget exhausted",
             Self::UnacknowledgedRecord => {
@@ -318,6 +321,15 @@ impl Client {
         if preview.recipe_id != *recipe || preview.mode != mode {
             return Err(Error::InvalidResponse);
         }
+        harnesses::validate_preview(
+            preview.harness.as_ref(),
+            &preview.effective_configuration,
+            &preview.parameters,
+            self.capabilities
+                .features
+                .iter()
+                .any(|f| f == RECIPE_HARNESS_SELECTION),
+        )?;
         Ok(preview)
     }
     pub fn prepare_launch(

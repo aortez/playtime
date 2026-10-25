@@ -67,6 +67,7 @@ impl Client {
         .await
     }
     pub fn prepare_recipe_save(&self, request: RecipeMutation) -> Result<PendingRecipeSave> {
+        self.check_harness_selection(&request)?;
         let mut bytes = [0; 24];
         getrandom::fill(&mut bytes).map_err(|_| Error::Io)?;
         Ok(PendingRecipeSave {
@@ -88,6 +89,7 @@ impl Client {
     }
     pub async fn save_recipe(&self, pending: &PendingRecipeSave) -> Result<RecipeSaveResponse> {
         self.check_recipe_save(pending)?;
+        self.check_harness_selection(&pending.request)?;
         let request = match &pending.request {
             RecipeMutation::Clone { request } => {
                 self.request(Method::POST, "saved-recipes").json(request)
@@ -114,6 +116,24 @@ impl Client {
             .await?;
         validate_save(&response, pending)?;
         Ok(response)
+    }
+    fn check_harness_selection(&self, request: &RecipeMutation) -> Result<()> {
+        if selected_harness(request).is_some()
+            && !self
+                .capabilities()
+                .features
+                .iter()
+                .any(|f| f == RECIPE_HARNESS_SELECTION)
+        {
+            return Err(Error::UnsupportedCapability);
+        }
+        Ok(())
+    }
+}
+fn selected_harness(request: &RecipeMutation) -> Option<&HarnessId> {
+    match request {
+        RecipeMutation::Clone { request } => request.harness.as_ref(),
+        RecipeMutation::Revise { request, .. } => request.harness.as_ref(),
     }
 }
 fn model_identity(definition: &RecipeDefinition) -> (Option<&str>, Option<&str>) {
@@ -200,6 +220,11 @@ fn validate_save(response: &RecipeSaveResponse, pending: &PendingRecipeSave) -> 
         RecipeMutation::Clone { request } => &request.model_registration,
         RecipeMutation::Revise { request, .. } => &request.model_registration,
     };
+    if selected_harness(&pending.request)
+        .is_some_and(|id| definition.inherited["harness"].as_str() != Some(id.as_str()))
+    {
+        return Err(Error::InvalidResponse);
+    }
     if model.as_ref().is_some_and(|id| {
         definition
             .model_registration
