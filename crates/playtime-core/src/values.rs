@@ -60,6 +60,7 @@ macro_rules! string_value {
 string_value!(RunId, opaque_id, "invalid run ID");
 string_value!(SessionId, opaque_id, "invalid session ID");
 string_value!(RequestId, opaque_id, "invalid request ID");
+string_value!(HarnessId, opaque_id, "invalid harness ID");
 string_value!(
     Sha256Digest,
     sha256,

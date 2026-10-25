@@ -59,8 +59,20 @@ async fn edit_save_reopen_and_recover_offline_through_actual_catalog_and_http() 
     .await;
     assert!(model.preview.is_none());
     assert!(model.notice.contains("execution_unavailable"));
+    let harness = model
+        .authoring
+        .definition
+        .as_ref()
+        .unwrap()
+        .harness
+        .as_ref()
+        .unwrap();
+    assert_eq!(harness.view.harness.id, MEMENTO_TURNS_V1);
+    assert_eq!(harness.catalog.harnesses.len(), 1);
     model.edit_recipe(true);
     let draft = model.authoring.draft.as_mut().unwrap();
+    assert!(draft.harness.is_none());
+    draft.harness = Some(HarnessId::new(MEMENTO_TURNS_V1).unwrap());
     draft.name = "A new recipe".into();
     draft.prompt = "Saved exact prompt A".into();
     model.choose_recipe(RecipeId::new("other").unwrap(), RunMode::Simulation);
@@ -97,6 +109,7 @@ async fn edit_save_reopen_and_recover_offline_through_actual_catalog_and_http() 
         .prepare_recipe_save(RecipeMutation::Revise {
             recipe_id: a.saved.as_ref().unwrap().recipe_id.clone(),
             request: ReviseRecipeRequest {
+                harness: None,
                 model_registration: None,
                 model_settings: None,
                 expected_head: a.execution_recipe_id.clone(),
@@ -147,6 +160,7 @@ async fn edit_save_reopen_and_recover_offline_through_actual_catalog_and_http() 
         tag: stale,
         run: None,
         data: Data::Definition(Box::new(playtime_ui::authoring::DefinitionView {
+            harness: None,
             model_name: Some("gpt-oss:20b".into()),
             settings: None,
             value: a,

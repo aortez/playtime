@@ -334,6 +334,7 @@ impl Profile {
         Ok(Self {
             version: 1,
             profile: RECIPE_PROFILE.into(),
+            harness: Some(playtime_protocol::api::MEMENTO_TURNS_V1.into()),
             mode: RunMode::Experiment,
             scenario: Scenario {
                 schema_version: 1,

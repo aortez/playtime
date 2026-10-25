@@ -95,6 +95,19 @@ async fn frozen_configuration(
             if frozen != preview.effective_configuration {
                 return Err("archive configuration differs from exact selected preview".into());
             }
+            let archived = client
+                .run(run)
+                .await?
+                .harness
+                .ok_or("run lacks archived harness")?;
+            if archived.configuration != artifact.content
+                || Some(&archived.harness) != preview.harness.as_ref()
+                || HarnessView::from_configuration(&frozen)?.as_ref() != Some(&archived.harness)
+            {
+                return Err(
+                    "run inspector harness differs from verified archived configuration".into(),
+                );
+            }
             return Ok(());
         }
         query.cursor = page.next_cursor;
@@ -144,6 +157,7 @@ async fn main() -> Result<()> {
     settings.reasoning = RecipeReasoning::Off;
     let pending = client.prepare_recipe_save(RecipeMutation::Clone {
         request: CloneRecipeRequest {
+            harness: Some(HarnessId::new(MEMENTO_TURNS_V1)?),
             source: RecipeSource {
                 execution_recipe_id: source.execution_recipe_id,
                 definition_digest: source.definition_digest,
@@ -157,9 +171,13 @@ async fn main() -> Result<()> {
     retain(&evidence.join("pending-save.json"), &pending)?;
     let saved = client.save_recipe(&pending).await?;
     retain(&evidence.join("saved-recipe.json"), &saved)?;
+    let selected_harness = client.recipe_harness(&saved.definition).await?.harness;
     let id = saved.definition.execution_recipe_id;
     let preview = client.preview(&id, RunMode::Experiment).await?;
     retain(&evidence.join("preview.json"), &preview)?;
+    if preview.harness.as_ref() != Some(&selected_harness) {
+        return Err("preview differs from saved harness selection/settings".into());
+    }
     if preview.model_identity["registration"] != serde_json::to_value(&registered.registration)?
         || preview.model_identity["name"] != "qwen3:1.7b"
     {
@@ -252,6 +270,15 @@ async fn main() -> Result<()> {
         &mut model,
         &mut backend,
         &evidence.join("selected-model-run.png"),
+    )
+    .await?;
+    model.inspector = Inspector::Details;
+    model.source = None;
+    model.selected_row = None;
+    capture(
+        &mut model,
+        &mut backend,
+        &evidence.join("archived-harness.png"),
     )
     .await?;
     // Outcomes are retained even when the tiny model does not complete its task.

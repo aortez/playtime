@@ -438,6 +438,18 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
                 limits.json_bytes,
             )
         }
+        ("GET", ["api", "v1", "harnesses"]) => {
+            no_query(&request)?;
+            json(&app.harnesses().await?, 200, limits.json_bytes)
+        }
+        ("GET", ["api", "v1", "recipes", id, "harness"]) => {
+            no_query(&request)?;
+            json(
+                &app.recipe_harness(recipe_id(id)?).await?,
+                200,
+                limits.json_bytes,
+            )
+        }
         ("GET", ["api", "v1", "recipes", id, "definition"]) => {
             no_query(&request)?;
             json(

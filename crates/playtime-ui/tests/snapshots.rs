@@ -82,6 +82,16 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        ("harness-editor", true, false, Inspector::Details, false),
+        (
+            "harness-editor-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        ("harness-preview", true, false, Inspector::Details, false),
+        ("harness-archive", false, false, Inspector::Details, false),
         (
             "recipe-model-invalid",
             true,
@@ -260,7 +270,9 @@ async fn reviewed_workbench_screens() {
         ("running", false, false, Inspector::Details, false),
         ("ended", false, false, Inspector::Details, false),
     ] {
-        let mut app = if name.starts_with("long-recipe-runs") {
+        let mut app = if name.starts_with("harness-editor") {
+            common::harness_editor().await
+        } else if name.starts_with("long-recipe-runs") {
             common::long_recipe_runs().await
         } else if name.starts_with("model-settings") || name.starts_with("recipe-model") {
             common::model_settings_editor().await
@@ -325,6 +337,26 @@ async fn reviewed_workbench_screens() {
                 "Synthetic preview · live-profile metadata only; no inference or tool execution"
                     .into();
         }
+        if name == "harness-preview" {
+            let mut preview = preview_scene::live(app.model.preview.take().unwrap().value);
+            preview.harness = Some(HarnessView::project(MEMENTO_TURNS_V1, &preview.parameters));
+            app.model.preview = Some(playtime_ui::backend::prepare_preview(preview));
+            app.model.backend = "Synthetic harness preview · no inference or tool execution".into();
+        }
+        if name == "harness-archive" {
+            let parameters = app.model.preview.as_ref().unwrap().value.parameters.clone();
+            let mut value = app.model.run.as_ref().unwrap().value.clone();
+            value.harness = Some(ArchivedHarness {
+                configuration: playtime_protocol::archive::ContentRef {
+                    path: playtime_core::ArchivePath::new("inputs/scenario.json").unwrap(),
+                    sha256: playtime_core::Sha256Digest::new("a".repeat(64)).unwrap(),
+                    size_bytes: 1024,
+                },
+                harness: HarnessView::project(MEMENTO_TURNS_V1, &parameters),
+            });
+            app.model.run = Some(prepare_run(value));
+            app.model.source = None;
+        }
         if name == "archive-waiting" {
             let mut view = app.model.run.take().unwrap().value;
             view.orchestration.state = OrchestrationState::Preparing;
@@ -370,6 +402,12 @@ async fn reviewed_workbench_screens() {
             .wgpu_setup(setup())
             .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
         h.run();
+        if name.starts_with("harness-editor") {
+            use egui_kittest::kittest::Queryable;
+            h.get_by_label("Inherited harness settings (read only)")
+                .click();
+            h.run();
+        }
         if name.starts_with("recipe-model") {
             use egui_kittest::kittest::Queryable;
             if name == "recipe-model-corrected" {

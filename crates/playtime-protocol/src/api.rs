@@ -1,6 +1,8 @@
 //! HTTP v1 contracts, independent of the runtime and archive implementation.
 
 pub mod cursor;
+pub mod harnesses;
+pub use harnesses::*;
 pub mod models;
 pub mod recipes;
 pub mod registrations;
@@ -158,6 +160,8 @@ pub struct PreviewRequest {
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct Preview {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<HarnessView>,
     pub recipe_id: RecipeId,
     #[schema(value_type = schema::RunMode)]
     pub mode: RunMode,
@@ -285,6 +289,8 @@ pub enum Cleanup {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct RunView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<ArchivedHarness>,
     #[schema(value_type = String)]
     pub run_id: RunId,
     #[schema(value_type = schema::RunMode)]

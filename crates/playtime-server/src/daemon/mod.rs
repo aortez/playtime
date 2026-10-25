@@ -479,6 +479,7 @@ impl Application for Daemon {
             .chain(vec![
                 MODEL_REGISTRATION.into(),
                 RECIPE_AUTHORING.into(),
+                RECIPE_HARNESS_SELECTION.into(),
                 MODEL_SETTINGS.into(),
                 RECIPE_MODEL_SELECTION.into(),
                 RECIPE_MODEL_EXECUTION.into(),
@@ -550,6 +551,12 @@ impl Application for Daemon {
     }
     async fn recipe_model_settings(&self, id: RecipeId) -> Result<RecipeSettingsView> {
         self.inner.catalog.model_settings(&id).await
+    }
+    async fn harnesses(&self) -> Result<HarnessCatalog> {
+        playtime_runner::docker::harness_catalog().map_err(|_| ApiError::new("internal_error"))
+    }
+    async fn recipe_harness(&self, id: RecipeId) -> Result<RecipeHarnessView> {
+        self.inner.catalog.harness(&id).await
     }
     async fn recipe_definition(&self, id: RecipeId) -> Result<RecipeDefinition> {
         self.inner.catalog.definition(&id).await

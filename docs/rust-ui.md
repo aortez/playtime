@@ -13,8 +13,9 @@ and Docker/live run-and-view gates in [development](development.md).
 ## Recipe authoring
 
 A service with `recipe_authoring_v1` enables **Clone recipe** and **Edit recipe**.
-The editor changes the name, prompt, registered model selection and supported
-model settings. Whole-run budgets, protocol and seeds stay read-only. Model settings include
+The editor changes the name, prompt, versioned harness selection, registered model
+selection and supported model settings. Whole-run budgets, protocol and seeds stay
+read-only. Model settings include
 reasoning, sampling, context capacity and ordinary-response/handoff caps; reset
 buttons restore values from when editing began and changes remain visible. Save creates an immutable revision and refreshes its execution preview.
 **Refresh recipes** updates listed heads without replacing the selected execution
@@ -370,6 +371,17 @@ explicit codecs, corrupt/oversized images, animation limits and real named contr
 The process fixtures supply actual disconnect/lost-reply behavior.
 
 ## Reviewed screenshots
+
+Harness-capable services show the exact retained ID/version in the recipe editor,
+with a single supported choice and inherited settings in a read-only disclosure.
+Preview shows the effective saved settings. The run inspector's **Details** panel
+shows **Archived harness** and the verified frozen configuration digest when that
+identity was recorded. Loading an old archive never consults today's recipe head.
+The [harness editor](../crates/playtime-ui/tests/snapshots/harness-editor.png),
+[narrow editor](../crates/playtime-ui/tests/snapshots/harness-editor-narrow.png),
+[preview](../crates/playtime-ui/tests/snapshots/harness-preview.png), and
+[archive inspector](../crates/playtime-ui/tests/snapshots/harness-archive.png)
+are synthetic presentation fixtures, not native execution evidence.
 
 The separate `ui-snapshots` CI job pins Ubuntu 26.04 image digest
 `sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944`,

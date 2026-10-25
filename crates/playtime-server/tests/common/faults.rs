@@ -69,6 +69,12 @@ impl Application for Faults {
     async fn recipe_model_settings(&self, id: RecipeId) -> Result<RecipeSettingsView> {
         self.inner.recipe_model_settings(id).await
     }
+    async fn harnesses(&self) -> Result<HarnessCatalog> {
+        self.inner.harnesses().await
+    }
+    async fn recipe_harness(&self, id: RecipeId) -> Result<RecipeHarnessView> {
+        self.inner.recipe_harness(id).await
+    }
     async fn recipe_definition(&self, id: RecipeId) -> Result<RecipeDefinition> {
         self.inner.recipe_definition(id).await
     }

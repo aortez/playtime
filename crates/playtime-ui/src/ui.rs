@@ -1051,7 +1051,14 @@ impl Workbench {
                             });
                             if ui.button("Next source record").clicked() { self.model.source_sequence += 1; self.model.inspect_action(Action::Source(row, self.model.source_sequence, 0)); }
                         }
-                    } else if let Some(run) = &self.model.run { text(ui, &run.source.text, &mut self.metrics); }
+                    } else if let Some(run) = &self.model.run {
+                        if !run.harness.is_empty() {
+                            ui.strong("Archived harness");
+                            for line in &run.harness { ui.label(line); }
+                            ui.separator();
+                        }
+                        text(ui, &run.source.text, &mut self.metrics);
+                    }
                     else { ui.label("Select an activity or run to inspect its recorded source."); }
                 }
                 Inspector::Memory => {

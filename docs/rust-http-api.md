@@ -6,6 +6,31 @@ connects these handlers to durable admission, packaged workers, and verified
 archives. A separate scripted application fixture exercises transport contracts
 without executing a controller, worker, model, or Docker command.
 
+## Versioned harness readback
+
+`recipe_harness_selection_v1` exposes `GET /api/v1/harnesses` and
+`GET /api/v1/recipes/{recipe_id}/harness` through shared-client `harnesses()` and
+`recipe_harness(&definition)`. The built-in catalog is bounded to 16 descriptors;
+this build supplies only `memento_turns_v1`, its version, supported setting names,
+required model capabilities, and exact workshop image. These are installed support
+claims, independent of live model/workshop readiness. Both routes work offline.
+
+Recipe readback is bound to the immutable execution recipe ID and definition
+digest. The client checks it against the retained identity and parameters.
+Clone/revise requests optionally carry `harness`; omission inherits verbatim and
+is omitted from serialized legacy requests. Explicit unknown IDs fail atomically,
+without fallback or translating settings. Accepted save replay still precedes
+validation. Clients gate new selections on the capability; receipt lookup remains
+available without it. Unknown retained IDs stay readable and unsupported, and
+cannot execute.
+
+`Preview.harness` projects its exact frozen configuration. `RunView.harness`
+contains the projection plus the manifest-bound configuration `ContentRef`, read
+through verified archive I/O rather than the current recipe head. Both fields are
+optional for old services/configurations. An archive without explicit identity
+has no projected harness; readers do not infer it from recipe names or present-day
+catalogs. Existing authored archives can retain identity in their saved definition.
+
 ## Read-only Ollama model discovery
 
 When `--ollama-endpoint` is configured, the daemon advertises

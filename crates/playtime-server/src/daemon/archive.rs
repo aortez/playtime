@@ -535,6 +535,10 @@ impl Archive {
         )
         .unwrap();
         preview.effective_configuration = serde_json::to_value(profile).unwrap();
+        preview.harness = Some(HarnessView::project(
+            profile.harness.as_deref()?,
+            &profile.scenario.parameters,
+        ));
         preview.parameters = profile.scenario.parameters.clone();
         preview.prompt = profile.scenario.prompt.clone();
         preview.protocol = profile.scenario.protocol.clone();
@@ -565,6 +569,10 @@ impl Archive {
         )
         .unwrap();
         preview.effective_configuration = serde_json::to_value(profile).unwrap();
+        preview.harness = Some(HarnessView::project(
+            profile.harness.as_deref()?,
+            &profile.scenario.parameters,
+        ));
         preview.parameters = profile.scenario.parameters.clone();
         preview.prompt = profile.scenario.prompt.clone();
         preview.protocol = profile.scenario.protocol.clone();
@@ -580,6 +588,7 @@ impl Archive {
     }
     pub fn preview(&self) -> Preview {
         Preview {
+            harness: None,
             recipe_id: RecipeId::new("two-session").unwrap(),
             mode: RunMode::Simulation,
             preview_revision: self.revision.clone(),

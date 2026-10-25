@@ -20,6 +20,7 @@ fn source_recipe() -> RunRecipe {
 fn clone_request(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Clone {
         request: CloneRecipeRequest {
+            harness: None,
             model_registration: None,
             model_settings: None,
             source: RecipeSource {
@@ -35,6 +36,7 @@ fn revise(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Revise {
         recipe_id: definition.saved.as_ref().unwrap().recipe_id.clone(),
         request: ReviseRecipeRequest {
+            harness: None,
             model_registration: None,
             model_settings: None,
             expected_head: definition.execution_recipe_id.clone(),
@@ -55,6 +57,142 @@ async fn setup(root: &Temp) -> (Ledger, Catalog, RecipeDefinition) {
         .await
         .unwrap();
     (ledger, catalog, definition)
+}
+#[tokio::test]
+async fn harness_selection_is_exact_inherited_and_replayable_without_execution() {
+    let root = Temp::new();
+    let (_, catalog, source) = setup(&root).await;
+    let request = clone_request(&source, "legacy client");
+    let json = serde_json::to_value(&request).unwrap();
+    assert!(json["request"].get("harness").is_none());
+    let restored = serde_json::from_value(json).unwrap();
+    let a = catalog
+        .save(key("legacy"), restored)
+        .await
+        .unwrap()
+        .definition;
+    assert_eq!(a.inherited["harness"], source.inherited["harness"]);
+    let expected = catalog.harness(&a.execution_recipe_id).await.unwrap();
+    for id in ["unknown_v1", "MEMENTO_TURNS_V1", "memento_turns_v2"] {
+        let mut request = revise(&a, "explicit");
+        if let RecipeMutation::Revise { request, .. } = &mut request {
+            request.harness = Some(HarnessId::new(id).unwrap());
+        }
+        assert_eq!(
+            catalog
+                .save(key("selection"), request)
+                .await
+                .unwrap_err()
+                .code(),
+            "invalid_parameters"
+        );
+    }
+    assert_eq!(
+        catalog
+            .head(&a.saved.as_ref().unwrap().recipe_id)
+            .await
+            .unwrap()
+            .revision,
+        1
+    );
+    assert_eq!(
+        catalog.lookup(&key("selection")).await.unwrap_err().code(),
+        "not_found"
+    );
+    let mut request = revise(&a, "explicit");
+    if let RecipeMutation::Revise { request, .. } = &mut request {
+        request.harness = Some(HarnessId::new(MEMENTO_TURNS_V1).unwrap());
+    }
+    let b = catalog
+        .save(key("selection"), request.clone())
+        .await
+        .unwrap()
+        .definition;
+    assert_eq!(
+        catalog
+            .harness(&b.execution_recipe_id)
+            .await
+            .unwrap()
+            .harness,
+        expected.harness
+    );
+    assert_eq!(
+        catalog.harness(&a.execution_recipe_id).await.unwrap(),
+        expected
+    );
+    assert!(
+        catalog
+            .save(key("selection"), request)
+            .await
+            .unwrap()
+            .replayed
+    );
+    assert!(
+        catalog
+            .save(key("legacy"), clone_request(&source, "legacy client"))
+            .await
+            .unwrap()
+            .replayed
+    );
+
+    let old = common::Harness::new().await;
+    let omitted = clone_request(&source, "old service");
+    old.client.prepare_recipe_save(omitted.clone()).unwrap();
+    let mut explicit = omitted;
+    if let RecipeMutation::Clone { request } = &mut explicit {
+        request.harness = Some(HarnessId::new(MEMENTO_TURNS_V1).unwrap());
+    }
+    assert!(matches!(
+        old.client.prepare_recipe_save(explicit),
+        Err(playtime_client::Error::UnsupportedCapability)
+    ));
+    old.server.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn unknown_retained_harness_remains_readable_and_editable_without_fallback() {
+    let root = Temp::new();
+    let (_, catalog, source) = setup(&root).await;
+    let a = catalog
+        .save(key("a"), clone_request(&source, "retained"))
+        .await
+        .unwrap()
+        .definition;
+    let (mut frozen, _) = catalog
+        .frozen(a.execution_recipe_id.as_str())
+        .await
+        .unwrap();
+    frozen.harness = "future_v2".into();
+    let db = rusqlite::Connection::open(root.0.join(".playtime/service.sqlite3")).unwrap();
+    // Simulate an immutable definition retained from another build, with its
+    // actual digest. This is synthetic historical data, never an executed run.
+    db.execute(
+        "UPDATE recipe_revisions SET definition=?1,digest=?2 WHERE execution=?3",
+        rusqlite::params![
+            serde_json::to_string(&frozen).unwrap(),
+            frozen.digest().unwrap(),
+            a.execution_recipe_id.as_str()
+        ],
+    )
+    .unwrap();
+    let retained = catalog.definition(&a.execution_recipe_id).await.unwrap();
+    let view = catalog
+        .harness(&retained.execution_recipe_id)
+        .await
+        .unwrap();
+    assert_eq!(view.harness.id, "future_v2");
+    assert!(!view.harness.supported);
+    let edited = catalog
+        .save(key("edit"), revise(&retained, "offline edit"))
+        .await
+        .unwrap()
+        .definition;
+    let (edited, _) = catalog
+        .frozen(edited.execution_recipe_id.as_str())
+        .await
+        .unwrap();
+    assert_eq!(edited.harness, "future_v2");
+    assert!(edited.executable().is_err());
 }
 #[tokio::test]
 async fn immutable_revisions_conflicts_replay_and_restart_without_source_catalog() {
@@ -393,11 +531,32 @@ async fn actual_http_client_and_private_receipts_work_without_execution() {
         .await
         .unwrap()
         .settings;
+    let harnesses = client.harnesses().await.unwrap();
+    assert_eq!(harnesses.harnesses.len(), 1);
+    assert_eq!(harnesses.harnesses[0].id.as_str(), MEMENTO_TURNS_V1);
+    let original_harness = client.recipe_harness(&source).await.unwrap();
+    assert_eq!(original_harness.harness.id, MEMENTO_TURNS_V1);
+    for case in 0..3 {
+        let mut changed = source.clone();
+        match case {
+            0 => changed.definition_digest = "b".repeat(64),
+            1 => changed.inherited["harness"] = serde_json::json!("future_v2"),
+            _ => {
+                changed.inherited["recipe"]["parameters"]["limits"]["sessions"] =
+                    serde_json::json!(1)
+            }
+        }
+        assert!(matches!(
+            client.recipe_harness(&changed).await,
+            Err(playtime_client::Error::InvalidResponse)
+        ));
+    }
     settings.temperature = 0.0;
     settings.reasoning = RecipeReasoning::ModelDefault;
     let mut request = clone_request(&source, "client clone");
     if let RecipeMutation::Clone { request } = &mut request {
         request.model_settings = Some(settings.clone());
+        request.harness = Some(HarnessId::new(MEMENTO_TURNS_V1).unwrap());
     }
     let pending = client.prepare_recipe_save(request).unwrap();
     let state = Temp::new();
@@ -440,6 +599,17 @@ async fn actual_http_client_and_private_receipts_work_without_execution() {
         settings
     );
     let mut settings_mismatch = recovered.clone();
+    let mut harness_mismatch = recovered.clone();
+    harness_mismatch.definition.inherited["harness"] = serde_json::json!("future_v2");
+    assert!(store.acknowledge(&restored, &harness_mismatch).is_err());
+    assert_eq!(
+        client
+            .recipe_harness(&recovered.definition)
+            .await
+            .unwrap()
+            .harness,
+        original_harness.harness
+    );
     settings_mismatch.definition.inherited["recipe"]["model"]["temperature"] =
         serde_json::json!(1.0);
     assert!(store.acknowledge(&restored, &settings_mismatch).is_err());

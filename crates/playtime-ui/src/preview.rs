@@ -77,46 +77,66 @@ pub fn prepare(value: Preview) -> PreviewView {
     let parse_limit = l
         .tool_parse_error_limit
         .map_or(retries + 1, |n| u64::from(n.get()));
-    let mut sections = vec![section(
-        "Run limits",
-        vec![
-            format!(
-                "{} sessions · {} wall time · {} generated tokens",
-                thousands(l.sessions.get().into()),
-                duration(l.wall_seconds.get()),
-                thousands(l.generated_tokens.get())
-            ),
-            format!(
-                "{} work turns per session · {}",
-                thousands(l.work_turns_per_session.get().into()),
-                progress::memory_words(value.parameters.memory_condition)
-            ),
-            format!(
-                "Model timeout: {} · Command timeout: {}",
-                duration(l.model_seconds.get()),
-                duration(l.command_seconds.get())
-            ),
-            format!(
-                "Tool parse retries: {} consecutive · Per-session error limit: {}",
-                thousands(retries),
-                thousands(parse_limit)
-            ),
-            format!(
-                "Command output: {} · Memento: {} · Event log: {}",
-                bytes(l.output_bytes.get()),
-                bytes(l.memento_bytes.get()),
-                bytes(l.log_bytes.get())
-            ),
-            format!(
-                "Command return allowance: {}",
-                config
-                    .get("command_return_ms")
-                    .and_then(Value::as_u64)
-                    .map(|n| format!("{} ms", thousands(n)))
-                    .unwrap_or_else(|| "unavailable".into())
-            ),
-        ],
-    )];
+    let projected = value.harness.as_ref().is_some_and(|h| h.settings.is_some());
+    let mut limits = vec![if projected {
+        format!(
+            "{} wall time · {} generated tokens",
+            duration(l.wall_seconds.get()),
+            thousands(l.generated_tokens.get())
+        )
+    } else {
+        format!(
+            "{} sessions · {} wall time · {} generated tokens",
+            thousands(l.sessions.get().into()),
+            duration(l.wall_seconds.get()),
+            thousands(l.generated_tokens.get())
+        )
+    }];
+    if !projected {
+        limits.push(format!(
+            "{} work turns per session · {}",
+            thousands(l.work_turns_per_session.get().into()),
+            progress::memory_words(value.parameters.memory_condition)
+        ));
+    }
+    limits.push(format!(
+        "Model timeout: {} · Command timeout: {}",
+        duration(l.model_seconds.get()),
+        duration(l.command_seconds.get())
+    ));
+    if !projected {
+        limits.push(format!(
+            "Tool parse retries: {} consecutive · Per-session error limit: {}",
+            thousands(retries),
+            thousands(parse_limit)
+        ));
+    }
+    limits.push(if projected {
+        format!(
+            "Command output: {} · Event log: {}",
+            bytes(l.output_bytes.get()),
+            bytes(l.log_bytes.get())
+        )
+    } else {
+        format!(
+            "Command output: {} · Memento: {} · Event log: {}",
+            bytes(l.output_bytes.get()),
+            bytes(l.memento_bytes.get()),
+            bytes(l.log_bytes.get())
+        )
+    });
+    limits.push(format!(
+        "Command return allowance: {}",
+        config
+            .get("command_return_ms")
+            .and_then(Value::as_u64)
+            .map(|n| format!("{} ms", thousands(n)))
+            .unwrap_or_else(|| "unavailable".into())
+    ));
+    let mut sections = vec![section("Run limits", limits)];
+    if let Some(harness) = &value.harness {
+        sections.insert(0, section("Harness", crate::harness::lines(harness)));
+    }
     let adapter = model
         .get("adapter")
         .or_else(|| model.get("kind"))

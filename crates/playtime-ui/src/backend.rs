@@ -460,9 +460,19 @@ fn action_error(action: &Action, error: String) -> Data {
 }
 pub use crate::preview::prepare as prepare_preview;
 pub fn prepare_run(value: RunView) -> RunViewData {
+    let harness = value
+        .harness
+        .as_ref()
+        .map(|h| {
+            let mut lines = crate::harness::lines(&h.harness);
+            lines.push(format!("Frozen configuration: {}", h.configuration.sha256));
+            lines
+        })
+        .unwrap_or_default();
     let summary = progress::details(&value);
     let source = transcript::source_page(&serde_json::to_string_pretty(&value).unwrap(), 0);
     RunViewData {
+        harness,
         value,
         summary,
         source,
@@ -657,6 +667,19 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
 
         Action::Definition(id) => {
             let value = client.recipe_definition(&id).await.map_err(safe)?;
+            let harness = if client
+                .capabilities()
+                .features
+                .iter()
+                .any(|f| f == RECIPE_HARNESS_SELECTION)
+            {
+                Some(crate::harness::RecipeHarness::new(
+                    client.recipe_harness(&value).await.map_err(safe)?,
+                    client.harnesses().await.map_err(safe)?,
+                ))
+            } else {
+                None
+            };
             let settings = if client
                 .capabilities()
                 .features
@@ -699,6 +722,7 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 tag,
                 None,
                 Data::Definition(Box::new(crate::authoring::DefinitionView {
+                    harness,
                     model_name: value
                         .model_registration
                         .as_ref()

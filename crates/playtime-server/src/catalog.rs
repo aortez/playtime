@@ -121,6 +121,13 @@ impl Catalog {
             .settings_view()
             .map_err(|_| ApiError::new("unsupported_capability"))
     }
+    pub async fn harness(&self, execution: &RecipeId) -> Result<RecipeHarnessView> {
+        self.frozen(execution.as_str())
+            .await?
+            .0
+            .harness_view()
+            .map_err(|_| ApiError::new("catalog_corrupt"))
+    }
     pub async fn check_context(&self, execution: &RecipeId) -> Result<()> {
         self.frozen(execution.as_str())
             .await?
@@ -335,6 +342,13 @@ fn save_recipe(
     definition.recipe.id = execution_id.to_string();
     definition.recipe.name = name.clone();
     definition.recipe.prompt = prompt.clone();
+    let harness = match &request {
+        RecipeMutation::Clone { request } => &request.harness,
+        RecipeMutation::Revise { request, .. } => &request.harness,
+    };
+    if let Some(id) = harness {
+        definition.select_harness(id).map_err(settings_error)?;
+    }
     let selected = match &request {
         RecipeMutation::Clone { request } => &request.model_registration,
         RecipeMutation::Revise { request, .. } => &request.model_registration,
@@ -743,6 +757,7 @@ mod tests {
             .unwrap();
         let request = RecipeMutation::Clone {
             request: CloneRecipeRequest {
+                harness: None,
                 model_registration: None,
                 model_settings: None,
                 source: RecipeSource {

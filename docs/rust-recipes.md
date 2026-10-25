@@ -174,9 +174,11 @@ it after verified worker termination and resource cleanup; see
 
 Services advertise `recipe_authoring_v1`. In the workbench, select a catalog
 recipe, choose **Clone recipe**, edit its name and prompt, and **Save revision**.
-Select **Edit recipe** on a saved recipe to create its next revision. Harness,
-whole-run budgets, protocol, and seeds remain inherited and read-only. The
-[registered model picker](#registered-model-selection) changes model identity in
+Select **Edit recipe** on a saved recipe to create its next revision. Harness
+settings, whole-run budgets, protocol, and seeds remain inherited and read-only.
+The [harness picker](#versioned-harness-selection-109-step-a) selects a supported
+versioned identity. The [registered model picker](#registered-model-selection)
+changes model identity in
 the draft. The model settings editor changes reasoning, sampling,
 context capacity, and ordinary-response/memento-handoff caps. Unsaved
 edits disable launch and prevent changing the selection until explicitly saved
@@ -254,6 +256,33 @@ preview was unavailable. Restoring the socket produced a fresh ready preview
 without restarting; the saved definition and picker listing stayed identical.
 That check is recorded in the same evidence directory as
 `readiness-restoration.json`.
+
+## Versioned harness selection (#109 step A)
+
+The editor exposes **Harness**, with **Memento (turn-based) · v1** as the only
+production choice. Its stable ID is `memento_turns_v1`, already retained in saved
+definition schemas 1/2. Selecting it changes no settings or budgets; **Inherit
+source harness** restores omission in the save request. Session count, work turns,
+memento size, memory condition, handoff attempts and parse policy are projected
+read-only from the source. Existing model settings still control handoff tokens;
+the saved revision's preview shows the resulting effective value.
+
+Definitions and the installed harness catalog remain available without a ready
+model or workshop. An unknown retained harness stays visible and can be edited;
+preview/launch refuse execution until a supported identity is explicitly selected.
+Services lacking the new capability keep their existing editor behavior.
+
+New native profiles record the harness ID explicitly, and both preview revisions
+and the compiled worker profile digest cover that identity and its parameters.
+The changed profile capability requires a rebuilt frozen worker bundle. Worker
+validation independently rejects absent, unknown or mismatched selections before
+inference. Archived run inspection derives its harness from verified frozen
+configuration, never a newer recipe revision. Historical configurations without
+an explicit ID remain unrecorded; no archives or definitions are rewritten.
+
+This is #109's identity/readback slice. Policy extraction and session-neutral
+contracts remain subsequent steps; memento execution and existing limits are
+unchanged, and compaction is not available.
 
 ## Registered model selection
 

@@ -56,6 +56,10 @@ pub struct RecipeDefinition {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloneRecipeRequest {
+    /// Omission inherits the source revision. Selection never changes settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    pub harness: Option<HarnessId>,
     pub source: RecipeSource,
     pub name: String,
     pub prompt: String,
@@ -69,6 +73,10 @@ pub struct CloneRecipeRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReviseRecipeRequest {
+    /// Omission inherits the source revision. Selection never changes settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<String>)]
+    pub harness: Option<HarnessId>,
     pub expected_head: RecipeId,
     pub name: String,
     pub prompt: String,

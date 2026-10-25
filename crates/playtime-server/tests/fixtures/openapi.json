@@ -250,6 +250,22 @@
         ],
         "type": "object"
       },
+      "ArchivedHarness": {
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/ContentRef",
+            "description": "Manifest-bound source of this projection; never the current recipe head."
+          },
+          "harness": {
+            "$ref": "#/components/schemas/HarnessView"
+          }
+        },
+        "required": [
+          "configuration",
+          "harness"
+        ],
+        "type": "object"
+      },
       "Artifact": {
         "properties": {
           "artifact_id": {
@@ -600,6 +616,13 @@
       "CloneRecipeRequest": {
         "additionalProperties": false,
         "properties": {
+          "harness": {
+            "description": "Omission inherits the source revision. Selection never changes settings.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "model_registration": {
             "oneOf": [
               {
@@ -1068,6 +1091,99 @@
         ],
         "type": "object"
       },
+      "HarnessCatalog": {
+        "properties": {
+          "harnesses": {
+            "items": {
+              "$ref": "#/components/schemas/HarnessDescriptor"
+            },
+            "type": "array"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "harnesses"
+        ],
+        "type": "object"
+      },
+      "HarnessDescriptor": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "required_model_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "required_workshop_image": {
+            "type": "string"
+          },
+          "settings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "settings",
+          "required_model_capabilities",
+          "required_workshop_image"
+        ],
+        "type": "object"
+      },
+      "HarnessView": {
+        "properties": {
+          "id": {
+            "description": "Retained verbatim even when this build cannot interpret the identity.",
+            "type": "string"
+          },
+          "settings": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MementoHarnessSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supported": {
+            "type": "boolean"
+          },
+          "version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "supported"
+        ],
+        "type": "object"
+      },
       "IdempotencyKey": {
         "maxLength": 128,
         "minLength": 1,
@@ -1115,6 +1231,61 @@
           "accepted_at",
           "replayed",
           "run"
+        ],
+        "type": "object"
+      },
+      "MementoHarnessSettings": {
+        "properties": {
+          "handoff_attempts": {
+            "description": "Fixed by memento_turns_v1, not an editable allocation.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handoff_tokens": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "memento_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "memory_condition": {
+            "$ref": "#/components/schemas/MemoryCondition"
+          },
+          "sessions": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tool_parse_error_limit": {
+            "description": "Effective value, including the retained default when omitted.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tool_parse_retries": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "work_turns_per_session": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessions",
+          "work_turns_per_session",
+          "handoff_tokens",
+          "memento_bytes",
+          "memory_condition",
+          "tool_parse_retries",
+          "tool_parse_error_limit",
+          "handoff_attempts"
         ],
         "type": "object"
       },
@@ -1697,6 +1868,16 @@
                 "evidence": {
                   "$ref": "#/components/schemas/EvidenceAvailability"
                 },
+                "harness": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ArchivedHarness"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "input_manifest": {
                   "oneOf": [
                     {
@@ -1855,6 +2036,16 @@
           },
           "effective_configuration": {
             "type": "object"
+          },
+          "harness": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HarnessView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "mode": {
             "$ref": "#/components/schemas/RunMode"
@@ -2047,6 +2238,25 @@
           "prompt",
           "inherited",
           "seeds"
+        ],
+        "type": "object"
+      },
+      "RecipeHarnessView": {
+        "properties": {
+          "definition_digest": {
+            "type": "string"
+          },
+          "execution_recipe_id": {
+            "$ref": "#/components/schemas/RecipeId"
+          },
+          "harness": {
+            "$ref": "#/components/schemas/HarnessView"
+          }
+        },
+        "required": [
+          "execution_recipe_id",
+          "definition_digest",
+          "harness"
         ],
         "type": "object"
       },
@@ -2508,6 +2718,13 @@
           "expected_head": {
             "$ref": "#/components/schemas/RecipeId"
           },
+          "harness": {
+            "description": "Omission inherits the source revision. Selection never changes settings.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "model_registration": {
             "oneOf": [
               {
@@ -2665,6 +2882,16 @@
           },
           "evidence": {
             "$ref": "#/components/schemas/EvidenceAvailability"
+          },
+          "harness": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ArchivedHarness"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "input_manifest": {
             "oneOf": [
@@ -2990,6 +3217,78 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            },
+            "description": "Successful response",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Playtime-Service-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/api/v1/harnesses": {
+      "get": {
+        "operationId": "harnesses",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarnessCatalog"
                 }
               }
             },
@@ -4026,6 +4325,90 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RecipeDefinition"
+                }
+              }
+            },
+            "description": "Successful response",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Playtime-Service-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/api/v1/recipes/{recipe_id}/harness": {
+      "get": {
+        "operationId": "recipe_harness",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recipe_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipeHarnessView"
                 }
               }
             },
