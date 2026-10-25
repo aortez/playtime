@@ -11,7 +11,7 @@ use utoipa::{OpenApi, PartialSchema, ToSchema};
 pub fn openapi() -> Value {
     #[derive(OpenApi)]
     #[openapi(info(title = "Playtime native HTTP API", version = "1"), components(schemas(
-        ModelInventory, ModelInspection, ModelInspectRequest, Capabilities, Recipe, RecipeSettingsView, RecipeDefinition, SavedRecipe, RecipeSaveResponse, CloneRecipeRequest, ReviseRecipeRequest, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
+        ModelRegistrationReview, ModelRegistrations, RegisteredModel, ModelRegistrationRequest, ModelRegistrationResponse, ModelInventory, ModelInspection, ModelInspectRequest, Capabilities, Recipe, RecipeSettingsView, RecipeDefinition, SavedRecipe, RecipeSaveResponse, CloneRecipeRequest, ReviseRecipeRequest, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
         RunView, Page<Recipe>, Page<RunView>, Page<Checkpoint>, Page<Artifact>, EventPage, EventEnvelope,
         Checkpoint, Artifact, EventCursor, StreamEnd, ErrorResponse, UsageSummary, Connection
     )))]
@@ -32,14 +32,17 @@ pub fn openapi() -> Value {
             409,
             "stale_preview, model_metadata_changed, source_conflict, head_conflict, idempotency_conflict, service_identity_mismatch, run_busy, cursor_ahead, evidence_not_ready, release_refused",
         ),
-        (413, "limit_exceeded, catalog_full"),
+        (413, "limit_exceeded, catalog_full, model_registry_full"),
         (415, "unsupported_media_type"),
         (422, "unsupported_capability, invalid_parameters"),
-        (429, "too_many_observers, model_discovery_busy"),
+        (
+            429,
+            "too_many_observers, model_discovery_busy, model_registration_busy",
+        ),
         (500, "archive_corrupt, content_mismatch, internal_error"),
         (
             503,
-            "execution_unavailable, catalog_corrupt, ownership_unresolved, backend_unavailable, evidence_limit_exceeded",
+            "execution_unavailable, catalog_corrupt, model_registry_corrupt, ownership_unresolved, backend_unavailable, evidence_limit_exceeded",
         ),
         (504, "request_timeout"),
     ];
@@ -48,6 +51,46 @@ pub fn openapi() -> Value {
             "content":{"application/json":{"schema":{"$ref":"#/components/schemas/ErrorResponse"}}}});
     }
     let routes = [
+        (
+            "post",
+            "/models/review",
+            "model_review",
+            Some(ModelInspectRequest::name().to_string()),
+            ModelRegistrationReview::name().to_string(),
+            false,
+        ),
+        (
+            "get",
+            "/models/registrations",
+            "model_registrations",
+            None,
+            ModelRegistrations::name().to_string(),
+            false,
+        ),
+        (
+            "get",
+            "/models/registrations/{registration_id}",
+            "model_registration",
+            None,
+            RegisteredModel::name().to_string(),
+            false,
+        ),
+        (
+            "post",
+            "/models/registrations",
+            "register_model",
+            Some(ModelRegistrationRequest::name().to_string()),
+            ModelRegistrationResponse::name().to_string(),
+            false,
+        ),
+        (
+            "get",
+            "/model-registration-requests/{idempotency_key}",
+            "model_registration_lookup",
+            None,
+            ModelRegistrationResponse::name().to_string(),
+            false,
+        ),
         (
             "get",
             "/models",
@@ -290,7 +333,10 @@ pub fn openapi() -> Value {
         if method == "post" {
             parameters.push(json!({"name":"X-Playtime-Service-ID","in":"header","required":true,"schema":{"$ref":"#/components/schemas/ServiceId"}}));
         }
-        if matches!(name, "launch" | "clone_recipe" | "revise_recipe") {
+        if matches!(
+            name,
+            "launch" | "clone_recipe" | "revise_recipe" | "register_model"
+        ) {
             parameters.push(json!({"name":"Idempotency-Key","in":"header","required":true,"schema":{"$ref":"#/components/schemas/IdempotencyKey"}}));
         }
         let content = match name {
@@ -334,10 +380,13 @@ pub fn openapi() -> Value {
                 json!({"schema":{"type":"string","const":"nosniff"}}),
             );
         }
-        if matches!(name, "clone_recipe" | "revise_recipe") {
+        if matches!(name, "clone_recipe" | "revise_recipe" | "register_model") {
             operation["responses"]["201"] = operation["responses"]["200"].clone();
-            operation["responses"]["201"]["description"] =
-                json!("Immutable revision and keyed result committed atomically");
+            operation["responses"]["201"]["description"] = json!(if name == "register_model" {
+                "Immutable registration and keyed result committed atomically"
+            } else {
+                "Immutable revision and keyed result committed atomically"
+            });
             operation["responses"]["200"]["description"] =
                 json!("Replay of the original committed save");
         }

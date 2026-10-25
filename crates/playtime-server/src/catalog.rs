@@ -335,6 +335,22 @@ fn save_recipe(
     definition.recipe.id = execution_id.to_string();
     definition.recipe.name = name.clone();
     definition.recipe.prompt = prompt.clone();
+    let selected = match &request {
+        RecipeMutation::Clone { request } => &request.model_registration,
+        RecipeMutation::Revise { request, .. } => &request.model_registration,
+    };
+    if let Some(id) = selected {
+        let model = crate::registrations::retained(&tx, id).map_err(|error| {
+            if error.code() == "not_found" {
+                let mut error = invalid();
+                error.0.message = "The selected model registration is unavailable. Refresh registered models and choose an existing identity.".into();
+                error
+            } else { error }
+        })?;
+        definition
+            .select_registered_model(model)
+            .map_err(settings_error)?;
+    }
     let settings = match &request {
         RecipeMutation::Clone { request } => &request.model_settings,
         RecipeMutation::Revise { request, .. } => &request.model_settings,
@@ -345,6 +361,9 @@ fn save_recipe(
             .map_err(settings_error)?;
     }
     definition.validate().map_err(|_| invalid())?;
+    definition
+        .check_model_settings(&definition.model_settings().map_err(settings_error)?)
+        .map_err(settings_error)?;
     definition.check_initial_context().map_err(settings_error)?;
     let definition_json = encode(&definition)?;
     let saved = SavedRecipe {
@@ -724,6 +743,7 @@ mod tests {
             .unwrap();
         let request = RecipeMutation::Clone {
             request: CloneRecipeRequest {
+                model_registration: None,
                 model_settings: None,
                 source: RecipeSource {
                     execution_recipe_id: source.execution_recipe_id,

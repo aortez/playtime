@@ -2,10 +2,10 @@
 use crate::{Client, Error, Result};
 use playtime_protocol::api::*;
 use reqwest::Method;
-fn name(value: &str) -> bool {
+pub(crate) fn name(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
-fn digest(value: &str) -> bool {
+pub(crate) fn digest(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
@@ -71,44 +71,52 @@ impl Client {
         let value: ModelInspection = self
             .json(self.request(Method::POST, "models/inspect").json(request))
             .await?;
-        if value.schema_version != 1
-            || value.name != request.name
-            || !name(&value.backend_version)
-            || value.digest.as_deref().is_some_and(|s| !digest(s))
-            || value
-                .definition_sha256
-                .as_deref()
-                .is_some_and(|s| !digest(s))
-            || value.reason.as_ref().is_some_and(|s| s.len() > 1024)
-            || value.capability_provenance.len() > 1024
-            || value.advertised_capabilities.len() > 64
-            || value
-                .advertised_capabilities
-                .iter()
-                .any(|s| s.len() > 128 || s.chars().any(char::is_control))
-        {
-            return Err(Error::InvalidResponse);
-        }
-        if value.status == ModelMetadataStatus::Candidate
-            && (value.digest.is_none()
-                || value.definition_sha256.is_none()
-                || request
-                    .expected_digest
-                    .as_ref()
-                    .is_some_and(|d| Some(d) != value.digest.as_ref()))
-        {
-            return Err(Error::InvalidResponse);
-        }
-        if let Some(c) = &value.reviewed_capabilities
-            && (Some(&c.model_digest) != value.digest.as_ref()
-                || c.backend_version != value.backend_version
-                || c.provenance.len() > 512
-                || c.reasoning.len() > 4
-                || c.reasoning.is_empty()
-                || c.context_ceiling == Some(0))
-        {
-            return Err(Error::InvalidResponse);
-        }
+        validate_inspection(&value, request)?;
         Ok(value)
     }
+}
+
+pub(crate) fn validate_inspection(
+    value: &ModelInspection,
+    request: &ModelInspectRequest,
+) -> Result<()> {
+    if value.schema_version != 1
+        || value.name != request.name
+        || !name(&value.backend_version)
+        || value.digest.as_deref().is_some_and(|s| !digest(s))
+        || value
+            .definition_sha256
+            .as_deref()
+            .is_some_and(|s| !digest(s))
+        || value.reason.as_ref().is_some_and(|s| s.len() > 1024)
+        || value.capability_provenance.len() > 1024
+        || value.advertised_capabilities.len() > 64
+        || value
+            .advertised_capabilities
+            .iter()
+            .any(|s| s.len() > 128 || s.chars().any(char::is_control))
+    {
+        return Err(Error::InvalidResponse);
+    }
+    if value.status == ModelMetadataStatus::Candidate
+        && (value.digest.is_none()
+            || value.definition_sha256.is_none()
+            || request
+                .expected_digest
+                .as_ref()
+                .is_some_and(|d| Some(d) != value.digest.as_ref()))
+    {
+        return Err(Error::InvalidResponse);
+    }
+    if let Some(c) = &value.reviewed_capabilities
+        && (Some(&c.model_digest) != value.digest.as_ref()
+            || c.backend_version != value.backend_version
+            || c.provenance.len() > 512
+            || c.reasoning.len() > 4
+            || c.reasoning.is_empty()
+            || c.context_ceiling == Some(0))
+    {
+        return Err(Error::InvalidResponse);
+    }
+    Ok(())
 }

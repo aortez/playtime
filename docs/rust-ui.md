@@ -13,8 +13,8 @@ and Docker/live run-and-view gates in [development](development.md).
 ## Recipe authoring
 
 A service with `recipe_authoring_v1` enables **Clone recipe** and **Edit recipe**.
-The editor changes the name, prompt and supported model settings. Model identity,
-whole-run budgets, protocol and seeds stay read-only. Model settings include
+The editor changes the name, prompt, registered model selection and supported
+model settings. Whole-run budgets, protocol and seeds stay read-only. Model settings include
 reasoning, sampling, context capacity and ordinary-response/handoff caps; reset
 buttons restore values from when editing began and changes remain visible. Save creates an immutable revision and refreshes its execution preview.
 **Refresh recipes** updates listed heads without replacing the selected execution
@@ -36,8 +36,8 @@ Equal-digest aliases are labeled. Installed state and advisory loaded state are
 separate, and loaded does not imply GPU fit. Unknown reasoning/context support
 stays unknown; remote/cloud models are rejected.
 
-The browser never changes the recipe or its execution identity. Registration and
-recipe model selection are subsequent work (#133/#134). A selected recipe model
+The browser never changes the recipe or its execution identity. Use the recipe
+editor to select a registered identity. A selected recipe model
 that is absent remains visibly missing, without a fallback. An inspection that
 disproves the cached inventory marks it stale until an explicit inventory refresh.
 Metadata failures retain stale inventory with an explicit notice and timestamp. Refresh, close and
@@ -50,6 +50,61 @@ Reviewed views: [wide](../crates/playtime-ui/tests/snapshots/model-browser.png),
 [removed after refresh](../crates/playtime-ui/tests/snapshots/model-browser-removed.png),
 and [unavailable metadata](../crates/playtime-ui/tests/snapshots/model-browser-offline.png).
 See the [metadata API contract](rust-http-api.md#read-only-ollama-model-discovery).
+
+## Register and read model identities
+
+With `model_registration_v1`, open **Models → Installed models**, select the exact
+name and review its digest, backend version, definition fingerprint and capability
+evidence. **Register model** explicitly saves that identity after re-inspection.
+Registration does not save or launch a recipe, and unknown compatibility stays
+unknown. Existing recipes continue using their frozen locks until an explicit
+selection is saved in a new revision.
+
+**Registered models** lists immutable identities and opens their frozen definition.
+It remains available without an Ollama endpoint or ready workshop. Large definitions
+use 24 KiB source pages prepared outside rendering. Refreshing installed metadata
+never edits saved records. There is no automatic deletion or garbage collection.
+
+Pending registration receipts have separate **Look up registration** and
+**Retry same registration** controls. A lost reply or failed local acknowledgment
+keeps new registration disabled until the original request is resolved. Reconnect
+can rediscover receipts; an in-flight mutation and receipt scans share a gate so an
+early empty scan cannot allow a replacement request. Closing the model browser or
+refreshing installed metadata does not abort registration. Acceptance preserves the
+current recipe, unsaved draft, preview and run selection.
+
+Reviewed views: [register](../crates/playtime-ui/tests/snapshots/model-register.png),
+[narrow registration](../crates/playtime-ui/tests/snapshots/model-register-narrow.png),
+[offline readback](../crates/playtime-ui/tests/snapshots/model-registered.png),
+[narrow readback](../crates/playtime-ui/tests/snapshots/model-registered-narrow.png),
+[frozen source](../crates/playtime-ui/tests/snapshots/model-registered-source-narrow.png),
+and [pending receipt](../crates/playtime-ui/tests/snapshots/model-registration-pending.png).
+See the [registration API](rust-http-api.md#explicit-model-registration).
+
+## Choose a registered model in a recipe
+
+With `recipe_model_selection_v1`, open **Clone recipe** or **Edit recipe**, then
+choose **Registered model**. **Refresh recipe model choices** reads stored
+identities even when Ollama is offline. The picker shows registration IDs, so
+registrations with the same name stay distinguishable. Refresh does not replace a
+selected draft identity.
+
+Switching preserves settings and unfinished input. Unsupported reasoning is
+shown unchanged and prevents saving until explicitly corrected. **Reset model**
+restores only the entry selection; **Reset model settings** restores both the
+entry selection and its settings. The model's digest and capability evidence stay
+visible above the settings. See the [authoring contract](rust-recipes.md#registered-model-selection).
+
+Services advertising `recipe_model_execution_v1` can preview and launch reviewed
+selected identities. The preview includes the registration, capability provenance
+and definition fingerprint. Save first, then preview to check current availability;
+unavailable or changed models keep launch disabled. Older services still show the
+authoring-only limitation. Existing recipes retain their locked model behavior.
+
+Reviewed synthetic views: [unsupported reasoning](../crates/playtime-ui/tests/snapshots/recipe-model-invalid.png),
+[narrow](../crates/playtime-ui/tests/snapshots/recipe-model-invalid-narrow.png),
+[picker](../crates/playtime-ui/tests/snapshots/recipe-model-menu-narrow.png), and
+[corrected settings](../crates/playtime-ui/tests/snapshots/recipe-model-corrected.png).
 
 ## Frozen preview and file inspection
 

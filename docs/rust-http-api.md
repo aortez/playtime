@@ -42,6 +42,68 @@ fixture does not advertise discovery; the focused test opts into an ephemeral
 fake Ollama server and exercises the actual reader, routes and client. This is
 metadata-contract evidence, not live inference or registration evidence.
 
+## Explicit model registration
+
+The daemon advertises `model_registration_v1` even without a configured Ollama
+endpoint, so stored registrations remain readable offline. These authenticated
+routes keep registration separate from recipe saving and execution:
+
+| Operation | Route | Shared client |
+| --- | --- | --- |
+| Review exact installed identity | `POST /api/v1/models/review` | `review_model()` |
+| Register reviewed identity with `Idempotency-Key` | `POST /api/v1/models/registrations` | `prepare_model_registration()`, `register_model()` |
+| List immutable summaries | `GET /api/v1/models/registrations` | `registered_models()` |
+| Read frozen definition | `GET /api/v1/models/registrations/{registration_id}` | `registered_model()` |
+| Recover original acceptance | `GET /api/v1/model-registration-requests/{idempotency_key}` | `lookup_model_registration()` |
+
+Review takes the same request as inspection and returns its metadata plus an
+eligible acceptance request, bound to this service and configured endpoint.
+Register re-inspects before **new** acceptance and compares every identity field.
+Changed, missing, incomplete, unsupported-backend or remotely delegated metadata
+cannot be accepted. Unknown reasoning/context support or missing tool capability
+remains explicit; registration alone does not certify harness compatibility.
+
+An immutable version-1 record retains the opaque registration ID, exact request
+name, digest, backend version, canonical definition and fingerprint, advertised
+capabilities and reviewed capability evidence/provenance. The canonical definition
+contains template, parameters, model_info, details and capabilities. Generated
+Modelfile paths, observation timestamps, loaded state and operational endpoint
+bindings are not model identity. No service credentials are stored in records.
+Exact complete identities deduplicate; aliases retain distinct request names.
+A newly reviewed definition or capability change requires explicit acceptance.
+
+The registration and its keyed result commit atomically. Same key/request replays
+its historical result without contacting Ollama; a different request conflicts.
+New acceptance requires successful live inspection even when its identity already
+exists. Client receipts are written privately in `state/model-registrations`
+before POST, bound to service and service endpoint, then acknowledged with the
+registration ID. Lost responses and acknowledgment failures retain the original
+request for lookup/retry. Lookup absence or a failed retry never authorizes a new
+key. Refresh, draft discard and failed recipe saves do not delete registrations.
+
+Bounds: 256 immutable records, 4,096 keyed acceptances, 128 MiB aggregate serialized
+records/requests, 1 MiB canonical definitions, 2 MiB encoded records and 12 KiB
+encoded acceptance requests. The list is one bounded snapshot ordered by creation;
+there are no mutable heads or pagination cursors. These bounds keep its summaries
+below the default 4 MiB HTTP response limit. New acceptance is serialized with no
+waiting queue (`model_registration_busy`); metadata retains the existing read and
+time limits. Full capacity reports `model_registry_full`; invalid retained data
+reports `model_registry_corrupt`; unavailable metadata or storage I/O reports
+`backend_unavailable` (metadata deadlines remain `request_timeout`). Accepted keys
+still replay at capacity. There is no automatic garbage collection/deletion UI.
+
+Service ledger version 7 transactionally adds two tables to version 6; existing
+run and recipe rows are preserved. Older binaries refuse version 7. This additive
+upgrade requires no reset and does not establish a general historical-migration
+policy. Registration records are service definitions, not archive writer receipts.
+Registration itself does not grant execution; the separate
+`recipe_model_execution_v1` capability requires compiled reviewed support.
+
+Focused server/UI tests use ephemeral metadata-only Ollama and HTTP fixtures,
+including drift, alias identity, offline replay/restart, capacity, corruption,
+concurrent acceptance, disconnected responses and private receipt recovery. They
+establish registration behavior, not live inference or worker-recovery evidence.
+
 ## Run the transport fixtures
 
 In one terminal, choose a new data directory:
@@ -320,3 +382,31 @@ controller rules. Invalid parameters return 422 with an actionable safe message.
 The saved definition, receipt replay and archive retain the exact settings; the
 new optional fields require no service database migration. See
 [model settings editor](rust-recipes.md#model-settings-editor).
+
+### Registered model selection authoring
+
+`recipe_model_selection_v1` adds optional `model_registration` to clone/revise
+requests. The value is an immutable registration ID from this service; omission
+inherits the source revision's selected model. The service resolves the retained
+record inside the save transaction, without live inspection. Missing registrations,
+unreviewed capabilities, unsupported tool/reasoning settings and invalid context
+return `invalid_parameters` (422) without moving the head or accepting the key.
+All saves validate inherited settings too. `RecipeReasoning` now includes distinct
+`on` and `off` values; no named level is implicitly converted to either.
+
+Definitions with an explicit selection use schema version 2 and expose a typed
+`model_registration` summary. Their inherited frozen definition retains the full
+record and original `model_lock` separately. The settings endpoint reports the
+selected registration's reviewed capabilities. Client readback and save receipts
+validate the selected identity; omission in old request JSON stays omitted.
+Existing schema-1 definitions and keys are unchanged, and the ledger stays at 7.
+
+The selection flag certifies authoring only. `recipe_model_execution_v1` separately
+advertises verification and execution of compiled reviewed registrations. Preview
+includes the selected registration and definition fingerprint in `model_identity`;
+the preview revision binds the full worker profile. Unsupported stored evidence,
+missing/changed identity and unreachable endpoints return `execution_unavailable`
+with reasons `selected_model_unsupported`, `selected_model_missing_or_changed`, or
+`model_unavailable`. Accepted launch keys still replay the original admission.
+Synthetic HTTP/UI tests establish no native capability or inference support.
+See [registered model selection](rust-recipes.md#registered-model-selection).

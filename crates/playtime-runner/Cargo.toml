@@ -14,6 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 playtime-docker.workspace = true
+playtime-ollama.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

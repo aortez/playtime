@@ -42,6 +42,11 @@ impl ApiError {
             "source_conflict" => "The source definition changed; reload before cloning",
             "head_conflict" => "A newer revision was saved; keep your edits and reload",
             "catalog_full" => "The saved recipe catalog is full",
+            "model_registry_full" => "Model registration storage is full",
+            "model_registry_corrupt" => "Stored model registrations failed verification",
+            "model_registration_busy" => {
+                "A model acceptance is pending; look up or retry the same request"
+            }
             "catalog_corrupt" => "Saved recipe data failed verification",
             "execution_unavailable" => {
                 "Execution is unavailable; saved recipes can still be edited"
@@ -82,12 +87,12 @@ impl ApiError {
             | "evidence_not_ready"
             | "release_refused" => 409,
             "source_conflict" | "head_conflict" | "model_metadata_changed" => 409,
-            "catalog_full" => 413,
-            "catalog_corrupt" | "execution_unavailable" => 503,
+            "catalog_full" | "model_registry_full" => 413,
+            "catalog_corrupt" | "execution_unavailable" | "model_registry_corrupt" => 503,
             "limit_exceeded" => 413,
             "unsupported_media_type" => 415,
             "unsupported_capability" | "invalid_parameters" => 422,
-            "too_many_observers" | "model_discovery_busy" => 429,
+            "too_many_observers" | "model_discovery_busy" | "model_registration_busy" => 429,
             "ownership_unresolved" | "backend_unavailable" | "evidence_limit_exceeded" => 503,
             "request_timeout" => 504,
             _ => 500,
@@ -129,6 +134,28 @@ pub struct Download {
 pub trait Application: Send + Sync + 'static {
     /// Stable identity and cached capabilities; no remote probes here.
     fn capabilities(&self) -> Capabilities;
+    async fn model_review(&self, _request: ModelInspectRequest) -> Result<ModelRegistrationReview> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn model_registrations(&self) -> Result<ModelRegistrations> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn model_registration(&self, _id: ModelRegistrationId) -> Result<RegisteredModel> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn register_model(
+        &self,
+        _key: IdempotencyKey,
+        _request: ModelRegistrationRequest,
+    ) -> Result<ModelRegistrationResponse> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn model_registration_lookup(
+        &self,
+        _key: IdempotencyKey,
+    ) -> Result<ModelRegistrationResponse> {
+        Err(ApiError::new("unsupported_capability"))
+    }
     async fn model_inventory(&self) -> Result<ModelInventory> {
         Err(ApiError::new("unsupported_capability"))
     }

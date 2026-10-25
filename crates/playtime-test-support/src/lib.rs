@@ -238,3 +238,9 @@ pub async fn run_command(
     records.push(json!({"args":args.iter().map(|s| s.to_string_lossy()).collect::<Vec<_>>(),"code":captured.code,"stdout":String::from_utf8_lossy(&captured.stdout),"stderr":String::from_utf8_lossy(&captured.stderr)}));
     Ok(captured)
 }
+
+/// Bounded metadata-only fake; never performs inference.
+pub mod model_metadata;
+
+/// Synthetic retained registrations for authoring tests, never native model evidence.
+pub mod recipe_models;

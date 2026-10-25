@@ -26,19 +26,12 @@ fn failure(error: Failure) -> ApiError {
     })
 }
 fn reviewed_capabilities(value: &ModelInspection) -> Option<RecipeModelCapabilities> {
-    let locked: serde_json::Value =
-        serde_json::from_slice(playtime_runner::docker::MODEL_LOCK).ok()?;
-    // Discovery has already fingerprinted the canonical definition. Match the
-    // same identity fields the execution adapter verifies, not the generated
-    // Modelfile's host-specific blob path. Keep the reviewed lock itself intact.
-    if locked["name"].as_str() != Some(value.name.as_str())
-        || locked["digest"].as_str() != value.digest.as_deref()
-        || locked["ollama_version"].as_str() != Some(value.backend_version.as_str())
-        || locked["definition_sha256"].as_str() != value.definition_sha256.as_deref()
-    {
-        return None;
-    }
-    playtime_runner::docker::reviewed_model_capabilities(&locked).ok()
+    playtime_runner::docker::reviewed_identity_capabilities(
+        &value.name,
+        value.digest.as_deref()?,
+        &value.backend_version,
+        value.definition_sha256.as_deref()?,
+    )
 }
 impl ModelBrowser {
     pub fn new(endpoint: &str) -> Result<Self> {
@@ -119,6 +112,59 @@ impl ModelBrowser {
         })
     }
     pub async fn inspect(&self, request: ModelInspectRequest) -> Result<ModelInspection> {
+        self.inspect_definition(request)
+            .await
+            .map(|(value, _)| value)
+    }
+    pub(crate) fn binding(&self, service: &ServiceId) -> String {
+        playtime_ollama::json::hash(
+            &serde_json::to_vec(&(service, self.endpoint.as_str())).expect("endpoint identity"),
+        )
+    }
+    pub async fn review(
+        &self,
+        service: &ServiceId,
+        request: ModelInspectRequest,
+    ) -> Result<ModelRegistrationReview> {
+        let (inspection, _) = self.inspect_definition(request).await?;
+        let request = RegisteredModelIdentity::from_inspection(&inspection).map(|identity| {
+            ModelRegistrationRequest {
+                endpoint_binding: self.binding(service),
+                identity,
+            }
+        });
+        Ok(ModelRegistrationReview {
+            inspection,
+            request,
+        })
+    }
+    pub(crate) async fn accept(
+        &self,
+        service: &ServiceId,
+        request: &ModelRegistrationRequest,
+    ) -> Result<serde_json::Value> {
+        if !request.valid() {
+            return Err(ApiError::new("invalid_parameters"));
+        }
+        if request.endpoint_binding != self.binding(service) {
+            return Err(ApiError::new("model_metadata_changed"));
+        }
+        let (inspection, definition) = self
+            .inspect_definition(ModelInspectRequest {
+                name: request.identity.name.clone(),
+                expected_digest: Some(request.identity.digest.clone()),
+            })
+            .await?;
+        if RegisteredModelIdentity::from_inspection(&inspection).as_ref() != Some(&request.identity)
+        {
+            return Err(ApiError::new("model_metadata_changed"));
+        }
+        definition.ok_or_else(|| ApiError::new("model_metadata_changed"))
+    }
+    async fn inspect_definition(
+        &self,
+        request: ModelInspectRequest,
+    ) -> Result<(ModelInspection, Option<serde_json::Value>)> {
         let _permit = self
             .reads
             .try_acquire()
@@ -197,6 +243,6 @@ impl ModelBrowser {
                     Some("Capability metadata is missing or malformed; support is unknown".into());
             }
         }
-        Ok(value)
+        Ok((value, detail.definition))
     }
 }

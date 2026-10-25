@@ -174,8 +174,10 @@ it after verified worker termination and resource cleanup; see
 
 Services advertise `recipe_authoring_v1`. In the workbench, select a catalog
 recipe, choose **Clone recipe**, edit its name and prompt, and **Save revision**.
-Select **Edit recipe** on a saved recipe to create its next revision. The model identity, harness, whole-run budgets, protocol, and seeds remain
-inherited and read-only. The model settings editor changes reasoning, sampling,
+Select **Edit recipe** on a saved recipe to create its next revision. Harness,
+whole-run budgets, protocol, and seeds remain inherited and read-only. The
+[registered model picker](#registered-model-selection) changes model identity in
+the draft. The model settings editor changes reasoning, sampling,
 context capacity, and ordinary-response/memento-handoff caps. Unsaved
 edits disable launch and prevent changing the selection until explicitly saved
 or discarded. A conflicting edit keeps its text; it can be saved as a new recipe
@@ -190,7 +192,7 @@ the original service, request, and key. Reopening the workbench restores these
 pending receipts. Unsaved text is not persisted across process exit.
 
 The service stores revisions, logical heads, and keyed results atomically in its
-private SQLite ledger (version 6). Limits are 256 logical recipes, 4,096 retained
+private SQLite ledger (currently version 7). Limits are 256 logical recipes, 4,096 retained
 revisions, 128 MiB of definition/request/result bytes, and 4 MiB per encoded row.
 Names allow 128 UTF-8 bytes and prompts 65,536 bytes. Existing seed and recipe
 bounds still apply. Exhaustion refuses a new save without losing old reads or
@@ -253,6 +255,60 @@ without restarting; the saved definition and picker listing stayed identical.
 That check is recorded in the same evidence directory as
 `readiness-restoration.json`.
 
+## Registered model selection
+
+With `recipe_model_selection_v1`, **Clone recipe** or **Edit recipe** includes a
+**Registered model** picker. Register an inspected identity through **Models**
+first, then refresh the recipe's choices. Selecting a registration changes only
+the draft. Its ID, digest and capability provenance remain visible; equal names
+can refer to different immutable registrations.
+
+Selection preserves the prompt, seed files, numeric sampling seed, every numeric
+setting and all run budgets. Unsupported settings remain invalid. For example,
+High stays High when selecting a model supporting only Model default / On / Off;
+choose an explicit supported value before saving. A smaller reviewed context
+ceiling may require a separate capacity change. The service checks completion and
+tool support, reviewed reasoning/context capabilities, numeric bounds and initial
+context fit on every save, including when settings are inherited. Unknown
+capabilities block selection saves rather than becoming guessed defaults.
+
+**Reset model** restores the selection at editor entry while preserving settings,
+including unfinished input. **Reset model settings** restores that selection and
+all entry settings. Discarding edits never deletes a registration. Saving uses the
+existing optimistic head check and durable receipt flow; it never mutates earlier
+revisions. Reads and edits require neither a live model nor a ready workshop.
+
+With `recipe_model_execution_v1`, selected registrations execute only when their
+complete identity and capability evidence match a compiled reviewed profile.
+The exact GPT-OSS lock and [Qwen3 1.7B development lock](local-ollama-development.md)
+are supported on Ollama 0.32.3. Qwen offers Model default / On / Off with unknown
+default and a 40,960-token context ceiling. High is not converted to On, and
+selecting Qwen does not shrink an inherited 65,536-token context automatically.
+Synthetic boolean records used by authoring tests never grant execution support.
+
+Preview and admission inspect the selected name/digest, backend version and
+canonical definition. Worker startup, session start and every selected inference
+dispatch verify them again. Capability provenance must match the compiled review;
+stored claims alone cannot approve a new model. Missing, offline or changed
+models block execution with a useful explanation while definitions remain editable.
+Restore the original identity or explicitly select a newly reviewed registration,
+then request a fresh preview. Nothing launches or updates a registration automatically.
+Loaded-model state is diagnostic and does not change identity or preview revisions.
+Metadata checks cannot eliminate tag changes between inspection and inference;
+the existing live-run exclusion and conservative accounting still apply.
+
+The archive's projected execution lock/settings and registration agree with its
+full frozen definition and preview. The original model lock remains only base
+provenance. The original GPT-OSS acceptance gate and full two-model acceptance
+remain outstanding while its host is unavailable; local Qwen evidence is separate.
+
+Selected recipes use frozen-definition schema version 2. They retain the full
+immutable registration as selected authority and keep `model_lock` as base recipe
+provenance. Schema-1 recipes keep their existing serialized bytes and digests.
+This adds no database migration: the service ledger remains version 7. Older
+binaries cannot read the new definition format. Execution archives for selected
+registrations will be verified in the following execution slice.
+
 ## Model settings editor
 
 `recipe_model_settings_v1` adds **Model settings** to the clone/revision form.
@@ -278,8 +334,8 @@ New settings revisions freeze `model_capabilities` and its provenance. The curre
 resolver is a reviewed fallback scoped to the complete GPT-OSS lock and Ollama
 0.32.3, with context ceiling from locked `model_info`; it does not infer support
 from names. [Ollama's thinking contract](https://docs.ollama.com/capabilities/thinking)
-distinguishes explicit reasoning choices from omission. Model registration (#7)
-will extend this resolver to other models and advertised metadata.
+distinguishes explicit reasoning choices from omission. Selected registrations
+use their retained reviewed capability evidence; names alone never grant support.
 
 The fields are additive: existing frozen definitions, keyed request JSON and
 replies remain readable; the service ledger stays at version 6. Rebuild the worker

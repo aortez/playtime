@@ -274,6 +274,18 @@ Linked-history review in [#11](https://github.com/aortez/playtime/issues/11) rem
 separate from comparing independent runs. Recovery and backend-host enforcement
 remain in their existing tickets; studio acceptance does not replace those gates.
 
+Model selection is staged under #7: read-only discovery (#131), explicit immutable
+registration (#133), then recipe selection and generalized worker verification
+(#134). Registration is now available independently of recipe saves; its
+[implemented contract](rust-http-api.md#explicit-model-registration) defines replay,
+offline reads, storage bounds and the additive ledger change. The first #134 slice
+now selects registrations in drafts, validates capabilities/settings and saves
+immutable revisions offline. [Its contract](rust-recipes.md#registered-model-selection)
+keeps base provenance separate from the selected authority. The execution slice
+now verifies compiled reviewed registrations through preview, admission and
+worker dispatch. Local Qwen development evidence is separate from the original
+GPT-OSS acceptance gate; full two-model native acceptance remains under #134.
+
 ## First recipe authoring slice
 
 The first delivery, [#113](https://github.com/aortez/playtime/issues/113) under #108,

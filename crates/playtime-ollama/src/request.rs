@@ -44,6 +44,36 @@ pub fn encode_request(
     settings: &EffectiveSettings,
     limit: usize,
 ) -> Result<Vec<u8>> {
+    if settings.thinking.as_ref().is_some_and(
+        |t| !matches!(t, Thinking::Level(level) if THINKING_LEVELS.contains(&level.as_str())),
+    ) {
+        return Err(Failure::new(
+            FailureKind::Request,
+            "unsupported reasoning choice",
+        ));
+    }
+    encode_payload(request, settings, Profile::MODEL, limit)
+}
+pub(crate) fn encode_for_model(
+    request: &ModelRequest,
+    settings: &EffectiveSettings,
+    model: &crate::ExecutionModel,
+    limit: usize,
+) -> Result<Vec<u8>> {
+    if !model.reasoning.contains(&settings.thinking) {
+        return Err(Failure::new(
+            FailureKind::Request,
+            "unsupported reasoning choice for selected identity",
+        ));
+    }
+    encode_payload(request, settings, &model.name, limit)
+}
+fn encode_payload(
+    request: &ModelRequest,
+    settings: &EffectiveSettings,
+    name: &str,
+    limit: usize,
+) -> Result<Vec<u8>> {
     if request.maximum_tokens == 0
         || request.maximum_tokens > i64::MAX as u64
         || request.sampling_seed >= 1 << 31
@@ -60,9 +90,6 @@ pub fn encode_request(
             .repeat_penalty
             .is_some_and(|n| !n.is_finite() || n < 0.0)
         || settings.keep_alive != "5m"
-        || settings.thinking.as_ref().is_some_and(
-            |t| !matches!(t, Thinking::Level(level) if THINKING_LEVELS.contains(&level.as_str())),
-        )
     {
         return Err(Failure::new(
             FailureKind::Request,
@@ -85,7 +112,7 @@ pub fn encode_request(
             options.insert(key.into(), v);
         }
     }
-    let mut payload = value!({"model":Profile::MODEL,"stream":true,"messages":request.messages,"tools":request.tools,"keep_alive":settings.keep_alive,"options":options});
+    let mut payload = value!({"model":name,"stream":true,"messages":request.messages,"tools":request.tools,"keep_alive":settings.keep_alive,"options":options});
     if let Some(think) = &settings.thinking {
         payload["think"] = serde_json::to_value(think)
             .map_err(|e| Failure::new(FailureKind::Request, e.to_string()))?;

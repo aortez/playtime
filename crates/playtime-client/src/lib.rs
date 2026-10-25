@@ -669,3 +669,5 @@ fn validate_launch(reply: &LaunchResponse, pending: Option<&PendingLaunch>) -> R
     }
     Ok(())
 }
+
+pub mod registrations;

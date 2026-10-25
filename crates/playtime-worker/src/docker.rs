@@ -139,9 +139,15 @@ impl Live {
     }
     fn with_transport(transport: Box<dyn Transport>, model: &LiveModel) -> crate::Result<Self> {
         let limits = playtime_ollama::Limits::default();
-        let lock = ModelLock::parse(&serde_json::to_vec(&model.lock)?).map_err(invalid)?;
+        let adapter = if model.registration.is_some() {
+            Adapter::with_model(Port(transport), model.execution_model()?, limits.clone())
+        } else {
+            let lock = ModelLock::parse(&serde_json::to_vec(&model.lock)?).map_err(invalid)?;
+            Adapter::new(Port(transport), lock, limits.clone())
+        }
+        .map_err(invalid)?;
         Ok(Self {
-            adapter: Adapter::new(Port(transport), lock, limits.clone()).map_err(invalid)?,
+            adapter,
             settings: serde_json::from_value(model.settings.clone())?,
             limits,
         })
@@ -636,7 +642,16 @@ impl NativeEffects {
         });
         let model = match &profile.model {
             None => Model::Scripted(profile.scenario.models.clone().into()),
-            Some(model) => Model::Live(Box::new(Live::prepare(model)?)),
+            Some(model) => {
+                let mut live = Live::prepare(model)?;
+                if model.registration.is_some() {
+                    live.adapter
+                        .inspect(false, deadline, &CancellationToken::new())
+                        .await
+                        .map_err(invalid)?;
+                }
+                Model::Live(Box::new(live))
+            }
         };
         Ok(Self {
             prepared: Some((ready, owner, journal, bootstrap.private_dir.clone(), model)),

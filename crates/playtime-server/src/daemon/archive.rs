@@ -40,23 +40,141 @@ pub(super) struct Archive {
 pub(super) struct Live {
     pub host: playtime_runner::docker::LiveHost,
     endpoint: playtime_ollama::Endpoint,
-    adapter: tokio::sync::Mutex<playtime_ollama::Adapter<playtime_ollama::NativeTransport>>,
+    reads: tokio::sync::Mutex<()>,
 }
 impl Live {
-    /// Same addresses as at startup, and the locked model still identifies
-    /// itself exactly. Metadata only; never inference.
-    async fn ready(&self) -> life::Result<()> {
+    /// Recheck frozen addresses and the requested execution identity. A missing
+    /// default model must not block an explicitly selected different model.
+    async fn ready(&self, model: Option<&playtime_runner::docker::LiveModel>) -> life::Result<()> {
+        let _guard = self.reads.lock().await;
         if resolve(&self.endpoint).await? != self.host.addresses {
             return Err(Error::Invalid("live model unavailable"));
         }
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
-        self.adapter
-            .lock()
-            .await
-            .inspect(false, deadline, &playtime_ollama::CancellationToken::new())
+        let limits = playtime_ollama::Limits::default();
+        let transport = playtime_ollama::NativeTransport::with_resolution(
+            self.endpoint.clone(),
+            playtime_ollama::Trust::BundledWebPki,
+            playtime_ollama::Resolution::Pinned {
+                addresses: self.host.addresses.clone(),
+            },
+            &limits,
+        )
+        .map_err(|_| Error::Invalid("live model unavailable"))?;
+        let mut adapter = if let Some(model) = model.filter(|m| m.registration.is_some()) {
+            let identity = model
+                .execution_model()
+                .map_err(|_| Error::Invalid("selected model unsupported"))?;
+            playtime_ollama::Adapter::with_model(transport, identity, limits)
+        } else {
+            let lock = playtime_ollama::ModelLock::parse(playtime_runner::docker::MODEL_LOCK)
+                .map_err(|_| Error::Invalid("invalid model lock"))?;
+            playtime_ollama::Adapter::new(transport, lock, limits)
+        }
+        .map_err(|_| Error::Invalid("selected model unsupported"))?;
+        adapter
+            .inspect(
+                false,
+                tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+                &playtime_ollama::CancellationToken::new(),
+            )
             .await
             .map(|_| ())
-            .map_err(|_| Error::Invalid("live model unavailable"))
+            .map_err(|e| {
+                if e.kind == playtime_ollama::FailureKind::Identity {
+                    Error::Invalid("selected model identity changed")
+                } else {
+                    Error::Invalid("live model unavailable")
+                }
+            })
+    }
+}
+#[cfg(test)]
+#[path = "../../../playtime-runner/tests/common/registered.rs"]
+mod registered;
+#[cfg(test)]
+mod model_readiness_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn selected_readiness_requires_its_own_identity_and_not_the_default_model() {
+        let fake = playtime_test_support::model_metadata::FakeOllama::start().await;
+        let selected = registered::qwen();
+        let id = &selected.summary.identity;
+        let lock = serde_json::json!({"name":id.name,"digest":id.digest,"ollama_version":id.backend_version,
+            "definition_sha256":id.definition_sha256,"definition":selected.definition,"modelfile":""});
+        let model = playtime_runner::docker::LiveModel {
+            registration: Some(selected.summary.clone()),
+            lock,
+            settings: serde_json::json!({}),
+            host: playtime_runner::docker::LiveHost {
+                endpoint: fake.endpoint.clone(),
+                addresses: vec!["127.0.0.1".parse().unwrap()],
+                live_lock: "/synthetic/lock".into(),
+            },
+        };
+        let live = Live {
+            endpoint: playtime_ollama::Endpoint::parse(&fake.endpoint).unwrap(),
+            host: model.host.clone(),
+            reads: tokio::sync::Mutex::new(()),
+        };
+        let tags = serde_json::json!({"models":[{"name":id.name,"digest":id.digest}]});
+        {
+            let mut state = fake.metadata.0.lock().unwrap();
+            state.tags = tags.clone();
+            state.show = selected.definition.clone();
+        }
+        live.ready(Some(&model)).await.unwrap();
+        assert!(
+            live.ready(None).await.is_err(),
+            "no default GPT-OSS on this host"
+        );
+        for case in 0..5 {
+            {
+                let mut state = fake.metadata.0.lock().unwrap();
+                state.tags = tags.clone();
+                state.show = selected.definition.clone();
+                state.version = id.backend_version.clone();
+                match case {
+                    // The HTTP fixture returns 404 from show for an absent tag,
+                    // just as Ollama does; this must not become endpoint outage.
+                    0 => state.tags = serde_json::json!({"models":[]}),
+                    1 => state.tags["models"][0]["digest"] = serde_json::json!("changed"),
+                    2 => state.show["template"] = serde_json::json!("changed"),
+                    3 => state.version = "0.32.4".into(),
+                    _ => state.show["capabilities"] = serde_json::json!(["completion"]),
+                }
+            }
+            assert!(
+                matches!(
+                    live.ready(Some(&model)).await,
+                    Err(Error::Invalid("selected model identity changed"))
+                ),
+                "case {case}"
+            );
+        }
+        {
+            let mut state = fake.metadata.0.lock().unwrap();
+            state.tags = tags;
+            state.show = selected.definition;
+            state.version = id.backend_version.clone();
+            state.loaded = serde_json::json!({"models":[{"name":"unrelated-loaded-model"}]});
+        }
+        live.ready(Some(&model)).await.unwrap();
+        assert!(
+            !fake
+                .metadata
+                .0
+                .lock()
+                .unwrap()
+                .calls
+                .iter()
+                .any(|c| c == "ps" || c.starts_with("unexpected:"))
+        );
+        fake.stop();
+        assert!(matches!(
+            live.ready(Some(&model)).await,
+            Err(Error::Invalid("live model unavailable"))
+        ));
     }
 }
 /// Busy while any checkout's live worker holds the lock. This probe releases
@@ -241,20 +359,6 @@ impl Archive {
             return Err(Error::Invalid("live runs need the Docker workshop"));
         }
         let addresses = resolve(&endpoint).await?;
-        let limits = playtime_ollama::Limits::default();
-        let transport = playtime_ollama::NativeTransport::with_resolution(
-            endpoint.clone(),
-            playtime_ollama::Trust::BundledWebPki,
-            playtime_ollama::Resolution::Pinned {
-                addresses: addresses.clone(),
-            },
-            &limits,
-        )
-        .map_err(|_| Error::Invalid("live model unavailable"))?;
-        let lock = playtime_ollama::ModelLock::parse(playtime_runner::docker::MODEL_LOCK)
-            .map_err(|_| Error::Invalid("invalid model lock"))?;
-        let adapter = playtime_ollama::Adapter::new(transport, lock, limits)
-            .map_err(|_| Error::Invalid("live model unavailable"))?;
         let live = Live {
             host: playtime_runner::docker::LiveHost {
                 endpoint: endpoint.as_str().into(),
@@ -262,9 +366,8 @@ impl Archive {
                 live_lock: directory.join("live-model.lock"),
             },
             endpoint,
-            adapter: tokio::sync::Mutex::new(adapter),
+            reads: tokio::sync::Mutex::new(()),
         };
-        live.ready().await?;
         self.live = Some(Arc::new(live));
         Ok(())
     }
@@ -311,12 +414,12 @@ impl Archive {
         if ready.docker.is_none() {
             return Err(Error::Invalid("execution unavailable"));
         }
-        if mode != RunMode::ScriptedSmoke {
+        if mode == RunMode::LiveSmoke {
             ready
                 .live
                 .as_ref()
                 .ok_or(Error::Invalid("execution unavailable"))?
-                .ready()
+                .ready(None)
                 .await?;
         }
         Ok(ready)
@@ -340,9 +443,13 @@ impl Archive {
                     "invalid saved recipe"
                 })
             })?;
-        definition
-            .executable()
-            .map_err(|_| Error::Invalid("execution unavailable"))?;
+        definition.executable().map_err(|_| {
+            Error::Invalid(if definition.model_registration.is_some() {
+                "selected model unsupported"
+            } else {
+                "execution unavailable"
+            })
+        })?;
         let (docker, live) = (
             self.docker
                 .as_ref()
@@ -351,14 +458,13 @@ impl Archive {
                 .as_ref()
                 .ok_or(Error::Invalid("execution unavailable"))?,
         );
-        let mut profile = playtime_runner::docker::Profile::freeze_recipe(
-            definition.recipe.clone(),
+        let profile = playtime_runner::docker::Profile::freeze_definition(
+            definition,
             docker.selection.clone(),
             docker.daemon.clone(),
             live.host.clone(),
         )
         .map_err(|_| Error::Invalid("invalid saved recipe"))?;
-        profile.definition = Some(definition);
         profile
             .validate()
             .map_err(|_| Error::Invalid("invalid saved recipe"))?;
@@ -366,6 +472,11 @@ impl Archive {
     }
     pub async fn authored_preview(&self, id: &str) -> life::Result<Preview> {
         let profile = self.authored_profile(id).await?;
+        self.live
+            .as_ref()
+            .ok_or(Error::Invalid("execution unavailable"))?
+            .ready(profile.model.as_ref())
+            .await?;
         let mut preview = self
             .model_preview(&profile, id, RunMode::Experiment)
             .ok_or(Error::Invalid("execution unavailable"))?;
@@ -431,7 +542,15 @@ impl Archive {
         preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"],
             "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"],
             "settings":model.settings,"endpoint":model.host.endpoint,"addresses":model.host.addresses});
-        preview.warnings = vec!["Live model: real inference on the locked model, and tools execute in the real locked Docker workshop. One live run at a time across checkouts.".into()];
+        if let Some(registration) = &model.registration {
+            preview.model_identity["registration"] = serde_json::to_value(registration).unwrap();
+            preview.model_identity["definition_sha256"] = model.lock["definition_sha256"].clone();
+        }
+        preview.warnings = vec![if model.registration.is_some() {
+            "Live model: real inference on the selected registered identity. Tools execute in the locked Docker workshop. One live run at a time across checkouts."
+        } else {
+            "Live model: real inference on the locked model, and tools execute in the real locked Docker workshop. One live run at a time across checkouts."
+        }.into()];
         preview.backend = projection::live_backend();
         Some(preview)
     }

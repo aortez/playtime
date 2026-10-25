@@ -32,10 +32,11 @@ impl Client {
             || value.definition_digest != definition.definition_digest
             || serde_json::to_value(&value.settings).map_err(|_| Error::InvalidResponse)?
                 != definition_settings(definition)
-            || definition.inherited["model_lock"]["digest"].as_str()
-                != Some(value.capabilities.model_digest.as_str())
-            || definition.inherited["model_lock"]["ollama_version"].as_str()
-                != Some(value.capabilities.backend_version.as_str())
+            || model_identity(definition)
+                != (
+                    Some(value.capabilities.model_digest.as_str()),
+                    Some(value.capabilities.backend_version.as_str()),
+                )
             || definition.inherited["recipe"]["parameters"]["limits"]["generated_tokens"].as_u64()
                 != Some(value.generated_tokens)
         {
@@ -115,6 +116,19 @@ impl Client {
         Ok(response)
     }
 }
+fn model_identity(definition: &RecipeDefinition) -> (Option<&str>, Option<&str>) {
+    if let Some(model) = &definition.model_registration {
+        (
+            Some(model.identity.digest.as_str()),
+            Some(model.identity.backend_version.as_str()),
+        )
+    } else {
+        (
+            definition.inherited["model_lock"]["digest"].as_str(),
+            definition.inherited["model_lock"]["ollama_version"].as_str(),
+        )
+    }
+}
 fn is_digest(value: &str) -> bool {
     value.len() == 64
         && value
@@ -122,14 +136,26 @@ fn is_digest(value: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 fn validate_definition(value: &RecipeDefinition) -> Result<()> {
-    if value.schema_version != 1
-        || !is_digest(&value.definition_digest)
+    if !matches!(
+        (value.schema_version, value.model_registration.is_some()),
+        (1, false) | (2, true)
+    ) || !is_digest(&value.definition_digest)
         || value.name.is_empty()
         || value.name.len() > 128
         || value.prompt.len() > 65536
         || !value.inherited.is_object()
         || value.seeds.len() > 16
         || value.seeds.iter().any(|s| !is_digest(&s.sha256))
+        || value.model_registration.as_ref().is_some_and(|m| {
+            !m.identity.valid()
+                || serde_json::to_value(m).ok().as_ref()
+                    != value.inherited.pointer("/model_registration/summary")
+        })
+        || (value.model_registration.is_none()
+            && value
+                .inherited
+                .get("model_registration")
+                .is_some_and(|m| !m.is_null()))
         || value.saved.as_ref().is_some_and(|s| {
             s.execution_recipe_id != value.execution_recipe_id
                 || s.definition_digest != value.definition_digest
@@ -170,6 +196,19 @@ fn validate_save(response: &RecipeSaveResponse, pending: &PendingRecipeSave) -> 
             (&request.name, &request.prompt)
         }
     };
+    let model = match &pending.request {
+        RecipeMutation::Clone { request } => &request.model_registration,
+        RecipeMutation::Revise { request, .. } => &request.model_registration,
+    };
+    if model.as_ref().is_some_and(|id| {
+        definition
+            .model_registration
+            .as_ref()
+            .map(|m| &m.registration_id)
+            != Some(id)
+    }) {
+        return Err(Error::InvalidResponse);
+    }
     let settings = match &pending.request {
         RecipeMutation::Clone { request } => &request.model_settings,
         RecipeMutation::Revise { request, .. } => &request.model_settings,

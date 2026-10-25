@@ -97,6 +97,7 @@ async fn edit_save_reopen_and_recover_offline_through_actual_catalog_and_http() 
         .prepare_recipe_save(RecipeMutation::Revise {
             recipe_id: a.saved.as_ref().unwrap().recipe_id.clone(),
             request: ReviseRecipeRequest {
+                model_registration: None,
                 model_settings: None,
                 expected_head: a.execution_recipe_id.clone(),
                 name: "B".into(),

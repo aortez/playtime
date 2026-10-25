@@ -17,6 +17,61 @@ and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
 
+## Registered-model execution (#134, 2026-10-25)
+
+Adds `recipe_model_execution_v1` for compiled, reviewed identity profiles. Selected
+schema-2 definitions now project their registration into the worker's model lock,
+settings and archived configuration; base lock provenance is unchanged. The
+supported identities are the existing exact GPT-OSS lock and the new Qwen3 1.7B
+lock on Ollama 0.32.3. Qwen supports explicit boolean On/Off; its default stays
+unknown. Existing locks, recipe budgets, schema-1 definition bytes and ledger
+version 7 are unchanged. No API schema changes or old golden rewrites are needed.
+
+The compiled Docker profile digest includes selected-model execution and the Qwen
+lock. Rebuild worker bundles; older bundles cannot execute through this daemon.
+Preview/admission and selected worker startup/session/each inference dispatch
+recheck identity. Model availability is checked for the requested recipe rather
+than requiring GPT-OSS during endpoint setup. Transport failures and metadata
+drift never fall back to the base model. The controller still conservatively
+charges an unknown allowance once it has dispatched a native effect, including
+an adapter metadata refusal before inference. This does not relax uncertainty
+accounting or claim atomic mutable-tag verification.
+
+An execution metadata `/api/show` HTTP 404 is an identity failure, including
+removal between tags and show. Preview/admission therefore report
+`selected_model_missing_or_changed` rather than an endpoint outage. Other
+metadata HTTP failures remain availability errors; no inference is dispatched
+after either refusal. The HTTP metadata fixture now returns 404 for absent models.
+
+Local CPU Qwen probes establish boolean thinking and native tool-call support.
+The separate registered-model gate exercises API/workbench launches with real
+systemd/Docker and retains both outcomes. It does not replace the existing
+GPT-OSS acceptance gate; full two-model acceptance keeps #134 open while that
+host is unavailable. See [local development setup](local-ollama-development.md).
+
+The run-and-view worker-loss fixture's teardown accepts an already absent agent
+only with the same exact absence proof it requires after removal. A history read
+can arrive after checkpoint capture removed that agent. Transport ambiguity still
+fails closed; existing resources still require exact proposal checks, and test
+cleanup never releases the retained service admission.
+
+## Registered-model recipe authoring (#134, first slice, 2026-10-24)
+
+Adds `recipe_model_selection_v1`, an optional registration ID on clone/revise
+requests, a typed selected summary on definitions, and explicit On/Off reasoning.
+The reviewed OpenAPI golden includes those additive fields and enum variants.
+Selected frozen definitions use schema version 2 and retain their immutable
+registration separately from base model-lock provenance. Old schema-1 definitions
+and omitted request fields keep their original bytes/digests; ledger version 7
+is unchanged. Older binaries reject selected schema-2 definitions.
+
+Every new save validates selected capabilities and inherited settings/context.
+No second native profile is approved; boolean-profile tests are synthetic. The
+worker rejects selected registrations rather than using the base lock. Native
+execution verification and the two-model acceptance required by #134 remain
+incomplete. Four new pinned-renderer screenshots cover model selection, preserved
+unsupported reasoning and explicit corrections; existing baselines are unchanged.
+
 ## Read-only model discovery (#131, 2026-10-24)
 
 Adds opt-in `model_discovery_v1`, two authenticated metadata routes and bounded
@@ -45,8 +100,8 @@ bit-identical rebuild.
 
 Limit DTOs name explicit byte units, and `cpu_cores` retains fractional CPU
 values without rounding. The daemon freezes model/recipe fields and preview
-revisions as described in [recipes](rust-recipes.md). Interactive recipe/model
-overrides are not implemented.
+revisions as described in [recipes](rust-recipes.md). Interactive edits create
+immutable saved revisions; launch never applies an unsaved override.
 
 ## Rust CLI command map
 
@@ -354,3 +409,19 @@ PR #130 review correction: run state now occupies its own untruncated line benea
 the recipe button. Long recipe names cannot hide `needs release`; fixed run-row
 height includes the extra line. Regression and pinned-renderer coverage exercise
 default and minimum sidebar widths with running, ended and release-needed runs.
+
+
+## Explicit Ollama identity registration (#133)
+
+Adds opt-in `model_registration_v1` review/register/list/read/keyed-lookup routes,
+immutable version-1 identity DTOs and private shared-client receipts. The HTTP
+OpenAPI golden deliberately adds these schemas/routes and full/corrupt/busy errors.
+Existing discovery DTOs, recipe locks, worker verification, archives, controller
+behavior and frozen Python remain unchanged. New acceptance re-inspects complete
+identity; accepted-key replay returns retained evidence without live metadata.
+
+Ledger version 7 adds registrations and keyed acceptances transactionally to
+version 6, preserving existing run/recipe rows; older binaries refuse it. No reset
+is required, and this does not decide a general development migration policy.
+New pinned screenshots cover wide/narrow registration, offline readback and receipt
+recovery. Existing discovery-only and workbench baselines remain unchanged.
