@@ -1,11 +1,10 @@
-use std::{
-    collections::{BTreeSet, VecDeque},
-    num::NonZeroU64,
-};
+mod admission;
+
+use std::{collections::BTreeSet, num::NonZeroU64};
 
 use playtime_core::{
-    CommandOutcome, GenerationUsage, InvalidValue, MemoryCondition, RunId, RunMode, RunPhase,
-    SessionId, StopReason, UsageTotals,
+    CommandOutcome, GenerationUsage, InvalidValue, RunId, RunMode, RunPhase, SessionId, StopReason,
+    UsageTotals,
 };
 use playtime_protocol::{
     events::CleanupOutcome, observations::ObservationIdentity, v1::UsageSummary,
@@ -13,11 +12,9 @@ use playtime_protocol::{
 use serde_json::{Value, json};
 
 use crate::{
-    context::{
-        ContextWindow, TOOLS, canonical, encoded_size, fit_tool_result, message, tool_message,
-        validate_call,
-    },
-    evidence::{self, CommandObservation, CommandSources},
+    context::{ContextWindow, encoded_size},
+    evidence::{CommandObservation, CommandSources},
+    policy::{Inference, Memento, Recovery, View, memento_contract as contract},
     *,
 };
 
@@ -29,10 +26,7 @@ const CHUNK_BYTES: u64 = 512 * 1024;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Stage {
-    Starting,
-    Work,
-    Handoff,
-    Calls,
+    Policy,
     Checkpoint,
     Publishing,
     Cleaning,
@@ -48,11 +42,13 @@ struct ActiveTool {
     effect_id: Option<u64>,
 }
 
-/// The only owner of execution policy. External adapters supply observations,
-/// never decisions to retry, increase an allocation, or start another session.
+/// Runtime enforcement and effect authority. The private memento policy proposes
+/// conversation/lifecycle actions; adapters supply observations, never decisions
+/// to retry, increase an allocation, or start another session.
 pub struct Controller<I: IdSource> {
     config: ControllerConfig,
     tool_policy: ToolPolicy,
+    policy: Memento,
     run_id: RunId,
     mode: RunMode,
     ids: I,
@@ -85,13 +81,11 @@ pub struct Controller<I: IdSource> {
     active: bool,
     checkpoint_attempted: bool,
     last_checkpoint: Option<Checkpoint>,
-    messages: Vec<Value>,
     context: ContextWindow,
     turns: u32,
     handoff_attempts: u32,
     current_handoff: bool,
-    calls: VecDeque<Value>,
-    response_had_calls: bool,
+    tool_calls_remaining: usize,
     tool: Option<ActiveTool>,
     commands: Vec<CommandObservation>,
     ended: bool,
@@ -149,6 +143,7 @@ impl<I: IdSource> Controller<I> {
         let mut controller = Self {
             config,
             tool_policy,
+            policy: Memento::default(),
             run_id,
             mode,
             ids,
@@ -157,7 +152,7 @@ impl<I: IdSource> Controller<I> {
             started_ms: now_ms,
             now_ms,
             deadline_ms,
-            stage: Stage::Starting,
+            stage: Stage::Policy,
             phase: RunPhase::Admitted,
             pending: None,
             pending_started: false,
@@ -181,13 +176,11 @@ impl<I: IdSource> Controller<I> {
             active: false,
             checkpoint_attempted: false,
             last_checkpoint: None,
-            messages: Vec::new(),
             context: ContextWindow::default(),
             turns: 0,
             handoff_attempts: 0,
             current_handoff: false,
-            calls: VecDeque::new(),
-            response_had_calls: false,
+            tool_calls_remaining: 0,
             tool: None,
             commands: Vec::new(),
             ended: false,
@@ -526,7 +519,7 @@ impl<I: IdSource> Controller<I> {
             json!({"reason": reason, "usage": UsageSummary::from(self.totals)}),
         );
         self.control(ControlFact::StopDecided(reason));
-        self.calls.clear();
+        self.policy.stopped();
         self.tool = None;
         if matches!(
             self.pending.as_ref().map(|effect| &effect.kind),
@@ -603,26 +596,16 @@ impl<I: IdSource> Controller<I> {
                 return;
             }
             match self.stage {
-                Stage::Starting => self.start_session(),
-                Stage::Work => {
-                    let limits = &self.config.parameters.limits;
-                    if self.turns >= limits.work_turns_per_session.get()
-                        || self.remaining_tokens() <= limits.handoff_tokens.get()
-                    {
-                        self.begin_handoff();
-                    } else {
-                        self.request(false);
+                Stage::Policy => {
+                    let proposal = self.policy.propose(View {
+                        config: &self.config,
+                        facts: self.facts(),
+                    });
+                    if let Err(error) = self.apply_proposal(proposal) {
+                        self.diagnostic(error.0);
+                        self.stop(StopReason::InfrastructureFailure);
                     }
                 }
-                Stage::Handoff => {
-                    if self.handoff_attempts >= 2 || self.remaining_tokens() == 0 {
-                        self.emit("handoff_missing", json!({}));
-                        self.stage = Stage::Checkpoint;
-                    } else {
-                        self.request(true);
-                    }
-                }
-                Stage::Calls => self.next_tool(),
                 Stage::Checkpoint => {
                     self.checkpoint_attempted = true;
                     self.phase_to(RunPhase::Checkpointing);
@@ -656,11 +639,12 @@ impl<I: IdSource> Controller<I> {
         self.request_context = None;
         self.turns = 0;
         self.handoff_attempts = 0;
+        self.tool_calls_remaining = 0;
         self.session_parse_errors = 0;
         self.ended = false;
         self.finished = false;
         self.context = ContextWindow::default();
-        self.messages.clear();
+        self.policy.session_starting();
         self.commands.clear();
         self.checkpoint_attempted = false;
         // A dispatched but partly successful start also needs finalization.
@@ -675,12 +659,6 @@ impl<I: IdSource> Controller<I> {
             LIFECYCLE_MS,
             true,
         );
-    }
-
-    fn budget(&self) -> Value {
-        json!({"generated_tokens_remaining": self.remaining_tokens(),
-            "wall_seconds_limit": self.config.parameters.limits.wall_seconds,
-            "session": self.session, "sessions_total": self.config.parameters.limits.sessions})
     }
 
     fn remaining_tokens(&self) -> u64 {
@@ -715,52 +693,39 @@ impl<I: IdSource> Controller<I> {
             json!({"ordinal": self.session, "context": "fresh", "memory": memory,
             "evidence": evidence, "memory_condition": self.config.parameters.memory_condition}),
         );
-        self.messages = crate::context::SessionInput {
-            parameters: &self.config.parameters,
-            protocol: &self.config.protocol,
-            prompt: &self.config.prompt,
-            inventory: &self.config.inventory,
-        }
-        .messages(self.session, self.remaining_tokens(), &memory);
-        if let Some(evidence) = evidence {
-            self.messages.push(message("user", evidence.content));
-        }
-        self.stage = Stage::Work;
+        self.policy.session_started(
+            View {
+                config: &self.config,
+                facts: self.facts(),
+            },
+            &memory,
+            evidence.as_ref(),
+        );
         self.phase_to(RunPhase::Working);
     }
 
     fn begin_handoff(&mut self) {
-        self.stage = Stage::Handoff;
         self.phase_to(RunPhase::HandingOff);
-        self.messages.push(message("user", format!(
-            "This session is ending. Call end_session now with the memento your next session needs. Only end_session is available. Maximum {} UTF-8 bytes. Budget: {}",
-            self.config.parameters.limits.memento_bytes, canonical(&self.budget()))));
+        self.policy.begin_handoff(View {
+            config: &self.config,
+            facts: self.facts(),
+        });
     }
 
-    fn request(&mut self, handoff: bool) {
+    fn request(&mut self, proposal: Inference) {
+        let Inference {
+            handoff,
+            messages,
+            tools,
+        } = proposal;
         let limits = &self.config.parameters.limits;
-        let reserve = if handoff {
-            0
-        } else {
-            limits.handoff_tokens.get()
-        };
-        let cap = if handoff {
-            limits.handoff_tokens.get()
-        } else {
-            limits.tokens_per_call.get()
-        };
-        let maximum = cap.min(self.remaining_tokens().saturating_sub(reserve));
+        let maximum = contract::allowance(limits, self.remaining_tokens(), handoff);
         let Some(reservation) = NonZeroU64::new(maximum) else {
             self.stop(StopReason::TokenLimit);
             return;
         };
-        let tools = if handoff {
-            vec![TOOLS.last().unwrap().clone()]
-        } else {
-            TOOLS.clone()
-        };
-        let (context_input, basis) = self.context.estimate(&self.messages, &tools);
-        let context_reserve = crate::context::request_context_reserve(limits, handoff);
+        let (context_input, basis) = self.context.estimate(&messages, &tools);
+        let context_reserve = contract::request_context_reserve(limits, handoff);
         if context_input
             .saturating_add(maximum)
             .saturating_add(context_reserve)
@@ -775,7 +740,7 @@ impl<I: IdSource> Controller<I> {
                 json!({"reason": "context_guard", "context_input_bound": context_input}),
             );
             if handoff {
-                self.stage = Stage::Checkpoint;
+                self.policy.context_rejected();
             } else {
                 self.begin_handoff();
             }
@@ -796,7 +761,7 @@ impl<I: IdSource> Controller<I> {
             sampling_seed: ((u64::from(self.config.parameters.sampling_seed) + call - 1)
                 % (1 << 31)) as u32,
             maximum_tokens: maximum,
-            messages: self.messages.clone(),
+            messages,
             tools,
             context_input_bound: context_input,
             context_basis: basis.into(),
@@ -842,19 +807,7 @@ impl<I: IdSource> Controller<I> {
             ));
             return;
         };
-        if !response.message.is_object()
-            || response.message["role"] != "assistant"
-            || ["content", "thinking"].iter().any(|key| {
-                response
-                    .message
-                    .get(key)
-                    .is_some_and(|value| !value.is_string())
-            })
-            || response
-                .message
-                .get("tool_calls")
-                .is_some_and(|value| !value.is_array())
-        {
+        if !Memento::valid_message(&response.message) {
             self.model_error(ModelFailure::Parse("invalid assistant message".into()));
             return;
         }
@@ -894,110 +847,93 @@ impl<I: IdSource> Controller<I> {
             self.stop(StopReason::TokenLimitExceededByServer);
             return;
         }
-        self.messages.push(response.message.clone());
+        // Measured context belongs to the actual admitted input plus response,
+        // never to history rewritten by a policy. Admission estimates the next
+        // proposal against this verified prefix.
+        let mut observed_messages = request.messages;
+        observed_messages.push(response.message.clone());
         self.context.observe(
-            &self.messages,
+            &observed_messages,
             &request.tools,
             response.prompt_tokens,
             tokens,
         );
-        self.calls = response.message["tool_calls"]
+        if response.message["tool_calls"]
             .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .into();
-        if self.calls.len() > 8 {
+            .is_some_and(|calls| calls.len() > 8)
+        {
             self.stop(StopReason::TooManyToolsInOneResponse);
-            return;
+        } else {
+            self.tool_calls_remaining = response.message["tool_calls"]
+                .as_array()
+                .map_or(0, Vec::len);
+            self.policy.model_response(response.message);
         }
-        self.response_had_calls = !self.calls.is_empty();
-        self.stage = Stage::Calls;
     }
 
     fn model_error(&mut self, error: ModelFailure) {
         self.pending = None;
         let charge = self.reserved_tokens();
         self.settle_unknown();
-        let mut recovery = false;
-        let mut session_ceiling = false;
-        let reason = match &error {
-            ModelFailure::Parse(_) => {
-                self.parse_errors += 1;
-                self.session_parse_errors += 1;
-                self.parse_streak += 1;
-                let limits = &self.config.parameters.limits;
-                // The error ceiling applies per session. Reaching it ends this
-                // session through the normal handoff instead of the whole run.
-                let ceiling = limits
-                    .tool_parse_error_limit
-                    .map_or(limits.tool_parse_retries + 1, |value| value.get());
-                recovery = self.parse_streak <= limits.tool_parse_retries;
-                session_ceiling = recovery && self.session_parse_errors >= ceiling;
-                StopReason::ToolParseRetryLimit
-            }
-            ModelFailure::Connection(_) => StopReason::ModelConnectionError,
-            ModelFailure::Incomplete(_) => StopReason::IncompleteModelResponse,
-            ModelFailure::MissingUsage(_) => StopReason::MissingTokenUsage,
-            ModelFailure::ByteLimit(_) => StopReason::ModelResponseByteLimit,
-            ModelFailure::Timeout(_) => StopReason::ModelTimeout,
-            ModelFailure::Infrastructure(_) => StopReason::InfrastructureFailure,
-        };
+        if matches!(error, ModelFailure::Parse(_)) {
+            self.parse_errors += 1;
+            self.session_parse_errors += 1;
+            self.parse_streak += 1;
+        }
+        let decision = self.policy.recovery(
+            View {
+                config: &self.config,
+                facts: self.facts(),
+            },
+            &error,
+        );
+        let recovery = matches!(decision, Recovery::Retry { .. });
         self.emit(
             "model_error",
             json!({"error": error, "recovery_allowed": recovery,
             "token_budget_charge": charge, "consecutive_errors": self.parse_streak,
             "tool_parse_errors": self.parse_errors, "usage": UsageSummary::from(self.totals)}),
         );
-        if recovery {
-            self.messages.push(message("user", format!(
-                "The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments. The failed request's full generation allowance was charged to the budget; its actual usage is unknown. Budget: {}", canonical(&self.budget()))));
-            if session_ceiling && !self.current_handoff {
-                self.emit(
-                    "early_handoff",
-                    json!({"reason": "tool_parse_error_limit",
-                    "session_tool_parse_errors": self.session_parse_errors}),
-                );
-                self.begin_handoff();
-            } else {
-                self.after_response(false);
+        match decision {
+            Recovery::Retry { end_session } => {
+                self.policy.retry(View {
+                    config: &self.config,
+                    facts: self.facts(),
+                });
+                if end_session {
+                    self.emit(
+                        "early_handoff",
+                        json!({"reason": "tool_parse_error_limit",
+                        "session_tool_parse_errors": self.session_parse_errors}),
+                    );
+                    self.begin_handoff();
+                } else {
+                    self.after_response(false);
+                }
             }
-        } else {
-            self.diagnostic(&format!("{error:?}"));
-            self.stop(reason);
+            Recovery::Stop(reason) => {
+                self.diagnostic(&format!("{error:?}"));
+                self.stop(reason);
+            }
         }
     }
 
-    fn next_tool(&mut self) {
-        let Some(call) = self.calls.pop_front() else {
-            self.after_response(true);
-            return;
-        };
-        let name = call["function"]["name"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_owned();
-        let arguments = call["function"]["arguments"].clone();
+    fn next_tool(&mut self, proposed: ToolRequest) {
+        let name = proposed.name.clone();
+        let arguments = proposed.arguments.clone();
         let Some(sequence) = self.emit(
             "tool_request",
             json!({"name": name, "arguments": arguments}),
         ) else {
             return;
         };
-        let mut error = validate_call(&name, &arguments);
-        if self.ended {
-            error = Some("The session has already ended".into());
-        }
-        if self.current_handoff && name != "end_session" {
-            error = Some("Only end_session is available during handoff".into());
-        }
+        let error = contract::tool_error(
+            &proposed,
+            &self.config.parameters.limits,
+            self.ended,
+            self.current_handoff,
+        );
         let save_memory = name == "end_session";
-        if error.is_none()
-            && save_memory
-            && arguments["memento"].as_str().unwrap().len() as u64
-                > self.config.parameters.limits.memento_bytes.get()
-        {
-            error = Some("Memento exceeds its byte limit; shorten it and retry".into());
-        }
         let mut active = ActiveTool {
             request: ToolRequest {
                 name: name.clone(),
@@ -1043,14 +979,7 @@ impl<I: IdSource> Controller<I> {
                 },
             });
         }
-        let request = if save_memory {
-            ToolRequest {
-                name: "write_file".into(),
-                arguments: json!({"path": "/work/MEMENTO.md", "content": arguments["memento"]}),
-            }
-        } else {
-            active.request.clone()
-        };
+        let request = contract::workshop_request(&active.request);
         let mut timeout_ms = self.config.parameters.limits.command_seconds.get() * 1000;
         if let Some(seconds) = arguments["timeout_seconds"]
             .as_f64()
@@ -1104,27 +1033,15 @@ impl<I: IdSource> Controller<I> {
             self.ended = true;
             self.finished = tool.finish_run;
         }
-        let result = if !self.ended && !self.current_handoff {
-            let context = self
-                .context
-                .estimate(&self.messages, &[TOOLS.last().unwrap().clone()])
-                .0;
-            let reserve = context
-                .saturating_add(self.config.parameters.limits.handoff_tokens.get())
-                .saturating_add(8192)
-                .saturating_add(self.calls.len() as u64 * 512);
-            let available = self
-                .config
-                .parameters
-                .limits
-                .context_tokens
-                .get()
-                .saturating_sub(reserve)
-                .max(512);
-            fit_tool_result(&tool.request.name, original.clone(), available)
-        } else {
-            original.clone()
-        };
+        let result = self.policy.fit_result(
+            View {
+                config: &self.config,
+                facts: self.facts(),
+            },
+            &self.context,
+            &tool.request.name,
+            &original,
+        );
         let mut identity = self.request_identity();
         identity.effect_id = tool.effect_id.and_then(NonZeroU64::new);
         identity.tool_request_sequence = NonZeroU64::new(tool.request_sequence);
@@ -1139,36 +1056,21 @@ impl<I: IdSource> Controller<I> {
             self.commands[index].result = Some(original);
             self.commands[index].sources.result = sequence;
         }
-        self.messages
-            .push(tool_message(&tool.request.name, &result));
-        self.stage = Stage::Calls;
+        self.policy.tool_result(&tool.request.name, &result);
     }
 
     fn after_response(&mut self, complete: bool) {
-        if self.ended {
-            self.stage = Stage::Checkpoint;
-            return;
-        }
-        if self.current_handoff {
-            if complete && self.handoff_attempts == 1 && !self.response_had_calls {
-                let feedback = "Your last response did not call a tool, so it did not save a memento. Call the end_session tool with your memento now. Returning JSON as ordinary text does not invoke the tool.";
-                self.messages.push(message("user", feedback));
-                self.emit(
-                    "handoff_feedback",
-                    json!({"reason": "missing_tool_call", "content": feedback}),
-                );
-            }
-            self.stage = Stage::Handoff;
-        } else {
-            self.messages.push(message(
-                "user",
-                format!(
-                    "Continue independently. Budget: {}. Work turns left this session: {}.",
-                    canonical(&self.budget()),
-                    self.config.parameters.limits.work_turns_per_session.get() - self.turns
-                ),
-            ));
-            self.stage = Stage::Work;
+        if let Some(feedback) = self.policy.after_response(
+            View {
+                config: &self.config,
+                facts: self.facts(),
+            },
+            complete,
+        ) {
+            self.emit(
+                "handoff_feedback",
+                json!({"reason": "missing_tool_call", "content": feedback}),
+            );
         }
     }
 
@@ -1191,26 +1093,13 @@ impl<I: IdSource> Controller<I> {
                 snapshot.memory = snapshot
                     .memory
                     .bounded(self.config.parameters.limits.memento_bytes.get());
-                let previous = self
-                    .last_checkpoint
-                    .as_ref()
-                    .map(|checkpoint| &checkpoint.snapshot);
-                let evidence = (self.config.parameters.memory_condition
-                    == MemoryCondition::SelfPlusEvidence)
-                    .then(|| {
-                        evidence::build(
-                            self.session,
-                            previous.map_or(&self.config.initial_files, |snapshot| &snapshot.files),
-                            &snapshot.files,
-                            &self.commands,
-                            previous
-                                .map_or(&self.config.initial_workspace, |snapshot| {
-                                    &snapshot.workspace
-                                })
-                                .clone(),
-                            snapshot.workspace.clone(),
-                        )
-                    });
+                let evidence = Memento::checkpoint_evidence(
+                    &self.config,
+                    self.session,
+                    self.last_checkpoint.as_ref(),
+                    &snapshot,
+                    &self.commands,
+                );
                 let checkpoint = Checkpoint {
                     session_id: self.session_id.clone().unwrap(),
                     ordinal: self.session,
@@ -1237,19 +1126,15 @@ impl<I: IdSource> Controller<I> {
                     "memory": checkpoint.snapshot.memory, "evidence": checkpoint.evidence,
                     "handoff_saved": checkpoint.handoff_saved, "interrupted": checkpoint.interrupted}));
                 self.last_checkpoint = Some(*checkpoint);
-                self.stage = Stage::Starting;
+                self.policy.published();
+                self.stage = Stage::Policy;
                 if self.reason.is_some() {
                     self.stage = Stage::Cleaning;
                 } else if self.log_exhausted {
                     self.stop(StopReason::LogLimit);
-                } else if self.finished {
-                    self.stop(StopReason::AgentFinished);
-                } else if self.remaining_tokens() == 0 {
-                    self.stop(StopReason::TokenLimit);
-                } else if self.session >= self.config.parameters.limits.sessions.get() {
-                    self.stop(StopReason::SessionLimit);
                 }
             }
+
             (EffectKind::Cleanup, Outcome::Cleaned(errors)) => self.finish(errors),
             (effect, Outcome::Failed(error)) => self.failed(effect, error),
             _ => unreachable!("advance validates completion type"),

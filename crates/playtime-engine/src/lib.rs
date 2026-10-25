@@ -8,10 +8,11 @@ mod context;
 mod control;
 mod controller;
 pub mod evidence;
+mod policy;
 pub mod simulation;
 mod types;
 
-pub use context::SessionInput;
 pub use control::*;
 pub use controller::Controller;
+pub use policy::SessionInput;
 pub use types::*;
