@@ -1,8 +1,8 @@
 # Bounded Rust controller and simulation
 
-`playtime-engine` owns execution policy for both simulation and real runs. Its
-committed behavioral goldens are the spec; Python parity is retired. The
-[archive driver](rust-archive-driver.md) persists its decisions, and the
+`playtime-engine` owns conversation policy and runtime enforcement for both
+simulation and real runs. Its committed behavioral goldens are the spec; Python
+parity is retired. The [archive driver](rust-archive-driver.md) persists its decisions, and the
 [worker](rust-worker-package.md) supplies native effects.
 
 To run the in-memory simulation without Docker, Ollama, or wall-clock sleeps:
@@ -13,6 +13,48 @@ cargo run --locked -p playtime-engine --example simulate -- crates/playtime-engi
 
 This prints a simulation-labeled result and trace. It does not create a portable
 archive; use the archive-driver example for that.
+
+## Internal memento policy boundary
+
+`policy::Memento` owns conversation construction, response/tool interpretation,
+context shaping, retry and handoff decisions, session progression, and memory and
+evidence delivery. It proposes a finite set of actions: start a session, begin
+handoff, request inference, handle a tool call, complete a response, checkpoint,
+or finish. This is a private Rust interface with one concrete implementation,
+`memento_turns_v1`; it is not an external plugin interface.
+
+The controller supplies read-only facts: remaining allocation, admitted work and
+handoff counts, parse-error counts, and confirmed memory-write outcomes. These
+counts stay in the runtime so policy transitions cannot reset them. Complete
+responses reach the policy after envelope/byte checks and usage settlement;
+partial chunks remain observations only. The existing bounded adapter-input
+contract still applies to tool results and lifecycle observations.
+
+`controller::admission` validates proposals against those facts and the frozen
+`policy::memento_contract`. It checks lifecycle prerequisites, exact tool
+capabilities, turn and retry limits, and the two-attempt handoff ceiling. The
+contract derives the generation allowance and memento reserves from the accepted
+configuration. Proposals cannot supply an allowance, cost estimate, deadline,
+effect ID, accounting mutation, or publication receipt. Tool calls still pass
+schema, handoff, and memento-size checks before becoming workshop effects.
+
+The policy chooses messages and truncates delivered tool output. The runtime
+retains the accepted context estimator and its measurements: a measurement binds
+to the actual admitted messages plus the accepted response, never to history
+rewritten by the policy. Every inference proposal is checked against its actual
+messages/tools, derived output allowance, and frozen context reserve. Context
+rejection preserves the existing early-handoff/skip behavior and strict boundary
+comparison.
+
+The runtime also owns global request/seed ordering, reservation and settlement,
+absolute deadlines, cancellation, dispatch identities, durable control facts,
+checkpoint publication, and cleanup. A proposed successful finish requires a
+confirmed memento write and publication of this session's checkpoint. Publication
+failure or a late receipt cannot turn a previous failure into success.
+
+This extraction preserves memento's prompts, tools, records, saved definitions,
+limits, and deterministic behavior. Session-neutral purposes and records remain
+the next slice of #109; continuous conversation/compaction remains #110.
 
 ## Transition and effect contract
 
@@ -124,6 +166,9 @@ an unbounded network frame safe.
 Rust checks cover deterministic repeated traces, committed recovery and evidence
 fixtures, and 128 fixed-seed property cases for monotonic completed
 accounting, admission within allocation, and no dispatch after a stop decision.
+Private-boundary tests inject invalid proposals independently of memento to check
+runtime turn/retry/tool limits, context fit, preserved unknown charges, stop and
+dispatch facts, and publication prerequisites for successful completion.
 Virtual-time cases cover never-yielding inference, partial disconnects, parser
 ceilings, missing usage, command timeouts, context/byte/log limits, handoff
 exhaustion, oversized/missing memory, cancellation races, and checkpoint/cleanup

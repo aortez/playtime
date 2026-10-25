@@ -17,6 +17,22 @@ and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
 
+## Memento policy extraction (#109 step B, 2026-10-25)
+
+The engine now separates private memento conversation/progression proposals from
+runtime admission and effect authority. Frozen memento capabilities determine
+allowances, reserves, tool schemas, and retry/turn bounds. The runtime computes
+context fit from the actual proposed input and verified prior measurements,
+retains all accounting and deadlines, and requires a publication receipt before
+accepting a successful finish.
+
+This is an internal extraction: no definition, API, event, observation, database,
+worker-profile, or archive schema changes. Existing behavioral goldens and tool
+definitions remain unchanged; worker source/build identities change naturally.
+Simulator and native worker still use the same controller. Session-neutral
+purposes and record contracts remain #109 step C, with no compaction harness,
+context-triggered memento, new call cap, or change to recipe limits in this slice.
+
 ## Harness identity and readback (#109 step A, 2026-10-25)
 
 Adds `recipe_harness_selection_v1`, a bounded offline built-in catalog, typed
@@ -38,7 +54,8 @@ The HTTP OpenAPI golden adds two routes, six harness DTOs and optional selection
 preview and archived-run fields. Existing HTTP fixture responses remain unchanged.
 Four new pinned screenshots cover editor, narrow layout, preview and archived
 inspection; existing screenshots remain unchanged. No frozen Python changes.
-Policy extraction and session-neutral records remain #109's subsequent steps.
+Step A did not extract policy or introduce session-neutral records; those are
+separate #109 slices.
 
 ## Registered-model execution (#134, 2026-10-25)
 

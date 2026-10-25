@@ -124,3 +124,19 @@ including both verified configurations and screenshots, is retained under
 
 This verifies the existing memento selection/readback path. It does not establish
 compaction, restart/recovery, or #134's outstanding GPT-OSS/two-model acceptance.
+
+## Memento policy extraction verification (#109 step B, 2026-10-25)
+
+The same sequential gate passed after extracting memento decisions behind the
+runtime's private proposal boundary. API run `20261025T220516Z-e37ed792` and
+workbench run `20261025T220531Z-fd026ca3` both ended `agent_finished`, published
+two session checkpoints, and completed cleanup. They reported 137 and 133
+generated tokens respectively, with zero unknown requests/reservations. Harness
+readback, preview, frozen configuration, archive inspection and accepted-key
+replay checks passed with the same reviewed model settings and budgets.
+
+Evidence and unchanged-interface screenshots are retained under
+`/home/data2/pt/pr.LpxQll42/`. The separate real-systemd Docker-scripted gate also
+passed (`20261025T220409Z-6c6a8ddb`, two sessions, 160 known tokens), with evidence
+under `/home/data2/pt/playtime-service.7pkhe79e/`. These checks verify the existing
+memento path; the scope limits above still apply.

@@ -1,11 +1,5 @@
-use std::sync::LazyLock;
-
 use serde::Serialize;
 use serde_json::{Value, json};
-
-pub(crate) static TOOLS: LazyLock<Vec<Value>> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("tools.json")).expect("versioned tool definitions")
-});
 
 struct PythonFloats;
 
@@ -156,116 +150,10 @@ pub(crate) fn fit_tool_result(name: &str, result: Value, maximum: u64) -> Value 
     limited
 }
 
-pub(crate) fn validate_call(name: &str, arguments: &Value) -> Option<String> {
-    let schema = TOOLS.iter().find(|tool| tool["function"]["name"] == name);
-    let (Some(tool), Some(arguments)) = (schema, arguments.as_object()) else {
-        return Some("Unknown tool or invalid arguments object".into());
-    };
-    let schema = &tool["function"]["parameters"];
-    let properties = schema["properties"].as_object().unwrap();
-    if arguments.keys().any(|key| !properties.contains_key(key))
-        || schema["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|key| !arguments.contains_key(key.as_str().unwrap()))
-    {
-        return Some("Unexpected or missing tool arguments".into());
-    }
-    for (key, value) in arguments {
-        let valid = match properties[key]["type"].as_str().unwrap() {
-            "string" => value.is_string(),
-            "boolean" => value.is_boolean(),
-            "integer" => value.is_i64() || value.is_u64(),
-            "number" => value.is_number(),
-            _ => false,
-        };
-        if !valid {
-            return Some(format!("Invalid type for {key}"));
-        }
-    }
-    None
-}
-
-/// Shared prompt construction and conservative initial-context validation. This
-/// estimates bytes, not exact tokenizer usage or available GPU memory.
-pub struct SessionInput<'a> {
-    pub parameters: &'a playtime_core::RunParameters,
-    pub protocol: &'a str,
-    pub prompt: &'a str,
-    pub inventory: &'a str,
-}
-impl SessionInput<'_> {
-    pub(crate) fn messages(
-        &self,
-        session: u32,
-        remaining: u64,
-        memory: &crate::Memory,
-    ) -> Vec<Value> {
-        let l = &self.parameters.limits;
-        let budget = json!({"generated_tokens_remaining": remaining,
-            "wall_seconds_limit": l.wall_seconds, "session": session, "sessions_total": l.sessions});
-        vec![
-            message("system", self.protocol),
-            message(
-                "user",
-                format!(
-                    "{}\nSession {}/{}.\nBudget: {}\nMemento limit: {} UTF-8 bytes.\n\n{}\n\nMemento status: {}\n{}",
-                    self.prompt,
-                    session,
-                    l.sessions,
-                    canonical(&budget),
-                    l.memento_bytes,
-                    self.inventory,
-                    memory.status,
-                    memory.content
-                ),
-            ),
-        ]
-    }
-    pub fn initial_context_required(&self) -> u64 {
-        let l = &self.parameters.limits;
-        let messages = self.messages(
-            1,
-            l.generated_tokens.get(),
-            &crate::Memory {
-                status: "missing".into(),
-                content: String::new(),
-            },
-        );
-        let (input, _) = ContextWindow::default().estimate(&messages, &TOOLS);
-        let output = l.tokens_per_call.get().min(
-            l.generated_tokens
-                .get()
-                .saturating_sub(l.handoff_tokens.get()),
-        );
-        input
-            .saturating_add(output)
-            .saturating_add(request_context_reserve(l, false))
-            .saturating_add(1)
-    }
-}
-pub(crate) fn request_context_reserve(
-    limits: &playtime_core::ResourceLimits,
-    handoff: bool,
-) -> u64 {
-    if handoff {
-        4096
-    } else {
-        8192_u64
-            .saturating_add(limits.handoff_tokens.get())
-            .saturating_add(
-                limits
-                    .output_bytes
-                    .get()
-                    .min(limits.context_tokens.get() / 4),
-            )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::memento_contract::TOOLS;
 
     #[test]
     fn numeric_spelling_and_unicode_match_the_python_context_oracle() {
