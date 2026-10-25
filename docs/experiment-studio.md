@@ -281,9 +281,10 @@ registration (#133), then recipe selection and generalized worker verification
 offline reads, storage bounds and the additive ledger change. The first #134 slice
 now selects registrations in drafts, validates capabilities/settings and saves
 immutable revisions offline. [Its contract](rust-recipes.md#registered-model-selection)
-keeps base provenance separate from the selected authority. Registered-model
-execution, generalized verification and two-model native acceptance remain #134;
-authoring does not widen the locked runner.
+keeps base provenance separate from the selected authority. The execution slice
+now verifies compiled reviewed registrations through preview, admission and
+worker dispatch. Local Qwen development evidence is separate from the original
+GPT-OSS acceptance gate; full two-model native acceptance remains under #134.
 
 ## First recipe authoring slice
 

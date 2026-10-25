@@ -3,6 +3,7 @@
 use super::*;
 
 pub const RECIPE_MODEL_SELECTION: &str = "recipe_model_selection_v1";
+pub const RECIPE_MODEL_EXECUTION: &str = "recipe_model_execution_v1";
 
 pub const MODEL_SETTINGS: &str = "recipe_model_settings_v1";
 

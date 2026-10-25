@@ -13,8 +13,10 @@ mod definition;
 mod model_settings;
 pub use model_settings::reviewed_model_capabilities;
 mod recipe;
+mod registered_model;
 pub use definition::FrozenRecipe;
 pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
+pub use registered_model::{QWEN_MODEL_LOCK, reviewed_identity_capabilities};
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
 pub const LIVE_PROFILE: &str = "docker_live_no_seed_self_v1";
@@ -56,7 +58,8 @@ pub fn digest() -> Result<Sha256Digest> {
         serde_json::to_value(&BOUNDS)?,
         // A worker that predates authoring must not accept an authored profile
         // merely because its ordinary recipe template is unchanged.
-        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1}),
+        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1}),
+        serde_json::from_slice(QWEN_MODEL_LOCK)?,
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))
 }
@@ -90,6 +93,8 @@ pub struct LiveModel {
     pub lock: serde_json::Value,
     pub settings: serde_json::Value,
     pub host: LiveHost,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration: Option<playtime_protocol::api::ModelRegistrationSummary>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -165,6 +170,7 @@ impl Profile {
             mode: RunMode::LiveSmoke,
             scenario,
             model: Some(LiveModel {
+                registration: None,
                 lock: serde_json::from_slice(MODEL_LOCK)?,
                 settings,
                 host,
@@ -178,7 +184,16 @@ impl Profile {
             (None, None) => Self::freeze(selection, daemon)?,
             (Some(model), None) => Self::freeze_live(selection, daemon, model.host.clone())?,
             (Some(model), Some(recipe)) => {
-                Self::freeze_recipe(recipe.clone(), selection, daemon, model.host.clone())?
+                if let Some(definition) = &self.definition {
+                    Self::freeze_definition(
+                        definition.clone(),
+                        selection,
+                        daemon,
+                        model.host.clone(),
+                    )?
+                } else {
+                    Self::freeze_recipe(recipe.clone(), selection, daemon, model.host.clone())?
+                }
             }
             (None, Some(_)) => {
                 return Err(Error::Invalid(

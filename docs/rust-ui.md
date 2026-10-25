@@ -95,9 +95,11 @@ restores only the entry selection; **Reset model settings** restores both the
 entry selection and its settings. The model's digest and capability evidence stay
 visible above the settings. See the [authoring contract](rust-recipes.md#registered-model-selection).
 
-The current authoring slice saves these definitions but cannot execute them.
-The editor says so explicitly; preview and launch remain unavailable after saving.
-Existing recipes without an explicit registration retain their execution behavior.
+Services advertising `recipe_model_execution_v1` can preview and launch reviewed
+selected identities. The preview includes the registration, capability provenance
+and definition fingerprint. Save first, then preview to check current availability;
+unavailable or changed models keep launch disabled. Older services still show the
+authoring-only limitation. Existing recipes retain their locked model behavior.
 
 Reviewed synthetic views: [unsupported reasoning](../crates/playtime-ui/tests/snapshots/recipe-model-invalid.png),
 [narrow](../crates/playtime-ui/tests/snapshots/recipe-model-invalid-narrow.png),

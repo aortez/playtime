@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 mod fake;
 #[path = "../../playtime-ollama/tests/common/mod.rs"]
 mod ollama;
+#[path = "../../playtime-runner/tests/common/registered.rs"]
+mod registered;
 
 #[derive(Clone, Copy, PartialEq)]
 enum FaultCase {
@@ -179,6 +181,19 @@ fn run(
     live: Option<ollama::Fake>,
     recipe: Option<playtime_runner::docker::Recipe>,
 ) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
+    run_definition(
+        case,
+        hooks,
+        live,
+        recipe.map(|r| playtime_runner::docker::FrozenRecipe::current(r).unwrap()),
+    )
+}
+fn run_definition(
+    case: FaultCase,
+    hooks: Option<Box<dyn playtime_runner::WriterHooks>>,
+    live: Option<ollama::Fake>,
+    definition: Option<playtime_runner::docker::FrozenRecipe>,
+) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
     let is_live = live.is_some();
     let root = std::env::temp_dir().join(format!(
         "pt66-native-{}",
@@ -229,8 +244,8 @@ fn run(
         live_lock: root.join("live-model.lock"),
     };
     let daemon = engine.identity().clone();
-    let profile = match (live.is_some(), recipe) {
-        (true, Some(recipe)) => Profile::freeze_recipe(recipe, selection, daemon, host),
+    let profile = match (live.is_some(), definition) {
+        (true, Some(definition)) => Profile::freeze_definition(definition, selection, daemon, host),
         (true, None) => Profile::freeze_live(selection, daemon, host),
         (false, _) => Profile::freeze(selection, daemon),
     }
@@ -692,6 +707,96 @@ fn native_replies() -> Vec<playtime_ollama::HttpResponse> {
         .into_iter()
         .map(|[first, last]| ollama::response(200, format!("{first}\n{last}\n")))
         .collect()
+}
+#[test]
+fn registered_model_checks_each_dispatch_and_keeps_identity_settings_and_usage() {
+    for drift in [false, true] {
+        let selected = registered::qwen();
+        let metadata = || {
+            let id = &selected.summary.identity;
+            vec![
+                serde_json::json!({"version":id.backend_version}),
+                serde_json::json!({"models":[{"name":id.name,"digest":id.digest}]}),
+                selected.definition.clone(),
+            ]
+            .into_iter()
+            .map(|v| ollama::response(200, serde_json::to_vec(&v).unwrap()))
+            .collect::<Vec<_>>()
+        };
+        let mut pending = Vec::new();
+        for (i, mut pair) in native_records().into_iter().enumerate() {
+            if i == 0 || i == 3 {
+                pending.extend(metadata());
+            } // session start
+            if drift && i == 1 {
+                pending.extend([
+                    ollama::response(200, br#"{"version":"0.32.3"}"#.to_vec()),
+                    ollama::response(200, br#"{"models":[]}"#.to_vec()),
+                    ollama::response(200, serde_json::to_vec(&selected.definition).unwrap()),
+                ]);
+                break;
+            }
+            pending.extend(metadata()); // immediately before inference
+            for value in &mut pair {
+                value["model"] = serde_json::json!(selected.summary.identity.name);
+            }
+            pending.push(ollama::response(200, format!("{}\n{}\n", pair[0], pair[1])));
+        }
+        let mut definition =
+            playtime_runner::docker::FrozenRecipe::current(seeded_recipe()).unwrap();
+        definition
+            .select_registered_model(selected.clone())
+            .unwrap();
+        let mut settings = definition.model_settings().unwrap();
+        settings.reasoning = playtime_protocol::api::RecipeReasoning::Off;
+        definition.apply_model_settings(&settings).unwrap();
+        let fake = ollama::Fake::new(pending);
+        let seen = fake.seen.clone();
+        let (temp, port, report) =
+            run_definition(FaultCase::None, None, Some(fake), Some(definition));
+        assert!(report.terminal_committed, "{:?}", report.diagnostics);
+        let result = report.result.unwrap();
+        // The controller already dispatched the native effect. Its existing
+        // conservative accounting retains that allowance even when the adapter
+        // subsequently refuses inference during its metadata check.
+        assert_eq!(
+            result.usage.unknown_reserved_tokens,
+            if drift { 512 } else { 0 }
+        );
+        assert_eq!(
+            result.usage.known_generated_tokens,
+            if drift { 32 } else { 160 }
+        );
+        assert_eq!(
+            result.reason,
+            if drift {
+                playtime_core::StopReason::InfrastructureFailure
+            } else {
+                playtime_core::StopReason::AgentFinished
+            }
+        );
+        assert!(port.fake.state.lock().unwrap().containers.is_empty());
+        assert!(port.fake.state.lock().unwrap().volumes.is_empty());
+        let seen = seen.lock().unwrap();
+        let chats: Vec<_> = seen
+            .iter()
+            .filter(|r| r.operation == playtime_ollama::Operation::Chat)
+            .collect();
+        assert_eq!(chats.len(), if drift { 1 } else { 5 });
+        for r in chats {
+            let body: serde_json::Value = serde_json::from_slice(r.body.as_ref().unwrap()).unwrap();
+            assert_eq!(body["model"], selected.summary.identity.name);
+            assert_eq!(body["think"], false);
+        }
+        let records = records(&temp.0.join("archive"));
+        assert_eq!(
+            records
+                .iter()
+                .filter(|r| r.kind == "model_response")
+                .count(),
+            if drift { 1 } else { 5 }
+        );
+    }
 }
 /// A stream whose records arrive `gap` apart, as from a slow model.
 fn slow_reply(records: Vec<serde_json::Value>, gap: Duration) -> playtime_ollama::HttpResponse {

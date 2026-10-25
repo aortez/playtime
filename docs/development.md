@@ -65,6 +65,7 @@ real worker, Docker, model-host, or recovery behavior.
 | Workspace capture | `./scripts/test-rust-docker-e2e.sh --case checkpoint` | Real stopped-workspace capture; additionally run the sandbox gate |
 | Native effects/Docker profile/run-and-view | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted` | Real systemd worker and Docker, scripted model, archive and client review |
 | Live model path | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend live` | The live Ollama path, streaming, persistence, review and cleanup |
+| Registered-model execution | `./scripts/test-rust-registered-model.sh` | Additional real Qwen API/workbench smoke, exact selection and replay; does not replace the original live gate |
 
 The Docker gates require the already-present locked image and supported local
 Docker environment. Run-and-view gates additionally require user systemd and the

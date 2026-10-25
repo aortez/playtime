@@ -2,6 +2,59 @@ use crate::{Failure, FailureKind, Result, json};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Frozen execution identity supplied by the owner after capability review.
+/// Validation establishes consistency and the supported wire version, not approval
+/// of a new model. The recipe/worker boundary owns that approval.
+#[derive(Clone, Debug)]
+pub struct ExecutionModel {
+    pub name: String,
+    pub digest: String,
+    pub backend_version: String,
+    pub definition_sha256: String,
+    pub definition: Value,
+    pub reasoning: Vec<Option<crate::Thinking>>,
+}
+impl ExecutionModel {
+    pub fn validate(&self) -> Result<()> {
+        let digest = |s: &str| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        };
+        let definition = self.definition.as_object();
+        if self.name.is_empty() || self.name.len() > 256 || self.name.chars().any(char::is_control)
+            || self.backend_version != Profile::VERSION
+            || !digest(&self.digest) || !digest(&self.definition_sha256)
+            || !definition.is_some_and(|d| d.len() == 5 && ["template", "parameters", "model_info", "details", "capabilities"].iter().all(|k| d.contains_key(*k)))
+            || !self.definition["capabilities"].as_array().is_some_and(|c| c.iter().all(Value::is_string) && ["completion", "tools"].iter().all(|required| c.iter().any(|v| v == required)))
+            || self.reasoning.is_empty() || self.reasoning.len() > 4
+            || self.reasoning.iter().enumerate().any(|(i, choice)| self.reasoning[..i].contains(choice)
+                || matches!(choice, Some(crate::Thinking::Level(level)) if !crate::THINKING_LEVELS.contains(&level.as_str())))
+            || json::hash(&json::canonical(&self.definition, 1 << 20)?) != self.definition_sha256
+        {
+            return Err(Failure::new(FailureKind::Identity, "invalid frozen model execution identity"));
+        }
+        Ok(())
+    }
+    pub fn locked(lock: &ModelLock) -> Result<Self> {
+        lock.validate()?;
+        Ok(Self {
+            name: lock.name.clone(),
+            digest: lock.digest.clone(),
+            backend_version: lock.ollama_version.clone(),
+            definition_sha256: lock.definition_sha256.clone(),
+            definition: lock.definition.clone(),
+            reasoning: std::iter::once(None)
+                .chain(
+                    crate::THINKING_LEVELS
+                        .into_iter()
+                        .map(|level| Some(crate::Thinking::Level(level.into()))),
+                )
+                .collect(),
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Profile;
 impl Profile {
@@ -73,7 +126,7 @@ pub(crate) fn local(value: &Value) -> Result<()> {
     Ok(())
 }
 pub(crate) fn verify(
-    lock: &ModelLock,
+    lock: &ExecutionModel,
     version: Value,
     tags: Value,
     show: Value,
@@ -86,7 +139,7 @@ pub(crate) fn verify(
             "missing, changed or unsupported Ollama identity",
         )
     };
-    if version.get("version").and_then(Value::as_str) != Some(lock.ollama_version.as_str()) {
+    if version.get("version").and_then(Value::as_str) != Some(lock.backend_version.as_str()) {
         return Err(bad());
     }
     let models = tags

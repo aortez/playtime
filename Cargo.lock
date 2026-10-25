@@ -3459,6 +3459,7 @@ dependencies = [
  "playtime-core",
  "playtime-docker",
  "playtime-engine",
+ "playtime-ollama",
  "playtime-protocol",
  "playtime-storage",
  "serde",

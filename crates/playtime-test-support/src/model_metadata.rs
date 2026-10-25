@@ -82,11 +82,23 @@ async fn tags(State(s): State<Metadata>) -> Json<Value> {
     s.calls.push("tags".into());
     Json(s.tags.clone())
 }
-async fn show_model(State(s): State<Metadata>, Json(body): Json<Value>) -> Json<Value> {
+async fn show_model(
+    State(s): State<Metadata>,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
     let mut s = s.0.lock().unwrap();
     s.calls
         .push(format!("show:{}", body["model"].as_str().unwrap()));
-    Json(s.show.clone())
+    if !s.tags["models"]
+        .as_array()
+        .is_some_and(|models| models.iter().any(|model| model["name"] == body["model"]))
+    {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error":format!("model '{}' not found", body["model"].as_str().unwrap())})),
+        );
+    }
+    (StatusCode::OK, Json(s.show.clone()))
 }
 async fn loaded(State(s): State<Metadata>) -> Json<Value> {
     let mut s = s.0.lock().unwrap();
