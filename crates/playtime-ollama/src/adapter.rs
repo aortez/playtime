@@ -128,7 +128,13 @@ impl<T: Transport> Adapter<T> {
         read_body(&mut response, &mut bytes, limit, deadline, cancel).await?;
         if response.status != 200 {
             return Err(Failure::new(
-                FailureKind::Http,
+                // On the supported Ollama profile, show returns 404 for a
+                // missing model, including removal after the tags response.
+                if operation == Operation::Show && response.status == 404 {
+                    FailureKind::Identity
+                } else {
+                    FailureKind::Http
+                },
                 format!(
                     "metadata {} returned HTTP {}",
                     operation.path(),

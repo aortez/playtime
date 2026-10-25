@@ -154,6 +154,55 @@ async fn cached_verification_never_hides_selected_identity_drift() {
 }
 
 #[tokio::test]
+async fn missing_show_is_an_identity_failure_but_other_http_failures_are_not() {
+    for (metadata_count, status, kind) in [
+        (2, 404, FailureKind::Identity),
+        (2, 503, FailureKind::Http),
+        (1, 404, FailureKind::Http),
+        (0, 404, FailureKind::Http),
+    ] {
+        // Tags still contain the selected identity: it can disappear before show.
+        let fake = Fake::new(
+            replies(selected_metadata())
+                .into_iter()
+                .take(metadata_count)
+                .chain([response(
+                    status,
+                    br#"{"error":"metadata unavailable"}"#.to_vec(),
+                )]),
+        );
+        let seen = fake.seen.clone();
+        let mut adapter = Adapter::with_model(fake, model(), Limits::default()).unwrap();
+        let (tx, _rx) = observations(&Limits::default()).unwrap();
+        let result = adapter
+            .chat(
+                &request(),
+                &EffectiveSettings {
+                    thinking: None,
+                    ..Default::default()
+                },
+                deadline(),
+                &CancellationToken::new(),
+                &tx,
+            )
+            .await;
+        assert_eq!(
+            result.outcome.unwrap_err().kind,
+            kind,
+            "step {metadata_count}, HTTP {status}"
+        );
+        assert_eq!(result.dispatch, Dispatch::NotDispatched);
+        assert_eq!(result.remote, RemoteOutcome::NotStarted);
+        assert!(
+            seen.lock()
+                .unwrap()
+                .iter()
+                .all(|r| r.operation != Operation::Chat)
+        );
+    }
+}
+
+#[tokio::test]
 async fn unsupported_reasoning_never_falls_back_or_reads_the_backend() {
     let fake = Fake::new([]);
     let seen = fake.seen.clone();

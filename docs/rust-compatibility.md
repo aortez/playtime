@@ -37,6 +37,12 @@ charges an unknown allowance once it has dispatched a native effect, including
 an adapter metadata refusal before inference. This does not relax uncertainty
 accounting or claim atomic mutable-tag verification.
 
+An execution metadata `/api/show` HTTP 404 is an identity failure, including
+removal between tags and show. Preview/admission therefore report
+`selected_model_missing_or_changed` rather than an endpoint outage. Other
+metadata HTTP failures remain availability errors; no inference is dispatched
+after either refusal. The HTTP metadata fixture now returns 404 for absent models.
+
 Local CPU Qwen probes establish boolean thinking and native tool-call support.
 The separate registered-model gate exercises API/workbench launches with real
 systemd/Docker and retains both outcomes. It does not replace the existing

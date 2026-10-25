@@ -135,6 +135,8 @@ mod model_readiness_tests {
                 state.show = selected.definition.clone();
                 state.version = id.backend_version.clone();
                 match case {
+                    // The HTTP fixture returns 404 from show for an absent tag,
+                    // just as Ollama does; this must not become endpoint outage.
                     0 => state.tags = serde_json::json!({"models":[]}),
                     1 => state.tags["models"][0]["digest"] = serde_json::json!("changed"),
                     2 => state.show["template"] = serde_json::json!("changed"),
