@@ -8,6 +8,7 @@ pub fn draw(
     original_name: Option<&str>,
     choices: &[ModelRegistrationSummary],
     busy: bool,
+    execution_enabled: bool,
 ) {
     ui.separator();
     ui.strong("Recipe model");
@@ -71,9 +72,11 @@ pub fn draw(
             ))
             .wrap(),
         );
-        ui.label(
-            "This service can save the selection; execution of registered models is unavailable.",
-        );
+        ui.label(if execution_enabled {
+            "Save the revision, then preview to verify this model's current availability and identity."
+        } else {
+            "This service can save the selection; execution of registered models is unavailable."
+        });
     }
     if draft.model_registration != draft.original.model_registration {
         let original = original_name.unwrap_or("original model");

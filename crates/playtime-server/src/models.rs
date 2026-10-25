@@ -26,19 +26,12 @@ fn failure(error: Failure) -> ApiError {
     })
 }
 fn reviewed_capabilities(value: &ModelInspection) -> Option<RecipeModelCapabilities> {
-    let locked: serde_json::Value =
-        serde_json::from_slice(playtime_runner::docker::MODEL_LOCK).ok()?;
-    // Discovery has already fingerprinted the canonical definition. Match the
-    // same identity fields the execution adapter verifies, not the generated
-    // Modelfile's host-specific blob path. Keep the reviewed lock itself intact.
-    if locked["name"].as_str() != Some(value.name.as_str())
-        || locked["digest"].as_str() != value.digest.as_deref()
-        || locked["ollama_version"].as_str() != Some(value.backend_version.as_str())
-        || locked["definition_sha256"].as_str() != value.definition_sha256.as_deref()
-    {
-        return None;
-    }
-    playtime_runner::docker::reviewed_model_capabilities(&locked).ok()
+    playtime_runner::docker::reviewed_identity_capabilities(
+        &value.name,
+        value.digest.as_deref()?,
+        &value.backend_version,
+        value.definition_sha256.as_deref()?,
+    )
 }
 impl ModelBrowser {
     pub fn new(endpoint: &str) -> Result<Self> {

@@ -73,7 +73,9 @@ pub async fn worker_loss(cli: &Path, daemon: &Path, bundle: &Path, evidence: &Pa
         .join(accepted.run_id.as_str())
         .join("events.jsonl");
     // A returned first tool result establishes that all volume/holder/agent
-    // creates completed. Kill well before another session/create is possible.
+    // creates completed. Observation can lag into checkpoint capture, which
+    // removes the session agent; the proposal-count check below still refuses
+    // a probe that reached another session/create.
     loop {
         let page = client
             .history(
@@ -274,6 +276,13 @@ async fn fixture_cleanup(root: &TestRoot, proposals: &[Proposal]) -> Result<Vec<
             let observed = cli
                 .execute(inspect.clone(), deadline, CancellationToken::new())
                 .await;
+            // The worker may already have removed its session agent while the
+            // history response was in flight. Exact absence needs no removal;
+            // a transport failure or ambiguous inspection is never absence.
+            if confirmed_absent(&observed) {
+                result.push(json!({"name":p.name,"role":role,"confirmed_absent":true,"already_absent":true}));
+                continue;
+            }
             if !observed.success() {
                 return Err("test cleanup could not establish exact resource identity".into());
             }
@@ -308,17 +317,7 @@ async fn fixture_cleanup(root: &TestRoot, proposals: &[Proposal]) -> Result<Vec<
             let absent = cli
                 .execute(inspect, deadline, CancellationToken::new())
                 .await;
-            if absent.fault.is_some()
-                || absent.local
-                    != (LocalExit::Reaped {
-                        code: Some(1),
-                        signal: None,
-                    })
-                || serde_json::from_slice::<Value>(&absent.stdout).ok() != Some(json!([]))
-                || !String::from_utf8_lossy(&absent.stderr)
-                    .to_ascii_lowercase()
-                    .contains("no such")
-            {
+            if !confirmed_absent(&absent) {
                 return Err("test cleanup absence uncertain".into());
             }
             result.push(json!({"name":p.name,"role":role,"confirmed_absent":true}));
@@ -332,4 +331,43 @@ async fn fixture_cleanup(root: &TestRoot, proposals: &[Proposal]) -> Result<Vec<
         return Err("test cleanup final daemon identity changed".into());
     }
     Ok(result)
+}
+
+fn confirmed_absent(observed: &playtime_docker::transport::Outcome) -> bool {
+    observed.fault.is_none()
+        && observed.local
+            == (LocalExit::Reaped {
+                code: Some(1),
+                signal: None,
+            })
+        && serde_json::from_slice::<Value>(&observed.stdout).ok() == Some(json!([]))
+        && String::from_utf8_lossy(&observed.stderr)
+            .to_ascii_lowercase()
+            .contains("no such")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cleanup_requires_confirmed_absence_not_an_ambiguous_inspection() {
+        use playtime_docker::transport::{Fault, Outcome};
+        let mut absent = Outcome::completed(b"[]\n".to_vec());
+        absent.local = LocalExit::Reaped {
+            code: Some(1),
+            signal: None,
+        };
+        absent.stderr = b"Error: No such container: exact-proposal\n".to_vec();
+        assert!(confirmed_absent(&absent));
+        for case in 0..4 {
+            let mut uncertain = absent.clone();
+            match case {
+                0 => uncertain.fault = Some(Fault::Deadline),
+                1 => uncertain.local = LocalExit::Reaping,
+                2 => uncertain.stdout = b"".to_vec(),
+                _ => uncertain.stderr = b"Cannot connect to the Docker daemon".to_vec(),
+            }
+            assert!(!confirmed_absent(&uncertain));
+        }
+    }
 }

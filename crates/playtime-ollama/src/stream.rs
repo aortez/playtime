@@ -100,6 +100,7 @@ impl AssistantMessage {
 /// Framing is independent of HTTP and legacy error classification. A result is
 /// yielded once, at the first terminal boundary; all later bytes are discarded.
 pub struct Decoder {
+    model_name: String,
     limits: Limits,
     buffer: Vec<u8>,
     diagnostic: Vec<u8>,
@@ -112,8 +113,21 @@ pub struct Decoder {
 }
 impl Decoder {
     pub fn new(limits: Limits) -> Result<Self> {
+        Self::for_model(limits, Profile::MODEL.into())
+    }
+    pub fn for_model(limits: Limits, model_name: String) -> Result<Self> {
         limits.validate()?;
+        if model_name.is_empty()
+            || model_name.len() > 256
+            || model_name.chars().any(char::is_control)
+        {
+            return Err(Failure::new(
+                FailureKind::Identity,
+                "invalid response model identity",
+            ));
+        }
         Ok(Self {
+            model_name,
             limits,
             buffer: vec![],
             diagnostic: vec![],
@@ -257,7 +271,7 @@ impl Decoder {
         crate::identity::local(&chunk)?;
         if object
             .get("model")
-            .is_some_and(|v| v.as_str() != Some(Profile::MODEL))
+            .is_some_and(|v| v.as_str() != Some(self.model_name.as_str()))
         {
             return Err(Failure::new(
                 FailureKind::Identity,

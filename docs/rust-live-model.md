@@ -30,12 +30,14 @@ The workbench offers the same recipe. `--ollama-endpoint` needs
   `Resolution::Pinned`; the host name stays in the URL and `Host` header. Each
   admission resolves again and refuses if the addresses changed: restart the
   daemon between runs after the host moves. No address is ever hard-coded.
-- **Identity.** The profile freezes the exact model lock, a copy of
-  `models/gpt-oss-20b.lock.json` tied to it by a unit test. The daemon inspects
-  the model at startup and at each admission, and the worker inspects it at each
-  session start. A mismatch refuses the admission or stops the run before the
-  session's first request. Inspection is read-only metadata (version, tags,
-  show); nothing on the model host changes.
+- **Identity.** The original smoke freezes the exact model lock, a copy of
+  `models/gpt-oss-20b.lock.json` tied to it by a unit test. Endpoint setup resolves
+  the host independently of any one model. Preview/admission inspects the requested
+  model, and the worker inspects it at each session start. Recipes with an explicit
+  [registered selection](rust-recipes.md#registered-model-selection) freeze that
+  identity instead and additionally inspect it at worker startup and before each
+  inference dispatch. A mismatch refuses execution without fallback. Inspection
+  is read-only metadata (version, tags, show); nothing on the model host changes.
 - **Live-run lock.** Every checkout's daemon and worker share
   `$XDG_RUNTIME_DIR/playtime/live-model.lock`. The worker takes it before any
   Docker or model work and holds it, close-on-exec, for its whole lifetime;
@@ -52,7 +54,8 @@ crypto toolchain. HTTPS endpoints are refused without it.
 Request settings are frozen with the profile: context 32,768, `think: "low"`,
 seed 1042 (advanced per request by the controller), temperature 0.8, top-p 0.95,
 top-k 40, repeat penalty 1.0 and `keep_alive: "5m"`. Catalog recipes choose their
-own settings, including `think` levels `low`, `medium` and `high`; see
+own settings, including `think` levels `low`, `medium` and `high`, or boolean
+On/Off for an explicitly selected reviewed boolean-thinking model; see
 [recipes](rust-recipes.md). Streamed records reach the
 controller as chunks while the request runs, so the workbench shows partial
 thinking and content live, and a failed request keeps what arrived. Native
@@ -107,6 +110,12 @@ the scripted smoke, live smoke, reference catalog recipe, and recipe bounds.
 A live admission needs both; a bundle without
 `real_model` still runs scripted Docker and simulation. Older bundles reject the
 live worker kind.
+The current digest also covers registered-model execution and the reviewed Qwen
+lock. Rebuild bundles when updating to this execution slice.
+
+A small [local Ollama development host](local-ollama-development.md) can exercise
+registered-model API/workbench execution while oldman-bird is unavailable. Its
+Qwen smoke is additional evidence and does not replace the GPT-OSS gate below.
 
 ## Evidence
 

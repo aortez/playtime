@@ -5,6 +5,34 @@ use playtime_ui::{backend::prepare_preview, model::*};
 use serde_json::json;
 
 #[tokio::test]
+async fn selected_preview_discloses_registration_and_boolean_controls_without_translation() {
+    let app = common::demo(true).await;
+    let original = preview_scene::live(app.model.preview.unwrap().value);
+    for (value, label) in [
+        (json!(false), "Off"),
+        (json!(true), "On"),
+        (json!("high"), "high"),
+    ] {
+        let mut preview = original.clone();
+        preview.model_identity["registration"] = json!({"registration_id":"model-reviewed", "identity":{"capability_provenance":"explicit reviewed evidence"}});
+        preview.model_identity["definition_sha256"] = json!("a".repeat(64));
+        preview.model_identity["settings"]["thinking"] = value;
+        let prepared = prepare_preview(preview.clone());
+        let text = prepared
+            .sections
+            .iter()
+            .find(|s| s.title == "Model")
+            .unwrap()
+            .lines
+            .join("\n");
+        assert!(text.contains("Registration: model-reviewed"));
+        assert!(text.contains("Capability evidence: explicit reviewed evidence"));
+        assert!(text.contains(&format!("Thinking: {label}")));
+        assert_eq!(prepared.value, preview);
+    }
+}
+
+#[tokio::test]
 async fn readable_frozen_values_preserve_source_and_exact_launch_revision() {
     let mut app = common::demo(true).await;
     let original = preview_scene::live(app.model.preview.take().unwrap().value);

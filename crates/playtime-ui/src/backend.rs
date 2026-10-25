@@ -165,6 +165,20 @@ async fn local<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static
 }
 fn safe(error: Error) -> String {
     if let Error::Api { response, .. } = &error
+        && response.code == "execution_unavailable"
+    {
+        let explanation = response.details.get("reasons").and_then(serde_json::Value::as_array)
+            .and_then(|reasons| reasons.iter().find_map(|reason| match reason.as_str()? {
+                "selected_model_unsupported" => Some("This saved model identity has no supported execution profile in this build."),
+                "selected_model_missing_or_changed" => Some("The selected model is missing or has changed. Restore its registered identity or choose a newly reviewed registration, then refresh the preview."),
+                "model_unavailable" => Some("The configured model endpoint is unavailable. Restore it, then refresh the preview."),
+                "workshop_unavailable" | "workshop_image_unavailable" => Some("The locked Docker workshop is unavailable. Restore it, then refresh the preview."),
+                "worker_profile_unavailable" => Some("The worker bundle does not support this execution profile. Build and select a current bundle."),
+                _ => None,
+            })).unwrap_or("Execution is unavailable with the current service configuration.");
+        return format!("{error}: {explanation} Saved definitions remain readable and editable.");
+    }
+    if let Error::Api { response, .. } = &error
         && response.code == "invalid_parameters"
     {
         return format!(
@@ -1775,6 +1789,40 @@ impl Default for Inbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn execution_refusals_explain_recovery_without_displaying_unreviewed_details() {
+        for (reason, expected) in [
+            (
+                "selected_model_missing_or_changed",
+                "Restore its registered identity",
+            ),
+            (
+                "selected_model_unsupported",
+                "no supported execution profile",
+            ),
+            ("model_unavailable", "model endpoint is unavailable"),
+            (
+                "unreviewed private diagnostic",
+                "current service configuration",
+            ),
+        ] {
+            let error = Error::Api {
+                status: 503,
+                response: playtime_protocol::v1::ErrorResponse {
+                    code: "execution_unavailable".into(),
+                    message: "unreviewed private message".into(),
+                    request_id: None,
+                    details: [("reasons".into(), serde_json::json!([reason]))]
+                        .into_iter()
+                        .collect(),
+                },
+            };
+            let message = safe(error);
+            assert!(message.contains(expected));
+            assert!(message.contains("Saved definitions remain readable and editable"));
+            assert!(!message.contains("unreviewed private"));
+        }
+    }
     #[test]
     fn prepared_windows_share_the_100_record_frame_budget() {
         let (commands, _commands) = mpsc::channel(64);

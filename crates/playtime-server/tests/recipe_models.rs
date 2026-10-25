@@ -176,7 +176,7 @@ async fn choose_correct_save_and_recover_an_immutable_model_without_execution_or
             .executable()
             .unwrap_err()
             .to_string()
-            .contains("registered model execution")
+            .contains("unsupported")
     );
     assert_eq!(
         client
@@ -348,7 +348,7 @@ async fn missing_unknown_incompatible_and_inherited_context_failures_preserve_he
 }
 
 #[tokio::test]
-async fn real_registration_path_selects_the_exact_lock_but_does_not_grant_execution() {
+async fn real_registration_path_selects_the_reviewed_lock_but_never_approves_an_alias() {
     use playtime_server::models::ModelBrowser;
     use playtime_test_support::model_metadata::FakeOllama;
     let root = TestRoot::new().unwrap();
@@ -408,7 +408,7 @@ async fn real_registration_path_selects_the_exact_lock_but_does_not_grant_execut
         .unwrap()
         .0;
     assert_eq!(frozen.recipe.model.thinking, "high");
-    assert!(frozen.executable().is_err());
+    frozen.executable().unwrap();
     let mut malformed = frozen.clone();
     malformed.model_registration = None;
     assert!(malformed.validate().is_err());

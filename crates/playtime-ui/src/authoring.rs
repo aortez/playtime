@@ -89,6 +89,7 @@ impl Draft {
 pub struct Authoring {
     pub enabled: bool,
     pub model_selection_enabled: bool,
+    pub model_execution_enabled: bool,
     pub definition: Option<DefinitionView>,
     pub draft: Option<Draft>,
     pub save: Mutation,
@@ -335,6 +336,7 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
                 definition.model_name.as_deref(),
                 &model.registrations.items,
                 busy,
+                model.authoring.model_execution_enabled,
             );
             if !model.registrations.list_error.is_empty() {
                 ui.label(&model.registrations.list_error);

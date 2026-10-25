@@ -1,7 +1,7 @@
 use crate::{
-    AssistantMessage, CancellationToken, Decoder, EffectiveSettings, Failure, FailureKind,
-    HttpResponse, Inspection, Limits, ModelLock, Observation, ObservationKind, ObservationSender,
-    Operation, Profile, Request, Result, Transport, encode_request, json,
+    AssistantMessage, CancellationToken, Decoder, EffectiveSettings, ExecutionModel, Failure,
+    FailureKind, HttpResponse, Inspection, Limits, ModelLock, Observation, ObservationKind,
+    ObservationSender, Operation, Profile, Request, Result, Transport, json,
 };
 use futures_util::StreamExt;
 use playtime_engine::{ModelRequest, ModelResponse};
@@ -35,12 +35,26 @@ pub struct ChatResult {
 }
 pub struct Adapter<T: Transport> {
     transport: T,
-    lock: ModelLock,
+    lock: ExecutionModel,
     limits: Limits,
     verified: bool,
+    recheck_dispatch: bool,
 }
 impl<T: Transport> Adapter<T> {
     pub fn new(transport: T, lock: ModelLock, limits: Limits) -> Result<Self> {
+        let lock = ExecutionModel::locked(&lock)?;
+        Self::build(transport, lock, limits, false)
+    }
+    /// Explicit selected identities are checked again before every inference.
+    pub fn with_model(transport: T, model: ExecutionModel, limits: Limits) -> Result<Self> {
+        Self::build(transport, model, limits, true)
+    }
+    fn build(
+        transport: T,
+        lock: ExecutionModel,
+        limits: Limits,
+        recheck_dispatch: bool,
+    ) -> Result<Self> {
         lock.validate()?;
         limits.validate()?;
         Ok(Self {
@@ -48,6 +62,7 @@ impl<T: Transport> Adapter<T> {
             lock,
             limits,
             verified: false,
+            recheck_dispatch,
         })
     }
     /// Metadata only; success belongs to this immutable transport/lock pair.
@@ -93,8 +108,10 @@ impl<T: Transport> Adapter<T> {
         cancel: &CancellationToken,
     ) -> Result<serde_json::Value> {
         let deadline = deadline.min(Instant::now() + Duration::from_secs(15));
-        let body = (operation == Operation::Show)
-            .then(|| format!("{{\"model\":\"{}\"}}", self.lock.name).into_bytes());
+        let body = (operation == Operation::Show).then(|| {
+            serde_json::to_vec(&serde_json::json!({"model": self.lock.name}))
+                .expect("model name JSON")
+        });
         let mut response = bounded(
             self.transport.send(Request { operation, body }),
             deadline,
@@ -137,8 +154,13 @@ impl<T: Transport> Adapter<T> {
     ) -> ChatResult {
         let before = async {
             check(deadline, cancel)?;
-            let body = encode_request(request, settings, self.limits.request_bytes)?;
-            if !self.verified {
+            let body = crate::request::encode_for_model(
+                request,
+                settings,
+                &self.lock,
+                self.limits.request_bytes,
+            )?;
+            if self.recheck_dispatch || !self.verified {
                 self.inspect(false, deadline, cancel).await?;
             }
             check(deadline, cancel)?;
@@ -159,7 +181,8 @@ impl<T: Transport> Adapter<T> {
                 };
             }
         };
-        let mut decoder = Decoder::new(self.limits.clone()).expect("validated adapter limits");
+        let mut decoder = Decoder::for_model(self.limits.clone(), self.lock.name.clone())
+            .expect("validated adapter identity and limits");
         let response = bounded(
             self.transport.send(Request {
                 operation: Operation::Chat,

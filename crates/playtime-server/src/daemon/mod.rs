@@ -353,6 +353,8 @@ fn lifecycle(error: life::Error) -> ApiError {
         }
         error @ life::Error::Invalid(
             "live model unavailable"
+            | "selected model unsupported"
+            | "selected model identity changed"
             | "execution unavailable"
             | "Docker readiness unavailable"
             | "locked Docker image unavailable"
@@ -479,6 +481,7 @@ impl Application for Daemon {
                 RECIPE_AUTHORING.into(),
                 MODEL_SETTINGS.into(),
                 RECIPE_MODEL_SELECTION.into(),
+                RECIPE_MODEL_EXECUTION.into(),
                 "keyed_launch".into(),
                 "event_stream".into(),
                 "verified_artifacts".into(),
@@ -889,6 +892,10 @@ fn execution_unavailable(error: life::Error) -> ApiError {
             return ApiError::new("unsupported_capability");
         }
         life::Error::Invalid("live model unavailable") => "model_unavailable",
+        life::Error::Invalid("selected model unsupported") => "selected_model_unsupported",
+        life::Error::Invalid("selected model identity changed") => {
+            "selected_model_missing_or_changed"
+        }
         life::Error::Invalid("locked Docker image unavailable") => "workshop_image_unavailable",
         life::Error::Invalid(
             "Docker readiness unavailable"

@@ -278,13 +278,29 @@ all entry settings. Discarding edits never deletes a registration. Saving uses t
 existing optimistic head check and durable receipt flow; it never mutates earlier
 revisions. Reads and edits require neither a live model nor a ready workshop.
 
-This is the authoring portion of #134. Execution of recipes with a selected
-registration is deliberately unavailable, including a registration matching the
-original model. Preview grants no launch token; workers reject these definitions
-without falling back to the base lock. Generalized execution verification and the
-two-model native acceptance remain follow-up work. No second native capability
-profile is approved here: currently only the exact reviewed GPT-OSS identity has
-known support. Boolean-model tests use explicitly synthetic retained records.
+With `recipe_model_execution_v1`, selected registrations execute only when their
+complete identity and capability evidence match a compiled reviewed profile.
+The exact GPT-OSS lock and [Qwen3 1.7B development lock](local-ollama-development.md)
+are supported on Ollama 0.32.3. Qwen offers Model default / On / Off with unknown
+default and a 40,960-token context ceiling. High is not converted to On, and
+selecting Qwen does not shrink an inherited 65,536-token context automatically.
+Synthetic boolean records used by authoring tests never grant execution support.
+
+Preview and admission inspect the selected name/digest, backend version and
+canonical definition. Worker startup, session start and every selected inference
+dispatch verify them again. Capability provenance must match the compiled review;
+stored claims alone cannot approve a new model. Missing, offline or changed
+models block execution with a useful explanation while definitions remain editable.
+Restore the original identity or explicitly select a newly reviewed registration,
+then request a fresh preview. Nothing launches or updates a registration automatically.
+Loaded-model state is diagnostic and does not change identity or preview revisions.
+Metadata checks cannot eliminate tag changes between inspection and inference;
+the existing live-run exclusion and conservative accounting still apply.
+
+The archive's projected execution lock/settings and registration agree with its
+full frozen definition and preview. The original model lock remains only base
+provenance. The original GPT-OSS acceptance gate and full two-model acceptance
+remain outstanding while its host is unavailable; local Qwen evidence is separate.
 
 Selected recipes use frozen-definition schema version 2. They retain the full
 immutable registration as selected authority and keep `model_lock` as base recipe

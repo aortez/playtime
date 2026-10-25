@@ -95,17 +95,19 @@ impl FrozenRecipe {
     }
     pub fn executable(&self) -> Result<()> {
         self.validate()?;
-        // Authoring a registered identity does not widen the locked worker.
-        // The next execution slice must verify this authority at every boundary.
-        if self.model_registration.is_some() {
-            return Err(Error::Invalid(
-                "registered model execution is unavailable".into(),
-            ));
-        }
         if self.harness != "memento_turns_v1"
-            || self.model_lock != serde_json::from_slice::<Value>(MODEL_LOCK)?
             || self.environment_lock != serde_json::from_slice::<Value>(IMAGE_LOCK)?
         {
+            return Err(Error::Invalid(
+                "recipe execution identities are unavailable".into(),
+            ));
+        }
+        if let Some(model) = &self.model_registration {
+            super::registered_model::execution_model(model)?;
+            self.check_model_settings(&self.model_settings()?)?;
+            return self.check_initial_context();
+        }
+        if self.model_lock != serde_json::from_slice::<Value>(MODEL_LOCK)? {
             return Err(Error::Invalid(
                 "recipe execution identities are unavailable".into(),
             ));

@@ -282,7 +282,12 @@ pub(super) fn settings(context_tokens: u64, sampling: &Sampling) -> serde_json::
         "top_p": sampling.top_p,
         "top_k": sampling.top_k,
         "repeat_penalty": sampling.repeat_penalty,
-        "thinking": if sampling.thinking == "default" { None } else { Some(&sampling.thinking) },
+        "thinking": match sampling.thinking.as_str() {
+            "default" => serde_json::Value::Null,
+            "on" => serde_json::Value::Bool(true),
+            "off" => serde_json::Value::Bool(false),
+            level => serde_json::Value::String(level.into()),
+        },
         "use_mmap": null,
         "keep_alive": "5m",
     })
@@ -299,6 +304,31 @@ impl Profile {
         host: LiveHost,
     ) -> Result<Self> {
         recipe.check()?;
+        Self::freeze_checked_recipe(recipe, selection, daemon, host)
+    }
+    pub fn freeze_definition(
+        definition: super::FrozenRecipe,
+        selection: Selection,
+        daemon: DaemonIdentity,
+        host: LiveHost,
+    ) -> Result<Self> {
+        definition.executable()?;
+        let mut profile =
+            Self::freeze_checked_recipe(definition.recipe.clone(), selection, daemon, host)?;
+        if let Some(selected) = &definition.model_registration {
+            let model = profile.model.as_mut().expect("recipe model");
+            model.lock = super::registered_model::selected_lock(selected);
+            model.registration = Some(selected.summary.clone());
+        }
+        profile.definition = Some(definition);
+        Ok(profile)
+    }
+    fn freeze_checked_recipe(
+        recipe: Recipe,
+        selection: Selection,
+        daemon: DaemonIdentity,
+        host: LiveHost,
+    ) -> Result<Self> {
         let p = recipe.parameters.clone();
         let (l, w) = (&p.limits, &p.workshop);
         Ok(Self {
@@ -345,6 +375,7 @@ impl Profile {
             },
             command_return_ms: RETURN_OVERHEAD_MS,
             model: Some(LiveModel {
+                registration: None,
                 lock: serde_json::from_slice(MODEL_LOCK)?,
                 settings: settings(l.context_tokens.get(), &recipe.model),
                 host,

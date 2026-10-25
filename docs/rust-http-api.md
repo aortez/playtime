@@ -96,8 +96,8 @@ Service ledger version 7 transactionally adds two tables to version 6; existing
 run and recipe rows are preserved. Older binaries refuse version 7. This additive
 upgrade requires no reset and does not establish a general historical-migration
 policy. Registration records are service definitions, not archive writer receipts.
-The existing locked model/recipe execution path remains unchanged; #134 owns
-recipe model selection and generalized worker verification.
+Registration itself does not grant execution; the separate
+`recipe_model_execution_v1` capability requires compiled reviewed support.
 
 Focused server/UI tests use ephemeral metadata-only Ollama and HTTP fixtures,
 including drift, alias identity, offline replay/restart, capacity, corruption,
@@ -401,9 +401,12 @@ selected registration's reviewed capabilities. Client readback and save receipts
 validate the selected identity; omission in old request JSON stays omitted.
 Existing schema-1 definitions and keys are unchanged, and the ledger stays at 7.
 
-This feature flag certifies authoring only. Registered-model execution remains
-unavailable pending the remaining #134 verification work. Even selection of the
-original locked identity receives no executable preview. Synthetic HTTP/UI tests
-cover preservation, explicit High-to-On/Off corrections, offline edits, optimistic
-conflicts and save recovery; they do not establish native capability or inference
-support. See [registered model selection](rust-recipes.md#registered-model-selection).
+The selection flag certifies authoring only. `recipe_model_execution_v1` separately
+advertises verification and execution of compiled reviewed registrations. Preview
+includes the selected registration and definition fingerprint in `model_identity`;
+the preview revision binds the full worker profile. Unsupported stored evidence,
+missing/changed identity and unreachable endpoints return `execution_unavailable`
+with reasons `selected_model_unsupported`, `selected_model_missing_or_changed`, or
+`model_unavailable`. Accepted launch keys still replay the original admission.
+Synthetic HTTP/UI tests establish no native capability or inference support.
+See [registered model selection](rust-recipes.md#registered-model-selection).

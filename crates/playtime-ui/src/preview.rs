@@ -148,6 +148,20 @@ pub fn prepare(value: Preview) -> PreviewView {
             ),
         ],
     };
+    if model.get("registration").is_some() {
+        model_lines.push(format!(
+            "Registration: {}",
+            field(model, "/registration/registration_id")
+        ));
+        model_lines.push(format!(
+            "Capability evidence: {}",
+            field(model, "/registration/identity/capability_provenance")
+        ));
+        model_lines.push(format!(
+            "Definition fingerprint: {}",
+            short(model, "/definition_sha256")
+        ));
+    }
     model_lines.push(format!(
         "Context capacity: {} tokens · Response cap: {} · Handoff cap: {}",
         thousands(l.context_tokens.get()),
@@ -157,10 +171,11 @@ pub fn prepare(value: Preview) -> PreviewView {
     if !matches!(adapter, Some("fixture" | "scripted")) {
         model_lines.push(format!(
             "Thinking: {}",
-            if model.pointer("/settings/thinking") == Some(&Value::Null) {
-                "model default (setting omitted)".into()
-            } else {
-                field(model, "/settings/thinking")
+            match model.pointer("/settings/thinking") {
+                Some(Value::Null) => "model default (setting omitted)".into(),
+                Some(Value::Bool(true)) => "On".into(),
+                Some(Value::Bool(false)) => "Off".into(),
+                _ => field(model, "/settings/thinking"),
             }
         ));
         model_lines.push(format!(

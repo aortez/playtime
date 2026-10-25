@@ -1,4 +1,4 @@
-//! Native external I/O for the exact locked Ollama compatibility profile.
+//! Native external I/O for frozen identities on the supported Ollama wire profile.
 //! No tool execution, retries, canonical accounting or backend stop authority.
 mod adapter;
 pub mod discovery;
@@ -10,7 +10,7 @@ mod stream;
 mod transport;
 
 pub use adapter::{Adapter, ChatResult, Dispatch, RemoteOutcome};
-pub use identity::{Inspection, ModelLock, Profile};
+pub use identity::{ExecutionModel, Inspection, ModelLock, Profile};
 pub use observation::{
     Observation, ObservationKind, ObservationReceiver, ObservationSender, observations,
 };
