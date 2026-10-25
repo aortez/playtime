@@ -9,6 +9,8 @@ pub use effects::{CheckpointBytes, Effects};
 mod error;
 mod mapping;
 mod prepare;
+#[cfg(feature = "test-harness")]
+pub mod probe;
 mod queries;
 mod receipt;
 pub mod recovery;

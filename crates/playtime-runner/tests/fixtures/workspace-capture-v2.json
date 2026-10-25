@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "run_id": "probe",
+  "workspace": {
+    "path": "artifacts/final/workspace.json",
+    "sha256": "bd25b1b72e26477af09c000c0b7847f0ee5c95bd3679b644c6839c31b1876c4e",
+    "size_bytes": 41
+  },
+  "files": [
+    {
+      "path": "output.txt",
+      "size_bytes": 6,
+      "mode": 420,
+      "entry_type": "file",
+      "sha256": "e0ee8bb50685e05fa0f47ed04203ae953fdfd055f5bd2892ea186504254f8c3a",
+      "link": null,
+      "content": {
+        "availability": "retained",
+        "content": {
+          "path": "artifacts/final/files/0",
+          "sha256": "e0ee8bb50685e05fa0f47ed04203ae953fdfd055f5bd2892ea186504254f8c3a",
+          "size_bytes": 6
+        }
+      }
+    },
+    {
+      "path": "seed.txt",
+      "size_bytes": 4,
+      "mode": 420,
+      "entry_type": "file",
+      "sha256": "19b25856e1c150ca834cffc8b59b23adbd0ec0389e58eb22b3b64768098d002b",
+      "link": null,
+      "content": {
+        "availability": "retained",
+        "content": {
+          "path": "artifacts/final/files/1",
+          "sha256": "19b25856e1c150ca834cffc8b59b23adbd0ec0389e58eb22b3b64768098d002b",
+          "size_bytes": 4
+        }
+      }
+    }
+  ],
+  "source_map": {
+    "path": "artifacts/final/source-map.json",
+    "sha256": "8b6b56a6df0f1b1b27807249f4c5eea66ae4d318e732a6fbb4bcfd9ec767abbc",
+    "size_bytes": 1752
+  }
+}

@@ -4,6 +4,59 @@ use serde::{Deserialize, Serialize};
 
 use crate::{InvalidValue, MemoryCondition};
 
+/// Shared allocations without memento session, memory, or handoff settings.
+/// The legacy ResourceLimits representation below keeps its stored layout.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommonLimits {
+    pub wall_seconds: NonZeroU64,
+    pub generated_tokens: NonZeroU64,
+    pub tokens_per_call: NonZeroU64,
+    pub context_tokens: NonZeroU64,
+    pub model_seconds: NonZeroU64,
+    pub command_seconds: NonZeroU64,
+    pub output_bytes: NonZeroU64,
+    pub log_bytes: NonZeroU64,
+}
+
+impl CommonLimits {
+    pub fn validate(&self) -> Result<(), InvalidValue> {
+        if !(1024..=65536).contains(&self.output_bytes.get()) {
+            return Err(InvalidValue("output_bytes must be 1024..65536"));
+        }
+        if self.context_tokens <= self.tokens_per_call {
+            return Err(InvalidValue(
+                "context_tokens must leave room beyond tokens_per_call",
+            ));
+        }
+        for seconds in [self.wall_seconds, self.model_seconds, self.command_seconds] {
+            seconds
+                .get()
+                .checked_mul(1000)
+                .ok_or(InvalidValue("timeout overflows milliseconds"))?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommonParameters {
+    pub sampling_seed: u32,
+    pub limits: CommonLimits,
+    pub workshop: WorkshopLimits,
+}
+
+impl CommonParameters {
+    pub fn validate(&self) -> Result<(), InvalidValue> {
+        if self.sampling_seed > i32::MAX as u32 {
+            return Err(InvalidValue("sampling_seed must be at most 2147483647"));
+        }
+        self.limits.validate()?;
+        self.workshop.validate()
+    }
+}
+
 /// Requested configuration. Deserialization rejects misspelled settings;
 /// validate() checks relationships before the values may be used for admission.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -17,6 +70,13 @@ pub struct RunParameters {
 }
 
 impl RunParameters {
+    pub fn common(&self) -> CommonParameters {
+        CommonParameters {
+            sampling_seed: self.sampling_seed,
+            limits: self.limits.common(),
+            workshop: self.workshop.clone(),
+        }
+    }
     pub fn validate(&self) -> Result<(), InvalidValue> {
         if self.sampling_seed > i32::MAX as u32 {
             return Err(InvalidValue("sampling_seed must be at most 2147483647"));
@@ -62,6 +122,18 @@ fn present_error_limit<'de, D: serde::Deserializer<'de>>(
 }
 
 impl ResourceLimits {
+    pub fn common(&self) -> CommonLimits {
+        CommonLimits {
+            wall_seconds: self.wall_seconds,
+            generated_tokens: self.generated_tokens,
+            tokens_per_call: self.tokens_per_call,
+            context_tokens: self.context_tokens,
+            model_seconds: self.model_seconds,
+            command_seconds: self.command_seconds,
+            output_bytes: self.output_bytes,
+            log_bytes: self.log_bytes,
+        }
+    }
     pub fn validate(&self) -> Result<(), InvalidValue> {
         if self.sessions.get() > 1000 || self.work_turns_per_session.get() > 1000 {
             return Err(InvalidValue(

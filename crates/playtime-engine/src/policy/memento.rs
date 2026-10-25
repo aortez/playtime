@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use playtime_core::{MemoryCondition, StopReason};
+use playtime_core::{MemoryCondition, RequestPurpose, StopReason};
 use serde_json::{Value, json};
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
     evidence::{self, CommandObservation, Evidence},
 };
 
-use super::{Inference, Proposal, Recovery, View, memento_contract as contract};
+use super::{Inference, MementoView as View, Proposal, Recovery, memento_contract as contract};
 
 #[derive(Default)]
 enum Stage {
@@ -53,7 +53,11 @@ impl Memento {
             Stage::Work | Stage::Handoff => {
                 let handoff = matches!(self.stage, Stage::Handoff);
                 Proposal::Infer(Inference {
-                    handoff,
+                    purpose: if handoff {
+                        RequestPurpose::Handoff
+                    } else {
+                        RequestPurpose::Work
+                    },
                     messages: self.messages.clone(),
                     tools: contract::tools(handoff),
                 })
@@ -118,15 +122,6 @@ impl Memento {
 
     pub fn context_rejected(&mut self) {
         self.stage = Stage::Checkpoint;
-    }
-
-    pub fn valid_message(message: &Value) -> bool {
-        message.is_object()
-            && message["role"] == "assistant"
-            && ["content", "thinking"]
-                .iter()
-                .all(|key| message.get(key).is_none_or(Value::is_string))
-            && message.get("tool_calls").is_none_or(Value::is_array)
     }
 
     /// Receives a complete, byte-bounded response after runtime settlement.

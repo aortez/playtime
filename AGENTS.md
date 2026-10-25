@@ -30,7 +30,8 @@ The Rust foundation is a root Cargo workspace under `crates/`. Keep
 `playtime-engine` owns the bounded controller and replaceable external effects.
 Its simulator must drive the same controller and never execute command text on
 the host. See `docs/rust-controller.md` for dispatch, deadline, and accounting
-invariants.
+invariants. Changes to the session-neutral contract also run
+`cargo test -p playtime-runner --features test-harness --test workspace_probe --locked`.
 `playtime-storage` owns synchronous portable archive I/O. Preserve its distinction
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`
@@ -122,7 +123,10 @@ Preserve these properties:
 
 - Model-controlled commands execute only inside the workshop as uid 1000.
 - Logs, input archives, controller code, and Docker access stay outside it.
-- Each session starts a new conversation. Only workspace files persist.
+- `memento_turns_v1` starts a new conversation each session; only workspace files
+  persist. Other internal policies must use explicit request purposes/scopes and
+  versioned archive records, never fabricated memento sessions. The run-scoped
+  probe is test-only and establishes no native process-continuity behavior.
 - Limits and cleanup are enforced by the controller and container lifetime.
 - Keep partial inference visible; never report unknown token usage as zero.
 - Archived model text and filenames must be escaped in generated HTML.

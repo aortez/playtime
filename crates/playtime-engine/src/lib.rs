@@ -11,6 +11,7 @@ pub mod evidence;
 mod policy;
 pub mod simulation;
 mod types;
+mod validation;
 
 pub use control::*;
 pub use controller::Controller;

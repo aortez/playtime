@@ -234,7 +234,10 @@ mod tests {
                 playtime_engine::EffectKind::Model(request) => Some(request),
                 _ => None,
             });
-            assert_eq!(request.is_some_and(|r| !r.handoff), starts_work);
+            assert_eq!(
+                request.is_some_and(|r| r.purpose == playtime_core::RequestPurpose::Work),
+                starts_work
+            );
         }
     }
 }

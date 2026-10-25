@@ -3,8 +3,8 @@ mod admission;
 use std::{collections::BTreeSet, num::NonZeroU64};
 
 use playtime_core::{
-    CommandOutcome, GenerationUsage, InvalidValue, RunId, RunMode, RunPhase, SessionId, StopReason,
-    UsageTotals,
+    CommandOutcome, GenerationUsage, InvalidValue, RequestPurpose, RequestScope, RunId, RunMode,
+    RunPhase, SessionId, StopReason, UsageTotals,
 };
 use playtime_protocol::{
     events::CleanupOutcome, observations::ObservationIdentity, v1::UsageSummary,
@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use crate::{
     context::{ContextWindow, encoded_size},
     evidence::{CommandObservation, CommandSources},
-    policy::{Inference, Memento, Recovery, View, memento_contract as contract},
+    policy::{Inference, Memento, Policy, Recovery, View, memento_contract as contract},
     *,
 };
 
@@ -33,6 +33,20 @@ enum Stage {
     Done,
 }
 
+#[derive(Clone)]
+enum PublicationArtifact {
+    Checkpoint(Box<Checkpoint>),
+    Capture(Box<Capture>),
+}
+impl PublicationArtifact {
+    fn effect(self) -> EffectKind {
+        match self {
+            Self::Checkpoint(checkpoint) => EffectKind::PublishCheckpoint(checkpoint),
+            Self::Capture(capture) => EffectKind::PublishCapture(capture),
+        }
+    }
+}
+
 struct ActiveTool {
     request: ToolRequest,
     request_sequence: u64,
@@ -46,9 +60,9 @@ struct ActiveTool {
 /// conversation/lifecycle actions; adapters supply observations, never decisions
 /// to retry, increase an allocation, or start another session.
 pub struct Controller<I: IdSource> {
-    config: ControllerConfig,
+    config: RuntimeConfig,
     tool_policy: ToolPolicy,
-    policy: Memento,
+    policy: Policy,
     run_id: RunId,
     mode: RunMode,
     ids: I,
@@ -65,7 +79,7 @@ pub struct Controller<I: IdSource> {
     outbox: Vec<BoundRecord>,
     controls: Vec<ControlUpdate>,
     request_context: Option<RequestContext>,
-    publication: Option<(u64, Box<Checkpoint>, bool)>,
+    publication: Option<(u64, PublicationArtifact, bool)>,
     sequence: u64,
     log_used: u64,
     log_exhausted: bool,
@@ -81,6 +95,8 @@ pub struct Controller<I: IdSource> {
     active: bool,
     checkpoint_attempted: bool,
     last_checkpoint: Option<Checkpoint>,
+    last_capture: Option<Capture>,
+    workspace_started: bool,
     context: ContextWindow,
     turns: u32,
     handoff_attempts: u32,
@@ -108,6 +124,49 @@ impl<I: IdSource> Controller<I> {
 
     pub fn with_tool_policy(
         config: ControllerConfig,
+        run_id: RunId,
+        mode: RunMode,
+        ids: I,
+        now_ms: u64,
+        tool_policy: ToolPolicy,
+    ) -> Result<Self, InvalidValue> {
+        config.parameters.validate()?;
+        Self::configured(
+            RuntimeConfig::memento(config),
+            Policy::Memento(Memento::default()),
+            run_id,
+            mode,
+            ids,
+            now_ms,
+            tool_policy,
+        )
+    }
+
+    #[cfg(feature = "test-harness")]
+    pub fn test_workspace(
+        config: WorkspaceConfig,
+        run_id: RunId,
+        ids: I,
+        now_ms: u64,
+    ) -> Result<Self, InvalidValue> {
+        config.parameters.validate()?;
+        if config.context_reserve >= config.parameters.limits.context_tokens.get() {
+            return Err(InvalidValue("workspace context reserve exceeds window"));
+        }
+        Self::configured(
+            RuntimeConfig::workspace(config),
+            Policy::probe(),
+            run_id,
+            RunMode::Simulation,
+            ids,
+            now_ms,
+            ToolPolicy::Simulation,
+        )
+    }
+
+    fn configured(
+        config: RuntimeConfig,
+        policy: Policy,
         run_id: RunId,
         mode: RunMode,
         ids: I,
@@ -143,7 +202,7 @@ impl<I: IdSource> Controller<I> {
         let mut controller = Self {
             config,
             tool_policy,
-            policy: Memento::default(),
+            policy,
             run_id,
             mode,
             ids,
@@ -176,6 +235,8 @@ impl<I: IdSource> Controller<I> {
             active: false,
             checkpoint_attempted: false,
             last_checkpoint: None,
+            last_capture: None,
+            workspace_started: false,
             context: ContextWindow::default(),
             turns: 0,
             handoff_attempts: 0,
@@ -189,7 +250,14 @@ impl<I: IdSource> Controller<I> {
             diagnostics: Vec::new(),
             result: None,
         };
-        controller.emit("controller_started", json!({"run_id": controller.run_id, "mode": mode, "parameters": controller.config.parameters}));
+        let parameters = controller.config.memento.as_ref().map_or_else(
+            || json!(controller.config.parameters),
+            |config| json!(config.parameters),
+        );
+        controller.emit(
+            "controller_started",
+            json!({"run_id": controller.run_id, "mode": mode, "parameters": parameters}),
+        );
         controller.pump();
         Ok(controller)
     }
@@ -330,7 +398,7 @@ impl<I: IdSource> Controller<I> {
                 }
                 if matches!(
                     self.pending.as_ref().unwrap().kind,
-                    EffectKind::StartSession { .. }
+                    EffectKind::StartSession { .. } | EffectKind::StartWorkspace
                 ) {
                     self.active = true;
                 }
@@ -383,6 +451,9 @@ impl<I: IdSource> Controller<I> {
         matches!(
             (effect, outcome),
             (_, Outcome::Failed(_))
+                | (EffectKind::StartWorkspace, Outcome::WorkspaceStarted)
+                | (EffectKind::CaptureWorkspace, Outcome::WorkspaceCaptured(_))
+                | (EffectKind::PublishCapture(_), Outcome::Published)
                 | (EffectKind::StartSession { .. }, Outcome::Started(_))
                 | (
                     EffectKind::Model(_),
@@ -454,13 +525,18 @@ impl<I: IdSource> Controller<I> {
             self.control(ControlFact::ObservationOmitted {
                 kind: kind.into(),
                 size_bytes: size,
+                request: self.bound_request(&identity),
                 identity,
             });
             return None;
         }
         self.log_used += size;
         self.sequence += 1;
-        self.outbox.push(BoundRecord { record, identity });
+        self.outbox.push(BoundRecord {
+            record,
+            request: self.bound_request(&identity),
+            identity,
+        });
         Some(self.sequence - 1)
     }
 
@@ -500,7 +576,19 @@ impl<I: IdSource> Controller<I> {
             ..
         }) = &self.pending
         {
-            self.publication = Some((*id, checkpoint.clone(), false));
+            self.publication = Some((
+                *id,
+                PublicationArtifact::Checkpoint(checkpoint.clone()),
+                false,
+            ));
+        }
+        if let Some(Effect {
+            id,
+            kind: EffectKind::PublishCapture(capture),
+            ..
+        }) = &self.pending
+        {
+            self.publication = Some((*id, PublicationArtifact::Capture(capture.clone()), false));
         }
     }
 
@@ -525,6 +613,8 @@ impl<I: IdSource> Controller<I> {
             self.pending.as_ref().map(|effect| &effect.kind),
             Some(
                 EffectKind::Snapshot { .. }
+                    | EffectKind::CaptureWorkspace
+                    | EffectKind::PublishCapture(_)
                     | EffectKind::PublishCheckpoint(_)
                     | EffectKind::Cleanup
             )
@@ -608,14 +698,13 @@ impl<I: IdSource> Controller<I> {
                 }
                 Stage::Checkpoint => {
                     self.checkpoint_attempted = true;
-                    self.phase_to(RunPhase::Checkpointing);
-                    self.effect(
-                        EffectKind::Snapshot {
-                            session_id: self.session_id.clone().unwrap(),
-                        },
-                        CHECKPOINT_MS,
-                        false,
-                    );
+                    if let Some(session_id) = self.session_id.clone() {
+                        self.phase_to(RunPhase::Checkpointing);
+                        self.effect(EffectKind::Snapshot { session_id }, CHECKPOINT_MS, false);
+                    } else {
+                        self.phase_to(RunPhase::CapturingWorkspace);
+                        self.effect(EffectKind::CaptureWorkspace, CHECKPOINT_MS, false);
+                    }
                 }
                 Stage::Publishing => unreachable!("publication always has a pending effect"),
                 Stage::Cleaning => {
@@ -671,7 +760,16 @@ impl<I: IdSource> Controller<I> {
     }
 
     fn session_started(&mut self, memory: Memory) {
-        let memory = memory.bounded(self.config.parameters.limits.memento_bytes.get());
+        let memory = memory.bounded(
+            self.config
+                .memento
+                .as_ref()
+                .unwrap()
+                .parameters
+                .limits
+                .memento_bytes
+                .get(),
+        );
         let evidence = self
             .last_checkpoint
             .as_ref()
@@ -691,7 +789,7 @@ impl<I: IdSource> Controller<I> {
         self.emit(
             "memory_received",
             json!({"ordinal": self.session, "context": "fresh", "memory": memory,
-            "evidence": evidence, "memory_condition": self.config.parameters.memory_condition}),
+            "evidence": evidence, "memory_condition": self.config.memento.as_ref().unwrap().parameters.memory_condition}),
         );
         self.policy.session_started(
             View {
@@ -714,32 +812,45 @@ impl<I: IdSource> Controller<I> {
 
     fn request(&mut self, proposal: Inference) {
         let Inference {
-            handoff,
+            purpose,
             messages,
             tools,
         } = proposal;
+        let handoff = purpose == RequestPurpose::Handoff;
         let limits = &self.config.parameters.limits;
-        let maximum = contract::allowance(limits, self.remaining_tokens(), handoff);
+        let contract = self
+            .config
+            .request_contract(purpose)
+            .expect("validated request purpose");
+        let maximum = contract.maximum_tokens.min(
+            self.remaining_tokens()
+                .saturating_sub(contract.generation_reserve),
+        );
         let Some(reservation) = NonZeroU64::new(maximum) else {
             self.stop(StopReason::TokenLimit);
             return;
         };
         let (context_input, basis) = self.context.estimate(&messages, &tools);
-        let context_reserve = contract::request_context_reserve(limits, handoff);
+        let context_reserve = contract.context_reserve;
         if context_input
             .saturating_add(maximum)
             .saturating_add(context_reserve)
             >= limits.context_tokens.get()
         {
             self.emit(
-                if handoff {
+                if self.config.memento.is_none() {
+                    "context_guard_rejected"
+                } else if handoff {
                     "handoff_skipped"
                 } else {
                     "early_handoff"
                 },
                 json!({"reason": "context_guard", "context_input_bound": context_input}),
             );
-            if handoff {
+            if self.config.memento.is_none() {
+                self.diagnostic("run-scoped input exceeds the shared context allowance");
+                self.stop(StopReason::InfrastructureFailure);
+            } else if handoff {
                 self.policy.context_rejected();
             } else {
                 self.begin_handoff();
@@ -757,7 +868,7 @@ impl<I: IdSource> Controller<I> {
         let request = ModelRequest {
             request_id: id,
             call,
-            handoff,
+            purpose,
             sampling_seed: ((u64::from(self.config.parameters.sampling_seed) + call - 1)
                 % (1 << 31)) as u32,
             maximum_tokens: maximum,
@@ -767,12 +878,24 @@ impl<I: IdSource> Controller<I> {
             context_basis: basis.into(),
             context_reserve,
         };
-        let Some(sequence) = self.emit("model_request", json!(request)) else {
+        let mut recorded = json!(request);
+        if self.config.memento.is_none() {
+            recorded.as_object_mut().unwrap().remove("handoff");
+            recorded["purpose"] = json!(request.purpose);
+        }
+        let Some(sequence) = self.emit("model_request", recorded) else {
             return;
         };
         self.request_context = Some(RequestContext {
             effect_id: self.next_effect,
-            session_id: self.session_id.clone().unwrap(),
+            scope: self
+                .session_id
+                .clone()
+                .map_or(RequestScope::Run, |session_id| RequestScope::Session {
+                    session_id,
+                }),
+            purpose: request.purpose,
+            call,
             request_id: request.request_id.clone(),
         });
         self.bind_record(sequence, self.request_identity());
@@ -782,7 +905,7 @@ impl<I: IdSource> Controller<I> {
         self.current_handoff = handoff;
         if handoff {
             self.handoff_attempts += 1;
-        } else {
+        } else if self.config.memento.is_some() {
             self.turns += 1;
         }
         self.effect(EffectKind::Model(request), timeout_ms, true);
@@ -807,7 +930,7 @@ impl<I: IdSource> Controller<I> {
             ));
             return;
         };
-        if !Memento::valid_message(&response.message) {
+        if !crate::validation::valid_message(&response.message) {
             self.model_error(ModelFailure::Parse("invalid assistant message".into()));
             return;
         }
@@ -863,6 +986,13 @@ impl<I: IdSource> Controller<I> {
             .is_some_and(|calls| calls.len() > 8)
         {
             self.stop(StopReason::TooManyToolsInOneResponse);
+        } else if request.tools.is_empty()
+            && response.message["tool_calls"]
+                .as_array()
+                .is_some_and(|calls| !calls.is_empty())
+        {
+            self.diagnostic("tool-free request returned tool calls");
+            self.stop(StopReason::InfrastructureFailure);
         } else {
             self.tool_calls_remaining = response.message["tool_calls"]
                 .as_array()
@@ -927,13 +1057,26 @@ impl<I: IdSource> Controller<I> {
         ) else {
             return;
         };
-        let error = contract::tool_error(
-            &proposed,
-            &self.config.parameters.limits,
-            self.ended,
-            self.current_handoff,
-        );
-        let save_memory = name == "end_session";
+        let error = if let Some(config) = &self.config.memento {
+            contract::tool_error(
+                &proposed,
+                &config.parameters.limits,
+                self.ended,
+                self.current_handoff,
+            )
+        } else {
+            let purpose = self.request_context.as_ref().unwrap().purpose;
+            let allowed = self.config.request_contract(purpose).unwrap().tools;
+            if allowed
+                .iter()
+                .any(|tool| tool["function"]["name"] == proposed.name)
+            {
+                crate::validation::validate_call(&allowed, &proposed.name, &proposed.arguments)
+            } else {
+                Some("Tool is unavailable for this request purpose".into())
+            }
+        };
+        let save_memory = self.config.memento.is_some() && name == "end_session";
         let mut active = ActiveTool {
             request: ToolRequest {
                 name: name.clone(),
@@ -979,7 +1122,11 @@ impl<I: IdSource> Controller<I> {
                 },
             });
         }
-        let request = contract::workshop_request(&active.request);
+        let request = if save_memory {
+            contract::workshop_request(&active.request)
+        } else {
+            active.request.clone()
+        };
         let mut timeout_ms = self.config.parameters.limits.command_seconds.get() * 1000;
         if let Some(seconds) = arguments["timeout_seconds"]
             .as_f64()
@@ -1076,6 +1223,42 @@ impl<I: IdSource> Controller<I> {
 
     fn complete(&mut self, effect: EffectKind, outcome: Outcome) {
         match (effect, outcome) {
+            (EffectKind::StartWorkspace, Outcome::WorkspaceStarted) => {
+                self.control(ControlFact::WorkspaceStarted {
+                    workspace: self.config.initial_workspace.clone(),
+                });
+                self.emit(
+                    "workspace_started",
+                    json!({"workspace": self.config.initial_workspace}),
+                );
+                self.policy.workspace_started();
+                self.phase_to(RunPhase::Working);
+            }
+            (EffectKind::CaptureWorkspace, Outcome::WorkspaceCaptured(snapshot)) => {
+                self.active = false;
+                self.stage = Stage::Publishing;
+                self.effect(
+                    EffectKind::PublishCapture(Box::new(Capture {
+                        snapshot,
+                        interrupted: self.reason.is_some(),
+                    })),
+                    LIFECYCLE_MS,
+                    false,
+                );
+            }
+            (EffectKind::PublishCapture(capture), Outcome::Published) => {
+                if let Some((effect_id, _, _)) = self.publication.take() {
+                    self.control(ControlFact::CaptureCommitted { effect_id });
+                }
+                self.emit("workspace_captured", json!({"workspace": capture.snapshot.workspace, "interrupted": capture.interrupted}));
+                self.last_capture = Some(*capture);
+                self.policy.published();
+                self.stage = if self.reason.is_some() {
+                    Stage::Cleaning
+                } else {
+                    Stage::Policy
+                };
+            }
             (EffectKind::StartSession { .. }, Outcome::Started(memory)) => {
                 self.session_started(memory)
             }
@@ -1090,11 +1273,18 @@ impl<I: IdSource> Controller<I> {
                     finish_run: self.finished,
                     handoff_saved: self.ended,
                 });
-                snapshot.memory = snapshot
-                    .memory
-                    .bounded(self.config.parameters.limits.memento_bytes.get());
+                snapshot.memory = snapshot.memory.bounded(
+                    self.config
+                        .memento
+                        .as_ref()
+                        .unwrap()
+                        .parameters
+                        .limits
+                        .memento_bytes
+                        .get(),
+                );
                 let evidence = Memento::checkpoint_evidence(
-                    &self.config,
+                    self.config.memento.as_ref().unwrap(),
                     self.session,
                     self.last_checkpoint.as_ref(),
                     &snapshot,
@@ -1145,8 +1335,16 @@ impl<I: IdSource> Controller<I> {
         match effect {
             EffectKind::Model(_) => self.model_error(ModelFailure::Infrastructure(error)),
             EffectKind::Cleanup => self.finish(vec![error]),
-            EffectKind::Snapshot { .. } | EffectKind::PublishCheckpoint(_) => {
-                self.diagnostic(&format!("checkpoint: {error}"));
+            EffectKind::Snapshot { .. }
+            | EffectKind::PublishCheckpoint(_)
+            | EffectKind::CaptureWorkspace
+            | EffectKind::PublishCapture(_) => {
+                let operation = if self.config.memento.is_some() {
+                    "checkpoint"
+                } else {
+                    "workspace capture"
+                };
+                self.diagnostic(&format!("{operation}: {error}"));
                 self.stop(StopReason::InfrastructureFailure);
                 self.stage = Stage::Cleaning;
             }
@@ -1207,6 +1405,7 @@ impl<I: IdSource> Controller<I> {
             elapsed_ms: self.now_ms - self.started_ms,
             cleanup,
             last_checkpoint: self.last_checkpoint.clone(),
+            last_capture: self.last_capture.clone(),
             diagnostics: self.diagnostics.clone(),
         };
         self.emit(
@@ -1230,6 +1429,13 @@ impl<I: IdSource> Controller<I> {
         });
     }
 
+    fn bound_request(&self, identity: &ObservationIdentity) -> Option<RequestContext> {
+        self.request_context
+            .as_ref()
+            .filter(|request| identity.request_id.as_ref() == Some(&request.request_id))
+            .cloned()
+    }
+
     fn request_identity(&self) -> ObservationIdentity {
         self.request_context
             .as_ref()
@@ -1248,12 +1454,16 @@ impl<I: IdSource> Controller<I> {
             .iter_mut()
             .find(|entry| entry.record.sequence == sequence)
         {
+            entry.request = self.request_context.clone();
             entry.identity = identity;
         }
     }
 
     fn effect_info(&self, effect: &Effect) -> EffectInfo {
         let (kind, maximum_tokens) = match &effect.kind {
+            EffectKind::StartWorkspace => ("start_workspace", None),
+            EffectKind::CaptureWorkspace => ("capture_workspace", None),
+            EffectKind::PublishCapture(_) => ("publish_capture", None),
             EffectKind::StartSession { .. } => ("start_session", None),
             EffectKind::Model(request) => ("model", Some(request.maximum_tokens)),
             EffectKind::Tool(_) => ("tool", None),
@@ -1277,6 +1487,7 @@ impl<I: IdSource> Controller<I> {
             id: effect.id,
             kind,
             session_id: self.session_id.clone(),
+            request: self.bound_request(&identity),
             identity,
             maximum_tokens,
             deadline_ms: effect.deadline_ms,
@@ -1284,19 +1495,28 @@ impl<I: IdSource> Controller<I> {
     }
 
     fn publication_committed(&mut self, effect_id: u64) {
-        let checkpoint = self.publication.as_ref().unwrap().1.clone();
+        let artifact = self.publication.as_ref().unwrap().1.clone();
         if self
             .pending
             .as_ref()
             .is_some_and(|effect| effect.id == effect_id)
         {
             self.pending = None;
-            self.complete(
-                EffectKind::PublishCheckpoint(checkpoint),
-                Outcome::Published,
-            );
+            self.complete(artifact.effect(), Outcome::Published);
         } else {
             self.publication = None;
+            let PublicationArtifact::Checkpoint(checkpoint) = artifact else {
+                let PublicationArtifact::Capture(capture) = artifact else {
+                    unreachable!()
+                };
+                self.control(ControlFact::CaptureCommitted { effect_id });
+                self.emit("workspace_captured", json!({"workspace": capture.snapshot.workspace, "interrupted": capture.interrupted}));
+                self.last_capture = Some(*capture);
+                if let Some(result) = &mut self.result {
+                    result.last_capture = self.last_capture.clone();
+                }
+                return;
+            };
             self.control(ControlFact::CheckpointCommitted {
                 effect_id,
                 session_id: checkpoint.session_id.clone(),

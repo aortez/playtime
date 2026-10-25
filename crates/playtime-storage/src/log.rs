@@ -21,9 +21,13 @@ use crate::{
     reader::StoredEvent,
 };
 
+mod execution;
+
 #[derive(Clone, Default)]
 pub(crate) struct LogState {
+    manifest_version: u32,
     pub sequence: u64,
+    execution: execution::ExecutionState,
     pub usage: UsageTotals,
     requests: BTreeSet<RequestId>,
     pub checkpoints: Vec<CheckpointRef>,
@@ -39,6 +43,7 @@ enum ReferenceRole {
     InputManifest,
     Leaf,
     CheckpointIndex,
+    CaptureIndex,
     SourceMap,
     ObservationPayload,
 }
@@ -61,7 +66,10 @@ impl LogState {
         manifest: &InputManifest,
         limits: &StorageLimits,
     ) -> Result<Self> {
-        let mut state = Self::default();
+        let mut state = Self {
+            manifest_version: manifest.schema_version,
+            ..Self::default()
+        };
         state.typed_reference(
             &descriptor.input_manifest,
             ReferenceRole::InputManifest,
@@ -136,8 +144,27 @@ impl LogState {
                 "first event must bind run_started to the prepared archive",
             ));
         }
+        if self.manifest_version == 2
+            && (matches!(decoded.payload(), EventPayload::Observation(_))
+                || matches!(decoded.payload(), EventPayload::Control(control) if !matches!(control.as_ref(), BridgeEvent::StopDecided(_))))
+        {
+            return Err(StorageError::malformed(
+                "execution v2 requires versioned request/observation records",
+            ));
+        }
         let mut references = Vec::new();
         match decoded.payload() {
+            EventPayload::Execution(record) => {
+                self.observe_execution(
+                    record,
+                    bytes,
+                    descriptor,
+                    limits,
+                    directory,
+                    committed_sequence,
+                    &mut references,
+                )?;
+            }
             EventPayload::Observation(observation) => {
                 let source = observation.observation();
                 if self
@@ -172,6 +199,23 @@ impl LogState {
                 }
             }
             _ => {}
+        }
+        if self.manifest_version == 2
+            && matches!(
+                decoded.payload().known(),
+                Some(
+                    KnownEvent::SessionStarted { .. }
+                        | KnownEvent::RequestFinished { .. }
+                        | KnownEvent::CommandFinished { .. }
+                        | KnownEvent::SessionEnded { .. }
+                        | KnownEvent::CheckpointPublished { .. }
+                        | KnownEvent::RunFinished { .. }
+                )
+            )
+        {
+            return Err(StorageError::malformed(
+                "legacy session records cannot mix with execution v2",
+            ));
         }
         match decoded.payload().known() {
             Some(KnownEvent::RunStarted {

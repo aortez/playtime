@@ -357,6 +357,11 @@ impl Actor {
         let cancel = task.cancel.clone();
         let map = |e: playtime_docker::Error| Error::Uncertain(e.to_string());
         let outcome = match &effect.kind {
+            EffectKind::StartWorkspace
+            | EffectKind::CaptureWorkspace
+            | EffectKind::PublishCapture(_) => Outcome::Failed(
+                "native worker does not implement the test-only workspace profile".into(),
+            ),
             EffectKind::StartSession { ordinal, .. } => {
                 // A changed model stops the run before this session dispatches.
                 if let Model::Live(live) = &mut self.model {

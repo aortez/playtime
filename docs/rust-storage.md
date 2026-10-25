@@ -209,3 +209,19 @@ in the same append. Existing synthetic fixtures and their bytes are unchanged.
 See [rust-archive-driver.md](rust-archive-driver.md) for executing simulations,
 late receipt handling, and normalized copied-folder queries. Automatic recovery
 is not implemented; Rust does not read legacy Python archives.
+
+## Session-neutral execution records
+
+Current readers and writers explicitly accept input-manifest v2 as well as the
+unchanged v1 format. V2 declares the session-neutral `execution_v2` record contract;
+legacy request/session records cannot be mixed into it. Old v1 manifest decoders
+continue to reject v2. Storage validates admitted request scope/purpose/ordinal,
+settlement or non-dispatch proofs, unknown allowances, raw-observation associations,
+and aggregate terminal usage. Unsettled requests cannot form a terminal result.
+
+A v2 stopped-workspace capture uses its own index and source map, with the same
+immutable reference roles, verified regular-file leaves, committed source frontier
+and publication receipt rules. It is distinct from a memento checkpoint. A
+successful terminal result must reference the published capture; filesystem
+candidates and offline marker discovery never confer writer authority. See the
+[archive-driver contract](rust-archive-driver.md#session-neutral-execution-v2).

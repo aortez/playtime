@@ -31,7 +31,6 @@ impl<I: IdSource> Controller<I> {
                 "policy proposed work outside an idle running controller",
             ));
         }
-        let limits = &self.config.parameters.limits;
         let published = !self.active
             && self.checkpoint_attempted
             && self.last_checkpoint.as_ref().is_some_and(|checkpoint| {
@@ -39,7 +38,23 @@ impl<I: IdSource> Controller<I> {
                     && checkpoint.ordinal == self.session
             });
         match proposal {
+            Proposal::StartWorkspace => {
+                if self.config.memento.is_some() || self.workspace_started || self.active {
+                    return Err(InvalidValue(
+                        "policy proposed an unpermitted workspace start",
+                    ));
+                }
+                self.workspace_started = true;
+                self.effect(EffectKind::StartWorkspace, LIFECYCLE_MS, true);
+            }
             Proposal::StartSession => {
+                let limits = &self
+                    .config
+                    .memento
+                    .as_ref()
+                    .ok_or(InvalidValue("run-scoped policy cannot start a session"))?
+                    .parameters
+                    .limits;
                 if self.active
                     || self.session >= limits.sessions.get()
                     || self.finished
@@ -51,15 +66,24 @@ impl<I: IdSource> Controller<I> {
                 self.start_session();
             }
             Proposal::Finish(reason) => {
-                let permitted = match reason {
-                    StopReason::AgentFinished => self.finished && self.ended,
-                    StopReason::TokenLimit => !self.finished && self.remaining_tokens() == 0,
-                    StopReason::SessionLimit => {
-                        !self.finished
-                            && self.remaining_tokens() > 0
-                            && self.session >= limits.sessions.get()
-                    }
-                    _ => false,
+                let (published, permitted) = if let Some(config) = &self.config.memento {
+                    let permitted = match reason {
+                        StopReason::AgentFinished => self.finished && self.ended,
+                        StopReason::TokenLimit => !self.finished && self.remaining_tokens() == 0,
+                        StopReason::SessionLimit => {
+                            !self.finished
+                                && self.remaining_tokens() > 0
+                                && self.session >= config.parameters.limits.sessions.get()
+                        }
+                        _ => false,
+                    };
+                    (published, permitted)
+                } else {
+                    (
+                        !self.active && self.checkpoint_attempted && self.last_capture.is_some(),
+                        reason == StopReason::AgentFinished
+                            || (reason == StopReason::TokenLimit && self.remaining_tokens() == 0),
+                    )
                 };
                 if !published || !permitted {
                     return Err(InvalidValue(
@@ -80,22 +104,34 @@ impl<I: IdSource> Controller<I> {
                 }
                 match proposal {
                     Proposal::Infer(inference) => {
+                        let contract = self.config.request_contract(inference.purpose)?;
                         if self.ended
                             || self.tool_calls_remaining != 0
-                            || self.parse_streak > limits.tool_parse_retries
-                            || (inference.handoff
-                                && (self.phase != RunPhase::HandingOff
-                                    || self.handoff_attempts >= 2))
-                            || (!inference.handoff
-                                && (self.phase != RunPhase::Working
-                                    || self.turns >= limits.work_turns_per_session.get()
-                                    || self.session_parse_errors
-                                        >= contract::parse_ceiling(limits)))
-                            || inference.tools != contract::tools(inference.handoff)
+                            || inference.tools != contract.tools
                         {
                             return Err(InvalidValue(
-                                "policy inference exceeds frozen turn, retry, or tool capabilities",
+                                "policy inference exceeds frozen capabilities",
                             ));
+                        }
+                        if let Some(config) = &self.config.memento {
+                            let limits = &config.parameters.limits;
+                            let handoff = inference.purpose == RequestPurpose::Handoff;
+                            if self.parse_streak > limits.tool_parse_retries
+                                || (handoff
+                                    && (self.phase != RunPhase::HandingOff
+                                        || self.handoff_attempts >= 2))
+                                || (!handoff
+                                    && (self.phase != RunPhase::Working
+                                        || self.turns >= limits.work_turns_per_session.get()
+                                        || self.session_parse_errors
+                                            >= contract::parse_ceiling(limits)))
+                            {
+                                return Err(InvalidValue(
+                                    "policy inference exceeds frozen turn or retry limits",
+                                ));
+                            }
+                        } else if self.phase != RunPhase::Working {
+                            return Err(InvalidValue("workspace is not ready for inference"));
                         }
                         self.request(inference);
                     }
@@ -112,7 +148,10 @@ impl<I: IdSource> Controller<I> {
                         }
                         match proposal {
                             Proposal::BeginHandoff => {
-                                if self.phase != RunPhase::Working || self.ended {
+                                if self.config.memento.is_none()
+                                    || self.phase != RunPhase::Working
+                                    || self.ended
+                                {
                                     return Err(InvalidValue(
                                         "policy proposed an unpermitted handoff",
                                     ));
@@ -120,7 +159,20 @@ impl<I: IdSource> Controller<I> {
                                 self.begin_handoff();
                             }
                             Proposal::ResponseComplete => self.after_response(true),
+                            Proposal::CaptureWorkspace => {
+                                if self.config.memento.is_some() {
+                                    return Err(InvalidValue(
+                                        "memento requires its session checkpoint",
+                                    ));
+                                }
+                                self.stage = Stage::Checkpoint;
+                            }
                             Proposal::Checkpoint { missing_handoff } => {
+                                if self.config.memento.is_none() {
+                                    return Err(InvalidValue(
+                                        "workspace cannot publish a memento checkpoint",
+                                    ));
+                                }
                                 if missing_handoff {
                                     self.emit("handoff_missing", json!({}));
                                 }

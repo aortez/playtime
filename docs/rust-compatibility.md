@@ -17,6 +17,26 @@ and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
 
+## Session-neutral internal contract (#109 step C, 2026-10-25)
+
+Adds explicit internal work/handoff/compaction purposes, run/session scopes and
+common allocations without memento settings. Existing memento request serialization
+retains its `handoff` boolean; behavioral traces, recipe/schema-1/2 bytes, tool
+schemas, model/workshop locks, budgets and service ledger are unchanged.
+
+The feature-gated CPU workspace probe uses input-manifest v2, `execution_v2`
+payloads inside the existing event envelope, and a distinct final capture index.
+Strict v1 decoders remain available. Current readers explicitly support the new
+manifest/record versions and retain original JSONL; old readers and production
+worker acquire routes reject the test contract. The probe binds its actual test
+executable and shares the controller, dispatch barriers, archive loop and writer
+receipts. Native process continuity and actual compaction remain #110.
+
+New protocol, archive-driver and failure tests plus the separate
+`workspace-execution-v2.json` golden cover the new contract. Purpose projections
+keep unknown usage and unclassified legacy evidence explicit. No old goldens,
+Python controller/tests, database migrations or recovery semantics are changed.
+
 ## Memento policy extraction (#109 step B, 2026-10-25)
 
 The engine now separates private memento conversation/progression proposals from

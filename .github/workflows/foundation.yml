@@ -34,6 +34,8 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - run: cargo clippy -p playtime-runner --all-targets --features test-harness --locked -- -D warnings
+      - run: cargo test -p playtime-runner --features test-harness --test workspace_probe --locked
       - run: ./scripts/test-rust-cli-e2e.sh --backend fixture
       - run: ./scripts/test-rust-ui-e2e.sh --backend fixture
       - run: python3 -m unittest discover -s tests -v

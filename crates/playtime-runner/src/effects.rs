@@ -34,6 +34,11 @@ pub trait Effects: Send {
         false
     }
     fn dispatch(&mut self, now: u64, effect: &Effect, confirmed: &CommittedFrontier) -> Result<()>;
+    fn capture<'a>(&'a self, _capture: &playtime_engine::Capture) -> Result<CheckpointBytes<'a>> {
+        Err(crate::Error::Invalid(
+            "adapter does not implement session-neutral capture".into(),
+        ))
+    }
     fn checkpoint<'a>(&'a self, checkpoint: &Checkpoint) -> Result<CheckpointBytes<'a>>;
 }
 impl Effects for ScriptedAdapters {

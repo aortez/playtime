@@ -11,6 +11,7 @@ use playtime_protocol::{
 use playtime_storage::{ArchiveReader, CommittedFrontier, Snapshot, StorageLimits};
 
 use crate::{Error, Result};
+mod execution;
 
 /// A fixed verified frontier. Online construction requires a writer receipt;
 /// offline construction acquires the storage inspection lock. No database or
@@ -71,6 +72,26 @@ impl ArchiveQueries {
                     .map_err(|error| Error::Invalid(error.to_string()))?,
             )?;
             let fact = match decoded.payload() {
+                EventPayload::Execution(record) => {
+                    let resolved =
+                        if let playtime_protocol::execution::Fact::Observation(observation) =
+                            &record.fact
+                        {
+                            match &observation.data {
+                                ObservationData::Inline { value } => Some(value.clone()),
+                                ObservationData::Artifact { content } if resolve_payloads => {
+                                    Some(observation.resolve(&self.content(content)?)?)
+                                }
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                    ArchiveFact::Execution {
+                        event: *record.clone(),
+                        resolved,
+                    }
+                }
                 EventPayload::Known(event) => ArchiveFact::Canonical {
                     event: *event.clone(),
                 },
@@ -124,11 +145,42 @@ impl ArchiveQueries {
             incomplete_evidence: inspection.incomplete_evidence,
             uncommitted_event_bytes: inspection.uncommitted_event_bytes,
             contention: None,
+            execution: (self.reader.manifest().schema_version == 2).then(ExecutionRun::default),
         };
         let mut unsettled = BTreeMap::new();
+        let mut execution_intents = BTreeMap::new();
         let mut timings = Vec::new();
         self.visit(|entry| {
             match &entry.fact {
+                ArchiveFact::Execution { event, .. } => {
+                    use playtime_protocol::execution::Fact;
+                    match &event.fact {
+                        Fact::EffectIntent(intent) if intent.effect_kind == "model" => {
+                            execution_intents.insert(
+                                intent.request.as_ref().unwrap().request_id.clone(),
+                                intent.clone(),
+                            );
+                        }
+                        Fact::RequestSettled { request, .. }
+                        | Fact::RequestNotDispatched { request, .. } => {
+                            execution_intents.remove(&request.request_id);
+                        }
+                        Fact::CapturePublished { capture } => {
+                            run.execution.as_mut().unwrap().last_capture = Some(capture.clone())
+                        }
+                        Fact::RunFinished {
+                            reason, cleanup, ..
+                        } => {
+                            run.outcome = Some(ArchiveOutcome {
+                                reason: *reason,
+                                cleanup: cleanup.clone(),
+                                last_checkpoint: None,
+                            })
+                        }
+                        _ => {}
+                    }
+                }
+
                 // The live worker's own timing chunk follows each request's records.
                 ArchiveFact::Observation {
                     record: Some(record),
@@ -179,6 +231,9 @@ impl ArchiveQueries {
             Ok(())
         })?;
         run.unsettled_model_intents = unsettled.into_values().collect();
+        if let Some(execution) = &mut run.execution {
+            execution.unsettled_model_intents = execution_intents.into_values().collect();
+        }
         run.contention = contention(&timings);
         Ok(run)
     }

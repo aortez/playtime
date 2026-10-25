@@ -27,6 +27,8 @@ use crate::{Error, Result, prepare::reference};
 pub(crate) const STREAM_BATCH_BYTES: u64 = 64 * 1024;
 pub(crate) const STREAM_BATCH_MS: u64 = 250;
 
+mod execution;
+
 pub(crate) struct EncodedEvent {
     pub line: Vec<u8>,
     pub objects: Vec<FrozenInput>,
@@ -40,6 +42,7 @@ pub(crate) struct Publication {
     pub events: Vec<EncodedEvent>,
     pub class: BatchClass,
     pub checkpoint: Option<(u64, CheckpointRef, FileIndex)>,
+    pub capture: Option<(u64, playtime_protocol::execution::CaptureRef)>,
 }
 impl Publication {
     pub fn log_cost(&self) -> u64 {
@@ -62,6 +65,8 @@ impl Publication {
 
 pub(crate) struct Encoder {
     run_id: RunId,
+    execution_v2: bool,
+    last_capture: Option<playtime_protocol::execution::CaptureRef>,
     limits: StorageLimits,
     next_sequence: u64,
     /// Includes committed, in-flight, and queued JSONL plus observation objects.
@@ -114,6 +119,8 @@ impl Encoder {
     pub fn new(run_id: RunId, limits: StorageLimits, initial_files: FileIndex) -> Self {
         Self {
             run_id,
+            execution_v2: false,
+            last_capture: None,
             limits,
             next_sequence: 1,
             planned_log_bytes: 0,
@@ -196,10 +203,31 @@ impl Encoder {
             } else {
                 ObservationData::Inline { value: record.data }
             };
-            let observation =
-                ControllerObservation::from_record(source, entry.identity.clone(), data);
-            let data = serde_json::to_value(observation)?;
-            let line = self.encode(time, "controller_observation", data)?;
+            let (kind, data) = if self.execution_v2 {
+                use playtime_protocol::execution::{Fact, KIND, Observation, Record};
+                (
+                    KIND,
+                    serde_json::to_value(Record::new(Fact::Observation(Observation {
+                        controller_sequence: original_sequence,
+                        elapsed_ms: record.elapsed_ms,
+                        scope: playtime_core::RequestScope::Run,
+                        observation_kind: record.kind.clone(),
+                        identity: entry.identity.clone(),
+                        request: entry.request.as_ref().map(execution::request_identity),
+                        data,
+                    })))?,
+                )
+            } else {
+                (
+                    "controller_observation",
+                    serde_json::to_value(ControllerObservation::from_record(
+                        source,
+                        entry.identity.clone(),
+                        data,
+                    ))?,
+                )
+            };
+            let line = self.encode(time, kind, data)?;
             let log_cost = line.len() as u64 + external_bytes;
             let ordinary_ceiling = self
                 .limits
@@ -209,6 +237,23 @@ impl Encoder {
                 || self.planned_log_bytes.saturating_add(log_cost) > ordinary_ceiling
             {
                 self.capacity_exhausted = true;
+                if self.execution_v2 {
+                    self.execution_event(
+                        time,
+                        playtime_protocol::execution::Fact::ObservationOmitted {
+                            controller_sequence: Some(original_sequence),
+                            observation_kind: record.kind,
+                            elapsed_ms: record.elapsed_ms,
+                            scope: playtime_core::RequestScope::Run,
+                            identity: entry.identity,
+                            request: entry.request.as_ref().map(execution::request_identity),
+                            size_bytes: log_cost,
+                            reason: "archive_log_limit".into(),
+                        },
+                        Vec::new(),
+                    )?;
+                    continue;
+                }
                 self.control_event(
                     time,
                     BridgeEvent::ObservationOmitted(ObservationOmitted {
@@ -245,8 +290,24 @@ impl Encoder {
 
     pub fn controls(&mut self, time: &UtcTime, updates: Vec<ControlUpdate>) -> Result<()> {
         for update in updates {
+            if self.execution_v2
+                && !matches!(
+                    update.fact,
+                    ControlFact::PhaseChanged(_)
+                        | ControlFact::StopDecided(_)
+                        | ControlFact::Finished
+                )
+            {
+                self.execution_control(time, update)?;
+                continue;
+            }
             let session = update.session_id.clone();
             match update.fact {
+                ControlFact::WorkspaceStarted { .. } | ControlFact::CaptureCommitted { .. } => {
+                    return Err(Error::Invalid(
+                        "session-neutral facts require execution v2".into(),
+                    ));
+                }
                 ControlFact::PhaseChanged(phase) => self.canonical(
                     time,
                     KnownEvent::PhaseChanged {
@@ -297,7 +358,9 @@ impl Encoder {
                 ControlFact::RequestSettled { request, usage, .. } => self.canonical(
                     time,
                     KnownEvent::RequestFinished {
-                        session_id: request.session_id,
+                        session_id: request.scope.session_id().cloned().ok_or_else(|| {
+                            Error::Invalid("legacy event requires session scope".into())
+                        })?,
                         request_id: request.request_id,
                         usage,
                         recovery_origin: None,
@@ -312,7 +375,9 @@ impl Encoder {
                     BridgeEvent::RequestNotDispatched(RequestNotDispatched {
                         schema_version: 1,
                         effect_id: NonZeroU64::new(request.effect_id).unwrap(),
-                        session_id: request.session_id,
+                        session_id: request.scope.session_id().cloned().ok_or_else(|| {
+                            Error::Invalid("legacy event requires session scope".into())
+                        })?,
                         request_id: request.request_id,
                         released_tokens: NonZeroU64::new(released_tokens).unwrap(),
                     }),
@@ -382,7 +447,9 @@ impl Encoder {
                 } => self.canonical(
                     time,
                     KnownEvent::CommandFinished {
-                        session_id: request.session_id,
+                        session_id: request.scope.session_id().cloned().ok_or_else(|| {
+                            Error::Invalid("legacy event requires session scope".into())
+                        })?,
                         request_id: request.request_id.clone(),
                         outcome,
                         origin: Some(ObservationIdentity {
@@ -423,6 +490,7 @@ impl Encoder {
                     kind,
                     size_bytes,
                     identity,
+                    request: _,
                 } => self.control_event(
                     time,
                     BridgeEvent::ObservationOmitted(ObservationOmitted {
@@ -566,6 +634,7 @@ impl Encoder {
                 BatchClass::Ordinary
             },
             checkpoint: None,
+            capture: None,
         })
     }
 
@@ -784,12 +853,27 @@ impl Encoder {
     }
 
     pub fn confirmed(&mut self, publication: &Publication) {
+        if let Some((_, capture)) = &publication.capture {
+            self.last_capture = Some(capture.clone());
+        }
         if let Some((_, checkpoint, files)) = &publication.checkpoint {
             self.last_checkpoint = Some(checkpoint.clone());
             self.previous_files = files.clone();
         }
     }
     pub fn terminal(&mut self, time: &UtcTime, result: &RunResult) -> Result<()> {
+        if self.execution_v2 {
+            return self.execution_event(
+                time,
+                playtime_protocol::execution::Fact::RunFinished {
+                    reason: result.reason,
+                    usage: result.usage.clone(),
+                    cleanup: result.cleanup.clone(),
+                    last_capture: self.last_capture.clone(),
+                },
+                Vec::new(),
+            );
+        }
         self.canonical(
             time,
             KnownEvent::RunFinished {

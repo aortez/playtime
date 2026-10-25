@@ -6,6 +6,7 @@ pub mod archive_queries;
 pub mod backend_guard;
 pub mod bridge;
 pub mod events;
+pub mod execution;
 pub mod observations;
 mod read;
 pub mod recovery;

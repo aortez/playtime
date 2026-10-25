@@ -152,7 +152,7 @@ fn prepare(
         bundle,
         extra,
         recoverable,
-        &scenario,
+        Some(&scenario),
         RunMode::Simulation,
         adapters.config().initial_workspace.clone(),
         adapters.artifacts()[adapters.config().initial_workspace.path.as_str()].clone(),
@@ -183,7 +183,7 @@ pub fn prepare_docker_with_inputs(
         bundle,
         extra,
         false,
-        &profile.scenario,
+        Some(&profile.scenario),
         profile.mode,
         profile.config().initial_workspace,
         crate::docker::Profile::initial_bytes(),
@@ -192,14 +192,14 @@ pub fn prepare_docker_with_inputs(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn freeze_archive(
+pub(crate) fn freeze_archive(
     path: &Path,
     run_id: RunId,
     scenario_bytes: &[u8],
     bundle: WorkerBundle,
     extra: Vec<FrozenInput>,
     recoverable: bool,
-    scenario: &Scenario,
+    scenario: Option<&Scenario>,
     mode: RunMode,
     initial_workspace: ContentRef,
     initial_bytes: Vec<u8>,
@@ -226,7 +226,7 @@ fn freeze_archive(
     let files = extra.iter().map(|input| input.reference.clone()).collect();
     inputs.extend(extra);
     let mut manifest = InputManifest {
-        schema_version: 1,
+        schema_version: if scenario.is_some() { 1 } else { 2 },
         run_id: run_id.clone(),
         worker,
         configuration,
@@ -241,7 +241,12 @@ fn freeze_archive(
                 .map(|i| i.bytes.clone())
                 .ok_or_else(|| Error::Invalid("missing recovery capability bytes".into()))
         })?;
-        let contract = crate::recovery::contract_for(&manifest, scenario, &limits);
+        let contract = crate::recovery::contract_for(
+            &manifest,
+            scenario
+                .ok_or_else(|| Error::Invalid("recovery requires a memento scenario".into()))?,
+            &limits,
+        );
         use playtime_protocol::recovery::RecoveryRecord;
         contract.validate()?;
         let bytes = serde_json::to_vec(&contract)?;
