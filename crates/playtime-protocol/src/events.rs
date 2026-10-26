@@ -144,6 +144,7 @@ pub enum KnownEvent {
 #[derive(Clone, Debug, PartialEq)]
 pub enum EventPayload {
     Known(Box<KnownEvent>),
+    Execution(Box<crate::execution::Record>),
     Control(Box<BridgeEvent>),
     Observation(Box<DecodedObservation>),
     /// Unknown is visible data, never silently dropped or treated as executable.
@@ -157,7 +158,9 @@ impl EventPayload {
     pub fn known(&self) -> Option<&KnownEvent> {
         match self {
             Self::Known(event) => Some(event),
-            Self::Control(_) | Self::Observation(_) | Self::Unknown { .. } => None,
+            Self::Control(_) | Self::Observation(_) | Self::Execution(_) | Self::Unknown { .. } => {
+                None
+            }
         }
     }
 }
@@ -229,6 +232,11 @@ pub fn decode_event(json: &str) -> Result<DecodedEvent, ReadError> {
                 ));
             }
             EventPayload::Known(Box::new(event))
+        }
+        crate::execution::KIND => {
+            EventPayload::Execution(Box::new(crate::execution::decode_record(
+                &serde_json::to_string(&envelope.data).map_err(ReadError::malformed)?,
+            )?))
         }
         CONTROLLER_OBSERVATION_KIND => {
             let observation = decode_observation(

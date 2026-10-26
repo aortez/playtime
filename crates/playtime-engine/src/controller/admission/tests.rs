@@ -39,7 +39,11 @@ fn complete_idle(controller: &mut TestController, outcome: Outcome) {
 
 fn inference(handoff: bool) -> Inference {
     Inference {
-        handoff,
+        purpose: if handoff {
+            RequestPurpose::Handoff
+        } else {
+            RequestPurpose::Work
+        },
         messages: vec![json!({"role": "user", "content": "Continue"})],
         tools: contract::tools(handoff),
     }
@@ -68,7 +72,15 @@ fn call(request: &ToolRequest) -> Value {
 fn runtime_derives_allowance_and_keeps_completed_unknown_charges() {
     let mut controller = idle();
     let allocation = controller.config.parameters.limits.generated_tokens.get();
-    let reserve = controller.config.parameters.limits.handoff_tokens.get();
+    let reserve = controller
+        .config
+        .memento
+        .as_ref()
+        .unwrap()
+        .parameters
+        .limits
+        .handoff_tokens
+        .get();
     controller
         .totals
         .record(GenerationUsage::Unknown {
@@ -112,7 +124,15 @@ fn runtime_derives_allowance_and_keeps_completed_unknown_charges() {
     };
     assert_eq!(
         request.maximum_tokens,
-        controller.config.parameters.limits.handoff_tokens.get()
+        controller
+            .config
+            .memento
+            .as_ref()
+            .unwrap()
+            .parameters
+            .limits
+            .handoff_tokens
+            .get()
     );
 }
 
@@ -125,17 +145,35 @@ fn frozen_turn_retry_and_tool_capabilities_cannot_be_overridden() {
             0 => {
                 controller.turns = controller
                     .config
+                    .memento
+                    .as_ref()
+                    .unwrap()
                     .parameters
                     .limits
                     .work_turns_per_session
                     .get()
             }
             1 => {
-                controller.parse_streak = controller.config.parameters.limits.tool_parse_retries + 1
+                controller.parse_streak = controller
+                    .config
+                    .memento
+                    .as_ref()
+                    .unwrap()
+                    .parameters
+                    .limits
+                    .tool_parse_retries
+                    + 1
             }
             2 => {
-                controller.session_parse_errors =
-                    contract::parse_ceiling(&controller.config.parameters.limits)
+                controller.session_parse_errors = contract::parse_ceiling(
+                    &controller
+                        .config
+                        .memento
+                        .as_ref()
+                        .unwrap()
+                        .parameters
+                        .limits,
+                )
             }
             3 => proposal
                 .tools
@@ -333,7 +371,13 @@ fn successful_finish_and_next_session_require_actual_publication() {
         controller.pump();
         let snapshot = Snapshot {
             workspace: controller.config.initial_workspace.clone(),
-            files: controller.config.initial_files.clone(),
+            files: controller
+                .config
+                .memento
+                .as_ref()
+                .unwrap()
+                .initial_files
+                .clone(),
             memory: Memory::loaded("done".into()),
         };
         complete_idle(&mut controller, Outcome::Snapshot(snapshot));

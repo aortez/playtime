@@ -112,3 +112,22 @@ pub fn decode_input_manifest(json: &str) -> Result<InputManifest, ReadError> {
     manifest.validate()?;
     Ok(manifest)
 }
+
+/// Current archive readers explicitly opt into session-neutral execution v2.
+/// The v1 decoder remains strict, so old readers reject a v2 manifest before
+/// interpreting its log as session-based evidence.
+pub fn decode_execution_input_manifest(json: &str) -> Result<InputManifest, ReadError> {
+    require_version(json, "execution input manifest", 2)?;
+    let manifest: InputManifest = serde_json::from_str(json).map_err(ReadError::malformed)?;
+    manifest.validate()?;
+    Ok(manifest)
+}
+
+pub fn decode_readable_input_manifest(json: &str) -> Result<InputManifest, ReadError> {
+    match decode_input_manifest(json) {
+        Err(ReadError::UnsupportedVersion { received: 2, .. }) => {
+            decode_execution_input_manifest(json)
+        }
+        result => result,
+    }
+}

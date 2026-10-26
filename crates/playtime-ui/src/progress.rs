@@ -544,6 +544,7 @@ pub fn mode_words(mode: RunMode) -> &'static str {
 }
 pub fn phase_words(phase: RunPhase) -> &'static str {
     match phase {
+        RunPhase::CapturingWorkspace => "capturing workspace",
         RunPhase::Admitted => "admitted",
         RunPhase::StartingSession => "starting a session",
         RunPhase::Working => "working",

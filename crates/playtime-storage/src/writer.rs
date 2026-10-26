@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, fs::File, io, path::Path};
 
 use playtime_protocol::{
-    archive::{ContentRef, INPUT_MANIFEST_PATH, decode_input_manifest},
+    archive::{ContentRef, INPUT_MANIFEST_PATH, decode_readable_input_manifest},
     events::KnownEvent,
     storage::{
         ArchiveDescriptor, ArchiveIdentity, COMMIT_SCHEMA_VERSION, CommitMarker, EventFrontier,
@@ -200,7 +200,7 @@ impl ArchiveWriter {
             manifest_bytes,
             limits.manifest_bytes,
         )?;
-        let manifest = decode_input_manifest(utf8(manifest_bytes)?)?;
+        let manifest = decode_readable_input_manifest(utf8(manifest_bytes)?)?;
         if manifest.run_id != descriptor.run_id {
             return Err(StorageError::new(
                 ErrorCode::ContentMismatch,
@@ -435,12 +435,11 @@ impl ArchiveWriter {
         let mut references = BTreeMap::new();
         for bytes in lines {
             let decoded = decode_line(bytes, &self.limits)?;
-            if class == BatchClass::Ordinary
-                && matches!(
-                    decoded.payload().known(),
-                    Some(KnownEvent::RunFinished { .. })
-                )
-            {
+            let terminal = matches!(
+                decoded.payload().known(),
+                Some(KnownEvent::RunFinished { .. })
+            ) || matches!(decoded.payload(), playtime_protocol::events::EventPayload::Execution(record) if matches!(record.fact, playtime_protocol::execution::Fact::RunFinished { .. }));
+            if class == BatchClass::Ordinary && terminal {
                 return Err(StorageError::malformed(
                     "run_finished requires an explicitly finalization-class batch",
                 ));

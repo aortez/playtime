@@ -20,8 +20,9 @@ archive; use the archive-driver example for that.
 context shaping, retry and handoff decisions, session progression, and memory and
 evidence delivery. It proposes a finite set of actions: start a session, begin
 handoff, request inference, handle a tool call, complete a response, checkpoint,
-or finish. This is a private Rust interface with one concrete implementation,
-`memento_turns_v1`; it is not an external plugin interface.
+or finish. This is a private Rust interface with one production implementation,
+`memento_turns_v1`; the feature-gated workspace probe is a CPU contract test.
+There is no external plugin interface.
 
 The controller supplies read-only facts: remaining allocation, admitted work and
 handoff counts, parse-error counts, and confirmed memory-write outcomes. These
@@ -53,8 +54,47 @@ confirmed memento write and publication of this session's checkpoint. Publicatio
 failure or a late receipt cannot turn a previous failure into success.
 
 This extraction preserves memento's prompts, tools, records, saved definitions,
-limits, and deterministic behavior. Session-neutral purposes and records remain
-the next slice of #109; continuous conversation/compaction remains #110.
+limits, and deterministic behavior. Continuous conversation/compaction remains #110.
+
+## Session-neutral request and lifecycle contract
+
+`CommonParameters`/`CommonLimits` contain allocations shared by every policy,
+without dummy session counts, memory conditions, memento sizes or handoff reserves.
+The legacy `RunParameters` representation and validation entry point remain;
+memento projects its common allocation and retains its own additional checks.
+
+Every admitted request has a `RequestPurpose` (`work`, `handoff`, `compaction`),
+a `RequestScope` (run or an actual session), an effect/request ID and a global
+call ordinal. `RequestContract` derives its allowed tools, generation cap and
+context reserve from the frozen profile. Memento work still preserves the exact
+handoff allowance; the test profile has no handoff reserve. Maintenance uses the
+same remaining generation allocation, wall deadline, model timeout, seed sequence,
+context-fit check and unknown-usage settlement. `model_calls` counts admissions,
+including an attempt canceled before dispatch or refused by adapter preflight.
+There is no additional model-call cap or separate maintenance budget.
+
+Purpose and scope accompany bound observations and durable control facts, including
+settlement, non-dispatch, tool results and omissions. Legacy memento request JSON
+still serializes the original `handoff` boolean; its work/handoff mapping is
+lossless. The new record family writes explicit purpose instead. Common response
+and tool-schema checks are independent of memento's progression and memory checks.
+
+The feature-gated `test-harness` policy proposes `StartWorkspace`, work inference,
+a bounded tool, a tool-free maintenance request, `CaptureWorkspace` and finish.
+It uses this same controller and archive driver; commands remain scripted data.
+It requires no session ID, `MEMENTO.md`, `end_session`, or memento checkpoint.
+A stopped `WorkspaceSnapshot` is a candidate. Only the exact publication receipt
+can set `last_capture` and satisfy successful finish. Capture/publication/cleanup
+use the existing finalization timers and first-stop precedence, including late
+receipts. Production workers reject this test execution profile before effects.
+This proves neither a compaction algorithm nor native workspace continuity.
+
+Run the CPU boundary gate with:
+
+```sh
+cargo test -p playtime-runner --features test-harness --test workspace_probe --locked
+```
+
 
 ## Transition and effect contract
 

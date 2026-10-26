@@ -13,37 +13,6 @@ pub(crate) static TOOLS: LazyLock<Vec<Value>> = LazyLock::new(|| {
     serde_json::from_str(include_str!("../tools.json")).expect("versioned tool definitions")
 });
 
-pub(crate) fn validate_call(name: &str, arguments: &Value) -> Option<String> {
-    let schema = TOOLS.iter().find(|tool| tool["function"]["name"] == name);
-    let (Some(tool), Some(arguments)) = (schema, arguments.as_object()) else {
-        return Some("Unknown tool or invalid arguments object".into());
-    };
-    let schema = &tool["function"]["parameters"];
-    let properties = schema["properties"].as_object().unwrap();
-    if arguments.keys().any(|key| !properties.contains_key(key))
-        || schema["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|key| !arguments.contains_key(key.as_str().unwrap()))
-    {
-        return Some("Unexpected or missing tool arguments".into());
-    }
-    for (key, value) in arguments {
-        let valid = match properties[key]["type"].as_str().unwrap() {
-            "string" => value.is_string(),
-            "boolean" => value.is_boolean(),
-            "integer" => value.is_i64() || value.is_u64(),
-            "number" => value.is_number(),
-            _ => false,
-        };
-        if !valid {
-            return Some(format!("Invalid type for {key}"));
-        }
-    }
-    None
-}
-
 pub(crate) fn request_context_reserve(
     limits: &playtime_core::ResourceLimits,
     handoff: bool,
@@ -70,15 +39,6 @@ pub(crate) fn tools(handoff: bool) -> Vec<Value> {
     }
 }
 
-pub(crate) fn allowance(limits: &ResourceLimits, remaining: u64, handoff: bool) -> u64 {
-    let (cap, reserve) = if handoff {
-        (limits.handoff_tokens.get(), 0)
-    } else {
-        (limits.tokens_per_call.get(), limits.handoff_tokens.get())
-    };
-    cap.min(remaining.saturating_sub(reserve))
-}
-
 pub(crate) fn parse_ceiling(limits: &ResourceLimits) -> u32 {
     limits
         .tool_parse_error_limit
@@ -91,7 +51,7 @@ pub(crate) fn tool_error(
     ended: bool,
     handoff: bool,
 ) -> Option<String> {
-    let mut error = validate_call(&request.name, &request.arguments);
+    let mut error = crate::validation::validate_call(&TOOLS, &request.name, &request.arguments);
     if ended {
         error = Some("The session has already ended".into());
     }

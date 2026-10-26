@@ -17,6 +17,7 @@ pub struct CommitContext {
     pub kinds: Vec<String>,
     pub effect_ids: Vec<u64>,
     pub checkpoint_effect: Option<u64>,
+    pub capture_effect: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,6 +63,7 @@ impl StorageThread {
                         .iter()
                         .filter_map(|event| event.effect_id)
                         .collect(),
+                    capture_effect: publication.capture.as_ref().map(|(effect, _)| *effect),
                     checkpoint_effect: publication
                         .checkpoint
                         .as_ref()
@@ -134,6 +136,9 @@ pub struct PendingPublication {
     pub(crate) confirmed: crate::LatestReceipt,
 }
 impl PendingPublication {
+    pub fn capture_effect(&self) -> Option<u64> {
+        self.publication.capture.as_ref().map(|(id, _)| *id)
+    }
     pub fn checkpoint_effect(&self) -> Option<u64> {
         self.publication.checkpoint.as_ref().map(|(id, _, _)| *id)
     }

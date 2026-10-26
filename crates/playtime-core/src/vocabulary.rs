@@ -1,5 +1,30 @@
 use serde::{Deserialize, Serialize};
 
+/// Every admitted inference consumes the same run allocation and call ordinal.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestPurpose {
+    Work,
+    Handoff,
+    Compaction,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RequestScope {
+    Run,
+    Session { session_id: crate::SessionId },
+}
+
+impl RequestScope {
+    pub fn session_id(&self) -> Option<&crate::SessionId> {
+        match self {
+            Self::Run => None,
+            Self::Session { session_id } => Some(session_id),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunMode {
@@ -17,6 +42,7 @@ pub enum RunPhase {
     Working,
     HandingOff,
     Checkpointing,
+    CapturingWorkspace,
     CleaningUp,
     Terminal,
 }

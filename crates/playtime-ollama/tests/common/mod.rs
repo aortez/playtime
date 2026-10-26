@@ -17,7 +17,7 @@ pub fn request() -> ModelRequest {
     ModelRequest {
         request_id: RequestId::new("fixture-request").unwrap(),
         call: 1,
-        handoff: false,
+        purpose: playtime_core::RequestPurpose::Work,
         sampling_seed: 17,
         maximum_tokens: 512,
         messages: vec![json!({"role":"user","content":"fixture é"})],

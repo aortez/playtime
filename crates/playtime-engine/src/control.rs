@@ -1,6 +1,9 @@
 //! Lossless controller facts, independent of the raw observation byte budget.
 
-use playtime_core::{CommandOutcome, GenerationUsage, RequestId, RunPhase, SessionId, StopReason};
+use playtime_core::{
+    CommandOutcome, GenerationUsage, RequestId, RequestPurpose, RequestScope, RunPhase, SessionId,
+    StopReason,
+};
 use playtime_protocol::{archive::ContentRef, observations::ObservationIdentity, v1::UsageSummary};
 
 use crate::{Memory, Record, evidence::Evidence};
@@ -14,6 +17,7 @@ pub(crate) const CONTROL_TRANSITION_RESERVE: usize = 64;
 pub struct BoundRecord {
     pub record: Record,
     pub identity: ObservationIdentity,
+    pub request: Option<RequestContext>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -24,12 +28,15 @@ pub struct EffectInfo {
     pub identity: ObservationIdentity,
     pub maximum_tokens: Option<u64>,
     pub deadline_ms: u64,
+    pub request: Option<RequestContext>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RequestContext {
     pub effect_id: u64,
-    pub session_id: SessionId,
+    pub scope: RequestScope,
+    pub purpose: RequestPurpose,
+    pub call: u64,
     pub request_id: RequestId,
 }
 
@@ -42,6 +49,12 @@ pub struct ControlUpdate {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ControlFact {
+    WorkspaceStarted {
+        workspace: ContentRef,
+    },
+    CaptureCommitted {
+        effect_id: u64,
+    },
     PhaseChanged(RunPhase),
     EffectPending(EffectInfo),
     EffectNotDispatched(EffectInfo),
@@ -82,5 +95,6 @@ pub enum ControlFact {
         kind: String,
         size_bytes: u64,
         identity: ObservationIdentity,
+        request: Option<RequestContext>,
     },
 }

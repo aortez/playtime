@@ -55,7 +55,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let request = ModelRequest {
         request_id: RequestId::new("ollama-compatibility-55")?,
         call: 1,
-        handoff: false,
+        purpose: playtime_core::RequestPurpose::Work,
         sampling_seed: 55,
         maximum_tokens: 256,
         messages: vec![

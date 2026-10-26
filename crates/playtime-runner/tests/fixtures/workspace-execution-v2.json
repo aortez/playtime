@@ -1,0 +1,1024 @@
+[
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 1,
+        "elapsed_ms": 0,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "controller_started",
+        "identity": {
+          "effect_id": null,
+          "request_id": null,
+          "tool_request_sequence": null
+        },
+        "request": null,
+        "data": {
+          "storage": "inline",
+          "value": {
+            "mode": "simulation",
+            "parameters": {
+              "limits": {
+                "command_seconds": 5,
+                "context_tokens": 32768,
+                "generated_tokens": 1000,
+                "log_bytes": 1048576,
+                "model_seconds": 30,
+                "output_bytes": 16384,
+                "tokens_per_call": 100,
+                "wall_seconds": 300
+              },
+              "sampling_seed": 1042,
+              "workshop": {
+                "cpu_cores": 1.0,
+                "memory_bytes": 536870912,
+                "pids": 64,
+                "tmp_bytes": 67108864,
+                "workspace_bytes": 67108864
+              }
+            },
+            "run_id": "probe"
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "effect_intent",
+      "data": {
+        "effect_id": 1,
+        "effect_kind": "start_workspace",
+        "request": null,
+        "tool_request_sequence": null,
+        "maximum_tokens": null,
+        "deadline_ms": 20000,
+        "sources": []
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 2,
+        "elapsed_ms": 0,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "workspace_started",
+        "identity": {
+          "effect_id": null,
+          "request_id": null,
+          "tool_request_sequence": null
+        },
+        "request": null,
+        "data": {
+          "storage": "inline",
+          "value": {
+            "workspace": {
+              "path": "inputs/workspace.json",
+              "sha256": "8a14102d1e5dc2144e31086432ac02ceff2f5ace85f26a728c1b2e09e1df88e7",
+              "size_bytes": 19
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 3,
+        "elapsed_ms": 0,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "phase_changed",
+        "identity": {
+          "effect_id": null,
+          "request_id": null,
+          "tool_request_sequence": null
+        },
+        "request": null,
+        "data": {
+          "storage": "inline",
+          "value": {
+            "phase": "working",
+            "session_id": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 4,
+        "elapsed_ms": 0,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "model_request",
+        "identity": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "tool_request_sequence": null
+        },
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "data": {
+          "storage": "inline",
+          "value": {
+            "call": 1,
+            "context_basis": "input_bytes",
+            "context_input_bound": 435,
+            "context_reserve": 0,
+            "maximum_tokens": 100,
+            "messages": [
+              {
+                "content": "Perform the bounded test task.",
+                "role": "system"
+              },
+              {
+                "content": "Create output.txt.",
+                "role": "user"
+              }
+            ],
+            "purpose": "work",
+            "request_id": "r1",
+            "sampling_seed": 1042,
+            "tools": [
+              {
+                "function": {
+                  "description": "Execute a bounded Bash command in the owned workshop.",
+                  "name": "exec",
+                  "parameters": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "command": {
+                        "type": "string"
+                      },
+                      "cwd": {
+                        "type": "string"
+                      },
+                      "timeout_seconds": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "command"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "function"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "workspace_started",
+      "data": {
+        "workspace": {
+          "path": "inputs/workspace.json",
+          "sha256": "8a14102d1e5dc2144e31086432ac02ceff2f5ace85f26a728c1b2e09e1df88e7",
+          "size_bytes": 19
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "effect_intent",
+      "data": {
+        "effect_id": 2,
+        "effect_kind": "model",
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "tool_request_sequence": null,
+        "maximum_tokens": 100,
+        "deadline_ms": 30000,
+        "sources": [
+          {
+            "controller_sequence": 4,
+            "archive_sequence": 6,
+            "record_sha256": "d469f94ac9487a7d5bb82211c07564734f50fb4fb2680c2da8a20fd4941b1615"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 5,
+        "elapsed_ms": 10,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "request_settled",
+        "identity": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "tool_request_sequence": null
+        },
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "data": {
+          "storage": "inline",
+          "value": {
+            "call": 1,
+            "totals": {
+              "budget_charged_tokens": 8,
+              "known_generated_tokens": 8,
+              "unknown_requests": 0,
+              "unknown_reserved_tokens": 0,
+              "usage_complete": true
+            },
+            "usage": {
+              "generated_tokens": 8,
+              "status": "known"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 6,
+        "elapsed_ms": 10,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "model_response",
+        "identity": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "tool_request_sequence": null
+        },
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "data": {
+          "storage": "inline",
+          "value": {
+            "call": 1,
+            "response": {
+              "done": true,
+              "generated_tokens": 8,
+              "message": {
+                "content": "Working",
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "function": {
+                      "arguments": {
+                        "command": "write output"
+                      },
+                      "name": "exec"
+                    }
+                  }
+                ]
+              },
+              "prompt_tokens": null
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 7,
+        "elapsed_ms": 10,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "tool_request",
+        "identity": {
+          "effect_id": 3,
+          "request_id": "r1",
+          "tool_request_sequence": 7
+        },
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "data": {
+          "storage": "inline",
+          "value": {
+            "arguments": {
+              "command": "write output"
+            },
+            "name": "exec"
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 8,
+        "elapsed_ms": 10,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "tool_dispatch",
+        "identity": {
+          "effect_id": 3,
+          "request_id": "r1",
+          "tool_request_sequence": 7
+        },
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "data": {
+          "storage": "inline",
+          "value": {
+            "name": "exec",
+            "request_sequence": 7
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "request_settled",
+      "data": {
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "usage": {
+          "status": "known",
+          "generated_tokens": 8
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "effect_intent",
+      "data": {
+        "effect_id": 3,
+        "effect_kind": "tool",
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "tool_request_sequence": 7,
+        "maximum_tokens": null,
+        "deadline_ms": 5010,
+        "sources": [
+          {
+            "controller_sequence": 7,
+            "archive_sequence": 12,
+            "record_sha256": "50f16258af8609035cf88080728bc9f6e3fed9c142f36769f895111e1ca2222b"
+          },
+          {
+            "controller_sequence": 8,
+            "archive_sequence": 13,
+            "record_sha256": "ee760da9c7b92898369502535cb71af1112090f16c8e35affe53cccaf89dec84"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 9,
+        "elapsed_ms": 15,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "tool_result",
+        "identity": {
+          "effect_id": 3,
+          "request_id": "r1",
+          "tool_request_sequence": 7
+        },
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "data": {
+          "storage": "inline",
+          "value": {
+            "name": "exec",
+            "request_sequence": 7,
+            "result": {
+              "exit_code": 0,
+              "stderr": "",
+              "stdout": "done",
+              "timed_out": false
+            },
+            "unabridged_result": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 10,
+        "elapsed_ms": 15,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "model_request",
+        "identity": {
+          "effect_id": 4,
+          "request_id": "r2",
+          "tool_request_sequence": null
+        },
+        "request": {
+          "effect_id": 4,
+          "request_id": "r2",
+          "call": 2,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "compaction"
+        },
+        "data": {
+          "storage": "inline",
+          "value": {
+            "call": 2,
+            "context_basis": "input_bytes",
+            "context_input_bound": 475,
+            "context_reserve": 0,
+            "maximum_tokens": 100,
+            "messages": [
+              {
+                "content": "Perform the bounded test task.",
+                "role": "system"
+              },
+              {
+                "content": "Create output.txt.",
+                "role": "user"
+              },
+              {
+                "content": "Working",
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "function": {
+                      "arguments": {
+                        "command": "write output"
+                      },
+                      "name": "exec"
+                    }
+                  }
+                ]
+              },
+              {
+                "content": "{\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"done\",\"timed_out\":false}",
+                "role": "tool",
+                "tool_name": "exec"
+              },
+              {
+                "content": "Test-only maintenance request. Return a brief summary without tools.",
+                "role": "user"
+              }
+            ],
+            "purpose": "compaction",
+            "request_id": "r2",
+            "sampling_seed": 1043,
+            "tools": []
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "command_finished",
+      "data": {
+        "request": {
+          "effect_id": 2,
+          "request_id": "r1",
+          "call": 1,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "work"
+        },
+        "effect_id": 3,
+        "tool_request_sequence": 7,
+        "outcome": {
+          "status": "exited",
+          "exit_code": 0
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "effect_intent",
+      "data": {
+        "effect_id": 4,
+        "effect_kind": "model",
+        "request": {
+          "effect_id": 4,
+          "request_id": "r2",
+          "call": 2,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "compaction"
+        },
+        "tool_request_sequence": null,
+        "maximum_tokens": 100,
+        "deadline_ms": 30015,
+        "sources": [
+          {
+            "controller_sequence": 10,
+            "archive_sequence": 17,
+            "record_sha256": "84ea2b54847b85e9db690c02b7cac8e16501f369b03a02d72db4b229989c8184"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 11,
+        "elapsed_ms": 25,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "request_settled",
+        "identity": {
+          "effect_id": 4,
+          "request_id": "r2",
+          "tool_request_sequence": null
+        },
+        "request": {
+          "effect_id": 4,
+          "request_id": "r2",
+          "call": 2,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "compaction"
+        },
+        "data": {
+          "storage": "inline",
+          "value": {
+            "call": 2,
+            "totals": {
+              "budget_charged_tokens": 13,
+              "known_generated_tokens": 13,
+              "unknown_requests": 0,
+              "unknown_reserved_tokens": 0,
+              "usage_complete": true
+            },
+            "usage": {
+              "generated_tokens": 5,
+              "status": "known"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 12,
+        "elapsed_ms": 25,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "model_response",
+        "identity": {
+          "effect_id": 4,
+          "request_id": "r2",
+          "tool_request_sequence": null
+        },
+        "request": {
+          "effect_id": 4,
+          "request_id": "r2",
+          "call": 2,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "compaction"
+        },
+        "data": {
+          "storage": "inline",
+          "value": {
+            "call": 2,
+            "response": {
+              "done": true,
+              "generated_tokens": 5,
+              "message": {
+                "content": "Summary",
+                "role": "assistant"
+              },
+              "prompt_tokens": null
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 13,
+        "elapsed_ms": 25,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "phase_changed",
+        "identity": {
+          "effect_id": null,
+          "request_id": null,
+          "tool_request_sequence": null
+        },
+        "request": null,
+        "data": {
+          "storage": "inline",
+          "value": {
+            "phase": "capturing_workspace",
+            "session_id": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "request_settled",
+      "data": {
+        "request": {
+          "effect_id": 4,
+          "request_id": "r2",
+          "call": 2,
+          "scope": {
+            "kind": "run"
+          },
+          "purpose": "compaction"
+        },
+        "usage": {
+          "status": "known",
+          "generated_tokens": 5
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "effect_intent",
+      "data": {
+        "effect_id": 5,
+        "effect_kind": "capture_workspace",
+        "request": null,
+        "tool_request_sequence": null,
+        "maximum_tokens": null,
+        "deadline_ms": 80025,
+        "sources": []
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "effect_intent",
+      "data": {
+        "effect_id": 6,
+        "effect_kind": "publish_capture",
+        "request": null,
+        "tool_request_sequence": null,
+        "maximum_tokens": null,
+        "deadline_ms": 20025,
+        "sources": []
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "capture_published",
+      "data": {
+        "capture": {
+          "workspace": {
+            "path": "artifacts/final/workspace.json",
+            "sha256": "bd25b1b72e26477af09c000c0b7847f0ee5c95bd3679b644c6839c31b1876c4e",
+            "size_bytes": 41
+          },
+          "index": {
+            "path": "artifacts/final/capture-index-v2.json",
+            "sha256": "36bf68dfd36a55efc830e35800e25dd8d18977c0c6ea8466326bce84e557dffe",
+            "size_bytes": 1001
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 14,
+        "elapsed_ms": 25,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "workspace_captured",
+        "identity": {
+          "effect_id": null,
+          "request_id": null,
+          "tool_request_sequence": null
+        },
+        "request": null,
+        "data": {
+          "storage": "inline",
+          "value": {
+            "interrupted": false,
+            "workspace": {
+              "path": "artifacts/final/workspace.json",
+              "sha256": "bd25b1b72e26477af09c000c0b7847f0ee5c95bd3679b644c6839c31b1876c4e",
+              "size_bytes": 41
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 15,
+        "elapsed_ms": 25,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "controller_stop",
+        "identity": {
+          "effect_id": null,
+          "request_id": null,
+          "tool_request_sequence": null
+        },
+        "request": null,
+        "data": {
+          "storage": "inline",
+          "value": {
+            "reason": "agent_finished",
+            "usage": {
+              "budget_charged_tokens": 13,
+              "known_generated_tokens": 13,
+              "unknown_requests": 0,
+              "unknown_reserved_tokens": 0,
+              "usage_complete": true
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 16,
+        "elapsed_ms": 25,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "phase_changed",
+        "identity": {
+          "effect_id": null,
+          "request_id": null,
+          "tool_request_sequence": null
+        },
+        "request": null,
+        "data": {
+          "storage": "inline",
+          "value": {
+            "phase": "cleaning_up",
+            "session_id": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "effect_intent",
+      "data": {
+        "effect_id": 7,
+        "effect_kind": "cleanup",
+        "request": null,
+        "tool_request_sequence": null,
+        "maximum_tokens": null,
+        "deadline_ms": 20025,
+        "sources": []
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 17,
+        "elapsed_ms": 25,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "phase_changed",
+        "identity": {
+          "effect_id": null,
+          "request_id": null,
+          "tool_request_sequence": null
+        },
+        "request": null,
+        "data": {
+          "storage": "inline",
+          "value": {
+            "phase": "terminal",
+            "session_id": null
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "observation",
+      "data": {
+        "controller_sequence": 18,
+        "elapsed_ms": 25,
+        "scope": {
+          "kind": "run"
+        },
+        "observation_kind": "controller_finished",
+        "identity": {
+          "effect_id": null,
+          "request_id": null,
+          "tool_request_sequence": null
+        },
+        "request": null,
+        "data": {
+          "storage": "inline",
+          "value": {
+            "cleanup": {
+              "status": "complete"
+            },
+            "diagnostics": [],
+            "mode": "simulation",
+            "reason": "agent_finished",
+            "run_id": "probe",
+            "usage": {
+              "budget_charged_tokens": 13,
+              "known_generated_tokens": 13,
+              "unknown_requests": 0,
+              "unknown_reserved_tokens": 0,
+              "usage_complete": true
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "schema_version": 2,
+    "fact": {
+      "kind": "run_finished",
+      "data": {
+        "reason": "agent_finished",
+        "usage": {
+          "known_generated_tokens": 13,
+          "unknown_reserved_tokens": 0,
+          "unknown_requests": 0,
+          "budget_charged_tokens": 13,
+          "usage_complete": true
+        },
+        "cleanup": {
+          "status": "complete"
+        },
+        "last_capture": {
+          "workspace": {
+            "path": "artifacts/final/workspace.json",
+            "sha256": "bd25b1b72e26477af09c000c0b7847f0ee5c95bd3679b644c6839c31b1876c4e",
+            "size_bytes": 41
+          },
+          "index": {
+            "path": "artifacts/final/capture-index-v2.json",
+            "sha256": "36bf68dfd36a55efc830e35800e25dd8d18977c0c6ea8466326bce84e557dffe",
+            "size_bytes": 1001
+          }
+        }
+      }
+    }
+  }
+]

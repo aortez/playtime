@@ -63,11 +63,18 @@ struct InFlight {
 pub struct PreparedExecution {
     writer: ArchiveWriter,
     prepared: PreparedSimulation,
-    scenario: Scenario,
+    cancel_at_ms: Option<u64>,
+    fail_record_sequence: Option<u64>,
     mode: RunMode,
-    config: playtime_engine::ControllerConfig,
+    config: ExecutionConfig,
     adapters: Box<dyn crate::Effects>,
     image: WorkerIdentity,
+}
+
+enum ExecutionConfig {
+    Memento(Box<playtime_engine::ControllerConfig>),
+    #[cfg(feature = "test-harness")]
+    Workspace(Box<playtime_engine::WorkspaceConfig>),
 }
 
 impl PreparedExecution {
@@ -99,6 +106,11 @@ impl PreparedExecution {
         if reader.identity() != &prepared.identity {
             return Err(Error::Invalid(
                 "prepared identity changed before worker handoff".into(),
+            ));
+        }
+        if reader.manifest().schema_version != 1 {
+            return Err(Error::Invalid(
+                "production worker supports only the memento v1 execution contract".into(),
             ));
         }
         let snapshot = reader.live_snapshot(writer.confirmed_frontier())?;
@@ -152,10 +164,63 @@ impl PreparedExecution {
         Ok(Self {
             writer,
             prepared: prepared.clone(),
-            scenario,
+            cancel_at_ms: scenario.cancel_at_ms,
+            fail_record_sequence: scenario.fail_record_sequence,
             mode,
-            config,
+            config: ExecutionConfig::Memento(Box::new(config)),
             adapters,
+            image: reader.manifest().worker.clone(),
+        })
+    }
+
+    /// Explicit feature-gated CPU probe. Production acquire routes reject v2.
+    #[cfg(feature = "test-harness")]
+    pub fn acquire_probe(path: impl AsRef<Path>, prepared: &PreparedSimulation) -> Result<Self> {
+        let writer = ArchiveWriter::open_prepared(
+            path.as_ref(),
+            &prepared.identity,
+            prepared.limits.clone(),
+        )?;
+        let reader = ArchiveReader::open(path.as_ref(), prepared.limits.clone())?;
+        let snapshot = reader.live_snapshot(writer.confirmed_frontier())?;
+        if reader.manifest().schema_version != 2 || reader.descriptor().mode != RunMode::Simulation
+        {
+            return Err(Error::Invalid(
+                "test worker requires execution v2 simulation".into(),
+            ));
+        }
+        let current = reference(
+            reader.manifest().worker.executable.path.as_str(),
+            &executable(prepared.limits.content_bytes)?,
+        );
+        if current != reader.manifest().worker.executable {
+            return Err(Error::Invalid(
+                "test worker executable differs from frozen capability".into(),
+            ));
+        }
+        let scenario = crate::probe::Scenario::decode(
+            &reader.read_content(&snapshot, &reader.manifest().configuration)?,
+        )?;
+        let config = scenario.config();
+        if prepared.limits
+            != (playtime_storage::StorageLimits {
+                event_log_bytes: config.parameters.limits.log_bytes.get(),
+                ..playtime_storage::StorageLimits::default()
+            })
+            || config.initial_workspace != reader.manifest().initial_workspace
+        {
+            return Err(Error::Invalid(
+                "test profile frozen allowance/input mismatch".into(),
+            ));
+        }
+        Ok(Self {
+            writer,
+            prepared: prepared.clone(),
+            cancel_at_ms: scenario.cancel_at_ms,
+            fail_record_sequence: scenario.fail_record_sequence,
+            mode: RunMode::Simulation,
+            config: ExecutionConfig::Workspace(Box::new(config)),
+            adapters: Box::new(crate::probe::Adapter::new(scenario)),
             image: reader.manifest().worker.clone(),
         })
     }
@@ -195,7 +260,8 @@ fn execute(
     let PreparedExecution {
         writer,
         prepared,
-        scenario,
+        cancel_at_ms,
+        fail_record_sequence,
         mut adapters,
         mode,
         config,
@@ -207,19 +273,41 @@ fn execute(
     let mut worker = Some(worker);
     let start_ms = clock.now_ms();
     adapters.begin(start_ms)?;
-    let mut controller = Controller::with_tool_policy(
-        config.clone(),
-        prepared.identity.run_id.clone(),
-        mode,
-        SequentialIds,
-        start_ms,
-        adapters.policy(),
-    )?;
-    let mut encoder = Encoder::new(
-        prepared.identity.run_id.clone(),
-        prepared.limits.clone(),
-        config.initial_files.clone(),
-    );
+    let (mut controller, mut encoder) = match config {
+        ExecutionConfig::Memento(config) => (
+            Controller::with_tool_policy(
+                (*config).clone(),
+                prepared.identity.run_id.clone(),
+                mode,
+                SequentialIds,
+                start_ms,
+                adapters.policy(),
+            )?,
+            Encoder::new(
+                prepared.identity.run_id.clone(),
+                prepared.limits.clone(),
+                config.initial_files.clone(),
+            ),
+        ),
+        #[cfg(feature = "test-harness")]
+        ExecutionConfig::Workspace(config) => {
+            let mut encoder = Encoder::new(
+                prepared.identity.run_id.clone(),
+                prepared.limits.clone(),
+                config.initial_files.clone(),
+            );
+            encoder.use_execution_v2();
+            (
+                Controller::test_workspace(
+                    *config,
+                    prepared.identity.run_id.clone(),
+                    SequentialIds,
+                    start_ms,
+                )?,
+                encoder,
+            )
+        }
+    };
     let mut diagnostics = Vec::new();
     let mut healthy = true;
     let mut flush = true;
@@ -234,7 +322,7 @@ fn execute(
     let mut terminal_committed = false;
     let mut committed_log_bytes = 0;
     let mut peak_queued_bytes = 0;
-    let mut fail_record = scenario.fail_record_sequence;
+    let mut fail_record = fail_record_sequence;
     if let Err(error) =
         encoder.start_mode(&clock.utc(), prepared.identity.input_manifest.clone(), mode)
     {
@@ -251,9 +339,7 @@ fn execute(
         let now = clock.now_ms();
         adapters.poll(now);
         let cancelled = options.cancellation.is_cancelled()
-            || scenario
-                .cancel_at_ms
-                .is_some_and(|time| now.saturating_sub(start_ms) >= time);
+            || cancel_at_ms.is_some_and(|time| now.saturating_sub(start_ms) >= time);
         if cancelled && !cancel_notified {
             cancel_notified = true;
             controller.advance(now, Input::Cancel)?;
@@ -339,23 +425,23 @@ fn execute(
                                 terminal_committed = true;
                             }
                         }
-                        if let Some((effect_id, _, _)) = &completed.publication.checkpoint {
+                        if let Some(effect_id) = completed
+                            .publication
+                            .checkpoint
+                            .as_ref()
+                            .map(|(id, _, _)| *id)
+                            .or_else(|| completed.publication.capture.as_ref().map(|(id, _)| *id))
+                        {
                             let now = clock.now_ms();
                             if !cancel_notified
                                 && (options.cancellation.is_cancelled()
-                                    || scenario
-                                        .cancel_at_ms
+                                    || cancel_at_ms
                                         .is_some_and(|time| now.saturating_sub(start_ms) >= time))
                             {
                                 cancel_notified = true;
                                 controller.advance(now, Input::Cancel)?;
                             }
-                            controller.advance(
-                                now,
-                                Input::PublicationCommitted {
-                                    effect_id: *effect_id,
-                                },
-                            )?;
+                            controller.advance(now, Input::PublicationCommitted { effect_id })?;
                         }
                     }
                     Err(error) => {
@@ -429,7 +515,7 @@ fn execute(
                 &controller,
                 adapters.as_ref(),
                 queue_since,
-                &scenario,
+                cancel_at_ms,
                 start_ms,
                 cancel_notified,
                 now,
@@ -492,8 +578,7 @@ fn execute(
             let dispatch_time = clock.now_ms();
             if !cancel_notified
                 && (options.cancellation.is_cancelled()
-                    || scenario
-                        .cancel_at_ms
+                    || cancel_at_ms
                         .is_some_and(|time| dispatch_time.saturating_sub(start_ms) >= time))
             {
                 continue;
@@ -513,7 +598,9 @@ fn execute(
             if !healthy
                 && !matches!(
                     effect.kind,
-                    EffectKind::Snapshot { .. } | EffectKind::Cleanup
+                    EffectKind::Snapshot { .. }
+                        | EffectKind::CaptureWorkspace
+                        | EffectKind::Cleanup
                 )
             {
                 controller.advance(
@@ -550,27 +637,50 @@ fn execute(
                     ..
                 }
             ) {
-                let EffectKind::PublishCheckpoint(checkpoint) = &effect.kind else {
-                    unreachable!()
-                };
-                let publication = match adapters.checkpoint(checkpoint)? {
-                    crate::CheckpointBytes::Scripted(bytes) => encoder.checkpoint(
-                        &clock.utc(),
-                        effect.id,
-                        checkpoint,
-                        bytes,
-                        confirmed.frontier().committed_sequence,
-                    ),
-                    crate::CheckpointBytes::Contents { workspace, files } => encoder
-                        .checkpoint_contents(
-                            &clock.utc(),
-                            effect.id,
-                            checkpoint,
-                            workspace,
-                            &files,
-                            confirmed.frontier().committed_sequence,
-                        ),
-                };
+                let publication = (|| -> Result<Publication> {
+                    match &effect.kind {
+                        EffectKind::PublishCheckpoint(checkpoint) => {
+                            match adapters.checkpoint(checkpoint)? {
+                                crate::CheckpointBytes::Scripted(bytes) => encoder.checkpoint(
+                                    &clock.utc(),
+                                    effect.id,
+                                    checkpoint,
+                                    bytes,
+                                    confirmed.frontier().committed_sequence,
+                                ),
+                                crate::CheckpointBytes::Contents { workspace, files } => encoder
+                                    .checkpoint_contents(
+                                        &clock.utc(),
+                                        effect.id,
+                                        checkpoint,
+                                        workspace,
+                                        &files,
+                                        confirmed.frontier().committed_sequence,
+                                    ),
+                            }
+                        }
+                        EffectKind::PublishCapture(capture) => {
+                            let crate::CheckpointBytes::Contents { workspace, files } =
+                                adapters.capture(capture)?
+                            else {
+                                return Err(Error::Invalid(
+                                    "run-scoped capture requires explicit file bytes".into(),
+                                ));
+                            };
+                            encoder.capture_contents(
+                                &clock.utc(),
+                                effect.id,
+                                capture,
+                                workspace,
+                                &files,
+                                confirmed.frontier().committed_sequence,
+                            )
+                        }
+                        _ => Err(Error::Invalid(
+                            "publication reply for non-publication effect".into(),
+                        )),
+                    }
+                })();
                 match publication {
                     Ok(publication) => {
                         if encoder.capacity_exhausted && !capacity_notified {
@@ -603,7 +713,7 @@ fn execute(
             &controller,
             adapters.as_ref(),
             queue_since,
-            &scenario,
+            cancel_at_ms,
             start_ms,
             cancel_notified,
             now,
@@ -616,7 +726,7 @@ fn next_time(
     controller: &Controller<SequentialIds>,
     adapters: &dyn crate::Effects,
     queued_at: Option<u64>,
-    scenario: &Scenario,
+    cancel_at_ms: Option<u64>,
     start: u64,
     cancelled: bool,
     now: u64,
@@ -628,7 +738,7 @@ fn next_time(
     if let Some(time) = queued_at {
         next = next.min(time.saturating_add(STREAM_BATCH_MS));
     }
-    if !cancelled && let Some(time) = scenario.cancel_at_ms {
+    if !cancelled && let Some(time) = cancel_at_ms {
         next = next.min(start.saturating_add(time));
     }
     next.max(now)

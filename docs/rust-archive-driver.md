@@ -51,6 +51,44 @@ It rejects tails, existing events, damage, and another writer. The packaged
 worker retains the prepared value until Begin consumes its grant; acquisition
 neither grants execution authority nor resumes an interrupted run.
 
+## Session-neutral execution v2
+
+The test workspace profile uses input-manifest version 2 to declare its read
+contract. Existing v1 manifest/record decoders remain strict; current storage
+explicitly opts into both supported manifest families. A v1-only reader refuses
+the v2 manifest before interpreting its log. Production worker acquisition still
+requires the memento v1 profile. Feature-gated `acquire_probe` checks the v2
+profile/version, allocation, initial input and exact executing image before
+constructing the same driver loop. This is an explicit CPU test capability, not
+a new production launch route or catalog choice.
+
+The unchanged v1 event envelope carries `execution_v2` payloads with an explicit
+inner version. Common run-start, phase and first-stop records retain their meaning;
+request, tool, observation, capture and terminal facts use the new payload.
+Request identity includes scope, purpose and the global admitted-call ordinal.
+Storage verifies admission/settlement agreement, unknown reservation amounts,
+observation/source-map identity, and the terminal aggregate. It rejects mixed
+legacy request/session records under a v2 manifest and unknown inner versions.
+
+A final capture publishes an immutable workspace, individually verified file
+contents, a source map and a v2 capture index under `artifacts/final/`. It contains
+no memory delivery or session checkpoint. Publication uses the existing serialized
+storage owner and exact receipt barrier. Failed/lost publication does not promote
+the candidate, retry a stopped writer or produce a successful terminal result.
+
+`ArchiveQueries` preserves exact JSONL and exposes typed v2 history, `captures()`,
+and run-scoped unresolved intents. `request_accounting()` reconciles purposes with
+committed aggregate usage for both formats. V2 uses mandatory admission identity;
+v1 attribution requires the recorded `handoff` boolean. Missing old raw evidence
+is unclassified, and absent admission evidence makes the call count unavailable.
+No historical archive is rewritten and no v2 recovery/continuation is provided.
+
+The new `workspace-execution-v2.json` golden records the complete scripted contract.
+The probe gate covers shared budgets and deadlines, preflight/post-dispatch
+cancellation, unknown usage, omitted output, forbidden maintenance tools, malformed
+storage facts, and capture failure/lost or late receipts. Existing memento goldens
+remain unchanged.
+
 ## Dispatch and persistence
 
 The driver owns one controller, one active external effect, and one serialized

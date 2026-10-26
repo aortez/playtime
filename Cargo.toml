@@ -78,6 +78,9 @@ opt-level = 3
 debug = 1
 [profile.test.package.playtime-runner]
 debug = 1
+# Versioned archive DTOs also contribute substantial test-image type metadata.
+[profile.test.package.playtime-protocol]
+debug = "line-tables-only"
 # The live worker also links an HTTP client. Third-party dependencies keep line
 # tables only, so the worker's own test image still fits that bound.
 [profile.test.package."*"]

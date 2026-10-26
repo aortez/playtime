@@ -501,6 +501,13 @@ impl ScriptedAdapters {
             ));
         }
         self.schedule = match &effect.kind {
+            EffectKind::StartWorkspace
+            | EffectKind::CaptureWorkspace
+            | EffectKind::PublishCapture(_) => {
+                return Err(InvalidValue(
+                    "session-neutral effects require the explicit test profile",
+                ));
+            }
             EffectKind::Model(_) => {
                 let script = self.models.pop_front().unwrap_or(ModelScript {
                     chunks: Vec::new(),

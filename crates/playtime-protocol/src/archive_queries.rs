@@ -38,11 +38,17 @@ pub struct ArchiveRun {
     /// Missing means the run recorded no live request timing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contention: Option<crate::api::Contention>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionRun>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "classification", rename_all = "snake_case")]
 pub enum ArchiveFact {
+    Execution {
+        event: crate::execution::Record,
+        resolved: Option<serde_json::Value>,
+    },
     Canonical {
         event: KnownEvent,
     },
@@ -94,4 +100,36 @@ pub enum ObservationResolution {
         omission: ObservationOmitted,
     },
     NotRecorded,
+}
+
+/// Session-neutral facts stay distinct from legacy checkpoint/session meanings.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct ExecutionRun {
+    pub unsettled_model_intents: Vec<crate::execution::EffectIntent>,
+    pub last_capture: Option<crate::execution::CaptureRef>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ArchiveCapture {
+    pub capture: crate::execution::CaptureRef,
+    pub index: crate::execution::CaptureIndex,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PurposeAccounting {
+    pub admitted_calls: u64,
+    pub settled_calls: u64,
+    pub not_dispatched_calls: u64,
+    pub usage: UsageSummary,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct RequestAccounting {
+    /// None when the archive predates admission evidence. Settlements alone
+    /// cannot establish the number of attempted calls.
+    pub model_calls: Option<u64>,
+    pub by_purpose: std::collections::BTreeMap<playtime_core::RequestPurpose, PurposeAccounting>,
+    /// Missing purpose evidence remains explicit, including old omitted raw
+    /// model requests; it is never guessed from turns, tool calls or phases.
+    pub unclassified: PurposeAccounting,
 }

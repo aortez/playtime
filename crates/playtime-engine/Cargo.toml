@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# Integration proof only; never enabled in packaged production workers.
+test-harness = []
+
 [dependencies]
 playtime-core.workspace = true
 playtime-protocol.workspace = true

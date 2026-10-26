@@ -6,7 +6,8 @@ use std::{
 use playtime_core::Sha256Digest;
 use playtime_protocol::{
     archive::{
-        ContentRef, INPUT_MANIFEST_PATH, InputManifest, PlatformRequirements, decode_input_manifest,
+        ContentRef, INPUT_MANIFEST_PATH, InputManifest, PlatformRequirements,
+        decode_readable_input_manifest,
     },
     events::{CheckpointRef, EventEnvelope},
     storage::{
@@ -130,7 +131,7 @@ pub(crate) fn prepared(
         ));
     }
     let manifest_bytes = directory.verify(&descriptor.input_manifest, limits.manifest_bytes)?;
-    let manifest = decode_input_manifest(utf8(&manifest_bytes)?)?;
+    let manifest = decode_readable_input_manifest(utf8(&manifest_bytes)?)?;
     if manifest.run_id != descriptor.run_id {
         return Err(StorageError::new(
             ErrorCode::ContentMismatch,

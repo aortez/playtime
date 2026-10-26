@@ -173,7 +173,7 @@ fn recovery_matches_the_committed_python_baseline() {
             "token_budget_charged": usage.budget_charged_tokens, "unaccounted_token_reserve": usage.unknown_reserved_tokens,
             "unaccounted_model_calls": usage.unknown_requests, "token_usage_complete": usage.usage_complete,
             "model_calls": simulation.result.model_calls, "tool_parse_errors": simulation.result.tool_parse_errors},
-        "requests": requests(&simulation).into_iter().map(|request| json!({"call": request.call, "handoff": request.handoff,
+        "requests": requests(&simulation).into_iter().map(|request| json!({"call": request.call, "handoff": (request.purpose == playtime_core::RequestPurpose::Handoff),
             "seed": request.sampling_seed, "num_predict": request.maximum_tokens, "message_count": request.messages.len(),
             "tools": request.tools.iter().map(|tool| &tool["function"]["name"]).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "session_starts": records(&simulation, "memory_received").map(|record| json!({"kind": "session_start",
@@ -298,7 +298,7 @@ fn token_handoff_and_session_limits_do_not_create_new_allocations() {
     assert_eq!(
         requests(&simulation)
             .iter()
-            .map(|request| request.handoff)
+            .map(|request| request.purpose == playtime_core::RequestPurpose::Handoff)
             .collect::<Vec<_>>(),
         [false, true, true]
     );
@@ -582,7 +582,7 @@ fn parse_error_ceiling_ends_only_the_session_and_keeps_its_charges() {
     assert_eq!(errors[2].data["tool_parse_errors"], 3);
     assert!(errors.iter().all(|e| e.data["recovery_allowed"] == true));
     assert!(
-        requests(&simulation)[3].handoff,
+        (requests(&simulation)[3].purpose == playtime_core::RequestPurpose::Handoff),
         "the request after the ceiling is the handoff"
     );
 
