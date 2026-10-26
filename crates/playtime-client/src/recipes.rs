@@ -118,6 +118,16 @@ impl Client {
         Ok(response)
     }
     fn check_harness_selection(&self, request: &RecipeMutation) -> Result<()> {
+        if (compaction_settings(request).is_some()
+            || selected_harness(request).is_some_and(|id| id.as_str() == CONTINUOUS_COMPACTION_V1))
+            && !self
+                .capabilities()
+                .features
+                .iter()
+                .any(|f| f == RECIPE_COMPACTION_SETTINGS)
+        {
+            return Err(Error::UnsupportedCapability);
+        }
         if selected_harness(request).is_some()
             && !self
                 .capabilities()
@@ -128,6 +138,12 @@ impl Client {
             return Err(Error::UnsupportedCapability);
         }
         Ok(())
+    }
+}
+fn compaction_settings(request: &RecipeMutation) -> Option<&CompactionSettings> {
+    match request {
+        RecipeMutation::Clone { request } => request.compaction.as_ref(),
+        RecipeMutation::Revise { request, .. } => request.compaction.as_ref(),
     }
 }
 fn selected_harness(request: &RecipeMutation) -> Option<&HarnessId> {
@@ -158,7 +174,7 @@ fn is_digest(value: &str) -> bool {
 fn validate_definition(value: &RecipeDefinition) -> Result<()> {
     if !matches!(
         (value.schema_version, value.model_registration.is_some()),
-        (1, false) | (2, true)
+        (1, false) | (2, true) | (3, _)
     ) || !is_digest(&value.definition_digest)
         || value.name.is_empty()
         || value.name.len() > 128
@@ -183,6 +199,15 @@ fn validate_definition(value: &RecipeDefinition) -> Result<()> {
                 || s.revision == 0
                 || s.creation_sequence == 0
         })
+    {
+        return Err(Error::InvalidResponse);
+    }
+    if (value.schema_version == 3) != value.inherited.get("compaction").is_some() {
+        return Err(Error::InvalidResponse);
+    }
+    if value.schema_version == 3
+        && (value.inherited["harness"] != CONTINUOUS_COMPACTION_V1
+            || HarnessView::from_definition(&value.inherited).is_err())
     {
         return Err(Error::InvalidResponse);
     }
@@ -222,6 +247,12 @@ fn validate_save(response: &RecipeSaveResponse, pending: &PendingRecipeSave) -> 
     };
     if selected_harness(&pending.request)
         .is_some_and(|id| definition.inherited["harness"].as_str() != Some(id.as_str()))
+    {
+        return Err(Error::InvalidResponse);
+    }
+    if let Some(settings) = compaction_settings(&pending.request)
+        && definition.inherited["compaction"]["settings"]
+            != serde_json::to_value(settings).map_err(|_| Error::InvalidResponse)?
     {
         return Err(Error::InvalidResponse);
     }

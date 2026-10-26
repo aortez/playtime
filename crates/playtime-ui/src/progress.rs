@@ -61,6 +61,7 @@ enum Activity {
     },
     Stopping(StopReason),
     Working,
+    Compacting,
 }
 
 /// What one record says about progress.
@@ -81,6 +82,50 @@ pub(crate) struct Update {
     activity: Option<Activity>,
 }
 impl Update {
+    pub(crate) fn execution(o: &playtime_protocol::execution::Observation) -> Self {
+        use playtime_protocol::observations::ObservationData;
+        let value = match &o.data {
+            ObservationData::Inline { value } => Some(value),
+            _ => None,
+        };
+        let mut update = Self {
+            elapsed_ms: Some(o.elapsed_ms),
+            ..Default::default()
+        };
+        update.activity = match o.observation_kind.as_str() {
+            "controller_started" => {
+                update.limits = value.and_then(|v| {
+                    let l = &v["parameters"]["limits"];
+                    Some(Limits {
+                        sessions: 0,
+                        turns: 0,
+                        wall_seconds: l["wall_seconds"].as_u64()?,
+                        tokens: l["generated_tokens"].as_u64()?,
+                    })
+                });
+                Some(Activity::Starting)
+            }
+            "model_request" | "model_chunk" => Some(
+                if o.request
+                    .as_ref()
+                    .is_some_and(|r| r.purpose == playtime_core::RequestPurpose::Compaction)
+                {
+                    Activity::Compacting
+                } else {
+                    Activity::Model
+                },
+            ),
+            "compaction_planned" => Some(Activity::Compacting),
+            "tool_request" => value
+                .and_then(|v| v["name"].as_str())
+                .map(|s| Activity::Tool(excerpt(s, 60))),
+            "model_response" | "tool_result" | "compaction_applied" => Some(Activity::Working),
+            "controller_finished" => Some(Activity::Phase(RunPhase::Terminal)),
+            _ => None,
+        };
+        update
+    }
+
     pub(crate) fn observation(observation: &DecodedObservation) -> Self {
         let o = observation.observation();
         let mut update = Self {
@@ -345,6 +390,7 @@ impl Tracker {
             Activity::ModelError { retrying: false } => "stopping after a model error".into(),
             Activity::Stopping(reason) => format!("stopping: {}", words(reason)),
             Activity::Working => "working".into(),
+            Activity::Compacting => "compacting the conversation".into(),
         }
     }
 }
@@ -442,6 +488,12 @@ pub fn details(run: &RunView) -> Vec<String> {
         lines.push(cleanup_words(&run.cleanup));
     }
     lines.push(accounting(run));
+    if let Some(accounting) = &run.request_accounting {
+        for (purpose, item) in &accounting.by_purpose {
+            lines.push(format!("{}: {} calls admitted · {} tokens reported · {} tokens charged · {} requests with unknown usage", words(purpose), thousands(item.admitted_calls), thousands(item.usage.known_generated_tokens), thousands(item.usage.budget_charged_tokens), thousands(item.usage.unknown_requests)));
+        }
+    }
+
     if let Some(c) = &run.contention {
         let timed = count(c.timed_requests, "timed request", "timed requests");
         lines.push(if c.possible {

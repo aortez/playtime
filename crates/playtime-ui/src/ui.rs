@@ -1012,12 +1012,24 @@ impl Workbench {
             ui.label("Launch writes a private recovery receipt before sending the request. Pending launches remain available after reopening this window.");
             return;
         }
+        let continuous = self
+            .model
+            .run
+            .as_ref()
+            .and_then(|r| r.value.harness.as_ref())
+            .is_some_and(|h| h.harness.compaction.is_some());
+        if continuous && self.model.inspector == Inspector::Memory {
+            self.model.inspector = Inspector::Files;
+        }
         ui.horizontal(|ui| {
             for (label, tab) in [
                 ("Details", Inspector::Details),
                 ("Memory", Inspector::Memory),
                 ("Files", Inspector::Files),
             ] {
+                if continuous && tab == Inspector::Memory {
+                    continue;
+                }
                 if ui
                     .selectable_label(self.model.inspector == tab, label)
                     .clicked()
@@ -1029,7 +1041,7 @@ impl Workbench {
         });
         ui.separator();
         egui::ScrollArea::vertical().id_salt("inspector-body").show(ui, |ui| {
-            if self.model.inspector != Inspector::Details {
+            if self.model.inspector != Inspector::Details && !continuous {
                 let mut selected = None;
                 egui::ComboBox::from_label("Checkpoint").selected_text(self.model.checkpoint.as_ref().map_or("Select checkpoint", |c| c.checkpoint.session_id.as_str())).show_ui(ui, |ui| {
                     for checkpoint in &self.model.checkpoints { if ui.selectable_label(self.model.checkpoint.as_ref().map(|c| &c.checkpoint.session_id) == Some(&checkpoint.checkpoint.session_id), checkpoint.checkpoint.session_id.as_str()).clicked() { selected = Some(checkpoint.checkpoint.session_id.clone()); } }
@@ -1078,7 +1090,24 @@ impl Workbench {
                 Inspector::Files => {
                     ui.small("Saved versions · change classification is unavailable from this API");
                     let mut open = None;
-                    if let Some(checkpoint) = &self.model.checkpoint {
+                    if continuous {
+                        ui.strong("Final stopped workspace");
+                        ui.small("Retained files and exact capture index. Files unavailable to capture are listed in the index. Compaction does not publish checkpoints.");
+                        if ui.button("Load final workspace files").clicked() && let Some(run) = self.model.selected.clone() { self.model.inspect_action(Action::FinalFiles(run)); }
+                        if let Some((files, complete)) = &self.model.final_files {
+                            if !complete { ui.colored_label(egui::Color32::YELLOW, "Listing limit reached; this listing is incomplete."); }
+                            if files.is_empty() { ui.label("No final workspace publication found in the inspected archive prefix."); }
+                            ui.horizontal(|ui| {
+                                if ui.add_enabled(self.model.file_page > 0, egui::Button::new("Previous files")).clicked() { self.model.file_page = self.model.file_page.saturating_sub(20); }
+                                if ui.add_enabled(self.model.file_page + 20 < files.len(), egui::Button::new("Next files")).clicked() { self.model.file_page += 20; }
+                            });
+                            for file in files.iter().skip(self.model.file_page).take(20) {
+                                ui.separator(); ui.strong(brief(&file.name,120));
+                                ui.small(format!("{} · {}",file.kind,crate::preview::bytes(file.content.size_bytes)));
+                                ui.push_id(file.artifact_id.as_str(), |ui| { if ui.button(if crate::media::image_name(&file.name) { "Open image" } else { "Open file" }).clicked() { open = Some(file.artifact_id.clone()); } });
+                            }
+                        }
+                    } else if let Some(checkpoint) = &self.model.checkpoint {
                         ui.horizontal(|ui| {
                             if ui.add_enabled(self.model.file_page > 0, egui::Button::new("Previous files")).clicked() { self.model.file_page = self.model.file_page.saturating_sub(20); }
                             if ui.add_enabled(self.model.file_page + 20 < checkpoint.files.len(), egui::Button::new("Next files")).clicked() { self.model.file_page += 20; }

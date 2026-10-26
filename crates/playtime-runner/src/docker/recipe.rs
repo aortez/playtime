@@ -110,10 +110,10 @@ impl Recipe {
     pub fn check(&self) -> Result<()> {
         self.check_bounds(false)
     }
-    pub(super) fn check_registered(&self) -> Result<()> {
-        self.check_bounds(true)
-    }
     fn check_bounds(&self, registered: bool) -> Result<()> {
+        self.check_for_harness(registered, false)
+    }
+    pub(super) fn check_for_harness(&self, registered: bool, continuous: bool) -> Result<()> {
         let invalid = |what: &str| Err(Error::Invalid(format!("recipe {}: {what}", self.id)));
         let (b, p) = (&BOUNDS, &self.parameters);
         let (l, w) = (&p.limits, &p.workshop);
@@ -138,8 +138,12 @@ impl Recipe {
                 "the name, prompt, protocol and inventory must be non-empty and bounded",
             );
         }
-        p.validate()
-            .map_err(|e| Error::Invalid(format!("recipe {}: {}", self.id, e.0)))?;
+        (if continuous {
+            p.common().validate()
+        } else {
+            p.validate()
+        })
+        .map_err(|e| Error::Invalid(format!("recipe {}: {}", self.id, e.0)))?;
         if p.memory_condition != MemoryCondition::SelfWritten {
             return invalid("only the self memory condition is supported");
         }
@@ -170,7 +174,7 @@ impl Recipe {
             return invalid("a workshop limit exceeds its bound");
         }
         if !fits_archive(
-            l.sessions.get(),
+            if continuous { 1 } else { l.sessions.get() },
             w.workspace_bytes.get(),
             self.workspace_entries,
         ) {
@@ -313,6 +317,11 @@ impl Profile {
         host: LiveHost,
     ) -> Result<Self> {
         definition.executable()?;
+        if definition.compaction.is_some() {
+            return Err(Error::Invalid(
+                "continuous recipes require the continuous profile".into(),
+            ));
+        }
         let mut profile =
             Self::freeze_checked_recipe(definition.recipe.clone(), selection, daemon, host)?;
         if let Some(selected) = &definition.model_registration {
@@ -323,7 +332,7 @@ impl Profile {
         profile.definition = Some(definition);
         Ok(profile)
     }
-    fn freeze_checked_recipe(
+    pub(super) fn freeze_checked_recipe(
         recipe: Recipe,
         selection: Selection,
         daemon: DaemonIdentity,

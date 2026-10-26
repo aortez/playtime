@@ -164,6 +164,66 @@ fn pending_allowances_nondispatch_and_unknown_settlements_are_separate_at_each_f
     assert_eq!(last.accounting_coverage.unwrap().unsettled_allowance, 0);
 }
 #[test]
+fn continuous_accounting_uses_v2_intents_without_inventing_sessions() {
+    let root = Root::new();
+    let mut f = fixture::two_session().unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(f.manifest).unwrap();
+    manifest["schema_version"] = json!(2);
+    let bytes = serde_json::to_vec(&manifest).unwrap();
+    f.descriptor.input_manifest =
+        playtime_storage::content_ref(f.descriptor.input_manifest.path.clone(), &bytes);
+    let mut writer = ArchiveWriter::create(
+        root.0.join("archive"),
+        f.descriptor.clone(),
+        &bytes,
+        &f.inputs,
+        StorageLimits::default(),
+    )
+    .unwrap();
+    let request = json!({"effect_id":1,"request_id":"r1","call":1,"scope":{"kind":"run"},"purpose":"compaction"});
+    let pending = record(
+        &f,
+        2,
+        "execution_v2",
+        json!({"schema_version":2,"fact":{"kind":"effect_intent","data":{"effect_id":1,"effect_kind":"model","request":request,"tool_request_sequence":null,"maximum_tokens":512,"deadline_ms":1000,"sources":[]}}}),
+    );
+    let started = record(
+        &f,
+        1,
+        "run_started",
+        json!({"mode":f.descriptor.mode,"input_manifest":f.descriptor.input_manifest}),
+    );
+    writer
+        .append(&[&started, &pending], BatchClass::Ordinary)
+        .unwrap();
+    let first = view(&root, &writer, &f).view;
+    let coverage = first.accounting_coverage.unwrap();
+    assert_eq!(
+        (coverage.unsettled_requests, coverage.unsettled_allowance),
+        (1, 512)
+    );
+    let accounting = first.request_accounting.unwrap();
+    assert_eq!(
+        accounting.by_purpose[&playtime_core::RequestPurpose::Compaction].admitted_calls,
+        1
+    );
+    assert!(first.checkpoint.is_none());
+    let settled = record(
+        &f,
+        3,
+        "execution_v2",
+        json!({"schema_version":2,"fact":{"kind":"request_settled","data":{"request":request,"usage":{"status":"unknown","reserved_tokens":512}}}}),
+    );
+    writer.append(&[&settled], BatchClass::Ordinary).unwrap();
+    let last = view(&root, &writer, &f).view;
+    assert_eq!(last.accounting_coverage.unwrap().unsettled_allowance, 0);
+    let accounting = last.request_accounting.unwrap();
+    let usage = &accounting.by_purpose[&playtime_core::RequestPurpose::Compaction].usage;
+    assert_eq!(usage.unknown_requests, 1);
+    assert_eq!(usage.unknown_reserved_tokens, 512);
+    assert!(!usage.usage_complete);
+}
+#[test]
 fn exact_checkpoint_index_preserves_missing_empty_and_metadata_only_files() {
     let root = Root::new();
     let f = fixture::two_session().unwrap();

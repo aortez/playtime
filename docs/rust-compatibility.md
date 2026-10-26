@@ -542,3 +542,23 @@ version 6, preserving existing run/recipe rows; older binaries refuse it. No res
 is required, and this does not decide a general development migration policy.
 New pinned screenshots cover wide/narrow registration, offline readback and receipt
 recovery. Existing discovery-only and workbench baselines remain unchanged.
+
+
+## Continuous recipe and workbench integration (#110 step C)
+
+Definition schema 3 freezes compaction settings and its effective protocol and
+inventory alongside inactive source memento data. Optional clone/revise settings,
+`HarnessView.compaction`, `RunView.request_accounting`, and the corresponding
+capability/schema entries are deliberate additive API changes. The HTTP schema
+golden adds only these fields/DTOs; existing response and memento behavior goldens
+remain unchanged. Installed harness enumeration now includes continuous compaction.
+The existing native capability digest changes to cover saved continuous profiles
+and their default instructions. Old worker bundles cannot execute this capability.
+No service ledger migration/reset or model/environment lock changes are involved.
+
+Continuous trace projection preserves run/request purpose identities and final
+capture publication without inventing sessions. Unknown accounting remains
+explicit. New synthetic wide/narrow editor and trace screenshots cover this UI;
+existing screenshot baselines remain unchanged. See
+[continuous execution](rust-continuous-native.md) for active versus inactive
+parameters, native verification, and the bounded final-file listing.

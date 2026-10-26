@@ -171,6 +171,7 @@ pub enum Action {
     StopObservation,
     Window(WindowRequest),
     Source(usize, u64, usize),
+    FinalFiles(RunId),
     Checkpoints(RunId, Option<String>),
     Checkpoint(RunId, SessionId),
     Content(RunId, ArtifactId, usize),
@@ -226,6 +227,8 @@ pub enum Data {
     Cancellation(Box<RunViewData>),
     CancellationUnresolved(String),
     Window(Window, String, u64),
+    /// Bounded retained final workspace listing, with explicit completeness.
+    FinalFiles(Vec<Artifact>, bool),
     /// The page and, by session, what each checkpoint saved.
     Checkpoints(Page<Checkpoint>, BTreeMap<String, String>),
     Checkpoint(Box<Checkpoint>, MemoryView),
@@ -287,6 +290,7 @@ pub struct Model {
     pub expanded: std::collections::BTreeSet<usize>,
     pub source: Option<SourcePage>,
     pub source_sequence: u64,
+    pub final_files: Option<(Vec<Artifact>, bool)>,
     pub checkpoints: Vec<Checkpoint>,
     pub checkpoints_next: Option<String>,
     /// What each checkpoint saved, by session, for the timeline's markers.
@@ -355,6 +359,7 @@ impl Default for Model {
             expanded: Default::default(),
             source: None,
             source_sequence: 0,
+            final_files: None,
             checkpoints: vec![],
             checkpoints_next: None,
             checkpoint_files: BTreeMap::new(),
@@ -575,6 +580,7 @@ impl Model {
         self.selected_row = None;
         self.expanded.clear();
         self.source = None;
+        self.final_files = None;
         self.checkpoints.clear();
         self.checkpoint_files.clear();
         self.checkpoint = None;
@@ -678,7 +684,8 @@ impl Model {
         }
         if matches!(
             &reply.data,
-            Data::Checkpoint(..)
+            Data::FinalFiles(..)
+                | Data::Checkpoint(..)
                 | Data::Content(_)
                 | Data::Source(..)
                 | Data::GifFrame(..)
@@ -956,6 +963,10 @@ impl Model {
                 self.command(Action::Receipts(None));
                 // Otherwise the run list shows the new run only at its next poll.
                 self.command(Action::Runs(None));
+            }
+            Data::FinalFiles(files, complete) => {
+                self.final_files = Some((files, complete));
+                self.file_page = 0;
             }
             Data::Run(run) => {
                 self.apply_run(*run);

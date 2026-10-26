@@ -480,6 +480,7 @@ impl Application for Daemon {
                 MODEL_REGISTRATION.into(),
                 RECIPE_AUTHORING.into(),
                 RECIPE_HARNESS_SELECTION.into(),
+                RECIPE_COMPACTION_SETTINGS.into(),
                 MODEL_SETTINGS.into(),
                 RECIPE_MODEL_SELECTION.into(),
                 RECIPE_MODEL_EXECUTION.into(),

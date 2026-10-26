@@ -424,10 +424,14 @@ impl Archive {
         }
         Ok(ready)
     }
-    async fn authored_profile(&self, id: &str) -> life::Result<playtime_runner::docker::Profile> {
+    async fn authored_profile(
+        &self,
+        id: &str,
+    ) -> life::Result<playtime_runner::docker::NativeProfile> {
         if !id.starts_with("saved-") {
             return self
                 .recipe_profile(id)
+                .map(|p| playtime_runner::docker::NativeProfile::Memento(Box::new(p)))
                 .ok_or(Error::Invalid("execution unavailable"));
         }
         let (definition, _) = self
@@ -458,7 +462,7 @@ impl Archive {
                 .as_ref()
                 .ok_or(Error::Invalid("execution unavailable"))?,
         );
-        let profile = playtime_runner::docker::Profile::freeze_definition(
+        let profile = playtime_runner::docker::NativeProfile::freeze_definition(
             definition,
             docker.selection.clone(),
             docker.daemon.clone(),
@@ -475,12 +479,20 @@ impl Archive {
         self.live
             .as_ref()
             .ok_or(Error::Invalid("execution unavailable"))?
-            .ready(profile.model.as_ref())
+            .ready(profile.model())
             .await?;
-        let mut preview = self
-            .model_preview(&profile, id, RunMode::Experiment)
+        let (mut preview, seeds) = match &profile {
+            playtime_runner::docker::NativeProfile::Memento(p) => (
+                self.model_preview(p, id, RunMode::Experiment),
+                &p.recipe.as_ref().ok_or(Error::Uncertain)?.seeds,
+            ),
+            playtime_runner::docker::NativeProfile::Continuous(p) => {
+                (self.continuous_preview(p, id), &p.seeds)
+            }
+        };
+        let mut preview = preview
+            .take()
             .ok_or(Error::Invalid("execution unavailable"))?;
-        let seeds = &profile.recipe.as_ref().ok_or(Error::Uncertain)?.seeds;
         preview.seeds = SeedSummary {
             files: seeds.len() as u64,
             bytes: seeds.values().map(|s| s.len() as u64).sum(),
@@ -490,6 +502,43 @@ impl Archive {
                 .collect(),
         };
         Ok(preview)
+    }
+    fn continuous_preview(
+        &self,
+        profile: &playtime_runner::docker::ContinuousProfile,
+        recipe: &str,
+    ) -> Option<Preview> {
+        let mut preview = self.docker_preview()?;
+        preview.recipe_id = RecipeId::new(recipe).ok()?;
+        preview.mode = RunMode::Experiment;
+        preview.preview_revision = PreviewRevision::new(
+            digest(
+                &serde_json::to_vec(&(
+                    profile,
+                    self.bundle.id(),
+                    &self.bundle.descriptor().capabilities.docker_profile,
+                ))
+                .ok()?,
+            )
+            .as_str(),
+        )
+        .ok()?;
+        preview.effective_configuration = serde_json::to_value(profile).ok()?;
+        preview.harness = HarnessView::from_configuration(&preview.effective_configuration).ok()?;
+        // Compatibility field retains the source recipe's inactive memento
+        // allocations. Only config.parameters and the selected harness execute.
+        preview.parameters = profile.definition.as_ref()?.recipe.parameters.clone();
+        preview.prompt = profile.config.prompt.clone();
+        preview.protocol = profile.config.protocol.clone();
+        let model = profile.model.as_ref()?;
+        preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"], "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"], "settings":model.settings,"endpoint":model.host.endpoint,"addresses":model.host.addresses});
+        if let Some(registration) = &model.registration {
+            preview.model_identity["registration"] = serde_json::to_value(registration).ok()?;
+            preview.model_identity["definition_sha256"] = model.lock["definition_sha256"].clone();
+        }
+        preview.warnings = vec!["One continuous workshop. Compaction uses the same model and run budget. Only the final stopped workspace is captured; intermediate captures are unavailable.".into()];
+        preview.backend = projection::live_backend();
+        Some(preview)
     }
     fn recipe_profile(&self, id: &str) -> Option<playtime_runner::docker::Profile> {
         let (docker, live) = (self.docker.as_ref()?, self.live.as_ref()?);
@@ -947,8 +996,15 @@ impl Archive {
         // A Docker mode never falls back to simulation.
         let docker = match launch(&admission.request)? {
             Launch::Simulation => None,
-            Launch::ScriptedSmoke => Some(self.docker.clone()),
-            Launch::LiveSmoke => Some(self.live_profile()),
+            Launch::ScriptedSmoke => Some(
+                self.docker
+                    .clone()
+                    .map(|p| playtime_runner::docker::NativeProfile::Memento(Box::new(p))),
+            ),
+            Launch::LiveSmoke => Some(
+                self.live_profile()
+                    .map(|p| playtime_runner::docker::NativeProfile::Memento(Box::new(p))),
+            ),
             Launch::Catalog(id) => Some(Some(self.authored_profile(id).await?)),
         }
         .map(|profile| profile.ok_or(Error::Invalid("unsupported recipe or mode")))
@@ -969,14 +1025,19 @@ impl Archive {
             let directory = executable.parent().ok_or(Error::Uncertain)?.to_path_buf();
             let path = root.join("runs").join(admission.run_id.as_str());
             let kind = match &docker {
-                Some(profile) if profile.model.is_some() => WorkerKind::DockerLive,
+                Some(profile) if profile.model().is_some() => WorkerKind::DockerLive,
                 Some(_) => WorkerKind::DockerScripted,
                 None => WorkerKind::ControllerSimulation,
             };
             let prepared = if let Some(profile) = &docker {
-                (*bundle)
-                    .clone()
-                    .prepare_docker(&path, admission.run_id.clone(), profile)
+                match profile {
+                    playtime_runner::docker::NativeProfile::Memento(p) => (*bundle)
+                        .clone()
+                        .prepare_docker(&path, admission.run_id.clone(), p),
+                    playtime_runner::docker::NativeProfile::Continuous(p) => (*bundle)
+                        .clone()
+                        .prepare_continuous(&path, admission.run_id.clone(), p),
+                }
             } else {
                 (*bundle)
                     .clone()

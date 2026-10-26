@@ -1,5 +1,7 @@
 #![cfg(feature = "ui-snapshots")]
 mod common;
+#[path = "support/continuous_scene.rs"]
+mod continuous_scene;
 #[path = "support/model_scenes.rs"]
 mod model_scenes;
 #[path = "support/preview_scene.rs"]
@@ -82,6 +84,15 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        ("compaction-editor", true, false, Inspector::Details, false),
+        (
+            "compaction-editor-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
+        ("compaction-trace", false, false, Inspector::Details, false),
         ("harness-editor", true, false, Inspector::Details, false),
         (
             "harness-editor-narrow",
@@ -270,7 +281,8 @@ async fn reviewed_workbench_screens() {
         ("running", false, false, Inspector::Details, false),
         ("ended", false, false, Inspector::Details, false),
     ] {
-        let mut app = if name.starts_with("harness-editor") {
+        let mut app = if name.starts_with("harness-editor") || name.starts_with("compaction-editor")
+        {
             common::harness_editor().await
         } else if name.starts_with("long-recipe-runs") {
             common::long_recipe_runs().await
@@ -281,6 +293,38 @@ async fn reviewed_workbench_screens() {
         } else {
             common::demo(launcher).await
         };
+        if name.starts_with("compaction-editor") {
+            app.model.authoring.draft = None;
+            app.model.edit_recipe(true);
+            let draft = app.model.authoring.draft.as_mut().unwrap();
+            draft.harness = Some(HarnessId::new(CONTINUOUS_COMPACTION_V1).unwrap());
+            draft.name = "Curiosity: continuous conversation".into();
+            draft.prompt = "Explore a question raised by the seed files. Keep verified results and uncertainty clear; finish when the work is complete.".into();
+        }
+        if name == "compaction-trace" {
+            let mut transcript = Transcript::default();
+            for event in continuous_scene::events()
+                .into_iter()
+                .filter(|e| e.sequence.get() >= 6)
+            {
+                transcript.apply(event, None).unwrap();
+            }
+            app.model.window = transcript.window(View::Readable, 0, 64);
+            app.model.recipes[0].name = "Continuous compaction example".into();
+            app.model.history =
+                "Synthetic continuous execution evidence · no model or worker".into();
+            app.model.checkpoints.clear();
+            app.model.checkpoint = None;
+            let mut run = app.model.run.as_ref().unwrap().value.clone();
+            run.run_id = playtime_core::RunId::new("continuous-ui").unwrap();
+            run.harness = Some(ArchivedHarness {
+                configuration: run.input_manifest.clone().unwrap(),
+                harness: HarnessView::continuous(Default::default()).unwrap(),
+            });
+            app.model.selected = Some(run.run_id.clone());
+            app.model.runs = vec![run.clone()];
+            app.model.run = Some(prepare_run(run));
+        }
         if name.starts_with("model-register") || name == "model-registration-pending" {
             registration_scenes::prepare(&mut app, name);
         }

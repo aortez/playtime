@@ -440,3 +440,19 @@ See [the recorded measurement](rust-ui-performance.txt). This is prepared-view
 performance evidence, not an end-to-end execution measurement. Service and
 Docker/live gates exercise real run inspection separately; the complete
 restart/recovery matrix remains unimplemented.
+
+
+## Continuous compaction recipes
+
+The harness selector now offers **Continuous conversation with compaction**.
+Its editor exposes trigger percentage, retained complete exchanges, summary cap
+and instructions. Memento handoff controls are inactive and hidden; shared model
+and budget settings remain inherited. See the
+[recipe workflow](rust-continuous-native.md#recipe-and-workbench-workflow).
+
+New reviewed synthetic screenshots:
+[editor](../crates/playtime-ui/tests/snapshots/compaction-editor.png),
+[narrow editor](../crates/playtime-ui/tests/snapshots/compaction-editor-narrow.png),
+[trace](../crates/playtime-ui/tests/snapshots/compaction-trace.png).
+These are presentation fixtures; native evidence comes from the separate saved
+continuous API/workbench gate.

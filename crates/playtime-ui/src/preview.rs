@@ -77,7 +77,10 @@ pub fn prepare(value: Preview) -> PreviewView {
     let parse_limit = l
         .tool_parse_error_limit
         .map_or(retries + 1, |n| u64::from(n.get()));
-    let projected = value.harness.as_ref().is_some_and(|h| h.settings.is_some());
+    let projected = value
+        .harness
+        .as_ref()
+        .is_some_and(|h| h.settings.is_some() || h.compaction.is_some());
     let mut limits = vec![if projected {
         format!(
             "{} wall time · {} generated tokens",
@@ -182,12 +185,24 @@ pub fn prepare(value: Preview) -> PreviewView {
             short(model, "/definition_sha256")
         ));
     }
-    model_lines.push(format!(
-        "Context capacity: {} tokens · Response cap: {} · Handoff cap: {}",
-        thousands(l.context_tokens.get()),
-        thousands(l.tokens_per_call.get()),
-        thousands(l.handoff_tokens.get())
-    ));
+    if value
+        .harness
+        .as_ref()
+        .is_some_and(|h| h.compaction.is_some())
+    {
+        model_lines.push(format!(
+            "Context capacity: {} tokens · Response cap: {}",
+            thousands(l.context_tokens.get()),
+            thousands(l.tokens_per_call.get())
+        ));
+    } else {
+        model_lines.push(format!(
+            "Context capacity: {} tokens · Response cap: {} · Handoff cap: {}",
+            thousands(l.context_tokens.get()),
+            thousands(l.tokens_per_call.get()),
+            thousands(l.handoff_tokens.get())
+        ));
+    }
     if !matches!(adapter, Some("fixture" | "scripted")) {
         model_lines.push(format!(
             "Thinking: {}",
@@ -254,7 +269,11 @@ pub fn prepare(value: Preview) -> PreviewView {
         thousands(value.seeds.files),
         bytes(value.seeds.bytes)
     )];
-    if let Some(seeds) = config.pointer("/recipe/seeds").and_then(Value::as_object) {
+    if let Some(seeds) = config
+        .pointer("/recipe/seeds")
+        .or_else(|| config.get("seeds"))
+        .and_then(Value::as_object)
+    {
         for (name, content) in seeds.iter().take(64) {
             seed_lines.push(format!(
                 "{} · {}",
@@ -279,6 +298,7 @@ pub fn prepare(value: Preview) -> PreviewView {
     sections.push(section("Seed files", seed_lines));
     let inventory = config
         .pointer("/scenario/inventory")
+        .or_else(|| config.pointer("/config/inventory"))
         .or_else(|| config.get("inventory"))
         .and_then(Value::as_str)
         .map(|s| {

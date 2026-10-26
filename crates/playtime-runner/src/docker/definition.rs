@@ -8,6 +8,8 @@ use serde_json::Value;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrozenRecipe {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<CompactionDefinition>,
     pub schema_version: u32,
     pub harness: String,
     pub recipe: Recipe,
@@ -20,9 +22,28 @@ pub struct FrozenRecipe {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_registration: Option<playtime_protocol::api::RegisteredModel>,
 }
+/// Harness-specific inputs frozen at selection, independent of the source's
+/// inactive memento instructions and allocations.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompactionDefinition {
+    pub settings: playtime_protocol::api::CompactionSettings,
+    pub protocol: String,
+    pub inventory: String,
+}
+impl Default for CompactionDefinition {
+    fn default() -> Self {
+        Self {
+            settings: Default::default(),
+            protocol: include_str!("continuous-protocol-v1.txt").into(),
+            inventory: include_str!("continuous-inventory-v1.txt").into(),
+        }
+    }
+}
 impl FrozenRecipe {
     pub fn current(recipe: Recipe) -> Result<Self> {
         let value = Self {
+            compaction: None,
             schema_version: 1,
             harness: "memento_turns_v1".into(),
             recipe,
@@ -37,14 +58,28 @@ impl FrozenRecipe {
     }
     /// Structural validation intentionally does not require current identities.
     pub fn validate(&self) -> Result<()> {
-        if !matches!(
+        if !(matches!(
             (self.schema_version, self.model_registration.is_some()),
             (1, false) | (2, true)
-        ) || self.harness.is_empty()
+        ) && self.compaction.is_none()
+            || self.schema_version == 3 && self.compaction.is_some())
+            || self.harness.is_empty()
             || !self.model_lock.is_object()
             || !self.environment_lock.is_object()
         {
             return Err(Error::Invalid("unsupported recipe definition".into()));
+        }
+        if let Some(c) = &self.compaction {
+            if self.harness != playtime_protocol::api::CONTINUOUS_COMPACTION_V1
+                || c.settings.validation_error().is_some()
+                || [&c.protocol, &c.inventory]
+                    .iter()
+                    .any(|s| s.trim().is_empty() || s.len() > 65536)
+            {
+                return Err(Error::Invalid("invalid compaction definition".into()));
+            }
+        } else if self.harness == playtime_protocol::api::CONTINUOUS_COMPACTION_V1 {
+            return Err(Error::Invalid("missing compaction definition".into()));
         }
         if let Some(model) = &self.model_registration {
             if model.schema_version != 1
@@ -54,9 +89,11 @@ impl FrozenRecipe {
             {
                 return Err(Error::Invalid("invalid retained model registration".into()));
             }
-            self.recipe.check_registered()?;
+            self.recipe
+                .check_for_harness(true, self.compaction.is_some())?;
         } else {
-            self.recipe.check()?;
+            self.recipe
+                .check_for_harness(false, self.compaction.is_some())?;
         }
         if let Some(c) = &self.model_capabilities {
             // Retained evidence belongs to its own lock, not whichever model
@@ -95,8 +132,10 @@ impl FrozenRecipe {
     }
     pub fn executable(&self) -> Result<()> {
         self.validate()?;
-        if self.harness != "memento_turns_v1"
-            || self.environment_lock != serde_json::from_slice::<Value>(IMAGE_LOCK)?
+        if !matches!(
+            self.harness.as_str(),
+            "memento_turns_v1" | "continuous_compaction_v1"
+        ) || self.environment_lock != serde_json::from_slice::<Value>(IMAGE_LOCK)?
         {
             return Err(Error::Invalid(
                 "recipe execution identities are unavailable".into(),
@@ -116,6 +155,9 @@ impl FrozenRecipe {
             && *capabilities != self.resolve_model_capabilities()?
         {
             return Err(Error::Invalid("unsupported model capabilities".into()));
+        }
+        if self.compaction.is_some() {
+            self.check_initial_context()?;
         }
         Ok(())
     }

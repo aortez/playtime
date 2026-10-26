@@ -6,6 +6,50 @@ use playtime_core::MemoryCondition;
 
 pub const RECIPE_HARNESS_SELECTION: &str = "recipe_harness_selection_v1";
 pub const MEMENTO_TURNS_V1: &str = "memento_turns_v1";
+pub const CONTINUOUS_COMPACTION_V1: &str = "continuous_compaction_v1";
+pub const RECIPE_COMPACTION_SETTINGS: &str = "recipe_compaction_settings_v1";
+pub const DEFAULT_COMPACTION_INSTRUCTIONS: &str = "Summarize the older conversation for continued work. Preserve goals, decisions, useful file paths, verified results, failures, unresolved questions, and a concrete next action. Distinguish observations from assumptions. Incorporate still-relevant facts from the previous summary. Return only the summary, without tools.";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CompactionSettings {
+    pub schema_version: u32,
+    pub trigger_percent: u8,
+    pub recent_exchanges: u8,
+    pub summary_tokens: u64,
+    pub instructions: String,
+}
+impl Default for CompactionSettings {
+    fn default() -> Self {
+        Self {
+            schema_version: 1,
+            trigger_percent: 75,
+            recent_exchanges: 2,
+            summary_tokens: 2048,
+            instructions: DEFAULT_COMPACTION_INSTRUCTIONS.into(),
+        }
+    }
+}
+impl CompactionSettings {
+    pub fn validation_error(&self) -> Option<&'static str> {
+        if self.schema_version != 1 {
+            return Some("Unsupported compaction settings version.");
+        }
+        if !(1..=99).contains(&self.trigger_percent) {
+            return Some("Context trigger must be between 1 and 99 percent.");
+        }
+        if self.recent_exchanges > 32 {
+            return Some("Retain between 0 and 32 complete exchanges.");
+        }
+        if !(1..=16384).contains(&self.summary_tokens) {
+            return Some("Summary limit must be between 1 and 16,384 tokens.");
+        }
+        if self.instructions.trim().is_empty() || self.instructions.len() > 65536 {
+            return Some("Compaction instructions must contain 1 to 65,536 UTF-8 bytes.");
+        }
+        None
+    }
+}
 pub const HARNESS_CATALOG_LIMIT: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -45,6 +89,8 @@ pub struct HarnessView {
     pub supported: bool,
     pub version: Option<u32>,
     pub settings: Option<MementoHarnessSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<CompactionSettings>,
 }
 impl HarnessView {
     /// Read explicit, frozen identity only. Legacy configurations without one
@@ -61,6 +107,29 @@ impl HarnessView {
             .ok_or("invalid harness identity")?;
         if retained.is_some_and(|v| v.as_str() != Some(id)) {
             return Err("conflicting harness identities");
+        }
+        if id == CONTINUOUS_COMPACTION_V1 {
+            let settings = value
+                .pointer("/config/settings")
+                .ok_or("missing compaction settings")?;
+            let settings: CompactionSettings = serde_json::from_value(settings.clone())
+                .map_err(|_| "invalid compaction settings")?;
+            if value
+                .pointer("/definition/compaction/settings")
+                .is_some_and(|v| serde_json::to_value(&settings).ok().as_ref() != Some(v))
+            {
+                return Err("conflicting compaction settings");
+            }
+            if let Some(parameters) = value.pointer("/definition/recipe/parameters") {
+                let parameters: RunParameters = serde_json::from_value(parameters.clone())
+                    .map_err(|_| "invalid harness parameters")?;
+                if serde_json::to_value(parameters.common()).ok().as_ref()
+                    != value.pointer("/config/parameters")
+                {
+                    return Err("conflicting common parameters");
+                }
+            }
+            return Self::continuous(settings).map(Some);
         }
         let parameters = value
             .pointer("/scenario/parameters")
@@ -94,6 +163,34 @@ impl HarnessView {
                     .map_or(u64::from(l.tool_parse_retries) + 1, |n| u64::from(n.get())),
                 handoff_attempts: 2,
             }),
+            compaction: None,
+        }
+    }
+    pub fn continuous(settings: CompactionSettings) -> Result<Self, &'static str> {
+        if let Some(error) = settings.validation_error() {
+            return Err(error);
+        }
+        Ok(Self {
+            id: CONTINUOUS_COMPACTION_V1.into(),
+            supported: true,
+            version: Some(1),
+            settings: None,
+            compaction: Some(settings),
+        })
+    }
+    pub fn from_definition(value: &Value) -> Result<Self, &'static str> {
+        let id = value["harness"]
+            .as_str()
+            .ok_or("missing harness identity")?;
+        if id == CONTINUOUS_COMPACTION_V1 {
+            Self::continuous(
+                serde_json::from_value(value["compaction"]["settings"].clone())
+                    .map_err(|_| "invalid compaction settings")?,
+            )
+        } else {
+            let parameters = serde_json::from_value(value["recipe"]["parameters"].clone())
+                .map_err(|_| "invalid harness parameters")?;
+            Ok(Self::project(id, &parameters))
         }
     }
 }

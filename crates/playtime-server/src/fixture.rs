@@ -200,6 +200,7 @@ impl Run {
             records.clear();
         }
         let view = RunView {
+            request_accounting: None,
             harness: None,
             accounting_coverage: None,
             run_id: id,
@@ -577,6 +578,9 @@ impl Application for Fixture {
                 self.catalog
                     .as_ref()
                     .map(|_| RECIPE_HARNESS_SELECTION.into()),
+                self.catalog
+                    .as_ref()
+                    .map(|_| RECIPE_COMPACTION_SETTINGS.into()),
                 self.catalog.as_ref().map(|_| MODEL_SETTINGS.into()),
                 self.catalog.as_ref().map(|_| RECIPE_MODEL_SELECTION.into()),
             ]

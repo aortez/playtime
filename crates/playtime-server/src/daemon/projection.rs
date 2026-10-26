@@ -88,6 +88,7 @@ pub(super) struct Evidence {
 }
 fn base(record: &Admission) -> RunView {
     RunView {
+        request_accounting: None,
         harness: None,
         run_id: record.run_id.clone(),
         mode: record.request.mode,
@@ -171,17 +172,27 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
     view.controller_phase = run.phase;
     view.usage = Some(run.usage);
     view.contention = run.contention;
-    let allowance = run
-        .unsettled_model_intents
+    let allowances: Vec<_> = if let Some(execution) = &run.execution {
+        view.request_accounting = Some(queries.request_accounting().map_err(evidence)?);
+        execution
+            .unsettled_model_intents
+            .iter()
+            .map(|i| i.maximum_tokens)
+            .collect()
+    } else {
+        run.unsettled_model_intents
+            .iter()
+            .map(|i| i.maximum_tokens)
+            .collect()
+    };
+    let allowance = allowances
         .iter()
-        .try_fold(0u64, |total, intent| {
-            total.checked_add(intent.maximum_tokens.map_or(0, |n| n.get()))
-        })
+        .try_fold(0u64, |total, n| total.checked_add(n.map_or(0, |n| n.get())))
         .ok_or_else(|| evidence("allowance overflow"))?;
     view.accounting_coverage = Some(AccountingCoverage {
         schema_version: 1,
         availability: EvidenceAvailability::Available,
-        unsettled_requests: run.unsettled_model_intents.len() as u64,
+        unsettled_requests: allowances.len() as u64,
         unsettled_allowance: allowance,
         frontier: f.clone(),
     });
@@ -221,6 +232,7 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
     });
     let mut metadata: BTreeMap<String, (String, Option<SessionId>, u64)> = BTreeMap::new();
     let mut sequences = BTreeMap::new();
+    let mut capture_sequences = BTreeMap::new();
     let mut after = 0;
     loop {
         let page = queries.history(after, 200, false).map_err(evidence)?;
@@ -253,6 +265,23 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
                         metadata
                             .entry(evidence.provenance.path.to_string())
                             .or_insert(("evidence_provenance".into(), Some(session_id), sequence));
+                    }
+                }
+                ArchiveFact::Execution { event, .. } => {
+                    use playtime_protocol::execution::Fact;
+                    match event.fact {
+                        Fact::CapturePublished { capture } => {
+                            capture_sequences.insert(capture.index.path, sequence);
+                        }
+                        Fact::Observation(o) => {
+                            if let ObservationData::Artifact { content } = o.data {
+                                metadata.insert(
+                                    content.path.to_string(),
+                                    ("controller_observation".into(), None, sequence),
+                                );
+                            }
+                        }
+                        _ => (),
                     }
                 }
                 ArchiveFact::Observation { observation, .. } => {
@@ -360,6 +389,23 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
                 |r| available(&record.run_id, r),
             )),
         });
+    }
+    for item in queries.captures().map_err(evidence)? {
+        let sequence = *capture_sequences
+            .get(&item.capture.index.path)
+            .ok_or_else(|| evidence("capture sequence unavailable"))?;
+        let mut remember = |content: &ContentRef, kind: &str| {
+            metadata.insert(content.path.to_string(), (kind.into(), None, sequence));
+        };
+        remember(&item.capture.workspace, "final_workspace");
+        remember(&item.capture.index, "final_capture_index");
+        remember(&item.index.source_map, "capture_source_map");
+        for file in &item.index.files {
+            if let FileContent::Retained { content } = &file.content {
+                names.insert(content.path.clone(), file.path.clone());
+                remember(content, "file_version");
+            }
+        }
     }
     view.checkpoint = checkpoints.last().map(|c| c.checkpoint.clone());
     let artifacts = queries

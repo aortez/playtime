@@ -12,7 +12,7 @@ use crate::{FileIndex, context::encoded_size};
 
 pub const HARNESS: &str = "continuous_compaction_v1";
 pub const FINISH_SUMMARY_BYTES: usize = 8192;
-pub const DEFAULT_INSTRUCTIONS: &str = "Summarize the older conversation for continued work. Preserve goals, decisions, useful file paths, verified results, failures, unresolved questions, and a concrete next action. Distinguish observations from assumptions. Incorporate still-relevant facts from the previous summary. Return only the summary, without tools.";
+pub const DEFAULT_INSTRUCTIONS: &str = playtime_protocol::api::DEFAULT_COMPACTION_INSTRUCTIONS;
 pub(crate) const MIN_TOOL_RESULT_BYTES: u64 = 512;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

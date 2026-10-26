@@ -289,6 +289,9 @@ pub enum Cleanup {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct RunView {
+    /// Writer-confirmed accounting by explicit request purpose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_accounting: Option<crate::archive_queries::RequestAccounting>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<ArchivedHarness>,
     #[schema(value_type = String)]

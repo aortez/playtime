@@ -556,3 +556,13 @@ launches from the UI, inspects a compaction, and compares two preserved runs.
 Completion means that manual workflow works through the common API with frozen
 inputs and existing enforcement guarantees. It does not mean daemon recovery,
 external harness execution, or unattended studies have been delivered.
+
+
+## Continuous harness delivery (#110)
+
+The saved recipe/API/workbench path now supports `continuous_compaction_v1`.
+[Continuous execution](rust-continuous-native.md) documents the editing workflow,
+schema-3 frozen inputs, active common parameters, final-only capture, inspection
+and native verification. Existing memento recipes retain their reviewed budgets
+and behavior. #111 remains the next increment for richer context visualization
+and compaction comparison; study automation remains deferred.

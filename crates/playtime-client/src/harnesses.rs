@@ -13,7 +13,14 @@ pub(crate) fn validate_preview(
             .map_err(|_| Error::InvalidResponse)?
             .as_ref()
             != view
-            || view.is_some_and(|h| HarnessView::project(&h.id, parameters) != *h))
+            || view.is_some_and(|h| {
+                if h.compaction.is_some() {
+                    serde_json::to_value(parameters.common()).ok().as_ref()
+                        != configuration.pointer("/config/parameters")
+                } else {
+                    HarnessView::project(&h.id, parameters) != *h
+                }
+            }))
     {
         return Err(Error::InvalidResponse);
     }
@@ -57,14 +64,11 @@ impl Client {
 }
 
 fn validate_readback(view: &RecipeHarnessView, definition: &RecipeDefinition) -> Result<()> {
-    let id = definition.inherited["harness"]
-        .as_str()
-        .ok_or(Error::InvalidResponse)?;
-    let parameters = serde_json::from_value(definition.inherited["recipe"]["parameters"].clone())
-        .map_err(|_| Error::InvalidResponse)?;
     if view.execution_recipe_id != definition.execution_recipe_id
         || view.definition_digest != definition.definition_digest
-        || view.harness != HarnessView::project(id, &parameters)
+        || view.harness
+            != HarnessView::from_definition(&definition.inherited)
+                .map_err(|_| Error::InvalidResponse)?
     {
         return Err(Error::InvalidResponse);
     }

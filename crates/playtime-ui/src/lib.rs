@@ -19,4 +19,5 @@ pub mod models;
 
 pub mod registrations;
 
+mod compaction;
 mod recipe_models;

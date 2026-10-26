@@ -616,8 +616,18 @@
       "CloneRecipeRequest": {
         "additionalProperties": false,
         "properties": {
+          "compaction": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompactionSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "harness": {
-            "description": "Omission inherits the source revision. Selection never changes settings.",
+            "description": "Omission inherits the source harness. Switching installs that harness’s defaults; shared budgets are preserved.",
             "type": [
               "string",
               "null"
@@ -658,6 +668,42 @@
           "source",
           "name",
           "prompt"
+        ],
+        "type": "object"
+      },
+      "CompactionSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "instructions": {
+            "type": "string"
+          },
+          "recent_exchanges": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "summary_tokens": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "trigger_percent": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "trigger_percent",
+          "recent_exchanges",
+          "summary_tokens",
+          "instructions"
         ],
         "type": "object"
       },
@@ -1152,6 +1198,16 @@
       },
       "HarnessView": {
         "properties": {
+          "compaction": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompactionSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "description": "Retained verbatim even when this build cannot interpret the identity.",
             "type": "string"
@@ -1920,6 +1976,17 @@
                 "recipe_id": {
                   "$ref": "#/components/schemas/RecipeId"
                 },
+                "request_accounting": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RequestAccounting",
+                      "description": "Writer-confirmed accounting by explicit request purpose."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "run_id": {
                   "type": "string"
                 },
@@ -2118,6 +2185,35 @@
         "minLength": 1,
         "pattern": "^[A-Za-z0-9_-]+$",
         "type": "string"
+      },
+      "PurposeAccounting": {
+        "properties": {
+          "admitted_calls": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "not_dispatched_calls": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "settled_calls": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/UsageSummary"
+          }
+        },
+        "required": [
+          "admitted_calls",
+          "settled_calls",
+          "not_dispatched_calls",
+          "usage"
+        ],
+        "type": "object"
       },
       "Readiness": {
         "properties": {
@@ -2619,6 +2715,37 @@
         ],
         "type": "object"
       },
+      "RequestAccounting": {
+        "properties": {
+          "by_purpose": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PurposeAccounting"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "model_calls": {
+            "description": "None when the archive predates admission evidence. Settlements alone\ncannot establish the number of attempted calls.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "unclassified": {
+            "$ref": "#/components/schemas/PurposeAccounting",
+            "description": "Missing purpose evidence remains explicit, including old omitted raw\nmodel requests; it is never guessed from turns, tool calls or phases."
+          }
+        },
+        "required": [
+          "by_purpose",
+          "unclassified"
+        ],
+        "type": "object"
+      },
       "ResourceLimits": {
         "properties": {
           "command_seconds": {
@@ -2715,11 +2842,21 @@
       "ReviseRecipeRequest": {
         "additionalProperties": false,
         "properties": {
+          "compaction": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CompactionSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "expected_head": {
             "$ref": "#/components/schemas/RecipeId"
           },
           "harness": {
-            "description": "Omission inherits the source revision. Selection never changes settings.",
+            "description": "Omission inherits the source harness. Switching installs that harness’s defaults; shared budgets are preserved.",
             "type": [
               "string",
               "null"
@@ -2934,6 +3071,17 @@
           },
           "recipe_id": {
             "$ref": "#/components/schemas/RecipeId"
+          },
+          "request_accounting": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RequestAccounting",
+                "description": "Writer-confirmed accounting by explicit request purpose."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "run_id": {
             "type": "string"
