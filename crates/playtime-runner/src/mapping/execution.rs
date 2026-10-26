@@ -14,7 +14,51 @@ pub(super) fn request_identity(context: &RequestContext) -> RequestIdentity {
 }
 
 impl Encoder {
-    #[cfg(feature = "test-harness")]
+    pub(super) fn link_compaction(&self, record: &mut playtime_engine::Record) -> Result<()> {
+        use playtime_core::{RequestId, RequestPurpose};
+        use playtime_protocol::compaction::{EvidenceLinks, RequestSource, linked_kind};
+        if !linked_kind(&record.kind) {
+            return Ok(());
+        }
+        let source = |request_id: RequestId, purpose| RequestSource {
+            observation: self.model_sources.get(&request_id).cloned(),
+            request_id,
+            purpose,
+        };
+        let mut requests = Vec::new();
+        if record.kind == "compaction_planned" {
+            for key in ["source_requests", "retained_requests"] {
+                let ids: Vec<RequestId> = serde_json::from_value(record.data[key].clone())?;
+                requests.extend(ids.into_iter().map(|id| source(id, RequestPurpose::Work)));
+            }
+            record.data["previous_summary_request"] =
+                serde_json::to_value(&self.previous_summary_request)?;
+            if let Some(id) = &self.previous_summary_request {
+                requests.push(source(id.clone(), RequestPurpose::Compaction));
+            }
+        } else {
+            let (key, purpose) = if record.kind == "compaction_applied" {
+                ("summary_request_id", RequestPurpose::Compaction)
+            } else {
+                ("request_id", RequestPurpose::Work)
+            };
+            requests.push(source(
+                serde_json::from_value(record.data[key].clone())?,
+                purpose,
+            ));
+        }
+        record.data["evidence"] = serde_json::to_value(EvidenceLinks {
+            schema_version: 1,
+            requests,
+            plan: if record.kind == "compaction_applied" {
+                self.compaction_plan.clone()
+            } else {
+                None
+            },
+        })?;
+        Ok(())
+    }
+
     pub fn use_execution_v2(&mut self) {
         self.execution_v2 = true;
     }

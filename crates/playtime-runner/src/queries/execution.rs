@@ -41,6 +41,61 @@ impl Totals {
     }
 }
 impl ArchiveQueries {
+    /// Bounded inspection at this query's verified frontier. Omitted evidence
+    /// remains explicit; reading never creates a publication receipt.
+    pub fn compaction_history(
+        &self,
+        after: u64,
+        limit: u32,
+    ) -> Result<playtime_protocol::compaction::EvidencePage> {
+        use playtime_protocol::compaction::{EvidenceEntry, EvidencePage, evidence_kind};
+        let page = self.history(after, limit, true)?;
+        let mut entries = Vec::new();
+        for entry in page.entries {
+            if let ArchiveFact::Execution { event, resolved } = entry.fact {
+                match event.fact {
+                    Fact::Observation(observation)
+                        if evidence_kind(&observation.observation_kind) =>
+                    {
+                        entries.push(EvidenceEntry::Recorded {
+                            location: ObservationLocation {
+                                controller_sequence: observation.controller_sequence,
+                                archive_sequence: entry.envelope.sequence,
+                                record_sha256: entry.record_sha256,
+                            },
+                            kind: observation.observation_kind,
+                            request: observation.request,
+                            value: resolved.ok_or_else(|| {
+                                Error::Invalid("evidence payload was not resolved".into())
+                            })?,
+                        });
+                    }
+                    Fact::ObservationOmitted {
+                        controller_sequence,
+                        observation_kind,
+                        request,
+                        reason,
+                        ..
+                    } if evidence_kind(&observation_kind) => {
+                        entries.push(EvidenceEntry::Omitted {
+                            archive_sequence: entry.envelope.sequence,
+                            controller_sequence,
+                            kind: observation_kind,
+                            request,
+                            reason,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(EvidencePage {
+            entries,
+            next_after_sequence: page.next_after_sequence,
+            has_more: page.has_more,
+        })
+    }
+
     /// Lossless per-purpose projection for both record families. Legacy
     /// attribution requires the recorded handoff boolean, never a guess.
     pub fn request_accounting(&self) -> Result<RequestAccounting> {

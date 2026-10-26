@@ -38,7 +38,6 @@ impl<I: IdSource> Controller<I> {
                     && checkpoint.ordinal == self.session
             });
         match proposal {
-            #[cfg(feature = "test-harness")]
             Proposal::Stop(reason) => {
                 if self.config.compaction.is_none()
                     || !matches!(

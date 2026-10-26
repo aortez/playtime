@@ -54,7 +54,7 @@ confirmed memento write and publication of this session's checkpoint. Publicatio
 failure or a late receipt cannot turn a previous failure into success.
 
 This extraction preserves memento's prompts, tools, records, saved definitions,
-limits, and deterministic behavior. Continuous conversation/compaction remains #110.
+limits, and deterministic behavior. Continuous compaction uses the same controller; recipe selection remains #110 step C.
 
 ## Session-neutral request and lifecycle contract
 
@@ -96,12 +96,13 @@ Run the CPU boundary gate with:
 cargo test -p playtime-runner --features test-harness --test workspace_probe --locked
 ```
 
-## Continuous compaction policy (test capability)
+## Continuous compaction policy
 
-`Controller::test_compaction` is available only with `test-harness`. It runs
-`continuous_compaction_v1` through the shared controller, with no production
-selection or alternate effect dispatcher. #110 step B supplies native/archived
-execution and step C supplies recipe/API/workbench integration.
+`Controller::continuous` runs `continuous_compaction_v1` through the shared
+controller and effect dispatcher. The packaged worker supports an explicit
+[continuous native profile](rust-continuous-native.md); recipe/API/workbench
+selection remains #110 step C. `Controller::test_compaction` remains the
+feature-gated CPU test constructor.
 
 `CompactionSettings` version 1 defaults to a 75% projected-request trigger, two
 recent exchanges, a 2,048-token summary cap and explicit editable instructions.
@@ -158,7 +159,8 @@ all work reserves. Rewritten context cannot reuse a server measurement for a
 different prefix. Failure stops explicitly; there is no summarization retry loop.
 Observations retain source/retained request IDs, prior summary, exact before/after
 messages, estimates and their bases, summary content and outcome. Durable
-versioned source-reference validation and archive projections are step B.
+versioned source links and bounded archive projections are described in the
+[native contract](rust-continuous-native.md).
 `compaction_planned` records the decision without claiming request admission;
 the ordinary model-request/admission facts identify any actual attempt. A rejected
 or canceled plan cannot inherit the previous work request's purpose.

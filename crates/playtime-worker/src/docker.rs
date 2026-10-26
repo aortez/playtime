@@ -1,5 +1,6 @@
 //! One retained native effect owner. The controller thread never waits on Docker
 //! or ownership-journal I/O, and a cancelled request cannot create another owner.
+use crate::native_profile::EffectProfile;
 use playtime_docker::{
     CancellationToken, Engine, Ownership, OwnershipJournal, Proposal, ReadyImage, Sandbox, Tool,
     ToolLimits, ToolReply, WorkDeadline,
@@ -16,7 +17,7 @@ use playtime_ollama::{
 use playtime_protocol::worker::Binding;
 use playtime_runner::{
     CheckpointBytes, Effects, Error, Result,
-    docker::{LiveModel, Profile},
+    docker::{CompletedResponse, LiveModel, NativeProfile},
 };
 use playtime_storage::CommittedFrontier;
 use playtime_worker_control::{Bootstrap, boot_ms, write_once};
@@ -94,7 +95,7 @@ struct Reply {
 }
 struct Actor {
     sandbox: Sandbox,
-    profile: Profile,
+    profile: EffectProfile,
     memory: Memory,
     journal: Arc<Journal>,
     model: Model,
@@ -107,6 +108,10 @@ struct Actor {
 enum Model {
     Scripted(VecDeque<playtime_engine::simulation::ModelScript>),
     Live(Box<Live>),
+    ContinuousScripted {
+        work: VecDeque<CompletedResponse>,
+        summaries: VecDeque<CompletedResponse>,
+    },
 }
 /// The live transport; CPU tests replace the native one.
 struct Port(Box<dyn Transport>);
@@ -294,7 +299,13 @@ fn forward(
 /// No retry here: only a tool-parse failure lets the controller ask again.
 fn outcome(result: ChatResult) -> Outcome {
     match result.outcome {
-        Ok(response) => Outcome::Model(response),
+        Ok(response) => match result.finish_reason {
+            Some(finish_reason) => Outcome::ModelCompleted {
+                response,
+                finish_reason,
+            },
+            None => Outcome::Model(response),
+        },
         Err(failure) => Outcome::ModelError(match failure.kind {
             FailureKind::BackendToolParse => ModelFailure::Parse(failure.detail),
             FailureKind::Timeout => ModelFailure::Timeout(failure.detail),
@@ -315,14 +326,11 @@ impl Actor {
     /// bridge, as uid 1000, before session 1's first request. Any failure stops
     /// the run before the model is asked anything.
     async fn seed(&mut self, deadline: Instant, cancel: &CancellationToken) -> Result<()> {
-        let Some(recipe) = &self.profile.recipe else {
-            return Ok(());
-        };
         let limits = ToolLimits {
             command_seconds: 10.0,
-            output_bytes: self.profile.scenario.parameters.limits.output_bytes.get() as u32,
+            output_bytes: self.profile.parameters.limits.output_bytes.get() as u32,
         };
-        for (path, content) in &recipe.seeds {
+        for (path, content) in &self.profile.seeds {
             let write = Tool::WriteFile {
                 path: format!("seeds/{path}"),
                 content: content.clone(),
@@ -357,12 +365,35 @@ impl Actor {
         let cancel = task.cancel.clone();
         let map = |e: playtime_docker::Error| Error::Uncertain(e.to_string());
         let outcome = match &effect.kind {
-            EffectKind::StartWorkspace
-            | EffectKind::CaptureWorkspace
-            | EffectKind::PublishCapture(_) => Outcome::Failed(
-                "native worker does not implement the test-only workspace profile".into(),
-            ),
+            EffectKind::StartWorkspace => {
+                if !self.profile.continuous {
+                    return Err(Error::Invalid(
+                        "memento cannot start a run-scoped workspace".into(),
+                    ));
+                }
+                if let Model::Live(live) = &mut self.model {
+                    live.adapter
+                        .inspect(false, deadline, &cancel)
+                        .await
+                        .map_err(|e| Error::Invalid(format!("live model identity: {e}")))?;
+                }
+                self.sandbox
+                    .initialize(deadline, cancel.clone())
+                    .await
+                    .map_err(map)?;
+                self.sandbox
+                    .start_workspace(deadline, cancel.clone())
+                    .await
+                    .map_err(map)?;
+                self.seed(deadline, &cancel).await?;
+                Outcome::WorkspaceStarted
+            }
             EffectKind::StartSession { ordinal, .. } => {
+                if self.profile.continuous {
+                    return Err(Error::Invalid(
+                        "continuous profile cannot start sessions".into(),
+                    ));
+                }
                 // A changed model stops the run before this session dispatches.
                 if let Model::Live(live) = &mut self.model {
                     live.adapter
@@ -386,6 +417,20 @@ impl Actor {
                 Outcome::Started(self.memory.clone())
             }
             EffectKind::Model(request) => match &mut self.model {
+                Model::ContinuousScripted { work, summaries } => {
+                    let reply = match request.purpose {
+                        playtime_core::RequestPurpose::Work => work.pop_front(),
+                        playtime_core::RequestPurpose::Compaction => summaries.pop_front(),
+                        playtime_core::RequestPurpose::Handoff => None,
+                    }
+                    .ok_or_else(|| {
+                        Error::Invalid("continuous scripted responses exhausted".into())
+                    })?;
+                    Outcome::ModelCompleted {
+                        response: reply.response,
+                        finish_reason: reply.finish_reason,
+                    }
+                }
                 Model::Scripted(models) => {
                     let model = models
                         .pop_front()
@@ -455,7 +500,7 @@ impl Actor {
                 };
                 let limits = ToolLimits {
                     command_seconds: command_ms as f64 / 1000.0,
-                    output_bytes: self.profile.scenario.parameters.limits.output_bytes.get() as u32,
+                    output_bytes: self.profile.parameters.limits.output_bytes.get() as u32,
                 };
                 Outcome::Tool(serde_json::to_value(
                     self.sandbox
@@ -464,7 +509,10 @@ impl Actor {
                         .map_err(map)?,
                 )?)
             }
-            EffectKind::Snapshot { session_id } => {
+            EffectKind::Snapshot { .. } | EffectKind::CaptureWorkspace => {
+                if matches!(effect.kind, EffectKind::CaptureWorkspace) != self.profile.continuous {
+                    return Err(Error::Invalid("capture differs from native profile".into()));
+                }
                 let profile = capture_profile(&self.profile, &task.confirmed)?;
                 let mut stopped = self
                     .sandbox
@@ -492,24 +540,35 @@ impl Actor {
                         )
                     })
                     .collect();
-                self.memory = Memory {
-                    status: candidate.memory().status.clone(),
-                    content: candidate.memory().content.clone(),
+                let path = match &effect.kind {
+                    EffectKind::Snapshot { session_id } => {
+                        format!("sessions/{session_id}/workspace.tar")
+                    }
+                    _ => "artifacts/final/workspace.tar".into(),
                 };
-                let snapshot = playtime_engine::Snapshot {
-                    workspace: playtime_storage::content_ref(
-                        playtime_core::ArchivePath::new(format!(
-                            "sessions/{session_id}/workspace.tar"
-                        ))
-                        .unwrap(),
-                        workspace.tar(),
-                    ),
-                    files,
-                    memory: self.memory.clone(),
+                let reference = playtime_storage::content_ref(
+                    playtime_core::ArchivePath::new(path).unwrap(),
+                    workspace.tar(),
+                );
+                let outcome = if self.profile.continuous {
+                    Outcome::WorkspaceCaptured(playtime_engine::WorkspaceSnapshot {
+                        workspace: reference,
+                        files,
+                    })
+                } else {
+                    self.memory = Memory {
+                        status: candidate.memory().status.clone(),
+                        content: candidate.memory().content.clone(),
+                    };
+                    Outcome::Snapshot(playtime_engine::Snapshot {
+                        workspace: reference,
+                        files,
+                        memory: self.memory.clone(),
+                    })
                 };
-                return Ok((Outcome::Snapshot(snapshot), Some(candidate)));
+                return Ok((outcome, Some(candidate)));
             }
-            EffectKind::PublishCheckpoint(_) => Outcome::Published,
+            EffectKind::PublishCheckpoint(_) | EffectKind::PublishCapture(_) => Outcome::Published,
             EffectKind::Cleanup => {
                 let cleanup = self.sandbox.cleanup(deadline, cancel).await;
                 let evidence =
@@ -538,7 +597,10 @@ impl Actor {
     }
 }
 
-fn capture_profile(profile: &Profile, confirmed: &CommittedFrontier) -> Result<CaptureProfile> {
+fn capture_profile(
+    profile: &EffectProfile,
+    confirmed: &CommittedFrontier,
+) -> Result<CaptureProfile> {
     let usage = confirmed.usage();
     let add = |a: u64, b: u64| {
         a.checked_add(b)
@@ -584,7 +646,7 @@ fn capture_profile(profile: &Profile, confirmed: &CommittedFrontier) -> Result<C
 
 pub(crate) struct NativeEffects {
     prepared: Option<(ReadyImage, Ownership, Arc<Journal>, PathBuf, Model)>,
-    profile: Profile,
+    profile: EffectProfile,
     sender: Option<mpsc::SyncSender<Task>>,
     receiver: Option<mpsc::Receiver<Reply>>,
     chunks: Option<mpsc::Receiver<(u64, serde_json::Value)>>,
@@ -595,8 +657,12 @@ pub(crate) struct NativeEffects {
     candidate: Option<SnapshotCandidate>,
 }
 impl NativeEffects {
-    pub async fn prepare(profile: Profile, bootstrap: &Bootstrap) -> crate::Result<Self> {
+    pub async fn prepare_native(
+        profile: NativeProfile,
+        bootstrap: &Bootstrap,
+    ) -> crate::Result<Self> {
         profile.validate()?;
+        let profile = EffectProfile::from(profile);
         let cli = Cli::resolve(
             &profile.selection.executable,
             &profile.selection.socket,
@@ -646,7 +712,11 @@ impl NativeEffects {
             slot: Arc::new(tokio::sync::Semaphore::new(1)),
         });
         let model = match &profile.model {
-            None => Model::Scripted(profile.scenario.models.clone().into()),
+            None if profile.continuous => Model::ContinuousScripted {
+                work: profile.work_responses.clone().into(),
+                summaries: profile.summary_responses.clone().into(),
+            },
+            None => Model::Scripted(profile.models.clone().into()),
             Some(model) => {
                 let mut live = Live::prepare(model)?;
                 if model.registration.is_some() {
@@ -686,7 +756,7 @@ impl Effects for NativeEffects {
         let monotonic = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
         let now_ns = monotonic.tv_sec as u64 * 1_000_000_000 + monotonic.tv_nsec as u64;
         let end = started_ms
-            .checked_add(self.profile.scenario.parameters.limits.wall_seconds.get() * 1000)
+            .checked_add(self.profile.parameters.limits.wall_seconds.get() * 1000)
             .ok_or_else(|| Error::Invalid("work deadline overflow".into()))?;
         let work = WorkDeadline::at(now_ns + end.saturating_sub(now_boot) * 1_000_000)
             .map_err(|e| Error::Invalid(e.to_string()))?;
@@ -837,13 +907,36 @@ impl Effects for NativeEffects {
             !matches!(
                 effect.kind,
                 EffectKind::Snapshot { .. }
+                    | EffectKind::CaptureWorkspace
+                    | EffectKind::PublishCapture(_)
                     | EffectKind::Cleanup
                     | EffectKind::PublishCheckpoint(_)
             ),
         ));
         Ok(())
     }
+    fn capture<'a>(&'a self, capture: &playtime_engine::Capture) -> Result<CheckpointBytes<'a>> {
+        let candidate = self
+            .candidate
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("no validated stopped capture".into()))?;
+        if playtime_storage::content_ref(
+            capture.snapshot.workspace.path.clone(),
+            candidate.workspace().tar(),
+        ) != capture.snapshot.workspace
+        {
+            return Err(Error::Invalid(
+                "native capture identity differs from controller".into(),
+            ));
+        }
+        self.candidate_bytes()
+    }
     fn checkpoint<'a>(&'a self, _: &playtime_engine::Checkpoint) -> Result<CheckpointBytes<'a>> {
+        self.candidate_bytes()
+    }
+}
+impl NativeEffects {
+    fn candidate_bytes(&self) -> Result<CheckpointBytes<'_>> {
         let workspace = self
             .candidate
             .as_ref()

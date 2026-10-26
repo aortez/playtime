@@ -4,7 +4,9 @@
 control. It supports controller simulation, Docker with a scripted model, and
 Docker with live Ollama through `playtime-ollama`. It has no public API server,
 SQLite ledger, or UI. Native tool text travels only to the fixed in-container
-bridge; it never reaches a host shell.
+bridge; it never reaches a host shell. The explicit
+[continuous native profile](rust-continuous-native.md) shares this worker and
+prepared-writer handoff; catalog/API selection remains a later slice.
 
 `xtask` builds and verifies the static worker bundle. The
 [daemon](rust-daemon.md) owns public admission and the

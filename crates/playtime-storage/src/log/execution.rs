@@ -12,6 +12,9 @@ pub(super) struct ExecutionState {
     settled: BTreeSet<RequestId>,
     claims: BTreeMap<RequestId, RequestIdentity>,
     capture: Option<CaptureRef>,
+    model_sources: BTreeMap<RequestId, ObservationLocation>,
+    compaction_plan: Option<(u64, ObservationLocation)>,
+    previous_summary_request: Option<RequestId>,
 }
 
 impl LogState {
@@ -150,21 +153,51 @@ impl LogState {
                         "observation sequences must increase",
                     ));
                 }
-                if let ObservationData::Artifact { content } = &source.data {
-                    self.typed_reference(content, ReferenceRole::ObservationPayload, limits)?;
-                    source.resolve(&directory.verify(content, limits.content_bytes)?)?;
-                    references.push(content.clone());
+                let value = match &source.data {
+                    ObservationData::Artifact { content } => {
+                        self.typed_reference(content, ReferenceRole::ObservationPayload, limits)?;
+                        let value =
+                            source.resolve(&directory.verify(content, limits.content_bytes)?)?;
+                        references.push(content.clone());
+                        value
+                    }
+                    ObservationData::Inline { value } => value.clone(),
+                };
+                let location = ObservationLocation {
+                    controller_sequence: source.controller_sequence,
+                    archive_sequence: std::num::NonZeroU64::new(self.sequence + 1).unwrap(),
+                    record_sha256: crate::sha256(bytes),
+                };
+                self.validate_compaction(source, &value)?;
+                match source.observation_kind.as_str() {
+                    "model_request" => {
+                        self.execution.model_sources.insert(
+                            source.request.as_ref().unwrap().request_id.clone(),
+                            location.clone(),
+                        );
+                    }
+                    "compaction_planned" => {
+                        self.execution.compaction_plan =
+                            Some((value["ordinal"].as_u64().unwrap(), location.clone()));
+                    }
+                    "compaction_applied" => {
+                        self.execution.previous_summary_request =
+                            Some(source.request.as_ref().unwrap().request_id.clone());
+                        self.execution.compaction_plan = None;
+                    }
+                    _ => {}
                 }
-                self.observations.insert(
-                    source.controller_sequence.get(),
-                    ObservationLocation {
-                        controller_sequence: source.controller_sequence,
-                        archive_sequence: std::num::NonZeroU64::new(self.sequence + 1).unwrap(),
-                        record_sha256: crate::sha256(bytes),
-                    },
-                );
+                self.observations
+                    .insert(source.controller_sequence.get(), location);
             }
-            Fact::ObservationOmitted { request, .. } => {
+            Fact::ObservationOmitted {
+                request,
+                observation_kind,
+                ..
+            } => {
+                if observation_kind == "compaction_planned" {
+                    self.execution.compaction_plan = None;
+                }
                 if let Some(request) = request {
                     self.record_claim(request)?;
                 }
@@ -253,6 +286,66 @@ impl LogState {
             .insert(request.request_id.clone(), request.clone());
         Ok(())
     }
+    fn validate_compaction(
+        &self,
+        observation: &playtime_protocol::execution::Observation,
+        value: &serde_json::Value,
+    ) -> Result<()> {
+        let Some(links) = playtime_protocol::compaction::validate(observation, value)? else {
+            return Ok(());
+        };
+        for source in &links.requests {
+            let Some((request, _)) = self.execution.admitted.get(&source.request_id) else {
+                return Err(StorageError::malformed(
+                    "compaction source lacks admitted request",
+                ));
+            };
+            if request.purpose != source.purpose
+                || request.scope != playtime_core::RequestScope::Run
+                || self.execution.model_sources.get(&source.request_id)
+                    != source.observation.as_ref()
+            {
+                return Err(StorageError::malformed(
+                    "compaction source differs from retained request evidence",
+                ));
+            }
+            if let Some(location) = &source.observation {
+                self.validate_source(location, self.sequence)?;
+            }
+        }
+        if observation.observation_kind == "compaction_applied" {
+            if links.plan.as_ref()
+                != self
+                    .execution
+                    .compaction_plan
+                    .as_ref()
+                    .map(|(_, location)| location)
+                || self
+                    .execution
+                    .compaction_plan
+                    .as_ref()
+                    .is_some_and(|(ordinal, _)| value["ordinal"].as_u64() != Some(*ordinal))
+            {
+                return Err(StorageError::malformed(
+                    "compaction replacement differs from retained plan",
+                ));
+            }
+            if let Some(location) = &links.plan {
+                self.validate_source(location, self.sequence)?;
+            }
+        }
+        if observation.observation_kind == "compaction_planned" {
+            let previous: Option<RequestId> =
+                serde_json::from_value(value["previous_summary_request"].clone())
+                    .map_err(StorageError::malformed)?;
+            if previous != self.execution.previous_summary_request {
+                return Err(StorageError::malformed(
+                    "compaction prior-summary identity differs",
+                ));
+            }
+        }
+        Ok(())
+    }
     fn validate_request(&self, request: &RequestIdentity) -> Result<u64> {
         match self.execution.admitted.get(&request.request_id) {
             Some((admitted, maximum)) if admitted == request => Ok(*maximum),
@@ -266,5 +359,116 @@ impl LogState {
             return Err(StorageError::malformed("request settled twice"));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use playtime_core::{RequestPurpose, RequestScope};
+    use playtime_protocol::{
+        compaction::{EvidenceLinks, RequestSource},
+        execution::Observation,
+        observations::ObservationIdentity,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn compaction_links_require_exact_admitted_sources_and_retained_plan() {
+        let location = |sequence| ObservationLocation {
+            controller_sequence: std::num::NonZeroU64::new(sequence).unwrap(),
+            archive_sequence: std::num::NonZeroU64::new(sequence).unwrap(),
+            record_sha256: crate::sha256(format!("record-{sequence}").as_bytes()),
+        };
+        let work = RequestIdentity {
+            effect_id: 1.try_into().unwrap(),
+            request_id: RequestId::new("work").unwrap(),
+            call: 1.try_into().unwrap(),
+            scope: RequestScope::Run,
+            purpose: RequestPurpose::Work,
+        };
+        let summary = RequestIdentity {
+            effect_id: 2.try_into().unwrap(),
+            request_id: RequestId::new("summary").unwrap(),
+            call: 2.try_into().unwrap(),
+            scope: RequestScope::Run,
+            purpose: RequestPurpose::Compaction,
+        };
+        let mut state = LogState {
+            sequence: 4,
+            ..Default::default()
+        };
+        for (id, request) in [(1, &work), (2, &summary)] {
+            state
+                .execution
+                .admitted
+                .insert(request.request_id.clone(), (request.clone(), 512));
+            state
+                .execution
+                .model_sources
+                .insert(request.request_id.clone(), location(id));
+            state.observations.insert(id, location(id));
+        }
+        state.observations.insert(3, location(3));
+        let mut observation = Observation {
+            controller_sequence: 5.try_into().unwrap(),
+            elapsed_ms: 5,
+            scope: RequestScope::Run,
+            observation_kind: "compaction_planned".into(),
+            identity: Default::default(),
+            request: None,
+            data: ObservationData::Inline { value: json!({}) },
+        };
+        let planned = json!({"ordinal":1,"source_requests":["work"],"retained_requests":[],"previous_summary":null,"previous_summary_request":null,
+            "before_messages":[],"input_bound":1000,"projected_tokens":1512,"estimate_basis":"input_bytes",
+            "evidence": EvidenceLinks { schema_version: 1, requests: vec![RequestSource { request_id: work.request_id.clone(), purpose: RequestPurpose::Work, observation: Some(location(1)) }], plan: None }});
+        state.validate_compaction(&observation, &planned).unwrap();
+        for (pointer, replacement) in [
+            ("/evidence/schema_version", json!(2)),
+            (
+                "/evidence/requests/0/observation/record_sha256",
+                json!("0".repeat(64)),
+            ),
+            ("/evidence/requests/0/observation", json!(null)),
+            ("/evidence/requests/0/purpose", json!("compaction")),
+            ("/source_requests/0", json!("missing")),
+        ] {
+            let mut bad = planned.clone();
+            *bad.pointer_mut(pointer).unwrap() = replacement;
+            assert!(
+                state.validate_compaction(&observation, &bad).is_err(),
+                "{pointer}"
+            );
+        }
+        // Absent source bytes are allowed only when the archive actually lacks
+        // that observation; admission/accounting still retain their own evidence.
+        state.execution.model_sources.remove(&work.request_id);
+        let mut omitted = planned.clone();
+        omitted["evidence"]["requests"][0]["observation"] = json!(null);
+        state.validate_compaction(&observation, &omitted).unwrap();
+        state.execution.compaction_plan = Some((1, location(3)));
+        observation.observation_kind = "compaction_applied".into();
+        observation.identity = ObservationIdentity {
+            request_id: Some(summary.request_id.clone()),
+            ..Default::default()
+        };
+        observation.request = Some(summary.clone());
+        let applied = json!({"ordinal":1,"summary_request_id":"summary","summary":"checked facts","messages":[],
+            "input_bound":1000,"projected_tokens":1512,"estimate_basis":"input_bytes",
+            "evidence":EvidenceLinks { schema_version:1, requests:vec![RequestSource { request_id:summary.request_id.clone(), purpose:RequestPurpose::Compaction, observation:Some(location(2)) }], plan:Some(location(3)) }});
+        state.validate_compaction(&observation, &applied).unwrap();
+        for (pointer, replacement) in [
+            ("/ordinal", json!(2)),
+            ("/summary_request_id", json!("work")),
+            ("/evidence/plan", json!(null)),
+            ("/evidence/plan/record_sha256", json!("f".repeat(64))),
+        ] {
+            let mut bad = applied.clone();
+            *bad.pointer_mut(pointer).unwrap() = replacement;
+            assert!(
+                state.validate_compaction(&observation, &bad).is_err(),
+                "{pointer}"
+            );
+        }
     }
 }

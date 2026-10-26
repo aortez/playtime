@@ -76,6 +76,9 @@ pub(crate) struct Encoder {
     pub finished: bool,
     queue: VecDeque<EncodedEvent>,
     sources: BTreeMap<u64, (ObservationLocation, ObservationIdentity)>,
+    model_sources: BTreeMap<playtime_core::RequestId, ObservationLocation>,
+    compaction_plan: Option<ObservationLocation>,
+    previous_summary_request: Option<playtime_core::RequestId>,
     intents: BTreeSet<u64>,
     sessions: BTreeMap<SessionId, SessionDelivery>,
     previous_files: FileIndex,
@@ -129,6 +132,9 @@ impl Encoder {
             finished: false,
             queue: VecDeque::new(),
             sources: BTreeMap::new(),
+            model_sources: BTreeMap::new(),
+            compaction_plan: None,
+            previous_summary_request: None,
             intents: BTreeSet::new(),
             sessions: BTreeMap::new(),
             previous_files: initial_files,
@@ -176,7 +182,10 @@ impl Encoder {
 
     pub fn observations(&mut self, time: &UtcTime, records: Vec<BoundRecord>) -> Result<()> {
         for entry in records {
-            let record = entry.record;
+            let mut record = entry.record;
+            if self.execution_v2 {
+                self.link_compaction(&mut record)?;
+            }
             let original_sequence = NonZeroU64::new(record.sequence).unwrap();
             let source = ControllerRecord {
                 sequence: original_sequence,
@@ -282,7 +291,20 @@ impl Encoder {
                     log_cost,
                 })?;
                 self.sources
-                    .insert(record.sequence, (location, entry.identity));
+                    .insert(record.sequence, (location.clone(), entry.identity.clone()));
+                if self.execution_v2 {
+                    match record.kind.as_str() {
+                        "model_request" => {
+                            self.model_sources
+                                .insert(entry.identity.request_id.unwrap(), location);
+                        }
+                        "compaction_planned" => self.compaction_plan = Some(location),
+                        "compaction_applied" => {
+                            self.previous_summary_request = entry.identity.request_id
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
         Ok(())

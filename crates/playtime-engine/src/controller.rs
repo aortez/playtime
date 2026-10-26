@@ -172,16 +172,34 @@ impl<I: IdSource> Controller<I> {
         ids: I,
         now_ms: u64,
     ) -> Result<Self, InvalidValue> {
+        Self::continuous(
+            config,
+            run_id,
+            RunMode::Simulation,
+            ids,
+            now_ms,
+            ToolPolicy::Simulation,
+        )
+    }
+
+    pub fn continuous(
+        config: crate::compaction::CompactionConfig,
+        run_id: RunId,
+        mode: RunMode,
+        ids: I,
+        now_ms: u64,
+        tools: ToolPolicy,
+    ) -> Result<Self, InvalidValue> {
         config.settings.validate(&config.parameters)?;
         let policy = Policy::compaction(&config)?;
         Self::configured(
             RuntimeConfig::compaction(config),
             policy,
             run_id,
-            RunMode::Simulation,
+            mode,
             ids,
             now_ms,
-            ToolPolicy::Simulation,
+            tools,
         )
     }
 

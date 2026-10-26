@@ -164,6 +164,11 @@ compaction and claim processes continued. Intermediate workspace snapshots would
 need a separate design and should be shown as unavailable until supported. The
 comparison UI must expose this difference from memento's session checkpoints.
 
+The [native execution slice](rust-continuous-native.md) supplies archive evidence,
+normal-completion metadata, one continuous workshop and final capture through an
+explicit smoke preparation capability. Recipe/API/workbench selection remains
+#110 step C.
+
 ## Proposed definition and API contracts
 
 ### Definitions and frozen execution

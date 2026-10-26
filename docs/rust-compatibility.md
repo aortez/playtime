@@ -17,6 +17,28 @@ and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
 
+## Continuous native execution (#110 step B, 2026-10-26)
+
+Promotes the existing compaction controller behind an explicit frozen native
+profile. It uses input manifest v2 and `execution_v2`, with no fabricated sessions.
+Version-1 evidence links identify original work/summary request observations and
+the retained plan by sequence and record hash; missing sources stay explicit.
+`compaction-links-v1.json` is a separate serialization golden. Storage validates
+admission, purpose, scope and source locations for inline and external payloads;
+the bounded `compaction_history` projection preserves omissions.
+
+Ollama now carries the first terminal `done_reason` to the shared controller.
+Missing metadata remains unknown; truncated summaries cannot replace history.
+One native agent and its absolute deadline survive compactions, followed by one
+stopped capture and the existing publication/cleanup barriers. The package
+capability digest includes the new fixed smoke template and probe seed. Existing
+memento goldens, recipes, allocations, model/environment locks and service ledger
+are unchanged. Catalog/API/workbench selection remains step C.
+
+See [native profile and evidence](rust-continuous-native.md) for the explicit
+smoke allocations, gates and retained failed attempts. This does not implement
+restart/recovery or continuation from an archive.
+
 ## Continuous compaction policy (#110 step A, 2026-10-26)
 
 Adds the test-only `continuous_compaction_v1` controller policy and version-1

@@ -60,7 +60,6 @@ impl RuntimeConfig {
             compaction: None,
         }
     }
-    #[cfg(feature = "test-harness")]
     pub fn compaction(config: crate::compaction::CompactionConfig) -> Self {
         Self {
             parameters: config.parameters.clone(),

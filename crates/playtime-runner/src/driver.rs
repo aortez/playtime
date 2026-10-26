@@ -73,6 +73,7 @@ pub struct PreparedExecution {
 
 enum ExecutionConfig {
     Memento(Box<playtime_engine::ControllerConfig>),
+    Continuous(Box<playtime_engine::compaction::CompactionConfig>),
     #[cfg(feature = "test-harness")]
     Workspace(Box<playtime_engine::WorkspaceConfig>),
 }
@@ -108,7 +109,7 @@ impl PreparedExecution {
                 "prepared identity changed before worker handoff".into(),
             ));
         }
-        if reader.manifest().schema_version != 1 {
+        if reader.manifest().schema_version != 1 && native.is_none() {
             return Err(Error::Invalid(
                 "production worker supports only the memento v1 execution contract".into(),
             ));
@@ -124,38 +125,69 @@ impl PreparedExecution {
                 "executing worker bytes differ from frozen identity".into(),
             ));
         }
-        let (scenario, mode, config, adapters): (_, _, _, Box<dyn crate::Effects>) =
-            if let Some(effects) = native {
-                let profile: crate::docker::Profile = serde_json::from_slice(&scenario_bytes)?;
-                profile.validate()?;
-                if reader
-                    .manifest()
-                    .files
-                    .iter()
-                    .any(|r| r.path.as_str() == playtime_protocol::recovery::EXECUTION_CONTRACT)
-                    || prepared.limits != profile.storage
-                    || reader.descriptor().mode != profile.mode
-                {
-                    return Err(Error::Invalid(
-                        "invalid Docker profile or simulation recovery authorization".into(),
-                    ));
+        let (mode, config, adapters, cancel_at_ms, fail_record_sequence): (
+            _,
+            _,
+            Box<dyn crate::Effects>,
+            _,
+            _,
+        ) = if let Some(effects) = native {
+            let profile = crate::docker::NativeProfile::decode(&scenario_bytes)?;
+            if reader
+                .manifest()
+                .files
+                .iter()
+                .any(|r| r.path.as_str() == playtime_protocol::recovery::EXECUTION_CONTRACT)
+                || prepared.limits != *profile.storage()
+                || reader.descriptor().mode != profile.mode()
+                || reader.manifest().schema_version != profile.manifest_version()
+            {
+                return Err(Error::Invalid(
+                    "invalid native profile, manifest or recovery authorization".into(),
+                ));
+            }
+            let mode = profile.mode();
+            let config = match profile {
+                crate::docker::NativeProfile::Memento(profile) => {
+                    ExecutionConfig::Memento(Box::new(profile.config()))
                 }
-                let config = profile.config();
-                (profile.scenario, profile.mode, config, effects)
-            } else {
-                let scenario: Scenario = serde_json::from_slice(&scenario_bytes)?;
-                crate::recovery::verify_worker_contract(
-                    &reader,
-                    &snapshot,
-                    &scenario,
-                    &prepared.limits,
-                )?;
-                let adapters = ScriptedAdapters::new(&scenario)?;
-                let config = adapters.config().clone();
-                (scenario, RunMode::Simulation, config, Box::new(adapters))
+                crate::docker::NativeProfile::Continuous(profile) => {
+                    ExecutionConfig::Continuous(Box::new(profile.config))
+                }
             };
-        if prepared.limits.event_log_bytes != scenario.parameters.limits.log_bytes.get()
-            || config.initial_workspace != reader.manifest().initial_workspace
+            (mode, config, effects, None, None)
+        } else {
+            let scenario: Scenario = serde_json::from_slice(&scenario_bytes)?;
+            crate::recovery::verify_worker_contract(
+                &reader,
+                &snapshot,
+                &scenario,
+                &prepared.limits,
+            )?;
+            let adapters = ScriptedAdapters::new(&scenario)?;
+            let config = ExecutionConfig::Memento(Box::new(adapters.config().clone()));
+            (
+                RunMode::Simulation,
+                config,
+                Box::new(adapters),
+                scenario.cancel_at_ms,
+                scenario.fail_record_sequence,
+            )
+        };
+        let (log_bytes, workspace) = match &config {
+            ExecutionConfig::Memento(config) => (
+                config.parameters.limits.log_bytes.get(),
+                &config.initial_workspace,
+            ),
+            ExecutionConfig::Continuous(config) => (
+                config.parameters.limits.log_bytes.get(),
+                &config.initial_workspace,
+            ),
+            #[cfg(feature = "test-harness")]
+            ExecutionConfig::Workspace(_) => unreachable!(),
+        };
+        if prepared.limits.event_log_bytes != log_bytes
+            || workspace != &reader.manifest().initial_workspace
         {
             return Err(Error::Invalid(
                 "frozen input/configuration allowance mismatch".into(),
@@ -164,10 +196,10 @@ impl PreparedExecution {
         Ok(Self {
             writer,
             prepared: prepared.clone(),
-            cancel_at_ms: scenario.cancel_at_ms,
-            fail_record_sequence: scenario.fail_record_sequence,
+            cancel_at_ms,
+            fail_record_sequence,
             mode,
-            config: ExecutionConfig::Memento(Box::new(config)),
+            config,
             adapters,
             image: reader.manifest().worker.clone(),
         })
@@ -289,6 +321,25 @@ fn execute(
                 config.initial_files.clone(),
             ),
         ),
+        ExecutionConfig::Continuous(config) => {
+            let mut encoder = Encoder::new(
+                prepared.identity.run_id.clone(),
+                prepared.limits.clone(),
+                config.initial_files.clone(),
+            );
+            encoder.use_execution_v2();
+            (
+                Controller::continuous(
+                    *config,
+                    prepared.identity.run_id.clone(),
+                    mode,
+                    SequentialIds,
+                    start_ms,
+                    adapters.policy(),
+                )?,
+                encoder,
+            )
+        }
         #[cfg(feature = "test-harness")]
         ExecutionConfig::Workspace(config) => {
             let mut encoder = Encoder::new(

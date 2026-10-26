@@ -53,11 +53,12 @@ neither grants execution authority nor resumes an interrupted run.
 
 ## Session-neutral execution v2
 
-The test workspace profile uses input-manifest version 2 to declare its read
-contract. Existing v1 manifest/record decoders remain strict; current storage
+The test workspace profile and explicit continuous native profile use
+input-manifest version 2 to declare their read contract. Existing v1 manifest/record decoders remain strict; current storage
 explicitly opts into both supported manifest families. A v1-only reader refuses
-the v2 manifest before interpreting its log. Production worker acquisition still
-requires the memento v1 profile. Feature-gated `acquire_probe` checks the v2
+the v2 manifest before interpreting its log. Native worker acquisition accepts
+only the matching frozen memento v1 or continuous v2 family, and rejects the test
+probe. Feature-gated `acquire_probe` checks the v2
 profile/version, allocation, initial input and exact executing image before
 constructing the same driver loop. This is an explicit CPU test capability, not
 a new production launch route or catalog choice.
@@ -81,7 +82,10 @@ and run-scoped unresolved intents. `request_accounting()` reconciles purposes wi
 committed aggregate usage for both formats. V2 uses mandatory admission identity;
 v1 attribution requires the recorded `handoff` boolean. Missing old raw evidence
 is unclassified, and absent admission evidence makes the call count unavailable.
-No historical archive is rewritten and no v2 recovery/continuation is provided.
+`compaction_history()` adds bounded compaction/completion inspection with
+versioned source links and explicit omissions; see the
+[continuous native contract](rust-continuous-native.md). No historical archive is
+rewritten and no v2 recovery/continuation is provided.
 
 The new `workspace-execution-v2.json` golden records the complete scripted contract.
 The probe gate covers shared budgets and deadlines, preflight/post-dispatch

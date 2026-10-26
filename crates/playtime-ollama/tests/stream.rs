@@ -75,6 +75,28 @@ fn first_terminal_ends_without_eof_and_discards_duplicates() {
     );
     assert_eq!(response.unwrap().generated_tokens, Some(999999));
 }
+
+#[test]
+fn completion_reason_comes_only_from_the_first_terminal_record() {
+    for reason in [json!("stop"), json!("length"), json!(null), json!(17)] {
+        let wire = format!(
+            "{}\n{}\n{}\n",
+            json!({"done":false,"done_reason":"stop"}),
+            json!({"done":true,"eval_count":3,"done_reason":reason}),
+            json!({"done":true,"eval_count":7,"done_reason":"stop"}),
+        );
+        let (decoder, result, records) = decode(wire.as_bytes(), Limits::default());
+        assert_eq!(result.unwrap().generated_tokens, Some(3));
+        assert_eq!(decoder.finish_reason(), reason.as_str());
+        assert_eq!(records.len(), 2);
+    }
+    for wire in [
+        b"{\"done\":true,\"eval_count\":0}\n".as_slice(),
+        b"{\"done\":false,\"done_reason\":\"stop\"}\n".as_slice(),
+    ] {
+        assert_eq!(decode(wire, Limits::default()).0.finish_reason(), None);
+    }
+}
 #[test]
 fn invalid_usage_never_becomes_known_zero_or_dispatchable_tools() {
     for usage in ["null", "-1", "1.0", "1.5", "true", "18446744073709551616"] {

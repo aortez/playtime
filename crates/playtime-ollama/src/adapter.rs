@@ -26,6 +26,7 @@ pub enum RemoteOutcome {
 #[derive(Clone, Debug)]
 pub struct ChatResult {
     pub outcome: Result<ModelResponse>,
+    pub finish_reason: Option<String>,
     pub dispatch: Dispatch,
     pub remote: RemoteOutcome,
     pub partial: AssistantMessage,
@@ -178,6 +179,7 @@ impl<T: Transport> Adapter<T> {
             Err(error) => {
                 return ChatResult {
                     outcome: Err(error),
+                    finish_reason: None,
                     dispatch: Dispatch::NotDispatched,
                     remote: RemoteOutcome::NotStarted,
                     partial: AssistantMessage::default(),
@@ -248,6 +250,7 @@ impl<T: Transport> Adapter<T> {
         }
         ChatResult {
             outcome,
+            finish_reason: decoder.finish_reason().map(str::to_owned),
             dispatch: Dispatch::PossiblySent,
             remote: if decoder.terminal_observed() {
                 RemoteOutcome::TerminalObserved
@@ -311,6 +314,7 @@ impl<T: Transport> Adapter<T> {
             } else {
                 error
             }),
+            finish_reason: None,
             dispatch: Dispatch::PossiblySent,
             remote: RemoteOutcome::Uncertain,
             partial: AssistantMessage::default(),
