@@ -681,11 +681,14 @@ fn exact_trigger_and_earlier_reserve_edges_use_the_next_request_allowance() {
         let threshold = (context * u64::from(trigger)).div_ceil(100);
         let boundary = threshold.min(context - reserve);
         initial.input(Input::Cancel);
+        // ContextWindow adds the appended continue notice's bytes.
+        let appended = serde_json::to_vec(&json!([continue_notice()]))
+            .unwrap()
+            .len() as u64;
         for delta in [-1_i64, 0, 1] {
             let mut run = Run::new(config.clone());
             let projected = boundary.checked_add_signed(delta).unwrap();
-            // ContextWindow adds the two bytes for the empty appended array.
-            let prompt = projected - cap - 10 - 2;
+            let prompt = projected - cap - 10 - appended;
             run.complete(Outcome::ModelCompleted {
                 response: ModelResponse {
                     done: true,
@@ -856,8 +859,33 @@ fn invalid_tool_batches_return_errors_without_running_any_call() {
 fn notice() -> Value {
     json!({"role":"user","content":"The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments."})
 }
+fn continue_notice() -> Value {
+    json!({"role":"user","content":"Your last response did not call a tool, so the run continues. Continue independently, or call finish_run alone if the task is finished; ordinary prose does not finish the run."})
+}
 fn parse_failure() -> Outcome {
     Outcome::ModelError(ModelFailure::Parse("error parsing tool call".into()))
+}
+
+#[test]
+fn tool_free_responses_are_followed_by_a_continue_notice() {
+    let mut run = Run::new(config());
+    let empty = json!({"role":"assistant","content":""});
+    run.response(empty.clone());
+    let request = run.request().clone();
+    assert_eq!(
+        request.messages[request.messages.len() - 2..],
+        [empty, continue_notice()]
+    );
+    run.response(
+        json!({"role":"assistant","tool_calls":[call("exec",json!({"command":"echo ok"}))]}),
+    );
+    run.complete(Outcome::Tool(
+        json!({"exit_code":0,"stdout":"ok\n","stderr":"","timed_out":false}),
+    ));
+    let request = run.request();
+    assert_eq!(request.messages.last().unwrap()["role"], "tool");
+    let notices = request.messages.iter().filter(|m| **m == continue_notice());
+    assert_eq!(notices.count(), 1);
 }
 
 #[test]
@@ -869,10 +897,14 @@ fn work_parse_failures_retry_with_a_notice_until_the_consecutive_limit() {
     assert_eq!(retry.purpose, RequestPurpose::Work);
     assert_eq!(retry.messages, [root.clone(), vec![notice()]].concat());
     // The notice opens the exchange of the response that follows it.
-    run.response(json!({"role":"assistant","content":"Retrying with valid arguments."}));
+    let prose = json!({"role":"assistant","content":"Retrying with valid arguments."});
+    run.response(prose.clone());
     let next = run.request();
     assert_eq!(next.messages[..retry.messages.len()], retry.messages[..]);
-    assert_eq!(next.messages.len(), retry.messages.len() + 1);
+    assert_eq!(
+        next.messages[retry.messages.len()..],
+        [prose, continue_notice()]
+    );
     for n in 1..=compaction::TOOL_PARSE_RETRIES + 1 {
         run.complete(parse_failure());
         if n <= compaction::TOOL_PARSE_RETRIES {

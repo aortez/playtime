@@ -112,7 +112,7 @@ bytes. The constructor also rejects initial inputs that cannot do work below the
 trigger with required reserves. It never edits a retained allocation to make a
 configuration fit.
 
-One exchange is an assistant response and all its tool results, after any retry
+One exchange is an assistant response and all its tool results, after any
 notices the controller added for that request. System/inventory
 instructions and the original task stay verbatim. A work request's projected
 occupancy is its estimated input (including tools) plus its actual output
@@ -170,7 +170,10 @@ Work exposes `exec`, `read_file`, `write_file` and `finish_run`. The latter take
 exactly one non-whitespace `summary` string of at most 8 KiB and must be the sole
 tool call in a normally completed response. The controller validates the entire
 batch before tool effects. A malformed or mixed finish stops the run with
-`invalid_completion`, and ordinary prose does not finish. When an ordinary call
+`invalid_completion`, and ordinary prose does not finish. A response that calls
+no tool gets a notice to continue or call `finish_run`; otherwise the next request
+would end with the model's own message, and gpt-oss then returned empty
+one-token responses until the run stopped. When an ordinary call
 is invalid, no call in the batch runs, but the run continues. Each call's result
 is an error: its own, or "Not run because another call in this response was
 invalid". Until 2026-10-26 (UTC), such a batch stopped the run. A valid

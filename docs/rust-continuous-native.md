@@ -33,8 +33,9 @@ The model can correct its own tool-call mistakes. A batch with an invalid
 ordinary call runs none of its calls and returns each call's error to the model.
 When the server can't parse a work response's tool call, the request is retried
 with a notice, up to five times in a row, and the failed attempt is charged its
-full allowance as unknown usage. A malformed or mixed finish, a batch over the
-result allowance or over eight calls, and a failed summary still stop the run.
+full allowance as unknown usage. A response that calls no tool is followed by a
+notice to continue or call `finish_run`. A malformed or mixed finish, a batch over
+the result allowance or over eight calls, and a failed summary still stop the run.
 
 Definition schema 3 adds `compaction: { settings, protocol, inventory }` to the
 frozen source recipe. Selecting the harness freezes its own protocol/inventory;

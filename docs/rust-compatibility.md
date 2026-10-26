@@ -580,8 +580,16 @@ and `tool_result` records without dispatch, as invalid memento calls do. They
 record no `tool_batch_rejected` observation; that kind still means the run
 stopped.
 
-Archive, API and settings schemas are unchanged. `compaction-policy-v1.json` is
-unchanged because its scenario has no failures; new CPU cases cover recovery.
-Memento behavior and goldens are unchanged. The new `continuous_tool_recovery`
+A work response that calls no tool is now followed by a notice to continue or
+call `finish_run`. Without it, the next request ended with the model's own
+message; in a gpt-oss trial that produced 153 empty one-token responses in 54
+seconds. The notice opens the next exchange, like a retry notice.
+
+Archive, API and settings schemas are unchanged. `compaction-policy-v1.json`
+changes deliberately: its responses call no tools, so each later input grows by
+204 bytes per notice in the conversation. Request IDs, order, seeds, allowances,
+estimate bases, compaction points and the final result are unchanged, and a
+pending notice stays out of the summary input. New CPU cases cover recovery and
+the notice. Memento behavior and goldens are unchanged. The new `continuous_tool_recovery`
 capability changes the native capability digest, so a new daemon refuses older
 worker bundles; rebuild the bundle.

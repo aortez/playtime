@@ -16,6 +16,9 @@ use crate::{
 /// Memento's parse retry notice, without its budget sentence: continuous
 /// requests carry no budget.
 const PARSE_RETRY_NOTICE: &str = "The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments.";
+/// Follows a response that called no tool. Otherwise the next request would end
+/// with the model's own message and leave it nothing to answer.
+const CONTINUE_NOTICE: &str = "Your last response did not call a tool, so the run continues. Continue independently, or call finish_run alone if the task is finished; ordinary prose does not finish the run.";
 
 /// Controller notices, then a response and its tool results.
 #[derive(Clone)]
@@ -353,7 +356,12 @@ impl Compaction {
     }
     pub fn after_response(&mut self) {
         // A retried request left no response, so it adds no exchange.
-        self.exchanges.extend(self.current.take());
+        if let Some(exchange) = self.current.take() {
+            if exchange.messages.last().unwrap()["role"] == "assistant" {
+                self.notices.push(message("user", CONTINUE_NOTICE));
+            }
+            self.exchanges.push(exchange);
+        }
         self.stage = Stage::Ready;
     }
     pub fn started(&mut self) {
