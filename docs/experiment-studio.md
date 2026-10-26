@@ -136,14 +136,28 @@ The proposed execution contract is:
    generated summary, resulting conversation, occupancy before and after, usage,
    and failure details. Partial generation and unknown usage remain visible.
 
-No default threshold percentage or retention count is fixed by this design.
-The model's usable context, selected output caps, and bounded tool results must
-determine valid settings. Reject unsupported sampling or thinking settings rather
-than silently dropping them. Context estimates must not be presented as exact
-token counts or imply a tokenizer guarantee the adapter cannot establish.
+The owner approved initial defaults on 2026-10-26: 75% projected occupancy
+(including the next response allowance), two recent complete exchanges, a
+2,048-token summary cap, and editable versioned instructions. The fixed v1 safety
+margin is the larger of 1,024 tokens and 5% of context capacity, rounded up.
+Compaction instructions, summary output and aggregate tool results have separate
+explicit reserves. Hard fit checks may trigger compaction earlier. Preserve the
+same selected model and reasoning/sampling settings; no silent override.
+
+Accept only a normally completed, nonempty final-answer summary that reduces
+estimated active input and leaves occupancy below the trigger with room for work
+and reserves. Preserve original thinking and partial responses as evidence.
+The model's usable context and accepted caps still determine valid settings;
+reject impossible combinations. Estimates are not exact tokenizer counts.
+
+Completion uses `finish_run` with one required nonempty `summary` string, bounded
+to 8 KiB. It must be the only tool call in its response; validate the entire batch
+before effects. Keep the model's declaration separate from capture/cleanup
+outcomes. Plain text never implicitly finishes, and budget/cancellation stops
+do not require another model call.
 
 Compaction is not a workspace checkpoint. The existing capture path requires a
-stopped workspace. For the first compaction harness, propose stopped-workspace
+stopped workspace. The owner approved final-only stopped-workspace
 capture at finalization, including cancellation when possible, with the event log
 published incrementally throughout the run. Do not invoke that capture at every
 compaction and claim processes continued. Intermediate workspace snapshots would

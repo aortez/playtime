@@ -32,6 +32,9 @@ Its simulator must drive the same controller and never execute command text on
 the host. See `docs/rust-controller.md` for dispatch, deadline, and accounting
 invariants. Changes to the session-neutral contract also run
 `cargo test -p playtime-runner --features test-harness --test workspace_probe --locked`.
+Compaction-policy changes also run
+`cargo test -p playtime-engine --features test-harness --locked`;
+its deterministic controller gate does not establish native process continuity.
 `playtime-storage` owns synchronous portable archive I/O. Preserve its distinction
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`

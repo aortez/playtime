@@ -412,3 +412,80 @@ fn successful_finish_and_next_session_require_actual_publication() {
         }
     }
 }
+
+#[cfg(feature = "test-harness")]
+#[test]
+fn compaction_proposals_cannot_grant_tokens_tools_or_completion() {
+    use crate::compaction::{CompactionConfig, CompactionSettings};
+    let scenario: Scenario =
+        serde_json::from_str(include_str!("../../../tests/fixtures/two-session.json")).unwrap();
+    let adapter = ScriptedAdapters::new(&scenario).unwrap();
+    let mut parameters = scenario.parameters.common();
+    parameters.limits.context_tokens = 65536.try_into().unwrap();
+    let config = CompactionConfig {
+        settings: CompactionSettings {
+            summary_tokens: 20.try_into().unwrap(),
+            ..CompactionSettings::default()
+        },
+        parameters,
+        protocol: "system".into(),
+        prompt: "task".into(),
+        inventory: "workshop".into(),
+        initial_workspace: adapter.config().initial_workspace.clone(),
+        initial_files: Default::default(),
+    };
+    let mut controller =
+        Controller::test_compaction(config, RunId::new("policy-test").unwrap(), SequentialIds, 0)
+            .unwrap();
+    complete_idle(&mut controller, Outcome::WorkspaceStarted);
+    for purpose in [
+        RequestPurpose::Work,
+        RequestPurpose::Compaction,
+        RequestPurpose::Handoff,
+    ] {
+        assert!(
+            controller
+                .apply_proposal(Proposal::Infer(Inference {
+                    purpose,
+                    messages: vec![json!({"role":"user","content":"request"})],
+                    tools: vec![json!({"function":{"name":"host_exec"}})]
+                }))
+                .is_err()
+        );
+        assert!(controller.pending().is_none());
+    }
+    assert!(
+        controller
+            .apply_proposal(Proposal::Finish(StopReason::AgentFinished))
+            .is_err()
+    );
+    assert!(
+        controller
+            .apply_proposal(Proposal::Stop(StopReason::AgentFinished))
+            .is_err()
+    );
+    let work_cap = controller.config.parameters.limits.tokens_per_call.get();
+    let total = controller.config.parameters.limits.generated_tokens.get();
+    controller
+        .totals
+        .record(GenerationUsage::Known {
+            generated_tokens: total - work_cap - 7,
+        })
+        .unwrap();
+    controller
+        .apply_proposal(Proposal::Infer(Inference {
+            purpose: RequestPurpose::Compaction,
+            messages: vec![json!({"role":"user","content":"summary"})],
+            tools: Vec::new(),
+        }))
+        .unwrap();
+    let EffectKind::Model(request) = &controller.pending().unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(
+        request.maximum_tokens, 7,
+        "runtime reserves continued work independently of policy"
+    );
+    assert_eq!(request.context_reserve, 3277);
+    assert_eq!(controller.reserved_tokens(), 7);
+}

@@ -151,9 +151,14 @@ Changes to request purposes/scopes, common allocations, or workspace capture als
 run the feature-gated CPU contract gate:
 
 ```sh
-cargo clippy -p playtime-runner --all-targets --features test-harness --locked -- -D warnings
+cargo clippy -p playtime-engine -p playtime-runner --all-targets --features test-harness --locked -- -D warnings
+cargo test -p playtime-engine --features test-harness --locked
 cargo test -p playtime-runner --features test-harness --test workspace_probe --locked
 ```
 
 CI runs these explicitly; the probe is excluded from default production builds.
 Its own v2 golden does not replace memento goldens or native run-and-view gates.
+The compaction controller gate adds a separate `compaction-policy-v1.json` golden
+and explicit simulated publication acknowledgments. The harness remains test-only;
+native metadata, archive/worker capability and launch/UI integration are later
+slices of #110. No host command or model call runs in this gate.

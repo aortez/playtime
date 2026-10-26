@@ -38,6 +38,21 @@ impl<I: IdSource> Controller<I> {
                     && checkpoint.ordinal == self.session
             });
         match proposal {
+            #[cfg(feature = "test-harness")]
+            Proposal::Stop(reason) => {
+                if self.config.compaction.is_none()
+                    || !matches!(
+                        reason,
+                        StopReason::ContextLimit
+                            | StopReason::CompactionFailed
+                            | StopReason::CompactionNoProgress
+                            | StopReason::TokenLimit
+                    )
+                {
+                    return Err(InvalidValue("policy requested an unsupported stop"));
+                }
+                self.stop(reason);
+            }
             Proposal::StartWorkspace => {
                 if self.config.memento.is_some() || self.workspace_started || self.active {
                     return Err(InvalidValue(
@@ -81,7 +96,8 @@ impl<I: IdSource> Controller<I> {
                 } else {
                     (
                         !self.active && self.checkpoint_attempted && self.last_capture.is_some(),
-                        reason == StopReason::AgentFinished
+                        (reason == StopReason::AgentFinished
+                            && (self.config.compaction.is_none() || self.finished))
                             || (reason == StopReason::TokenLimit && self.remaining_tokens() == 0),
                     )
                 };

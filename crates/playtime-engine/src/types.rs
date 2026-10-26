@@ -37,6 +37,7 @@ pub(crate) struct RuntimeConfig {
     pub initial_workspace: ContentRef,
     pub memento: Option<ControllerConfig>,
     pub workspace: Option<WorkspaceConfig>,
+    pub compaction: Option<crate::compaction::CompactionConfig>,
 }
 
 impl RuntimeConfig {
@@ -46,6 +47,7 @@ impl RuntimeConfig {
             initial_workspace: config.initial_workspace.clone(),
             memento: Some(config),
             workspace: None,
+            compaction: None,
         }
     }
     #[cfg(feature = "test-harness")]
@@ -55,6 +57,17 @@ impl RuntimeConfig {
             initial_workspace: config.initial_workspace.clone(),
             memento: None,
             workspace: Some(config),
+            compaction: None,
+        }
+    }
+    #[cfg(feature = "test-harness")]
+    pub fn compaction(config: crate::compaction::CompactionConfig) -> Self {
+        Self {
+            parameters: config.parameters.clone(),
+            initial_workspace: config.initial_workspace.clone(),
+            memento: None,
+            workspace: None,
+            compaction: Some(config),
         }
     }
 }
@@ -292,6 +305,12 @@ pub enum Outcome {
     WorkspaceCaptured(WorkspaceSnapshot),
     Started(Memory),
     Model(ModelResponse),
+    /// Explicit backend termination metadata; absent legacy metadata is not
+    /// evidence that a compaction summary completed normally.
+    ModelCompleted {
+        response: ModelResponse,
+        finish_reason: String,
+    },
     ModelError(ModelFailure),
     Tool(Value),
     Snapshot(Snapshot),
