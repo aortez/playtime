@@ -1,0 +1,424 @@
+{
+  "default_settings": {
+    "instructions": "Summarize the older conversation for continued work. Preserve goals, decisions, useful file paths, verified results, failures, unresolved questions, and a concrete next action. Distinguish observations from assumptions. Incorporate still-relevant facts from the previous summary. Return only the summary, without tools.",
+    "recent_exchanges": 2,
+    "schema_version": 1,
+    "summary_tokens": 2048,
+    "trigger_percent": 75
+  },
+  "requests": [
+    {
+      "call": 1,
+      "context_basis": "input_bytes",
+      "context_input_bound": 1605,
+      "context_reserve": 3675,
+      "maximum_tokens": 512,
+      "messages_sha256": "ee656f698269734d0eb50759fb3e2ec80b7553f99d0f0c25c53963bf6e03d58e",
+      "purpose": "work",
+      "request_id": "r1",
+      "sampling_seed": 1042,
+      "tools_sha256": "3616835f33f7d125772f5bdfbef99f984cdc3d638dca27d1e227c8df70f7e1a0"
+    },
+    {
+      "call": 2,
+      "context_basis": "input_bytes",
+      "context_input_bound": 4651,
+      "context_reserve": 3675,
+      "maximum_tokens": 512,
+      "messages_sha256": "5bd80a5a77897e46a0ee317f1d3a72989953a405a0d987bb660b455b2582f468",
+      "purpose": "work",
+      "request_id": "r2",
+      "sampling_seed": 1043,
+      "tools_sha256": "3616835f33f7d125772f5bdfbef99f984cdc3d638dca27d1e227c8df70f7e1a0"
+    },
+    {
+      "call": 3,
+      "context_basis": "input_bytes",
+      "context_input_bound": 7697,
+      "context_reserve": 3675,
+      "maximum_tokens": 512,
+      "messages_sha256": "a93d483f00d744e1ade733dece57c09a0f152bdddca73e03355a3121f36dd429",
+      "purpose": "work",
+      "request_id": "r3",
+      "sampling_seed": 1044,
+      "tools_sha256": "3616835f33f7d125772f5bdfbef99f984cdc3d638dca27d1e227c8df70f7e1a0"
+    },
+    {
+      "call": 4,
+      "context_basis": "input_bytes",
+      "context_input_bound": 10743,
+      "context_reserve": 3675,
+      "maximum_tokens": 512,
+      "messages_sha256": "31de710df8d047df0612f03fb9433d14fae830088ed5e7b1fd4c69f4910bfaa8",
+      "purpose": "work",
+      "request_id": "r4",
+      "sampling_seed": 1045,
+      "tools_sha256": "3616835f33f7d125772f5bdfbef99f984cdc3d638dca27d1e227c8df70f7e1a0"
+    },
+    {
+      "call": 5,
+      "context_basis": "input_bytes",
+      "context_input_bound": 6626,
+      "context_reserve": 1024,
+      "maximum_tokens": 256,
+      "messages_sha256": "1995a5c544ad6852e28e8b21ecac8dadb91b2d86d6d81ddeb907dee8178af6a5",
+      "purpose": "compaction",
+      "request_id": "r5",
+      "sampling_seed": 1046,
+      "tools_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "call": 6,
+      "context_basis": "input_bytes",
+      "context_input_bound": 7849,
+      "context_reserve": 3675,
+      "maximum_tokens": 512,
+      "messages_sha256": "27486b6d135c4cc83cd2b0b219ea34f38bec399b3852962dac5c4a823175ef85",
+      "purpose": "work",
+      "request_id": "r6",
+      "sampling_seed": 1047,
+      "tools_sha256": "3616835f33f7d125772f5bdfbef99f984cdc3d638dca27d1e227c8df70f7e1a0"
+    },
+    {
+      "call": 7,
+      "context_basis": "input_bytes",
+      "context_input_bound": 10895,
+      "context_reserve": 3675,
+      "maximum_tokens": 512,
+      "messages_sha256": "3cd7b8365b969d8147e0f4835badc940a33fead6eb8fa92794f5f68dd9319c62",
+      "purpose": "work",
+      "request_id": "r7",
+      "sampling_seed": 1048,
+      "tools_sha256": "3616835f33f7d125772f5bdfbef99f984cdc3d638dca27d1e227c8df70f7e1a0"
+    },
+    {
+      "call": 8,
+      "context_basis": "input_bytes",
+      "context_input_bound": 6778,
+      "context_reserve": 1024,
+      "maximum_tokens": 256,
+      "messages_sha256": "17c1cafa2161087d5c3d0a6a039e5783a6cbb9eee8bbdb60927b7dea884c0252",
+      "purpose": "compaction",
+      "request_id": "r8",
+      "sampling_seed": 1049,
+      "tools_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "call": 9,
+      "context_basis": "input_bytes",
+      "context_input_bound": 7849,
+      "context_reserve": 3675,
+      "maximum_tokens": 512,
+      "messages_sha256": "47bba53cea8ea7311d20447f87187af3e364cda0e301074c2758cb44827d79f7",
+      "purpose": "work",
+      "request_id": "r9",
+      "sampling_seed": 1050,
+      "tools_sha256": "3616835f33f7d125772f5bdfbef99f984cdc3d638dca27d1e227c8df70f7e1a0"
+    },
+    {
+      "call": 10,
+      "context_basis": "input_bytes",
+      "context_input_bound": 10895,
+      "context_reserve": 3675,
+      "maximum_tokens": 512,
+      "messages_sha256": "b82518a60ed85a232a9c1808ca64af293cd82ee4c2c29612b9417c1f7ab9cd45",
+      "purpose": "work",
+      "request_id": "r10",
+      "sampling_seed": 1051,
+      "tools_sha256": "3616835f33f7d125772f5bdfbef99f984cdc3d638dca27d1e227c8df70f7e1a0"
+    },
+    {
+      "call": 11,
+      "context_basis": "input_bytes",
+      "context_input_bound": 6778,
+      "context_reserve": 1024,
+      "maximum_tokens": 256,
+      "messages_sha256": "deca9c43c5456feeceaa6a5e240c9e66e3e9be5eb016b9a5e9102f64a5f76830",
+      "purpose": "compaction",
+      "request_id": "r11",
+      "sampling_seed": 1052,
+      "tools_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "call": 12,
+      "context_basis": "input_bytes",
+      "context_input_bound": 7849,
+      "context_reserve": 3675,
+      "maximum_tokens": 512,
+      "messages_sha256": "49b36a513c35a0a29ccf9a199b6f248e939104322462fc3c1cd9a7f20283eae5",
+      "purpose": "work",
+      "request_id": "r12",
+      "sampling_seed": 1053,
+      "tools_sha256": "3616835f33f7d125772f5bdfbef99f984cdc3d638dca27d1e227c8df70f7e1a0"
+    }
+  ],
+  "result": {
+    "cleanup": {
+      "status": "complete"
+    },
+    "diagnostics": [],
+    "elapsed_ms": 15,
+    "last_capture": {
+      "interrupted": false,
+      "snapshot": {
+        "files": {},
+        "workspace": {
+          "path": "inputs/workspace.json",
+          "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "size_bytes": 2
+        }
+      }
+    },
+    "last_checkpoint": null,
+    "mode": "simulation",
+    "model_calls": 12,
+    "reason": "agent_finished",
+    "run_id": "compaction-test",
+    "sessions_started": 0,
+    "tool_parse_errors": 0,
+    "usage": {
+      "budget_charged_tokens": 120,
+      "known_generated_tokens": 120,
+      "unknown_requests": 0,
+      "unknown_reserved_tokens": 0,
+      "usage_complete": true
+    }
+  },
+  "tools": [
+    {
+      "function": {
+        "description": "Execute a bounded Bash command in the owned workshop. Processes continue through conversation compaction and stop when the run ends.",
+        "name": "exec",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "timeout_seconds": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Read a bounded slice of a UTF-8 text file in the workshop. Binary files are rejected; use exec to inspect their metadata or compute a text summary.",
+        "name": "read_file",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "offset_bytes": {
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Write or append UTF-8 text to a file inside /work.",
+        "name": "write_file",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "append": {
+              "type": "boolean"
+            },
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Declare the experiment finished. Call this alone, with a nonempty summary of at most 8192 UTF-8 bytes. The controller then stops, captures and cleans up the workshop.",
+        "name": "finish_run",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "summary"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ],
+  "transitions": [
+    {
+      "data": {
+        "harness": "continuous_compaction_v1",
+        "safety_margin": 1024,
+        "settings": {
+          "instructions": "Summarize the older conversation for continued work. Preserve goals, decisions, useful file paths, verified results, failures, unresolved questions, and a concrete next action. Distinguish observations from assumptions. Incorporate still-relevant facts from the previous summary. Return only the summary, without tools.",
+          "recent_exchanges": 2,
+          "schema_version": 1,
+          "summary_tokens": 256,
+          "trigger_percent": 75
+        },
+        "work_context_reserve": 3675
+      },
+      "kind": "compaction_configured",
+      "sequence": 2
+    },
+    {
+      "data": {
+        "before_messages_sha256": "cdc45a4a1c63cf012a0fedff7e75ee2536f4e8301b54b1230025d52e9a2968fd",
+        "estimate_basis": "input_bytes",
+        "input_bound": 13789,
+        "ordinal": 1,
+        "previous_summary": null,
+        "progress_input_bytes": 13789,
+        "projected_tokens": 14301,
+        "retained_requests": [
+          "r3",
+          "r4"
+        ],
+        "source_requests": [
+          "r1",
+          "r2"
+        ],
+        "summary_estimate_basis": "input_bytes",
+        "summary_input_bound": 6626
+      },
+      "kind": "compaction_planned",
+      "sequence": 22
+    },
+    {
+      "data": {
+        "before_progress_input_bytes": 13789,
+        "estimate_basis": "input_bytes",
+        "input_bound": 7849,
+        "messages_sha256": "27486b6d135c4cc83cd2b0b219ea34f38bec399b3852962dac5c4a823175ef85",
+        "ordinal": 1,
+        "projected_tokens": 8361,
+        "summary": "Summary 1: checked results, next action.",
+        "summary_request_id": "r5"
+      },
+      "kind": "compaction_applied",
+      "sequence": 26
+    },
+    {
+      "data": {
+        "before_messages_sha256": "92036fb0e77bb70ef3a7ade927c4018a7668ee6a4bd54efadf98afe67f90854c",
+        "estimate_basis": "input_bytes",
+        "input_bound": 13941,
+        "ordinal": 2,
+        "previous_summary": {
+          "content": "Derived memory from earlier exchanges; retain uncertainty and verify claims:\nSummary 1: checked results, next action.",
+          "role": "assistant"
+        },
+        "progress_input_bytes": 13941,
+        "projected_tokens": 14453,
+        "retained_requests": [
+          "r6",
+          "r7"
+        ],
+        "source_requests": [
+          "r3",
+          "r4"
+        ],
+        "summary_estimate_basis": "input_bytes",
+        "summary_input_bound": 6778
+      },
+      "kind": "compaction_planned",
+      "sequence": 36
+    },
+    {
+      "data": {
+        "before_progress_input_bytes": 13941,
+        "estimate_basis": "input_bytes",
+        "input_bound": 7849,
+        "messages_sha256": "47bba53cea8ea7311d20447f87187af3e364cda0e301074c2758cb44827d79f7",
+        "ordinal": 2,
+        "projected_tokens": 8361,
+        "summary": "Summary 2: checked results, next action.",
+        "summary_request_id": "r8"
+      },
+      "kind": "compaction_applied",
+      "sequence": 40
+    },
+    {
+      "data": {
+        "before_messages_sha256": "2a7b8732e150f922421ab5da46e4625467293e982dd2e7c5252f644d8878db03",
+        "estimate_basis": "input_bytes",
+        "input_bound": 13941,
+        "ordinal": 3,
+        "previous_summary": {
+          "content": "Derived memory from earlier exchanges; retain uncertainty and verify claims:\nSummary 2: checked results, next action.",
+          "role": "assistant"
+        },
+        "progress_input_bytes": 13941,
+        "projected_tokens": 14453,
+        "retained_requests": [
+          "r9",
+          "r10"
+        ],
+        "source_requests": [
+          "r6",
+          "r7"
+        ],
+        "summary_estimate_basis": "input_bytes",
+        "summary_input_bound": 6778
+      },
+      "kind": "compaction_planned",
+      "sequence": 50
+    },
+    {
+      "data": {
+        "before_progress_input_bytes": 13941,
+        "estimate_basis": "input_bytes",
+        "input_bound": 7849,
+        "messages_sha256": "49b36a513c35a0a29ccf9a199b6f248e939104322462fc3c1cd9a7f20283eae5",
+        "ordinal": 3,
+        "projected_tokens": 8361,
+        "summary": "Summary 3: checked results, next action.",
+        "summary_request_id": "r11"
+      },
+      "kind": "compaction_applied",
+      "sequence": 54
+    },
+    {
+      "data": {
+        "request_id": "r12",
+        "summary": "Done; evidence is in the workshop."
+      },
+      "kind": "completion_declared",
+      "sequence": 59
+    }
+  ]
+}

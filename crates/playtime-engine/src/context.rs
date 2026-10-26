@@ -105,12 +105,26 @@ pub(crate) fn tool_message(name: &str, result: &Value) -> Value {
 }
 
 pub(crate) fn fit_tool_result(name: &str, result: Value, maximum: u64) -> Value {
+    fit_tool_result_with_notice(
+        name,
+        result,
+        maximum,
+        "Tool output shortened to reserve space for the session handoff.",
+    )
+}
+
+pub(crate) fn fit_tool_result_with_notice(
+    name: &str,
+    result: Value,
+    maximum: u64,
+    notice: &str,
+) -> Value {
     if encoded_size(&tool_message(name, &result)) <= maximum {
         return result;
     }
     let mut limited = json!({
         "context_truncated": true,
-        "notice": "Tool output shortened to reserve space for the session handoff."
+        "notice": notice
     });
     for key in [
         "exit_code",

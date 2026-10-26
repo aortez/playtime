@@ -87,7 +87,8 @@ A stopped `WorkspaceSnapshot` is a candidate. Only the exact publication receipt
 can set `last_capture` and satisfy successful finish. Capture/publication/cleanup
 use the existing finalization timers and first-stop precedence, including late
 receipts. Production workers reject this test execution profile before effects.
-This proves neither a compaction algorithm nor native workspace continuity.
+This probe does not prove native workspace continuity. The separate compaction
+controller policy below exercises the actual conversation transformation.
 
 Run the CPU boundary gate with:
 
@@ -95,6 +96,92 @@ Run the CPU boundary gate with:
 cargo test -p playtime-runner --features test-harness --test workspace_probe --locked
 ```
 
+## Continuous compaction policy (test capability)
+
+`Controller::test_compaction` is available only with `test-harness`. It runs
+`continuous_compaction_v1` through the shared controller, with no production
+selection or alternate effect dispatcher. #110 step B supplies native/archived
+execution and step C supplies recipe/API/workbench integration.
+
+`CompactionSettings` version 1 defaults to a 75% projected-request trigger, two
+recent exchanges, a 2,048-token summary cap and explicit editable instructions.
+Structural bounds are trigger 1..99, retention 0..32, summary cap within the
+accepted common per-call allocation, and nonempty instructions up to 65,536 UTF-8
+bytes. The constructor also rejects initial inputs that cannot do work below the
+trigger with required reserves. It never edits a retained allocation to make a
+configuration fit.
+
+One exchange is an assistant response and all its tool results. System/inventory
+instructions and the original task stay verbatim. A work request's projected
+occupancy is its estimated input (including tools) plus its actual output
+allowance. The independent strict fit check adds a fixed safety margin
+`max(1024, ceil(context / 20))`, the full summary allowance, exact encoded
+compaction instruction overhead and an aggregate tool-result allowance. Reaching
+either the percentage trigger or that fit boundary schedules compaction at a
+complete exchange boundary. When retained input alone prevents progress, it
+stops rather than silently reducing retention.
+
+With recent exchanges retained, the policy also checks the summary that would
+be needed after one more work exchange. Its older prefix is already known: the
+next response and its tool results will stay in the retained suffix. This check
+uses encoded bytes, since dropping that suffix invalidates the next server
+measurement. If the deferred summary would not fit with its instructions, output
+allowance and safety margin, compaction runs at the current boundary while its
+smaller input still fits. With no retained suffix, summarization extends the
+measured prefix and the ordinary work reserve covers that continuation.
+
+The aggregate retained result allowance is the existing `output_bytes` setting
+for this policy, divided among a response's tool calls. Each needs at least 512
+bytes; oversized batches are rejected before effects. Actual fitted message
+sizes are checked by the runtime independently of policy; full bounded results
+and explicit shortening notices remain in observations. Memento keeps its
+existing result-fitting semantics and wording.
+
+Summarization receives the original instructions/task, preceding derived summary,
+older complete exchanges and the compaction instructions, with no tools. It
+uses the same request IDs, global call/seed ordering, timeout, wall deadline and
+generation allocation. The policy requires enough remaining generation for the
+summary cap and another work call; runtime admission independently reserves the
+work allowance. Compaction cannot grant itself a separate budget.
+
+`Outcome::ModelCompleted` supplies explicit termination metadata. A summary must
+report `stop`, contain nonempty final-answer text and no tools, and stay within
+its admitted generation allowance. Thinking remains original evidence and never
+becomes the replacement summary. Partial, unknown-completion or failed responses
+leave active history intact. Existing legacy model outcomes remain supported for
+memento but cannot prove a normally completed summary.
+
+Replacement retains the configured recent exchanges and installs a tagged
+assistant summary. Its byte estimate must strictly decrease against the old
+conversation's byte estimate (the same basis), fit below the trigger and leave
+all work reserves. Rewritten context cannot reuse a server measurement for a
+different prefix. Failure stops explicitly; there is no summarization retry loop.
+Observations retain source/retained request IDs, prior summary, exact before/after
+messages, estimates and their bases, summary content and outcome. Durable
+versioned source-reference validation and archive projections are step B.
+`compaction_planned` records the decision without claiming request admission;
+the ordinary model-request/admission facts identify any actual attempt. A rejected
+or canceled plan cannot inherit the previous work request's purpose.
+
+Work exposes `exec`, `read_file`, `write_file` and `finish_run`. The latter takes
+exactly one non-whitespace `summary` string of at most 8 KiB and must be the sole
+tool call in a normally completed response. The controller validates the entire
+batch before tool effects. This v1 policy fails closed on malformed/mixed calls;
+ordinary prose does not finish. A valid declaration enters final-only capture;
+publication acknowledgment is still required before `agent_finished`. Capture
+failure, cleanup failure, cancellation and late receipts retain their independent
+evidence and established first-stop precedence.
+
+Run the CPU gate with:
+
+```sh
+cargo test -p playtime-engine --features test-harness --locked
+```
+
+The separate `compaction-policy-v1.json` golden captures exact request hashes,
+settings, tools, transitions and final outcome. Its test driver supplies model
+responses, tool data and explicit simulated writer acknowledgments. It executes
+no host commands and does not establish native process continuity or publication.
 
 ## Transition and effect contract
 

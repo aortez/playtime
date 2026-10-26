@@ -75,6 +75,10 @@ pub enum StopReason {
     TokenLimitExceededByServer,
     Interrupted,
     InfrastructureFailure,
+    ContextLimit,
+    CompactionFailed,
+    CompactionNoProgress,
+    InvalidCompletion,
 }
 
 /// A dispatched command with no result is distinct from a successful exit.

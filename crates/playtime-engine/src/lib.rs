@@ -4,6 +4,7 @@
 //! Drivers must persist observations before dispatch, honor effect deadlines,
 //! and cancel abandoned effects. The simulation drives this same controller.
 
+pub mod compaction;
 mod context;
 mod control;
 mod controller;

@@ -90,6 +90,7 @@ pub struct Controller<I: IdSource> {
     session_parse_errors: u32,
     parse_streak: u32,
     response_bytes: u64,
+    tool_result_bytes: u64,
     session: u32,
     session_id: Option<SessionId>,
     active: bool,
@@ -164,6 +165,26 @@ impl<I: IdSource> Controller<I> {
         )
     }
 
+    #[cfg(feature = "test-harness")]
+    pub fn test_compaction(
+        config: crate::compaction::CompactionConfig,
+        run_id: RunId,
+        ids: I,
+        now_ms: u64,
+    ) -> Result<Self, InvalidValue> {
+        config.settings.validate(&config.parameters)?;
+        let policy = Policy::compaction(&config)?;
+        Self::configured(
+            RuntimeConfig::compaction(config),
+            policy,
+            run_id,
+            RunMode::Simulation,
+            ids,
+            now_ms,
+            ToolPolicy::Simulation,
+        )
+    }
+
     fn configured(
         config: RuntimeConfig,
         policy: Policy,
@@ -230,6 +251,7 @@ impl<I: IdSource> Controller<I> {
             session_parse_errors: 0,
             parse_streak: 0,
             response_bytes: 0,
+            tool_result_bytes: 0,
             session: 0,
             session_id: None,
             active: false,
@@ -258,6 +280,14 @@ impl<I: IdSource> Controller<I> {
             "controller_started",
             json!({"run_id": controller.run_id, "mode": mode, "parameters": parameters}),
         );
+        if let Some(config) = &controller.config.compaction {
+            controller.emit("compaction_configured", json!({
+                "harness":crate::compaction::HARNESS,
+                "settings":config.settings,
+                "safety_margin":crate::compaction::CompactionSettings::safety_margin(config.parameters.limits.context_tokens.get()),
+                "work_context_reserve":config.work_reserve()
+            }));
+        }
         controller.pump();
         Ok(controller)
     }
@@ -457,7 +487,7 @@ impl<I: IdSource> Controller<I> {
                 | (EffectKind::StartSession { .. }, Outcome::Started(_))
                 | (
                     EffectKind::Model(_),
-                    Outcome::Model(_) | Outcome::ModelError(_)
+                    Outcome::Model(_) | Outcome::ModelCompleted { .. } | Outcome::ModelError(_)
                 )
                 | (EffectKind::Tool(_), Outcome::Tool(_))
                 | (EffectKind::Snapshot { .. }, Outcome::Snapshot(_))
@@ -469,7 +499,13 @@ impl<I: IdSource> Controller<I> {
     fn emit(&mut self, kind: &str, data: Value) -> Option<u64> {
         let identity = if kind == "model_request" {
             ObservationIdentity::default()
-        } else if kind.starts_with("model_") || kind.starts_with("request_") {
+        } else if kind.starts_with("model_")
+            || kind.starts_with("request_")
+            || matches!(
+                kind,
+                "compaction_applied" | "completion_declared" | "tool_batch_rejected"
+            )
+        {
             self.request_identity()
         } else if kind.starts_with("tool_") || kind == "memento_write" {
             let mut identity = self.request_identity();
@@ -679,6 +715,9 @@ impl<I: IdSource> Controller<I> {
 
     fn pump(&mut self) {
         loop {
+            for (kind, data) in self.policy.take_observations() {
+                self.emit(kind, data);
+            }
             if self.log_exhausted && self.reason.is_none() {
                 self.stop(StopReason::LogLimit);
             }
@@ -687,10 +726,13 @@ impl<I: IdSource> Controller<I> {
             }
             match self.stage {
                 Stage::Policy => {
-                    let proposal = self.policy.propose(View {
-                        config: &self.config,
-                        facts: self.facts(),
-                    });
+                    let proposal = self.policy.propose(
+                        View {
+                            config: &self.config,
+                            facts: self.facts(),
+                        },
+                        &self.context,
+                    );
                     if let Err(error) = self.apply_proposal(proposal) {
                         self.diagnostic(error.0);
                         self.stop(StopReason::InfrastructureFailure);
@@ -849,7 +891,11 @@ impl<I: IdSource> Controller<I> {
             );
             if self.config.memento.is_none() {
                 self.diagnostic("run-scoped input exceeds the shared context allowance");
-                self.stop(StopReason::InfrastructureFailure);
+                self.stop(if self.config.compaction.is_some() {
+                    StopReason::ContextLimit
+                } else {
+                    StopReason::InfrastructureFailure
+                });
             } else if handoff {
                 self.policy.context_rejected();
             } else {
@@ -911,7 +957,12 @@ impl<I: IdSource> Controller<I> {
         self.effect(EffectKind::Model(request), timeout_ms, true);
     }
 
-    fn model_response(&mut self, request: ModelRequest, response: ModelResponse) {
+    fn model_response(
+        &mut self,
+        request: ModelRequest,
+        response: ModelResponse,
+        finish_reason: Option<&str>,
+    ) {
         if encoded_size(&json!(response)) > MODEL_BYTES {
             self.model_error(ModelFailure::ByteLimit(
                 "model response exceeded its byte limit".into(),
@@ -981,6 +1032,55 @@ impl<I: IdSource> Controller<I> {
             response.prompt_tokens,
             tokens,
         );
+        if self.config.compaction.is_some() {
+            self.emit(
+                "model_completion",
+                json!({"call":request.call,"finish_reason":finish_reason}),
+            );
+            if tokens > request.maximum_tokens {
+                self.stop(StopReason::TokenLimitExceededByServer);
+                return;
+            }
+            if request.purpose == RequestPurpose::Compaction && finish_reason != Some("stop") {
+                self.diagnostic("summary requires explicit normal completion");
+                self.stop(StopReason::CompactionFailed);
+                return;
+            }
+            if request.purpose == RequestPurpose::Compaction
+                && response.message["tool_calls"]
+                    .as_array()
+                    .is_some_and(|calls| !calls.is_empty())
+            {
+                self.diagnostic("summary returned tools despite its tool-free contract");
+                self.stop(StopReason::CompactionFailed);
+                return;
+            }
+            match crate::compaction::validate_tools(
+                &response.message,
+                finish_reason,
+                self.config.parameters.limits.output_bytes.get(),
+            ) {
+                Err((reason, error)) => {
+                    self.emit(
+                        "tool_batch_rejected",
+                        json!({"reason":reason,"error":error}),
+                    );
+                    self.stop(reason);
+                    return;
+                }
+                Ok(Some(summary)) if request.purpose == RequestPurpose::Work => {
+                    self.emit(
+                        "completion_declared",
+                        json!({"request_id":request.request_id,"summary":summary}),
+                    );
+                    self.finished = true;
+                    self.ended = true;
+                    self.stage = Stage::Checkpoint;
+                    return;
+                }
+                _ => {}
+            }
+        }
         if response.message["tool_calls"]
             .as_array()
             .is_some_and(|calls| calls.len() > 8)
@@ -994,10 +1094,18 @@ impl<I: IdSource> Controller<I> {
             self.diagnostic("tool-free request returned tool calls");
             self.stop(StopReason::InfrastructureFailure);
         } else {
+            self.tool_result_bytes = 0;
             self.tool_calls_remaining = response.message["tool_calls"]
                 .as_array()
                 .map_or(0, Vec::len);
-            self.policy.model_response(response.message);
+            self.policy.model_response(
+                View {
+                    config: &self.config,
+                    facts: self.facts(),
+                },
+                request.request_id,
+                response,
+            );
         }
     }
 
@@ -1189,6 +1297,19 @@ impl<I: IdSource> Controller<I> {
             &tool.request.name,
             &original,
         );
+        if self.config.compaction.is_some() {
+            self.tool_result_bytes =
+                self.tool_result_bytes
+                    .saturating_add(encoded_size(&crate::context::tool_message(
+                        &tool.request.name,
+                        &result,
+                    )));
+            if self.tool_result_bytes > self.config.parameters.limits.output_bytes.get() {
+                self.diagnostic("fitted tool results exceed the frozen aggregate allowance");
+                self.stop(StopReason::ContextLimit);
+                return;
+            }
+        }
         let mut identity = self.request_identity();
         identity.effect_id = tool.effect_id.and_then(NonZeroU64::new);
         identity.tool_request_sequence = NonZeroU64::new(tool.request_sequence);
@@ -1263,8 +1384,15 @@ impl<I: IdSource> Controller<I> {
                 self.session_started(memory)
             }
             (EffectKind::Model(request), Outcome::Model(response)) => {
-                self.model_response(request, response)
+                self.model_response(request, response, None)
             }
+            (
+                EffectKind::Model(request),
+                Outcome::ModelCompleted {
+                    response,
+                    finish_reason,
+                },
+            ) => self.model_response(request, response, Some(&finish_reason)),
             (EffectKind::Model(_), Outcome::ModelError(error)) => self.model_error(error),
             (EffectKind::Tool(_), Outcome::Tool(result)) => self.tool_result(result),
             (EffectKind::Snapshot { .. }, Outcome::Snapshot(mut snapshot)) => {

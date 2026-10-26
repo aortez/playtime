@@ -17,6 +17,36 @@ and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
 
+## Continuous compaction policy (#110 step A, 2026-10-26)
+
+Adds the test-only `continuous_compaction_v1` controller policy and version-1
+settings: 75% trigger, two retained complete exchanges, 2,048 summary tokens and
+editable instructions. The frozen per-call allocation bounds the summary cap.
+Normal-completion metadata is an explicit new effect outcome; old responses do
+not acquire invented completion proof. Native adapters are unchanged in this slice.
+
+New controller outcomes distinguish `context_limit`, `compaction_failed`,
+`compaction_no_progress` and `invalid_completion`. The new
+`compaction-policy-v1.json` golden retains defaults, tool schemas, exact message
+hashes, global request/seed order, context estimates, compaction observations and
+finalization. It does not replace or regenerate any memento fixture. Legacy
+request/response serialization, saved recipe bytes, archive versions, locks,
+reviewed budgets, service ledger and production selection remain unchanged.
+
+The controller requires a sole, bounded `finish_run` call, then actual publication
+acknowledgment before agent-finished finalization. Cancellation and late receipts
+retain first-stop semantics. The CPU gate simulates effects/receipts; native
+process continuity, durable compaction read contracts and API/workbench support
+remain #110 steps B/C. Production workers cannot select this policy.
+
+PR #142 review correction: before continuing work with a retained suffix, check
+the next boundary's summary input on the conservative byte basis it will need
+after dropping recent exchanges. Compact earlier if deferring would make that
+summary impossible, even when measured work occupancy remains below its trigger.
+Regression coverage performs three compactions with reported prompt usage and
+both one and two retained exchanges. Existing byte-estimate compaction and memento
+goldens remain unchanged; no archive or schema version changes.
+
 ## Session-neutral internal contract (#109 step C, 2026-10-25)
 
 Adds explicit internal work/handoff/compaction purposes, run/session scopes and

@@ -4,6 +4,8 @@
 //! Memento is the only production policy. The feature-gated probe proves the
 //! run-scoped contract without exposing a production compaction harness.
 
+#[cfg(feature = "test-harness")]
+mod compaction;
 mod memento;
 pub(crate) mod memento_contract;
 #[cfg(feature = "test-harness")]
@@ -70,6 +72,8 @@ pub(crate) enum Proposal {
     StartWorkspace,
     #[cfg_attr(not(feature = "test-harness"), allow(dead_code))]
     CaptureWorkspace,
+    #[cfg(feature = "test-harness")]
+    Stop(StopReason),
     StartSession,
     BeginHandoff,
     Infer(Inference),
@@ -135,6 +139,34 @@ impl RuntimeConfig {
                 context_reserve: memento_contract::request_context_reserve(limits, handoff),
                 tools: memento_contract::tools(handoff),
             })
+        } else if let Some(config) = &self.compaction {
+            let (maximum_tokens, generation_reserve, context_reserve, tools) = match purpose {
+                RequestPurpose::Work => (
+                    self.parameters.limits.tokens_per_call.get(),
+                    0,
+                    config.work_reserve(),
+                    crate::compaction::tools(),
+                ),
+                RequestPurpose::Compaction => (
+                    config.settings.summary_tokens.get(),
+                    self.parameters.limits.tokens_per_call.get(),
+                    crate::compaction::CompactionSettings::safety_margin(
+                        self.parameters.limits.context_tokens.get(),
+                    ),
+                    Vec::new(),
+                ),
+                RequestPurpose::Handoff => {
+                    return Err(playtime_core::InvalidValue(
+                        "continuous conversation has no memento handoff",
+                    ));
+                }
+            };
+            Ok(RequestContract {
+                maximum_tokens,
+                generation_reserve,
+                context_reserve,
+                tools,
+            })
         } else {
             let config = self
                 .workspace
@@ -159,6 +191,8 @@ pub(crate) enum Policy {
     Memento(Memento),
     #[cfg(feature = "test-harness")]
     Probe(probe::Probe),
+    #[cfg(feature = "test-harness")]
+    Compaction(compaction::Compaction),
 }
 
 impl Policy {
@@ -166,18 +200,34 @@ impl Policy {
     pub fn probe() -> Self {
         Self::Probe(probe::Probe::default())
     }
-    pub fn propose(&mut self, view: View<'_>) -> Proposal {
+    #[cfg(feature = "test-harness")]
+    pub fn compaction(
+        config: &crate::compaction::CompactionConfig,
+    ) -> Result<Self, playtime_core::InvalidValue> {
+        let policy = compaction::Compaction::new(config);
+        if !policy.initial_fits(config) {
+            return Err(playtime_core::InvalidValue(
+                "initial compaction context cannot fit below the trigger with its required reserves",
+            ));
+        }
+        Ok(Self::Compaction(policy))
+    }
+    pub fn propose(&mut self, view: View<'_>, _context: &ContextWindow) -> Proposal {
         match self {
             Self::Memento(policy) => policy.propose(view.memento()),
             #[cfg(feature = "test-harness")]
             Self::Probe(policy) => policy.propose(view),
+            #[cfg(feature = "test-harness")]
+            Self::Compaction(policy) => policy.propose(view, _context),
         }
     }
     pub fn session_starting(&mut self) {
         match self {
             Self::Memento(policy) => policy.session_starting(),
             #[cfg(feature = "test-harness")]
-            Self::Probe(_) => unreachable!("run-scoped policy cannot start a session"),
+            Self::Probe(_) | Self::Compaction(_) => {
+                unreachable!("run-scoped policy cannot start a session")
+            }
         }
     }
     pub fn session_started(
@@ -189,7 +239,9 @@ impl Policy {
         match self {
             Self::Memento(policy) => policy.session_started(view.memento(), memory, evidence),
             #[cfg(feature = "test-harness")]
-            Self::Probe(_) => unreachable!("run-scoped policy has no memory delivery"),
+            Self::Probe(_) | Self::Compaction(_) => {
+                unreachable!("run-scoped policy has no memory delivery")
+            }
         }
     }
     pub fn workspace_started(&mut self) {
@@ -197,34 +249,43 @@ impl Policy {
             Self::Memento(_) => unreachable!("memento requires a session"),
             #[cfg(feature = "test-harness")]
             Self::Probe(policy) => policy.started(),
+            #[cfg(feature = "test-harness")]
+            Self::Compaction(policy) => policy.started(),
         }
     }
     pub fn begin_handoff(&mut self, view: View<'_>) {
         match self {
             Self::Memento(policy) => policy.begin_handoff(view.memento()),
             #[cfg(feature = "test-harness")]
-            Self::Probe(_) => unreachable!("test policy has no handoff"),
+            Self::Probe(_) | Self::Compaction(_) => unreachable!("test policy has no handoff"),
         }
     }
     pub fn context_rejected(&mut self) {
         match self {
             Self::Memento(policy) => policy.context_rejected(),
             #[cfg(feature = "test-harness")]
-            Self::Probe(_) => {}
+            Self::Probe(_) | Self::Compaction(_) => {}
         }
     }
-    pub fn model_response(&mut self, message: Value) {
+    pub fn model_response(
+        &mut self,
+        _view: View<'_>,
+        _request_id: playtime_core::RequestId,
+        response: crate::ModelResponse,
+    ) {
         match self {
-            Self::Memento(policy) => policy.model_response(message),
+            Self::Memento(policy) => policy.model_response(response.message),
             #[cfg(feature = "test-harness")]
-            Self::Probe(policy) => policy.model_response(message),
+            Self::Probe(policy) => policy.model_response(response.message),
+            #[cfg(feature = "test-harness")]
+            Self::Compaction(policy) => policy.model_response(_view, _request_id, response),
         }
     }
     pub fn recovery(&self, view: View<'_>, error: &ModelFailure) -> Recovery {
         match self {
             Self::Memento(policy) => policy.recovery(view.memento(), error),
             #[cfg(feature = "test-harness")]
-            Self::Probe(_) => Recovery::Stop(match error {
+            Self::Probe(_) | Self::Compaction(_) => Recovery::Stop(match error {
                 ModelFailure::Parse(_) => StopReason::ToolParseRetryLimit,
                 ModelFailure::Connection(_) => StopReason::ModelConnectionError,
                 ModelFailure::Incomplete(_) => StopReason::IncompleteModelResponse,
@@ -239,7 +300,7 @@ impl Policy {
         match self {
             Self::Memento(policy) => policy.retry(view.memento()),
             #[cfg(feature = "test-harness")]
-            Self::Probe(_) => unreachable!("test policy never retries"),
+            Self::Probe(_) | Self::Compaction(_) => unreachable!("test policy never retries"),
         }
     }
     pub fn fit_result(
@@ -251,6 +312,8 @@ impl Policy {
     ) -> Value {
         match self {
             Self::Memento(policy) => policy.fit_result(view.memento(), context, name, original),
+            #[cfg(feature = "test-harness")]
+            Self::Compaction(policy) => policy.fit_result(view, name, original),
             #[cfg(feature = "test-harness")]
             Self::Probe(_) => crate::context::fit_tool_result(
                 name,
@@ -264,6 +327,8 @@ impl Policy {
             Self::Memento(policy) => policy.tool_result(name, result),
             #[cfg(feature = "test-harness")]
             Self::Probe(policy) => policy.tool_result(name, result),
+            #[cfg(feature = "test-harness")]
+            Self::Compaction(policy) => policy.tool_result(name, result),
         }
     }
     pub fn after_response(&mut self, view: View<'_>, complete: bool) -> Option<&'static str> {
@@ -274,6 +339,11 @@ impl Policy {
                 policy.after_response();
                 None
             }
+            #[cfg(feature = "test-harness")]
+            Self::Compaction(policy) => {
+                policy.after_response();
+                None
+            }
         }
     }
     pub fn published(&mut self) {
@@ -281,6 +351,15 @@ impl Policy {
             Self::Memento(policy) => policy.published(),
             #[cfg(feature = "test-harness")]
             Self::Probe(policy) => policy.published(),
+            #[cfg(feature = "test-harness")]
+            Self::Compaction(policy) => policy.published(),
+        }
+    }
+    pub fn take_observations(&mut self) -> Vec<(&'static str, Value)> {
+        match self {
+            #[cfg(feature = "test-harness")]
+            Self::Compaction(policy) => policy.take_observations(),
+            _ => Vec::new(),
         }
     }
     pub fn stopped(&mut self) {
@@ -288,6 +367,8 @@ impl Policy {
             Self::Memento(policy) => policy.stopped(),
             #[cfg(feature = "test-harness")]
             Self::Probe(policy) => policy.stopped(),
+            #[cfg(feature = "test-harness")]
+            Self::Compaction(policy) => policy.stopped(),
         }
     }
 }
