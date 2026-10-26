@@ -48,10 +48,14 @@ that `finish_run` ends the run early. With `allow_finish_run: false`, a separate
 protocol says the run lasts until a limit and never names the tool. Work
 requests then offer only `exec`, `read_file` and `write_file`, and a `finish_run`
 call gets the ordinary unavailable-tool error. The inventory describes one
-workshop that lasts the whole run and ends with the recipe's workspace, entry
-and `/tmp` limits. Both lines are written at selection, and the protocol again
-when the finish choice changes; other setting changes keep the frozen protocol.
-Clone and revise don't change those limits, so the frozen lines stay accurate.
+workshop that lasts the whole run. It ends with the recipe's workspace, entry
+and `/tmp` limits, then the time after which the bridge stops a command
+(`command_seconds` less the 3-second return allowance) and the `output_bytes`
+that one response's tool results share. It suggests running longer jobs in the
+background with their output in files. Both texts are written at selection, and
+the protocol again when the finish choice changes; other setting changes keep
+the frozen protocol. Clone and revise don't change those limits, so the frozen
+texts stay accurate.
 The task,
 seeds, model, sampling and common allocations remain inherited. Legacy session
 allocations/instructions remain inactive source data, enabling an explicit

@@ -125,17 +125,30 @@ fn saved_continuous_definition_selects_only_its_exact_native_profile() {
         profile.config.inventory,
         definition.compaction.as_ref().unwrap().inventory
     );
-    assert!(profile.config.inventory.ends_with(
+    assert!(profile.config.inventory.contains(
         "\nYour workspace /work holds 8 MiB and 512 files and directories; /tmp holds 16 MiB. Both last until the run ends.\n"
+    ));
+    // Then its command limits: the bridge's cap, which leaves 3 of the 5 seconds
+    // to return, and the result allowance that one response's calls share.
+    assert!(profile.config.inventory.ends_with(
+        "\nA command still running after 2 seconds is stopped, along with any background jobs it started. The tool results of one response share 4 KiB; longer output is shortened. For longer work, start a background job with its output in a file, such as `python3 job.py > job.log 2>&1 &`, and check the file in later calls.\n"
     ));
     let mut curiosity = definition.recipe.clone();
     curiosity.parameters.workshop.workspace_bytes = (16 << 20).try_into().unwrap();
     curiosity.parameters.workshop.tmp_bytes = (1 << 30).try_into().unwrap();
     curiosity.workspace_entries = 900;
+    curiosity.parameters.limits.command_seconds = 60.try_into().unwrap();
+    curiosity.parameters.limits.output_bytes = (16 << 10).try_into().unwrap();
     assert!(
         playtime_runner::docker::CompactionDefinition::new(&curiosity)
             .inventory
-            .ends_with("\nYour workspace /work holds 16 MiB and 900 files and directories; /tmp holds 1 GiB. Both last until the run ends.\n")
+            .ends_with("\nYour workspace /work holds 16 MiB and 900 files and directories; /tmp holds 1 GiB. Both last until the run ends.\nA command still running after 57 seconds is stopped, along with any background jobs it started. The tool results of one response share 16 KiB; longer output is shortened. For longer work, start a background job with its output in a file, such as `python3 job.py > job.log 2>&1 &`, and check the file in later calls.\n")
+    );
+    curiosity.parameters.limits.command_seconds = 303.try_into().unwrap();
+    assert!(
+        playtime_runner::docker::CompactionDefinition::new(&curiosity)
+            .inventory
+            .contains("\nA command still running after 5 minutes is stopped")
     );
     curiosity.parameters.workshop.workspace_bytes = (3 << 19).try_into().unwrap();
     assert!(
