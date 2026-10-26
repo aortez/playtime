@@ -18,10 +18,14 @@ Defaults are 75%, two retained exchanges, 2,048 summary tokens and the versioned
 summary instruction template. The summary cap must fit the selected response
 cap; initial work must fit with the controller's reserves. Saving rejects
 impossible combinations, including prompt-only edits with inherited settings.
-The trigger is an upper bound. The policy also compacts when the next summary
-request might not fit, and that check estimates the request from its bytes, so
-it can fire first. In the saved-recipe gate's 16,384-token context, compaction
-starts near 5,300 projected tokens, well before the 75% trigger at 12,288.
+The trigger is an upper bound. Each work request must also leave the work
+reserve: the safety margin, summary cap, instruction message and output limit.
+The summary after the next exchange must fit too, and that check estimates the
+request from its bytes. Either check can fire first. In the saved-recipe gate's
+16,384-token context, the summary check starts compaction near 5,300 projected
+tokens, well before the 75% trigger at 12,288. With Curiosity's 65,536-token
+context and an 8,192-token summary cap, the reserve keeps projected work below
+37,336 tokens, 57% of context.
 No model, Docker or workshop connection is needed to read or edit saved
 configurations. Preview and launch still require those execution capabilities.
 
