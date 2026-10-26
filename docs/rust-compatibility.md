@@ -39,6 +39,14 @@ retain first-stop semantics. The CPU gate simulates effects/receipts; native
 process continuity, durable compaction read contracts and API/workbench support
 remain #110 steps B/C. Production workers cannot select this policy.
 
+PR #142 review correction: before continuing work with a retained suffix, check
+the next boundary's summary input on the conservative byte basis it will need
+after dropping recent exchanges. Compact earlier if deferring would make that
+summary impossible, even when measured work occupancy remains below its trigger.
+Regression coverage performs three compactions with reported prompt usage and
+both one and two retained exchanges. Existing byte-estimate compaction and memento
+goldens remain unchanged; no archive or schema version changes.
+
 ## Session-neutral internal contract (#109 step C, 2026-10-25)
 
 Adds explicit internal work/handoff/compaction purposes, run/session scopes and

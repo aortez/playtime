@@ -316,6 +316,119 @@ fn repeated_compaction_preserves_root_recent_exchanges_previous_summary_and_glob
 }
 
 #[test]
+fn reported_usage_compacts_before_the_next_summary_outgrows_context() {
+    for retained in [1, 2] {
+        let mut config = config();
+        config.settings.recent_exchanges = retained;
+        config.parameters.limits.generated_tokens = 50000.try_into().unwrap();
+        config.parameters.limits.log_bytes = 8000000.try_into().unwrap();
+        let context = config.parameters.limits.context_tokens.get();
+        let threshold = (context * u64::from(config.settings.trigger_percent)).div_ceil(100);
+        let mut run = Run::new(config);
+        let root = run.request().messages.clone();
+        let reserve = run.request().context_reserve;
+        let mut work_calls = 0;
+        let mut summaries = 0;
+        for _ in 0..40 {
+            assert_eq!(run.controller.terminal_decision(), None);
+            let request = run.request().clone();
+            let prompt_tokens =
+                (serde_json::to_vec(&json!({"messages":request.messages,"tools":request.tools}))
+                    .unwrap()
+                    .len() as u64)
+                    .div_ceil(8);
+            let (message, generated_tokens) = if request.purpose == RequestPurpose::Work {
+                work_calls += 1;
+                (
+                    json!({"role":"assistant","content":format!("Exchange {work_calls}: {}", "x".repeat(3000))}),
+                    400,
+                )
+            } else {
+                assert_eq!(request.purpose, RequestPurpose::Compaction);
+                assert_eq!(request.context_basis, "input_bytes");
+                assert!(
+                    request.context_input_bound + request.maximum_tokens + request.context_reserve
+                        < context
+                );
+                let plan = &run
+                    .records
+                    .iter()
+                    .rev()
+                    .find(|r| r.kind == "compaction_planned")
+                    .unwrap()
+                    .data;
+                // Measured work occupancy still permits more work; the summary
+                // fit, not the ordinary work trigger or reserve, must stop it.
+                assert_eq!(plan["estimate_basis"], "server_usage_plus_new_bytes");
+                let projected = plan["projected_tokens"].as_u64().unwrap();
+                assert!(projected < threshold && projected + reserve < context);
+                assert_eq!(
+                    plan["retained_requests"].as_array().unwrap().len(),
+                    usize::from(retained)
+                );
+                // One more response would move the oldest retained exchange
+                // into the summary and make its byte estimate exceed the bound.
+                // With retention one this is the entire current prefix, which
+                // must not borrow today's measurement for tomorrow's summary.
+                let mut deferred = plan["before_messages"].as_array().unwrap().clone();
+                deferred.truncate(deferred.len() - usize::from(retained) + 1);
+                deferred.push(json!({"role":"user","content":run.config.settings.instructions}));
+                let deferred_bytes = serde_json::to_vec(&json!({"messages":deferred,"tools":[]}))
+                    .unwrap()
+                    .len() as u64;
+                assert!(
+                    deferred_bytes + request.maximum_tokens + request.context_reserve >= context
+                );
+                assert_eq!(&request.messages[..root.len()], &root);
+                for n in work_calls - u64::from(retained) + 1..=work_calls {
+                    assert!(!request.messages.iter().any(|m| {
+                        m["content"]
+                            .as_str()
+                            .is_some_and(|s| s.starts_with(&format!("Exchange {n}:")))
+                    }));
+                }
+                if summaries > 0 {
+                    assert!(request.messages.iter().any(|m| {
+                        m["content"]
+                            .as_str()
+                            .is_some_and(|s| s.contains(&format!("Summary {summaries}")))
+                    }));
+                }
+                summaries += 1;
+                (
+                    json!({"role":"assistant","content":format!("Summary {summaries}: preserve the checked findings.")}),
+                    10,
+                )
+            };
+            run.complete(Outcome::ModelCompleted {
+                response: ModelResponse {
+                    done: true,
+                    generated_tokens: Some(generated_tokens),
+                    prompt_tokens: Some(prompt_tokens),
+                    message,
+                },
+                finish_reason: "stop".into(),
+            });
+            if summaries == 3 {
+                break;
+            }
+        }
+        assert_eq!(summaries, 3);
+        assert_eq!(run.request().purpose, RequestPurpose::Work);
+        assert_eq!(
+            run.records
+                .iter()
+                .filter(|r| r.kind == "compaction_applied")
+                .count(),
+            3
+        );
+        assert!(!run.records.iter().any(|r| r.kind == "compaction_rejected"));
+        run.response(finish(json!("done after repeated measured compaction")));
+        assert_eq!(run.finalize().reason, StopReason::AgentFinished);
+    }
+}
+
+#[test]
 fn summary_requires_normal_completion_final_content_and_progress() {
     for case in 0..8 {
         let mut run = Run::new(config());

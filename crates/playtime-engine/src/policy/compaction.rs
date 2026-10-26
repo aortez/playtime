@@ -70,6 +70,33 @@ impl Compaction {
         messages
     }
 
+    fn summary_messages(&self, older: usize, config: &CompactionConfig) -> Vec<Value> {
+        let mut messages = self.messages(&self.exchanges[..older], self.summary.as_ref());
+        messages.push(message("user", &config.settings.instructions));
+        messages
+    }
+
+    fn summary_fits_after_next_work(&self, config: &CompactionConfig) -> bool {
+        let retained = usize::from(config.settings.recent_exchanges);
+        if retained == 0 {
+            // Without a retained suffix, summarization extends the measured
+            // prefix. The ordinary work reserve covers that continuation.
+            return true;
+        }
+        // The next response and its tool results will be retained. Only the
+        // oldest retained exchange can enter the next summary, and it is
+        // already complete. Dropping the new suffix invalidates the next
+        // server measurement, even if this prefix is measured right now.
+        let older = (self.exchanges.len() + 1).saturating_sub(retained);
+        let messages = self.summary_messages(older, config);
+        encoded_size(&json!({"messages":messages,"tools":[]}))
+            .saturating_add(config.settings.summary_tokens.get())
+            .saturating_add(CompactionSettings::safety_margin(
+                config.parameters.limits.context_tokens.get(),
+            ))
+            < config.parameters.limits.context_tokens.get()
+    }
+
     pub fn initial_fits(&self, config: &CompactionConfig) -> bool {
         let input =
             encoded_size(&json!({"messages":self.root, "tools":crate::compaction::tools()}));
@@ -117,6 +144,7 @@ impl Compaction {
         let projected = input.saturating_add(allowance);
         if projected < config.settings.threshold(limits.context_tokens.get())
             && projected.saturating_add(config.work_reserve()) < limits.context_tokens.get()
+            && self.summary_fits_after_next_work(config)
         {
             return Proposal::Infer(Inference {
                 purpose: RequestPurpose::Work,
@@ -146,8 +174,7 @@ impl Compaction {
                 "insufficient budget for summary and continued work",
             );
         }
-        let mut summary_messages = self.messages(&self.exchanges[..older], self.summary.as_ref());
-        summary_messages.push(message("user", &config.settings.instructions));
+        let summary_messages = self.summary_messages(older, config);
         let (summary_input, summary_basis) = context.estimate(&summary_messages, &[]);
         if summary_input
             .saturating_add(config.settings.summary_tokens.get())
