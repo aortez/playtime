@@ -147,6 +147,12 @@ impl<I: IdSource> Controller<I> {
                             }
                         } else if self.phase != RunPhase::Working {
                             return Err(InvalidValue("workspace is not ready for inference"));
+                        } else if self.config.compaction.is_some()
+                            && self.parse_streak > crate::compaction::TOOL_PARSE_RETRIES
+                        {
+                            return Err(InvalidValue(
+                                "policy inference exceeds frozen retry limits",
+                            ));
                         }
                         self.request(inference);
                     }

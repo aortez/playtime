@@ -13,6 +13,9 @@ use crate::{FileIndex, context::encoded_size};
 pub const HARNESS: &str = "continuous_compaction_v1";
 pub const FINISH_SUMMARY_BYTES: usize = 8192;
 pub const DEFAULT_INSTRUCTIONS: &str = playtime_protocol::api::DEFAULT_COMPACTION_INSTRUCTIONS;
+/// Consecutive parse failures of work requests that are retried; one more
+/// stops the run.
+pub const TOOL_PARSE_RETRIES: u32 = 5;
 pub(crate) const MIN_TOOL_RESULT_BYTES: u64 = 512;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -131,14 +134,21 @@ pub(crate) fn tools() -> Vec<Value> {
     tools
 }
 
+pub(crate) enum Batch {
+    /// Every call may run. A finish declaration carries its summary.
+    Valid(Option<String>),
+    /// An ordinary call is invalid, so no call runs and each gets an error result.
+    Rejected,
+}
+
 pub(crate) fn validate_tools(
     message: &Value,
     finish_reason: Option<&str>,
     result_allowance: u64,
-) -> Result<Option<String>, (playtime_core::StopReason, String)> {
+) -> Result<Batch, (playtime_core::StopReason, String)> {
     use playtime_core::StopReason;
     let Some(calls) = message["tool_calls"].as_array() else {
-        return Ok(None);
+        return Ok(Batch::Valid(None));
     };
     let has_finish = calls
         .iter()
@@ -159,14 +169,10 @@ pub(crate) fn validate_tools(
         let name = call["function"]["name"].as_str().unwrap_or("");
         let arguments = &call["function"]["arguments"];
         if let Some(error) = crate::validation::validate_call(&tools(), name, arguments) {
-            return Err((
-                if has_finish {
-                    StopReason::InvalidCompletion
-                } else {
-                    StopReason::ToolParseRetryLimit
-                },
-                error,
-            ));
+            if !has_finish {
+                return Ok(Batch::Rejected);
+            }
+            return Err((StopReason::InvalidCompletion, error));
         }
         if name == "finish_run" {
             let summary = arguments["summary"].as_str().unwrap();
@@ -177,8 +183,8 @@ pub(crate) fn validate_tools(
                         .into(),
                 ));
             }
-            return Ok(Some(summary.into()));
+            return Ok(Batch::Valid(Some(summary.into())));
         }
     }
-    Ok(None)
+    Ok(Batch::Valid(None))
 }

@@ -767,7 +767,7 @@ fn retained_tool_exchange_stays_paired_and_older_tools_enter_the_summary_togethe
 
 #[test]
 fn impossible_preserved_input_budget_and_tool_batches_stop_without_maintenance() {
-    for case in 0..4 {
+    for case in 0..3 {
         let mut config = config();
         if case == 1 {
             config.parameters.limits.generated_tokens = 700.try_into().unwrap();
@@ -781,15 +781,13 @@ fn impossible_preserved_input_budget_and_tool_batches_stop_without_maintenance()
                     run.response(json!({"role":"assistant","content":"growing".repeat(450)}));
                 }
             }
-            2 => run.response(json!({"role":"assistant","tool_calls":(0..5).map(|_|call("exec",json!({"command":"never execute"}))).collect::<Vec<_>>()})),
-            _ => run.response(json!({"role":"assistant","tool_calls":[call("exec",json!({"command":42}))]})),
+            _ => run.response(json!({"role":"assistant","tool_calls":(0..5).map(|_|call("exec",json!({"command":"never execute"}))).collect::<Vec<_>>()})),
         }
         let result = run.finalize();
         assert_eq!(
             result.reason,
             match case {
                 1 => StopReason::TokenLimit,
-                3 => StopReason::ToolParseRetryLimit,
                 _ => StopReason::ContextLimit,
             }
         );
@@ -802,6 +800,206 @@ fn impossible_preserved_input_budget_and_tool_batches_stop_without_maintenance()
                 .any(|e| matches!(e.kind, EffectKind::Tool(_)))
         );
     }
+}
+
+#[test]
+fn invalid_tool_batches_return_errors_without_running_any_call() {
+    let mut run = Run::new(config());
+    run.response(json!({"role":"assistant","tool_calls":[
+        call("exec",json!({"command":"never execute"})),
+        call("write_file",json!({"path":"notes.txt","patch":"@@ -1 +1 @@"})),
+        call("python",json!({"code":"print(1)"})),
+    ]}));
+    let request = run.request();
+    assert_eq!(request.purpose, RequestPurpose::Work);
+    let results: Vec<Value> = request
+        .messages
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(|m| serde_json::from_str(m["content"].as_str().unwrap()).unwrap())
+        .collect();
+    assert_eq!(
+        results,
+        [
+            json!({"error":"Not run because another call in this response was invalid"}),
+            json!({"error":"Unexpected or missing tool arguments"}),
+            json!({"error":"Tool is unavailable for this request purpose"}),
+        ]
+    );
+    assert!(
+        !run.dispatches
+            .iter()
+            .any(|e| matches!(e.kind, EffectKind::Tool(_)))
+    );
+    assert!(
+        !run.records
+            .iter()
+            .any(|r| r.kind == "tool_dispatch" || r.kind == "tool_batch_rejected")
+    );
+    run.response(
+        json!({"role":"assistant","tool_calls":[call("exec",json!({"command":"echo fixed"}))]}),
+    );
+    run.complete(Outcome::Tool(
+        json!({"exit_code":0,"stdout":"fixed\n","stderr":"","timed_out":false}),
+    ));
+    run.response(finish(json!("Corrected the call and checked its output.")));
+    assert_eq!(run.finalize().reason, StopReason::AgentFinished);
+    assert_eq!(
+        run.dispatches
+            .iter()
+            .filter(|e| matches!(e.kind, EffectKind::Tool(_)))
+            .count(),
+        1
+    );
+}
+
+fn notice() -> Value {
+    json!({"role":"user","content":"The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments."})
+}
+fn parse_failure() -> Outcome {
+    Outcome::ModelError(ModelFailure::Parse("error parsing tool call".into()))
+}
+
+#[test]
+fn work_parse_failures_retry_with_a_notice_until_the_consecutive_limit() {
+    let mut run = Run::new(config());
+    let root = run.request().messages.clone();
+    run.complete(parse_failure());
+    let retry = run.request().clone();
+    assert_eq!(retry.purpose, RequestPurpose::Work);
+    assert_eq!(retry.messages, [root.clone(), vec![notice()]].concat());
+    // The notice opens the exchange of the response that follows it.
+    run.response(json!({"role":"assistant","content":"Retrying with valid arguments."}));
+    let next = run.request();
+    assert_eq!(next.messages[..retry.messages.len()], retry.messages[..]);
+    assert_eq!(next.messages.len(), retry.messages.len() + 1);
+    for n in 1..=compaction::TOOL_PARSE_RETRIES + 1 {
+        run.complete(parse_failure());
+        if n <= compaction::TOOL_PARSE_RETRIES {
+            let notices = run.request().messages.iter().filter(|m| **m == notice());
+            assert_eq!(notices.count() as u32, n + 1);
+        }
+    }
+    let result = run.finalize();
+    assert_eq!(result.reason, StopReason::ToolParseRetryLimit);
+    assert_eq!(result.usage.unknown_requests, 7);
+    assert_eq!(result.usage.unknown_reserved_tokens, 7 * 512);
+    assert!(!result.usage.usage_complete);
+    let errors: Vec<_> = run
+        .records
+        .iter()
+        .filter(|r| r.kind == "model_error")
+        .map(|r| {
+            (
+                r.data["recovery_allowed"].clone(),
+                r.data["consecutive_errors"].clone(),
+            )
+        })
+        .collect();
+    let expected: Vec<_> = [1, 1, 2, 3, 4, 5, 6]
+        .into_iter()
+        .map(|streak| (json!(streak <= 5), json!(streak)))
+        .collect();
+    assert_eq!(errors, expected);
+}
+
+#[test]
+fn a_retried_exchange_fits_its_tool_results_like_any_other() {
+    let results = |retried: bool| {
+        let mut run = Run::new(config());
+        if retried {
+            run.complete(parse_failure());
+        }
+        run.response(json!({"role":"assistant","tool_calls":[call("exec",json!({"command":"first"})),call("exec",json!({"command":"second"}))]}));
+        for _ in 0..2 {
+            run.complete(Outcome::Tool(
+                json!({"exit_code":0,"stdout":"é".repeat(10000),"stderr":"","timed_out":false}),
+            ));
+        }
+        let request = run.request();
+        request
+            .messages
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(results(true), results(false));
+}
+
+/// Alternates parse failures and short responses until compaction is planned
+/// while a retry notice waits for its exchange.
+fn compaction_with_pending_notice() -> Run {
+    let mut config = config();
+    config.parameters.limits.generated_tokens = 100_000.try_into().unwrap();
+    let mut run = Run::new(config);
+    for n in 0..200 {
+        run.complete(parse_failure());
+        if run.request().purpose == RequestPurpose::Compaction {
+            return run;
+        }
+        run.response(
+            json!({"role":"assistant","content":format!("Exchange {n}: {}", "x".repeat(150))}),
+        );
+        if run.request().purpose == RequestPurpose::Compaction {
+            run.response(json!({"role":"assistant","content":format!("Summary {n}.")}));
+        }
+    }
+    panic!("no compaction while a notice was pending");
+}
+
+#[test]
+fn a_pending_retry_notice_stays_out_of_the_summary_and_opens_the_next_exchange() {
+    let mut run = compaction_with_pending_notice();
+    let summary = run.request().clone();
+    let instructions = summary.messages.len() - 1;
+    assert_eq!(summary.messages[instructions - 1]["role"], "assistant");
+    let plan = run
+        .records
+        .iter()
+        .rev()
+        .find(|r| r.kind == "compaction_planned")
+        .unwrap()
+        .data
+        .clone();
+    assert_eq!(
+        plan["before_messages"].as_array().unwrap().last(),
+        Some(&notice())
+    );
+    run.response(json!({"role":"assistant","content":"Summary: checked results."}));
+    let applied = &run
+        .records
+        .iter()
+        .rev()
+        .find(|r| r.kind == "compaction_applied")
+        .unwrap()
+        .data;
+    assert_eq!(applied["ordinal"], plan["ordinal"]);
+    assert_eq!(
+        applied["messages"].as_array().unwrap().last(),
+        Some(&notice())
+    );
+    let work = run.request().clone();
+    assert_eq!(work.purpose, RequestPurpose::Work);
+    assert_eq!(work.messages.last(), Some(&notice()));
+    run.response(json!({"role":"assistant","content":"Retried after compaction."}));
+    assert_eq!(
+        run.request().messages[..work.messages.len()],
+        work.messages[..]
+    );
+
+    // A summary request's parse failure still stops the run.
+    let mut run = compaction_with_pending_notice();
+    run.complete(parse_failure());
+    assert_eq!(run.finalize().reason, StopReason::ToolParseRetryLimit);
+    let error = &run
+        .records
+        .iter()
+        .rev()
+        .find(|r| r.kind == "model_error")
+        .unwrap()
+        .data;
+    assert_eq!(error["recovery_allowed"], false);
 }
 
 #[test]

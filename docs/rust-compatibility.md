@@ -564,3 +564,24 @@ explicit. New synthetic wide/narrow editor and trace screenshots cover this UI;
 existing screenshot baselines remain unchanged. See
 [continuous execution](rust-continuous-native.md) for active versus inactive
 parameters, native verification, and the bounded final-file listing.
+
+## Continuous tool-call recovery
+
+`continuous_compaction_v1` no longer stops at a model's first tool-call mistake.
+A batch with an invalid ordinary call still runs none of its calls. Each call now
+gets an error result and work continues; before, the run stopped with
+`tool_parse_retry_limit`. A work request whose tool call the server can't parse
+is retried with memento's notice, without its budget sentence. More than five
+consecutive failures stop the run with `tool_parse_retry_limit`. A notice opens
+the next exchange, so compaction keeps it with the response that follows. A
+malformed or mixed finish, an oversized batch, more than eight calls and a failed
+summary still stop as before. A recovered batch's calls appear as `tool_request`
+and `tool_result` records without dispatch, as invalid memento calls do. They
+record no `tool_batch_rejected` observation; that kind still means the run
+stopped.
+
+Archive, API and settings schemas are unchanged. `compaction-policy-v1.json` is
+unchanged because its scenario has no failures; new CPU cases cover recovery.
+Memento behavior and goldens are unchanged. The new `continuous_tool_recovery`
+capability changes the native capability digest, so a new daemon refuses older
+worker bundles; rebuild the bundle.
