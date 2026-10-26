@@ -581,6 +581,9 @@ impl Application for Fixture {
                 self.catalog
                     .as_ref()
                     .map(|_| RECIPE_COMPACTION_SETTINGS.into()),
+                self.catalog
+                    .as_ref()
+                    .map(|_| RECIPE_COMPACTION_FINISH.into()),
                 self.catalog.as_ref().map(|_| MODEL_SETTINGS.into()),
                 self.catalog.as_ref().map(|_| RECIPE_MODEL_SELECTION.into()),
             ]

@@ -7,6 +7,7 @@ pub struct Draft {
     pub recent: String,
     pub summary: String,
     pub instructions: String,
+    pub allow_finish_run: bool,
 }
 impl From<CompactionSettings> for Draft {
     fn from(s: CompactionSettings) -> Self {
@@ -15,6 +16,7 @@ impl From<CompactionSettings> for Draft {
             recent: s.recent_exchanges.to_string(),
             summary: s.summary_tokens.to_string(),
             instructions: s.instructions,
+            allow_finish_run: s.allow_finish_run,
         }
     }
 }
@@ -35,13 +37,15 @@ impl Draft {
                 .parse()
                 .map_err(|_| "Enter a whole-number summary limit.")?,
             instructions: self.instructions.clone(),
+            allow_finish_run: self.allow_finish_run,
         };
         if let Some(error) = s.validation_error() {
             return Err(error.into());
         }
         Ok(s)
     }
-    pub fn draw(&mut self, ui: &mut egui::Ui) {
+    /// `finish_choice` shows the finish_run option when the service supports it.
+    pub fn draw(&mut self, ui: &mut egui::Ui, finish_choice: bool) {
         ui.strong("Compaction settings");
         for (label, value) in [
             ("Context trigger (%)", &mut self.trigger),
@@ -67,5 +71,14 @@ impl Draft {
         )
         .labelled_by(label.id);
         ui.small("Summaries use the selected model and whole-run budget. Compaction can start before the trigger when a summary request needs room. The workshop stays alive; only the final stopped workspace is captured.");
+        if finish_choice {
+            ui.checkbox(
+                &mut self.allow_finish_run,
+                "The model can end the run with finish_run",
+            );
+            if !self.allow_finish_run {
+                ui.small("Without finish_run, the run lasts until its time or token limit.");
+            }
+        }
     }
 }

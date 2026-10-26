@@ -19,6 +19,8 @@ const PARSE_RETRY_NOTICE: &str = "The server rejected your last response because
 /// Follows a response that called no tool. Otherwise the next request would end
 /// with the model's own message and leave it nothing to answer.
 const CONTINUE_NOTICE: &str = "Your last response did not call a tool, so the run continues. Continue independently, or call finish_run alone if the task is finished; ordinary prose does not finish the run.";
+/// The same notice for a run that offers no finish_run.
+const CONTINUE_TO_LIMIT_NOTICE: &str = "Your last response did not call a tool, so the run continues. Continue independently; the run ends when its time or token budget runs out.";
 
 /// Controller notices, then a response and its tool results.
 #[derive(Clone)]
@@ -117,8 +119,8 @@ impl Compaction {
     }
 
     pub fn initial_fits(&self, config: &CompactionConfig) -> bool {
-        let input =
-            encoded_size(&json!({"messages":self.root, "tools":crate::compaction::tools()}));
+        let tools = crate::compaction::tools(config.settings.allow_finish_run);
+        let input = encoded_size(&json!({"messages":self.root, "tools":tools}));
         let projected = input.saturating_add(config.parameters.limits.tokens_per_call.get());
         projected
             < config
@@ -153,7 +155,7 @@ impl Compaction {
         if view.facts.remaining_tokens == 0 {
             return Proposal::Stop(StopReason::TokenLimit);
         }
-        let tools = crate::compaction::tools();
+        let tools = crate::compaction::tools(config.settings.allow_finish_run);
         let messages = self.work_messages(&self.exchanges, self.summary.as_ref());
         let (input, basis) = context.estimate(&messages, &tools);
         let allowance = limits
@@ -266,7 +268,7 @@ impl Compaction {
                 ),
             );
             let after = self.work_messages(&self.exchanges[older..], Some(&candidate));
-            let tools = crate::compaction::tools();
+            let tools = crate::compaction::tools(config.settings.allow_finish_run);
             // Rewritten input cannot borrow server measurements of another
             // prefix. Compare before/after bytes on the same conservative basis.
             let after_bytes = encoded_size(&json!({"messages":after,"tools":tools}));
@@ -354,11 +356,19 @@ impl Compaction {
     pub fn retry(&mut self) {
         self.notices.push(message("user", PARSE_RETRY_NOTICE));
     }
-    pub fn after_response(&mut self) {
+    pub fn after_response(&mut self, view: View<'_>) {
         // A retried request left no response, so it adds no exchange.
         if let Some(exchange) = self.current.take() {
             if exchange.messages.last().unwrap()["role"] == "assistant" {
-                self.notices.push(message("user", CONTINUE_NOTICE));
+                let config = view.config.compaction.as_ref().unwrap();
+                self.notices.push(message(
+                    "user",
+                    if config.settings.allow_finish_run {
+                        CONTINUE_NOTICE
+                    } else {
+                        CONTINUE_TO_LIMIT_NOTICE
+                    },
+                ));
             }
             self.exchanges.push(exchange);
         }

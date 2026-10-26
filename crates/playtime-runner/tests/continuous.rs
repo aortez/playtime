@@ -54,10 +54,10 @@ fn native_preparation_rejects_changed_bounds_harness_tools_and_seeds() {
             .is_ok()
     );
 }
-#[test]
-fn saved_continuous_definition_selects_only_its_exact_native_profile() {
-    use playtime_protocol::api::{CONTINUOUS_COMPACTION_V1, HarnessId, HarnessView};
-    use playtime_runner::docker::{FrozenRecipe, LiveHost, NativeProfile, Profile, Recipe};
+/// A saved definition that selected the continuous harness.
+fn saved_continuous_definition() -> playtime_runner::docker::FrozenRecipe {
+    use playtime_protocol::api::{CONTINUOUS_COMPACTION_V1, HarnessId};
+    use playtime_runner::docker::{FrozenRecipe, Recipe};
     let scenario: playtime_engine::simulation::Scenario =
         serde_json::from_slice(playtime_runner::docker::LIVE_SCENARIO).unwrap();
     let mut definition = FrozenRecipe::current(Recipe {
@@ -88,12 +88,22 @@ fn saved_continuous_definition_selects_only_its_exact_native_profile() {
         .unwrap()
         .settings
         .summary_tokens = 128;
-    let base = profile();
-    let host = LiveHost {
+    definition
+}
+fn synthetic_host() -> playtime_runner::docker::LiveHost {
+    playtime_runner::docker::LiveHost {
         endpoint: "http://127.0.0.1:11434".into(),
         addresses: vec!["127.0.0.1".parse().unwrap()],
         live_lock: "/tmp/synthetic-model.lock".into(),
-    };
+    }
+}
+#[test]
+fn saved_continuous_definition_selects_only_its_exact_native_profile() {
+    use playtime_protocol::api::HarnessView;
+    use playtime_runner::docker::{NativeProfile, Profile};
+    let definition = saved_continuous_definition();
+    let base = profile();
+    let host = synthetic_host();
     assert!(
         Profile::freeze_definition(
             definition.clone(),
@@ -189,6 +199,92 @@ fn saved_continuous_definition_selects_only_its_exact_native_profile() {
             "{pointer}"
         );
     }
+}
+#[test]
+fn leaving_out_finish_run_rewrites_the_protocol_and_freezes_the_choice() {
+    use playtime_protocol::api::{CONTINUOUS_COMPACTION_V1, HarnessView};
+    use playtime_runner::docker::{CompactionDefinition, NativeProfile};
+    let mut definition = saved_continuous_definition();
+    let mut settings = definition.compaction.as_ref().unwrap().settings.clone();
+    settings.allow_finish_run = false;
+    definition.apply_compaction_settings(&settings).unwrap();
+    let protocol = definition.compaction.as_ref().unwrap().protocol.clone();
+    assert_eq!(
+        protocol,
+        CompactionDefinition::protocol(&definition.recipe, false)
+    );
+    assert!(protocol.starts_with(include_str!(
+        "../src/docker/continuous-protocol-no-finish-v1.txt"
+    )));
+    assert!(!protocol.contains("finish_run"));
+    let mut curiosity = definition.recipe.clone();
+    curiosity.parameters.limits.wall_seconds = 600.try_into().unwrap();
+    curiosity.parameters.limits.generated_tokens = 100_000.try_into().unwrap();
+    assert!(CompactionDefinition::protocol(&curiosity, false).ends_with(
+        "\nThis run lasts 10 minutes or 100,000 generated tokens, whichever comes first.\n"
+    ));
+    // The frozen profile carries the choice to the controller.
+    let base = profile();
+    let NativeProfile::Continuous(frozen) = NativeProfile::freeze_definition(
+        definition.clone(),
+        base.selection,
+        base.daemon,
+        synthetic_host(),
+    )
+    .unwrap() else {
+        panic!("wrong policy")
+    };
+    frozen.validate().unwrap();
+    assert!(!frozen.config.settings.allow_finish_run);
+    assert_eq!(frozen.config.protocol, protocol);
+    let value = serde_json::to_value(&frozen).unwrap();
+    assert_eq!(
+        value.pointer("/config/settings/allow_finish_run"),
+        Some(&json!(false))
+    );
+    assert_eq!(
+        HarnessView::from_configuration(&value).unwrap().unwrap(),
+        definition.harness_view().unwrap().harness
+    );
+    // Restoring finish_run restores its protocol. Other setting changes keep
+    // whatever protocol the definition already froze.
+    settings.allow_finish_run = true;
+    definition.apply_compaction_settings(&settings).unwrap();
+    assert_eq!(
+        definition.compaction.as_ref().unwrap().protocol,
+        CompactionDefinition::protocol(&definition.recipe, true)
+    );
+    definition.compaction.as_mut().unwrap().protocol = "Frozen earlier.".into();
+    settings.trigger_percent = 60;
+    definition.apply_compaction_settings(&settings).unwrap();
+    assert_eq!(
+        definition.compaction.as_ref().unwrap().protocol,
+        "Frozen earlier."
+    );
+    // Settings saved before the choice existed still mean finish_run is offered,
+    // and the default is omitted so their bytes and digests are unchanged.
+    let old: playtime_protocol::api::CompactionSettings =
+        serde_json::from_value(json!({"schema_version":1,"trigger_percent":75,
+            "recent_exchanges":2,"summary_tokens":2048,"instructions":"Summarize."}))
+        .unwrap();
+    assert!(old.allow_finish_run);
+    assert!(
+        serde_json::to_value(&old)
+            .unwrap()
+            .get("allow_finish_run")
+            .is_none()
+    );
+    let catalog = playtime_runner::docker::harness_catalog().unwrap();
+    let continuous = catalog
+        .harnesses
+        .iter()
+        .find(|h| h.id.as_str() == CONTINUOUS_COMPACTION_V1);
+    assert!(
+        continuous
+            .unwrap()
+            .settings
+            .contains(&"allow_finish_run".to_owned())
+    );
 }
 struct Effects {
     work: VecDeque<CompletedResponse>,

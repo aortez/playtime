@@ -69,8 +69,8 @@ pub fn digest() -> Result<Sha256Digest> {
         serde_json::to_value(&BOUNDS)?,
         // A worker that predates authoring must not accept an authored profile
         // merely because its ordinary recipe template is unchanged, nor run a
-        // continuous profile without tool-call recovery.
-        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1}),
+        // continuous profile without tool-call recovery or the finish choice.
+        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1}),
         serde_json::from_slice(QWEN_MODEL_LOCK)?,
         serde_json::to_value(CompactionDefinition::new(&Recipe::reference()?))?,
     ];

@@ -445,8 +445,11 @@ restart/recovery matrix remains unimplemented.
 
 The harness selector now offers **Continuous conversation with compaction**.
 Its editor exposes trigger percentage, retained complete exchanges, summary cap
-and instructions. Memento handoff controls are inactive and hidden; shared model
-and budget settings remain inherited. See the
+and instructions. When the service advertises `allow_finish_run`, a checkbox
+chooses whether the model can end the run with `finish_run`; clearing it notes
+that the run lasts until its time or token limit, and the harness readback says
+so. Memento handoff controls are inactive and hidden; shared model and budget
+settings remain inherited. See the
 [recipe workflow](rust-continuous-native.md#recipe-and-workbench-workflow).
 The readable trace explains a stopped run: rejection reasons and details, a
 response that reached its token limit, and the controller's stop reason and

@@ -143,7 +143,7 @@ impl RuntimeConfig {
                     self.parameters.limits.tokens_per_call.get(),
                     0,
                     config.work_reserve(),
-                    crate::compaction::tools(),
+                    crate::compaction::tools(config.settings.allow_finish_run),
                 ),
                 RequestPurpose::Compaction => (
                     config.settings.summary_tokens.get(),
@@ -329,7 +329,7 @@ impl Policy {
                 None
             }
             Self::Compaction(policy) => {
-                policy.after_response();
+                policy.after_response(view);
                 None
             }
         }

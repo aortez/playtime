@@ -182,6 +182,13 @@ publication acknowledgment is still required before `agent_finished`. Capture
 failure, cleanup failure, cancellation and late receipts retain their independent
 evidence and established first-stop precedence.
 
+Settings with `allow_finish_run: false` leave `finish_run` out of work requests,
+and admission refuses a proposal that offers it. A call to it is then an
+ordinary unavailable tool, so its batch runs nothing and work continues. The
+no-tool notice says the run ends when its budget runs out instead of naming the
+tool. Such a run ends only at a limit, a stopping error or cancellation, and
+still captures its final workspace.
+
 Run the CPU gate with:
 
 ```sh

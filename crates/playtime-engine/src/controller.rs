@@ -1052,7 +1052,12 @@ impl<I: IdSource> Controller<I> {
             response.prompt_tokens,
             tokens,
         );
-        if self.config.compaction.is_some() {
+        if let Some(allow_finish_run) = self
+            .config
+            .compaction
+            .as_ref()
+            .map(|c| c.settings.allow_finish_run)
+        {
             self.emit(
                 "model_completion",
                 json!({"call":request.call,"finish_reason":finish_reason}),
@@ -1079,6 +1084,7 @@ impl<I: IdSource> Controller<I> {
                 &response.message,
                 finish_reason,
                 self.config.parameters.limits.output_bytes.get(),
+                allow_finish_run,
             ) {
                 Err((reason, error)) => {
                     self.emit(

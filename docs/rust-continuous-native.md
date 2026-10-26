@@ -10,9 +10,11 @@ saved recipe to select the continuous harness explicitly.
 Choose a catalog recipe with a definition (for example **Curiosity**), then
 **Clone recipe**. Select **Continuous conversation with compaction** in the
 Harness selector. Edit the context trigger, recent complete exchanges, summary
-limit and compaction instructions, then **Save revision**. Preview shows the
-active harness, shared model/budgets and effective protocol. Launch uses that
-exact immutable revision through the normal durable launch receipt.
+limit and compaction instructions, then **Save revision**. Clear **The model can
+end the run with finish_run** to make the run last until its time or token limit.
+Preview shows the active harness, shared model/budgets and effective protocol.
+Launch uses that exact immutable revision through the normal durable launch
+receipt.
 
 Defaults are 75%, two retained exchanges, 2,048 summary tokens and the versioned
 summary instruction template. The summary cap must fit the selected response
@@ -34,17 +36,23 @@ ordinary call runs none of its calls and returns each call's error to the model.
 When the server can't parse a work response's tool call, the request is retried
 with a notice, up to five times in a row, and the failed attempt is charged its
 full allowance as unknown usage. A response that calls no tool is followed by a
-notice to continue or call `finish_run`. A malformed or mixed finish, a batch over
+notice to continue or call `finish_run`, or, when the recipe leaves that tool out,
+to continue until the budget runs out. A malformed or mixed finish, a batch over
 the result allowance or over eight calls, and a failed summary still stop the run.
 
 Definition schema 3 adds `compaction: { settings, protocol, inventory }` to the
 frozen source recipe. Selecting the harness freezes its own protocol/inventory;
 the old memento instructions do not go into continuous model requests. The
 protocol ends with the recipe's wall time and generated-token budget and says
-that `finish_run` ends the run early. The inventory describes one workshop that
-lasts the whole run and ends with the recipe's workspace, entry and `/tmp`
-limits. Both lines are written at selection; clone and revise don't change those
-limits, so the frozen lines stay accurate. The task,
+that `finish_run` ends the run early. With `allow_finish_run: false`, a separate
+protocol says the run lasts until a limit and never names the tool. Work
+requests then offer only `exec`, `read_file` and `write_file`, and a `finish_run`
+call gets the ordinary unavailable-tool error. The inventory describes one
+workshop that lasts the whole run and ends with the recipe's workspace, entry
+and `/tmp` limits. Both lines are written at selection, and the protocol again
+when the finish choice changes; other setting changes keep the frozen protocol.
+Clone and revise don't change those limits, so the frozen lines stay accurate.
+The task,
 seeds, model, sampling and common allocations remain inherited. Legacy session
 allocations/instructions remain inactive source data, enabling an explicit
 switch back to memento; they are not synthetic sessions or limits on continuous
@@ -56,8 +64,11 @@ Clone/revise accept optional `harness` and `compaction` fields. Omitting both
 inherits the source. Selecting continuous installs defaults only when switching
 from another harness; it preserves existing continuous settings. Compaction
 settings with an active memento harness are refused. The
-`recipe_compaction_settings_v1` feature advertises support. No ledger version,
-migration, data reset, model lock or workshop image change is needed.
+`recipe_compaction_settings_v1` feature advertises support, and
+`recipe_compaction_finish_v1` advertises `allow_finish_run`; clients refuse to
+send `false` without it. That setting defaults to true and is omitted when true,
+so earlier definitions keep their bytes. No ledger version, migration, data
+reset, model lock or workshop image change is needed.
 
 Readable traces group work and summary calls by explicit request identity, keep
 compaction plans/applied summaries separate, and distinguish completion claims
@@ -82,8 +93,8 @@ comparison remain #111.
 `ContinuousProfile::freeze_definition` reconstructs a saved recipe's exact active
 configuration and selected model identity. `NativeProfile` dispatches preparation
 to the correct family; a memento profile rejects a continuous definition. The
-capability digest includes the continuous recipe format, default input texts and
-tool-call recovery.
+capability digest includes the continuous recipe format, default input texts,
+tool-call recovery and the finish choice.
 
 For the separate fixed native smoke, `ContinuousProfile::freeze` produces
 `docker_continuous_compaction_v1`. Its validator reconstructs the exact supported

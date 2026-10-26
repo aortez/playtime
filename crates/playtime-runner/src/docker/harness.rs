@@ -39,6 +39,7 @@ pub fn harness_catalog() -> Result<HarnessCatalog> {
                     "recent_exchanges",
                     "summary_tokens",
                     "instructions",
+                    "allow_finish_run",
                 ]
                 .into_iter()
                 .map(str::to_owned)
@@ -88,6 +89,12 @@ impl FrozenRecipe {
         let compaction = self.compaction.as_mut().ok_or_else(|| {
             Error::Invalid("Compaction settings require the continuous compaction harness.".into())
         })?;
+        // The protocol says whether the model can end the run, so changing that
+        // choice rewrites it from this recipe's limits.
+        if compaction.settings.allow_finish_run != settings.allow_finish_run {
+            compaction.protocol =
+                CompactionDefinition::protocol(&self.recipe, settings.allow_finish_run);
+        }
         compaction.settings = settings.clone();
         Ok(())
     }
