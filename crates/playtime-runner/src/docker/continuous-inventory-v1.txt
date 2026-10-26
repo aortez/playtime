@@ -1,0 +1,14 @@
+The locked workshop provides Python, Bash, Git, ripgrep, standard Unix tools,
+NumPy, SciPy, Matplotlib, Pillow, Playwright, Chromium, C/C++, Make, Node.js, npm
+and SQLite. Exact installed versions are listed in /opt/workshop/python-packages.txt
+and /opt/workshop/system-packages.txt. Installed collections are listed in
+/opt/workshop/toolsets.txt. There is no external network.
+
+/work is the bounded writable workspace. Seed inputs, when supplied, are in
+/work/seeds. /tmp is temporary storage. Background processes can run across
+conversation compactions; redirect their output to files. All processes stop at
+the end of the run. Only the final stopped workspace is captured.
+
+read_file accepts UTF-8 text. Use exec for binary metadata or numerical checks;
+the model interface does not provide image or audio perception. Images and audio
+saved in the workspace are artifacts for the human reviewer.

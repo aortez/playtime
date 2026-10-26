@@ -20,6 +20,7 @@ fn source_recipe() -> RunRecipe {
 fn clone_request(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Clone {
         request: CloneRecipeRequest {
+            compaction: None,
             harness: None,
             model_registration: None,
             model_settings: None,
@@ -36,6 +37,7 @@ fn revise(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Revise {
         recipe_id: definition.saved.as_ref().unwrap().recipe_id.clone(),
         request: ReviseRecipeRequest {
+            compaction: None,
             harness: None,
             model_registration: None,
             model_settings: None,
@@ -57,6 +59,118 @@ async fn setup(root: &Temp) -> (Ledger, Catalog, RecipeDefinition) {
         .await
         .unwrap();
     (ledger, catalog, definition)
+}
+#[tokio::test]
+async fn compaction_saves_freeze_active_inputs_and_remain_editable_without_execution() {
+    let root = Temp::new();
+    let (ledger, catalog, source) = setup(&root).await;
+    let mut request = clone_request(&source, "continuous");
+    if let RecipeMutation::Clone { request } = &mut request {
+        request.harness = Some(HarnessId::new(CONTINUOUS_COMPACTION_V1).unwrap());
+    }
+    let saved = catalog
+        .save(key("continuous"), request.clone())
+        .await
+        .unwrap();
+    let a = saved.definition;
+    assert_eq!(a.schema_version, 3);
+    assert_eq!(
+        a.inherited["recipe"]["parameters"],
+        source.inherited["recipe"]["parameters"]
+    );
+    assert_eq!(
+        a.inherited["recipe"]["protocol"],
+        source.inherited["recipe"]["protocol"]
+    );
+    assert!(
+        a.inherited["compaction"]["protocol"]
+            .as_str()
+            .unwrap()
+            .contains("finish_run")
+    );
+    assert_eq!(
+        catalog
+            .harness(&a.execution_recipe_id)
+            .await
+            .unwrap()
+            .harness
+            .compaction
+            .unwrap(),
+        CompactionSettings::default()
+    );
+    assert!(
+        catalog
+            .save(key("continuous"), request)
+            .await
+            .unwrap()
+            .replayed
+    );
+    // No source catalog, Docker or model service is needed to read/revise.
+    let offline = Catalog::new(ledger, vec![]).unwrap();
+    let mut edit = revise(&a, "continuous edited");
+    let settings = CompactionSettings {
+        trigger_percent: 70,
+        recent_exchanges: 1,
+        summary_tokens: 1024,
+        instructions: "Keep verified facts and unresolved questions.".into(),
+        ..Default::default()
+    };
+    if let RecipeMutation::Revise { request, .. } = &mut edit {
+        request.compaction = Some(settings.clone());
+    }
+    let b = offline.save(key("edited"), edit).await.unwrap().definition;
+    assert_eq!(
+        offline
+            .harness(&b.execution_recipe_id)
+            .await
+            .unwrap()
+            .harness
+            .compaction,
+        Some(settings)
+    );
+    assert_eq!(offline.definition(&a.execution_recipe_id).await.unwrap(), a);
+    let mut invalid = revise(&b, "impossible summary");
+    if let RecipeMutation::Revise { request, .. } = &mut invalid {
+        request.compaction = Some(CompactionSettings {
+            summary_tokens: 16384,
+            ..Default::default()
+        });
+    }
+    assert_eq!(
+        offline
+            .save(key("invalid-cap"), invalid)
+            .await
+            .unwrap_err()
+            .code(),
+        "invalid_parameters"
+    );
+    let mut invalid = revise(&b, "oversized inherited prompt");
+    if let RecipeMutation::Revise { request, .. } = &mut invalid {
+        request.prompt = "x".repeat(65536);
+    }
+    assert_eq!(
+        offline
+            .save(key("invalid-context"), invalid)
+            .await
+            .unwrap_err()
+            .code(),
+        "invalid_parameters"
+    );
+    let mut back = revise(&b, "memento again");
+    if let RecipeMutation::Revise { request, .. } = &mut back {
+        request.harness = Some(HarnessId::new(MEMENTO_TURNS_V1).unwrap());
+    }
+    let c = offline.save(key("back"), back).await.unwrap().definition;
+    assert_eq!(c.schema_version, 1);
+    assert!(c.inherited.get("compaction").is_none());
+    assert_eq!(
+        c.inherited["recipe"]["parameters"],
+        source.inherited["recipe"]["parameters"]
+    );
+    assert_eq!(
+        c.inherited["recipe"]["protocol"],
+        source.inherited["recipe"]["protocol"]
+    );
 }
 #[tokio::test]
 async fn harness_selection_is_exact_inherited_and_replayable_without_execution() {
@@ -532,7 +646,7 @@ async fn actual_http_client_and_private_receipts_work_without_execution() {
         .unwrap()
         .settings;
     let harnesses = client.harnesses().await.unwrap();
-    assert_eq!(harnesses.harnesses.len(), 1);
+    assert_eq!(harnesses.harnesses.len(), 2);
     assert_eq!(harnesses.harnesses[0].id.as_str(), MEMENTO_TURNS_V1);
     let original_harness = client.recipe_harness(&source).await.unwrap();
     assert_eq!(original_harness.harness.id, MEMENTO_TURNS_V1);

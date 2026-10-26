@@ -408,7 +408,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     // A download reports on the saved file, not the open run, so
                     // its result still arrives and stays after another run opens.
                     let run = match &command.action {
-                        Action::Trace(run, ..) | Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
+                        Action::FinalFiles(run) | Action::Trace(run, ..) | Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
                     };
                     let action = command.action.clone();
                     let result = perform(&session, &out, command, previews).await;
@@ -712,6 +712,29 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                     inherited_value["recipe"]["parameters"]["limits"].as_object_mut()
                 {
                     for key in ["context_tokens", "tokens_per_call", "handoff_tokens"] {
+                        limits.remove(key);
+                    }
+                }
+            }
+            if inherited_value.get("compaction").is_some() {
+                if let Some(recipe) = inherited_value["recipe"].as_object_mut() {
+                    recipe.remove("protocol");
+                    recipe.remove("inventory");
+                }
+                if let Some(parameters) = inherited_value["recipe"]["parameters"].as_object_mut() {
+                    parameters.remove("memory_condition");
+                }
+                if let Some(limits) =
+                    inherited_value["recipe"]["parameters"]["limits"].as_object_mut()
+                {
+                    for key in [
+                        "sessions",
+                        "work_turns_per_session",
+                        "handoff_tokens",
+                        "memento_bytes",
+                        "tool_parse_retries",
+                        "tool_parse_error_limit",
+                    ] {
                         limits.remove(key);
                     }
                 }
@@ -1037,6 +1060,49 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 ),
             )
             .await;
+        }
+        Action::FinalFiles(run) => {
+            let _permit = previews.acquire_owned().await.map_err(|e| e.to_string())?;
+            let mut cursor = None;
+            let mut files = Vec::new();
+            let mut complete = false;
+            let mut bytes = 0usize;
+            'pages: for _ in 0..64 {
+                let page = client
+                    .artifacts(
+                        &run,
+                        &PageQuery {
+                            limit: Some(200),
+                            cursor,
+                        },
+                    )
+                    .await
+                    .map_err(safe)?;
+                for artifact in page.items.into_iter().filter(|a| {
+                    a.session_id.is_none()
+                        && matches!(
+                            a.kind.as_str(),
+                            "file_version" | "final_workspace" | "final_capture_index"
+                        )
+                }) {
+                    bytes += artifact.name.len()
+                        + artifact.kind.len()
+                        + artifact.content.path.as_str().len()
+                        + 512;
+                    if bytes > 4 << 20 {
+                        break 'pages;
+                    }
+                    files.push(artifact);
+                }
+                if page.next_cursor.is_none() {
+                    complete = true;
+                    break;
+                }
+                cursor = page.next_cursor;
+            }
+            files.sort_by(|a, b| (&a.kind, &a.name).cmp(&(&b.kind, &b.name)));
+            out.send(tag, Some(run), Data::FinalFiles(files, complete))
+                .await;
         }
         Action::Content(run, id, offset) => {
             let _permit = previews.acquire_owned().await.map_err(|e| e.to_string())?;

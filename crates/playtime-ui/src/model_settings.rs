@@ -3,6 +3,7 @@ use playtime_protocol::api::*;
 
 #[derive(Clone, Debug)]
 pub struct SettingsDraft {
+    pub continuous: bool,
     original: RecipeSettingsView,
     capabilities: Option<RecipeModelCapabilities>,
     model_error: Option<String>,
@@ -39,6 +40,7 @@ impl SettingsDraft {
         })
         .collect();
         Self {
+            continuous: false,
             capabilities: Some(view.capabilities.clone()),
             model_error: None,
             reasoning: s.reasoning,
@@ -84,7 +86,7 @@ impl SettingsDraft {
         {
             return Err("Context capacity exceeds the selected model's reported ceiling.".into());
         }
-        if s.handoff_tokens >= self.original.generated_tokens {
+        if !self.continuous && s.handoff_tokens >= self.original.generated_tokens {
             return Err(
                 "The whole-run generation budget must leave room beyond the handoff limit.".into(),
             );
@@ -117,7 +119,9 @@ impl SettingsDraft {
         }
     }
     pub fn reset(&mut self) {
+        let continuous = self.continuous;
         *self = Self::new(self.original.clone());
+        self.continuous = continuous;
     }
     /// The owner resets model selection together with settings when this returns true.
     pub fn draw(&mut self, ui: &mut egui::Ui) -> bool {
@@ -162,10 +166,11 @@ impl SettingsDraft {
                 ui.small("Omit the reasoning setting; use the locked model/backend default. The exact default is not advertised by this capability record.");
             }
         }
-        for field in &mut self.fields[..4] {
+        let visible = if self.continuous { 3 } else { 4 };
+        for field in &mut self.fields[..visible] {
             field.draw(ui);
         }
-        ui.small("Context holds the conversation and the next response. Response limits cap generation per call, including reasoning where reported. Memento handoffs have their own cap.");
+        ui.small(if self.continuous { "Context holds the conversation and the next response. Response limits cap generation per call, including reasoning where reported." } else { "Context holds the conversation and the next response. Response limits cap generation per call, including reasoning where reported. Memento handoffs have their own cap." });
         ui.label(format!(
             "Whole-run generation budget: {} tokens (inherited)",
             self.original.generated_tokens

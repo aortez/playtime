@@ -349,6 +349,15 @@ fn save_recipe(
     if let Some(id) = harness {
         definition.select_harness(id).map_err(settings_error)?;
     }
+    let compaction = match &request {
+        RecipeMutation::Clone { request } => &request.compaction,
+        RecipeMutation::Revise { request, .. } => &request.compaction,
+    };
+    if let Some(settings) = compaction {
+        definition
+            .apply_compaction_settings(settings)
+            .map_err(settings_error)?;
+    }
     let selected = match &request {
         RecipeMutation::Clone { request } => &request.model_registration,
         RecipeMutation::Revise { request, .. } => &request.model_registration,
@@ -757,6 +766,7 @@ mod tests {
             .unwrap();
         let request = RecipeMutation::Clone {
             request: CloneRecipeRequest {
+                compaction: None,
                 harness: None,
                 model_registration: None,
                 model_settings: None,

@@ -1,13 +1,65 @@
 # Continuous compaction: native execution
 
-#110 step B connects the shared `continuous_compaction_v1` controller to the
-packaged worker and versioned archive. This is an explicit native preparation
-capability. Catalog recipes, preview/launch APIs and workbench selection remain
-step C; no existing recipe changes its harness or allocations.
+#110 connects the shared `continuous_compaction_v1` controller to the packaged
+worker, versioned archive, saved recipe API and workbench. Existing catalog
+recipes keep their memento harness and reviewed allocations. Clone or revise a
+saved recipe to select the continuous harness explicitly.
+
+## Recipe and workbench workflow
+
+Choose a catalog recipe with a definition (for example **Curiosity**), then
+**Clone recipe**. Select **Continuous conversation with compaction** in the
+Harness selector. Edit the context trigger, recent complete exchanges, summary
+limit and compaction instructions, then **Save revision**. Preview shows the
+active harness, shared model/budgets and effective protocol. Launch uses that
+exact immutable revision through the normal durable launch receipt.
+
+Defaults are 75%, two retained exchanges, 2,048 summary tokens and the versioned
+summary instruction template. The summary cap must fit the selected response
+cap; initial work must fit with the controller's reserves. Saving rejects
+impossible combinations, including prompt-only edits with inherited settings.
+No model, Docker or workshop connection is needed to read or edit saved
+configurations. Preview and launch still require those execution capabilities.
+
+Definition schema 3 adds `compaction: { settings, protocol, inventory }` to the
+frozen source recipe. Selecting the harness freezes its own protocol/inventory;
+the old memento instructions do not go into continuous model requests. The task,
+seeds, model, sampling and common allocations remain inherited. Legacy session
+allocations/instructions remain inactive source data, enabling an explicit
+switch back to memento; they are not synthetic sessions or limits on continuous
+execution. The compatibility `Preview.parameters` field retains those source
+values; `effective_configuration.config.parameters` is the active common
+allocation. Clients cross-check it against the common projection.
+
+Clone/revise accept optional `harness` and `compaction` fields. Omitting both
+inherits the source. Selecting continuous installs defaults only when switching
+from another harness; it preserves existing continuous settings. Compaction
+settings with an active memento harness are refused. The
+`recipe_compaction_settings_v1` feature advertises support. No ledger version,
+migration, data reset, model lock or workshop image change is needed.
+
+Readable traces group work and summary calls by explicit request identity, keep
+compaction plans/applied summaries separate, and distinguish completion claims
+from terminal outcomes. **Inspect source** retains exact before/after
+conversations, request links, model output and estimate bases; externally
+retained observations offer verified payload loading. The run header separates
+work/compaction accounting without turning unknown usage into zero.
+
+**Files → Load final workspace files** lists retained files, final tar and capture
+index from the published archive. Open text/images or download verified content
+through the existing inspector. The exact index records unavailable files too.
+The search is bounded to 12,800 artifacts and 4 MiB of prepared metadata;
+reaching either bound marks the listing incomplete. There are no intermediate workspace snapshots or memory checkpoints.
+Richer occupancy visualization and comparison remain #111.
 
 ## Preparation and ownership
 
-`ContinuousProfile::freeze` produces `docker_continuous_compaction_v1`. Its
+`ContinuousProfile::freeze_definition` reconstructs a saved recipe’s exact active
+configuration and selected model identity. `NativeProfile` dispatches preparation
+to the correct family; a memento profile rejects a continuous definition. The
+capability digest includes the continuous recipe format and default input texts.
+
+For the separate fixed native smoke, `ContinuousProfile::freeze` produces `docker_continuous_compaction_v1`. Its
 validator reconstructs the exact supported template, including seeds, tool
 responses, limits, helper/image identities and model settings. The worker bundle's
 native capability digest includes that template and the reviewed model lock.
@@ -108,3 +160,19 @@ metadata, failed summary and cancellation finalization, lost capture receipts,
 changed native profiles and uncertain workspace starts. The existing controller
 golden covers policy decisions. Native success does not establish restart,
 reattachment, replay or archive continuation.
+
+## Saved recipe API/workbench gate
+
+```sh
+TMPDIR=/home/data2/pt VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json ./scripts/test-rust-registered-model.sh --continuous
+```
+
+This opt-in gate registers the existing local Qwen identity, clones a source with
+the reviewed native probe's common budgets, selects compaction and freezes its
+settings. It launches/replays through the API, edits the trigger through the real
+workbench model/backend, and launches a distinct immutable revision from the UI.
+Each run must apply at least two compactions, report matching purpose accounting,
+publish exactly one final workspace containing verified `continuity-ok`, and
+finish with complete cleanup. Frozen preview/archive settings must match. The
+gate retains failed attempts and captures UI screenshots on the pinned renderer;
+it does not establish daemon restart/recovery or task quality for other models.

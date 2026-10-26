@@ -1,4 +1,6 @@
 //! Bounded transcript index and payload working set. Used only by background work.
+#[path = "continuous_trace.rs"]
+mod continuous;
 #[path = "trace_presentation.rs"]
 mod presentation;
 use crate::progress::{self, Progress, Tracker, Update};
@@ -552,6 +554,7 @@ fn project(event: &EventEnvelope) -> Result<Projection, String> {
                     _ => (),
                 }
             }
+            EventPayload::Execution(record) => continuous::project(&record.fact, &mut p),
             EventPayload::Control(_) if event.kind == "effect_intent" => {
                 p.role = Role::Bookkeeping;
             }
@@ -1061,6 +1064,14 @@ impl Transcript {
             if let Ok(decoded) = decode_event(&c.raw)
                 && let EventPayload::Observation(observation) = decoded.payload()
                 && let ObservationPayload::Referenced { content } = observation.payload()
+            {
+                page.retained = Some(content.clone());
+            }
+            if let Ok(decoded) = decode_event(&c.raw)
+                && let EventPayload::Execution(record) = decoded.payload()
+                && let playtime_protocol::execution::Fact::Observation(o) = &record.fact
+                && let playtime_protocol::observations::ObservationData::Artifact { content } =
+                    &o.data
             {
                 page.retained = Some(content.clone());
             }

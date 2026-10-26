@@ -14,6 +14,8 @@ pub struct DefinitionView {
 }
 #[derive(Clone, Debug)]
 pub struct Draft {
+    pub original_harness: String,
+    pub compaction: crate::compaction::Draft,
     /// None inherits verbatim and preserves legacy save-receipt requests.
     pub harness: Option<HarnessId>,
     pub original: RecipeDefinition,
@@ -24,6 +26,12 @@ pub struct Draft {
     pub model_registration: Option<ModelRegistrationSummary>,
 }
 impl Draft {
+    pub fn continuous(&self) -> bool {
+        self.harness
+            .as_ref()
+            .map_or(self.original_harness.as_str(), |h| h.as_str())
+            == CONTINUOUS_COMPACTION_V1
+    }
     pub fn select_model(&mut self, model: ModelRegistrationSummary) {
         if let Some(settings) = &mut self.settings {
             settings.select_model(Some(&model));
@@ -43,13 +51,32 @@ impl Draft {
         }
     }
     pub fn request(&self) -> Result<RecipeMutation, String> {
-        let model_settings = self.settings.as_ref().map(|s| s.value()).transpose()?;
+        let model_settings = self
+            .settings
+            .as_ref()
+            .map(|s| {
+                let mut s = s.clone();
+                s.continuous = self.continuous();
+                s.value()
+            })
+            .transpose()?;
+        let compaction = if self.continuous() {
+            Some(self.compaction.value()?)
+        } else {
+            None
+        };
+        if let (Some(c), Some(m)) = (&compaction, &model_settings)
+            && c.summary_tokens > m.tokens_per_call
+        {
+            return Err("Summary limit must not exceed the response limit.".into());
+        }
         let request = if !self.clone
             && let Some(saved) = &self.original.saved
         {
             RecipeMutation::Revise {
                 recipe_id: saved.recipe_id.clone(),
                 request: ReviseRecipeRequest {
+                    compaction,
                     harness: self.harness.clone(),
                     model_registration: self
                         .model_registration
@@ -64,6 +91,7 @@ impl Draft {
         } else {
             RecipeMutation::Clone {
                 request: CloneRecipeRequest {
+                    compaction,
                     harness: self.harness.clone(),
                     model_registration: self
                         .model_registration
@@ -82,7 +110,7 @@ impl Draft {
         Ok(request)
     }
     pub fn valid(&self) -> bool {
-        self.settings.as_ref().is_none_or(|s| s.value().is_ok())
+        self.request().is_ok()
             && !self.name.trim().is_empty()
             && self.name.len() <= 128
             && !self.name.chars().any(char::is_control)
@@ -117,6 +145,17 @@ impl Model {
         }
         if let Some(view) = &self.authoring.definition {
             self.authoring.draft = Some(Draft {
+                original_harness: view
+                    .harness
+                    .as_ref()
+                    .map_or("unrecorded", |h| h.view.harness.id.as_str())
+                    .into(),
+                compaction: view
+                    .harness
+                    .as_ref()
+                    .and_then(|h| h.view.harness.compaction.clone())
+                    .unwrap_or_default()
+                    .into(),
                 harness: None,
                 model_registration: view.value.model_registration.clone(),
                 original: view.value.clone(),
@@ -257,10 +296,21 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
                     crate::model_settings::reasoning_label(s.reasoning),
                     s.temperature
                 ));
-                ui.label(format!(
-                    "Context: {} · response: {} · handoff: {} tokens",
-                    s.context_tokens, s.tokens_per_call, s.handoff_tokens
-                ));
+                if definition
+                    .harness
+                    .as_ref()
+                    .is_some_and(|h| h.view.harness.compaction.is_some())
+                {
+                    ui.label(format!(
+                        "Context: {} · response: {} tokens",
+                        s.context_tokens, s.tokens_per_call
+                    ));
+                } else {
+                    ui.label(format!(
+                        "Context: {} · response: {} · handoff: {} tokens",
+                        s.context_tokens, s.tokens_per_call, s.handoff_tokens
+                    ));
+                }
                 ui.label(format!(
                     "Top-p: {} · top-k: {} · repeat penalty: {} · sampling seed: {}",
                     s.top_p, s.top_k, s.repeat_penalty, s.sampling_seed
@@ -352,10 +402,21 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
             }
         }
         if let Some(settings) = &mut draft.settings {
+            settings.continuous = draft
+                .harness
+                .as_ref()
+                .map_or(draft.original_harness.as_str(), |h| h.as_str())
+                == CONTINUOUS_COMPACTION_V1;
             let reset = ui.add_enabled_ui(!busy, |ui| settings.draw(ui)).inner;
             if reset {
                 draft.reset_model_settings();
             }
+        }
+        if draft.continuous()
+            && draft.settings.as_ref().is_none_or(|s| s.value().is_ok())
+            && let Err(error) = draft.request()
+        {
+            ui.colored_label(egui::Color32::YELLOW, error);
         }
         if !draft.clone && !busy && ui.button("Keep edits as a new recipe instead").clicked() {
             draft.clone = true;

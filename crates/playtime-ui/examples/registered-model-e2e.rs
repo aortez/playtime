@@ -117,13 +117,95 @@ async fn frozen_configuration(
     }
 }
 
+async fn verify_continuous(client: &Client, run: &RunId, path: &Path) -> Result<()> {
+    use playtime_core::{RequestPurpose, StopReason};
+    let view = client.run(run).await?;
+    if view
+        .outcome
+        .as_ref()
+        .is_none_or(|o| o.reason != StopReason::AgentFinished)
+        || view.cleanup != Cleanup::Complete
+        || view.checkpoint.is_some()
+    {
+        return Err("continuous run did not finish with final-only capture and cleanup".into());
+    }
+    let mut query = PageQuery::default();
+    let mut events = Vec::new();
+    loop {
+        let page = client.history(run, &query).await?;
+        events.extend(page.events);
+        query.cursor = page.next_cursor;
+        if query.cursor.is_none() {
+            break;
+        }
+    }
+    retain(path, &events)?;
+    let applied = events
+        .iter()
+        .filter(|e| {
+            e.data
+                .pointer("/fact/data/observation_kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("compaction_applied")
+        })
+        .count();
+    let accounting = view
+        .request_accounting
+        .ok_or("purpose accounting unavailable")?;
+    if applied < 2
+        || accounting
+            .by_purpose
+            .get(&RequestPurpose::Compaction)
+            .is_none_or(|a| a.settled_calls != applied as u64 || a.usage.unknown_requests != 0)
+    {
+        return Err("compaction count and purpose accounting disagree".into());
+    }
+    let mut query = PageQuery::default();
+    let mut captures = 0;
+    let mut result = false;
+    loop {
+        let page = client.artifacts(run, &query).await?;
+        for artifact in page.items {
+            captures += usize::from(artifact.kind == "final_workspace");
+            if artifact.kind == "file_version" && artifact.name == "result.txt" {
+                let mut bytes = Vec::new();
+                client
+                    .download(
+                        run,
+                        &artifact,
+                        &mut bytes,
+                        &tokio_util::sync::CancellationToken::new(),
+                    )
+                    .await?;
+                result = bytes == b"continuity-ok\n" && artifact.session_id.is_none();
+            }
+        }
+        query.cursor = page.next_cursor;
+        if query.cursor.is_none() {
+            break;
+        }
+    }
+    if captures != 1 || !result {
+        return Err("final continuity result or capture missing".into());
+    }
+    println!(
+        "Verified saved continuous recipe: {applied} compactions, final continuity file, complete cleanup"
+    );
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let connection = PathBuf::from(args.next().ok_or("connection file required")?);
     let evidence = PathBuf::from(args.next().ok_or("evidence directory required")?);
+    let continuous = match args.next().as_deref() {
+        None => false,
+        Some("--continuous") => true,
+        _ => return Err("usage: registered-model-e2e CONNECTION EVIDENCE [--continuous]".into()),
+    };
     if args.next().is_some() {
-        return Err("usage: registered-model-e2e CONNECTION EVIDENCE".into());
+        return Err("unexpected arguments".into());
     }
     std::fs::DirBuilder::new()
         .recursive(true)
@@ -157,12 +239,13 @@ async fn main() -> Result<()> {
     settings.reasoning = RecipeReasoning::Off;
     let pending = client.prepare_recipe_save(RecipeMutation::Clone {
         request: CloneRecipeRequest {
-            harness: Some(HarnessId::new(MEMENTO_TURNS_V1)?),
+            compaction: continuous.then(|| CompactionSettings { summary_tokens: 512, instructions: "Summarize the checked progress in at most 300 characters. Preserve the task, next command and any uncertainty. Return only the summary; no tools.".into(), ..Default::default() }),
+            harness: Some(HarnessId::new(if continuous { CONTINUOUS_COMPACTION_V1 } else { MEMENTO_TURNS_V1 })?),
             source: RecipeSource {
                 execution_recipe_id: source.execution_recipe_id,
                 definition_digest: source.definition_digest,
             },
-            name: "Local Qwen: two-session smoke".into(),
+            name: if continuous { "Local Qwen: continuous compaction" } else { "Local Qwen: two-session smoke" }.into(),
             prompt: source.prompt,
             model_settings: Some(settings),
             model_registration: Some(registered.registration.registration_id.clone()),
@@ -173,7 +256,7 @@ async fn main() -> Result<()> {
     retain(&evidence.join("saved-recipe.json"), &saved)?;
     let selected_harness = client.recipe_harness(&saved.definition).await?.harness;
     let id = saved.definition.execution_recipe_id;
-    let preview = client.preview(&id, RunMode::Experiment).await?;
+    let mut preview = client.preview(&id, RunMode::Experiment).await?;
     retain(&evidence.join("preview.json"), &preview)?;
     if preview.harness.as_ref() != Some(&selected_harness) {
         return Err("preview differs from saved harness selection/settings".into());
@@ -229,9 +312,48 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    if continuous {
+        verify_continuous(
+            &client,
+            &accepted.run_id,
+            &evidence.join("api-history.json"),
+        )
+        .await?;
+    }
     // A fresh preview and launch through the actual workbench backend/receipts.
     model.choose_recipe(id, RunMode::Experiment);
     until(&mut model, &mut backend, 30, |m| m.can_launch()).await?;
+    if continuous {
+        model.edit_recipe(false);
+        let draft = model.authoring.draft.as_mut().ok_or("missing editor")?;
+        draft.compaction.trigger = "70".into();
+        capture(
+            &mut model,
+            &mut backend,
+            &evidence.join("compaction-editor.png"),
+        )
+        .await?;
+        model.save_recipe();
+        until(&mut model, &mut backend, 30, |m| {
+            m.authoring.draft.is_none() && m.can_launch()
+        })
+        .await?;
+        preview = model
+            .preview
+            .as_ref()
+            .ok_or("missing revised preview")?
+            .value
+            .clone();
+        if preview
+            .harness
+            .as_ref()
+            .and_then(|h| h.compaction.as_ref())
+            .is_none_or(|s| s.trigger_percent != 70)
+        {
+            return Err("workbench revision did not freeze the edited trigger".into());
+        }
+        retain(&evidence.join("workbench-preview.json"), &preview)?;
+    }
     model.launch();
     until(&mut model, &mut backend, 30, |m| {
         m.launch == Mutation::Accepted
@@ -262,6 +384,17 @@ async fn main() -> Result<()> {
                 .any(|r| r.run_id == run && r.orchestration.state == OrchestrationState::Terminal)
     })
     .await?;
+    if continuous {
+        verify_continuous(&client, &run, &evidence.join("workbench-history.json")).await?;
+        model.inspector = Inspector::Files;
+        model.inspect_action(Action::FinalFiles(run.clone()));
+        until(&mut model, &mut backend, 30, |m| m.final_files.is_some()).await?;
+        if model.final_files.as_ref().is_none_or(|(files, complete)| {
+            !complete || !files.iter().any(|a| a.name == "result.txt")
+        }) {
+            return Err("workbench did not expose final file".into());
+        }
+    }
     if let Some(checkpoint) = &ended.checkpoint {
         model.inspect_checkpoint(checkpoint.session_id.clone(), Inspector::Memory);
         until(&mut model, &mut backend, 20, |m| m.memory.is_some()).await?;

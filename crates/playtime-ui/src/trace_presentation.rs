@@ -8,12 +8,13 @@ use serde_json::Value;
 pub(super) struct Display {
     pub family: Option<String>,
     pub tool: bool,
-    call: Option<u64>,
+    pub(super) call: Option<u64>,
     handoff: bool,
-    title: Option<String>,
-    state: Option<String>,
+    pub(super) purpose: Option<String>,
+    pub(super) title: Option<String>,
+    pub(super) state: Option<String>,
     state_sequence: u64,
-    pending: bool,
+    pub(super) pending: bool,
 }
 impl Display {
     pub fn tracked_bytes(&self) -> usize {
@@ -25,6 +26,9 @@ impl Display {
             self.call = Some(call);
         }
         self.handoff |= other.handoff;
+        if other.purpose.is_some() {
+            self.purpose = other.purpose.clone();
+        }
         if other.title.is_some() {
             self.title = other.title.clone();
         }
@@ -44,6 +48,9 @@ impl Display {
         }
         self.call
             .map(|call| {
+                if let Some(purpose) = &self.purpose {
+                    return format!("Call {call} · {purpose}");
+                }
                 format!(
                     "Call {call}{}",
                     if self.handoff {
@@ -98,7 +105,7 @@ fn required(parts: &mut Vec<Section>, value: &Value, key: &str, label: &str) {
         );
     }
 }
-fn result_state(name: &str, result: &Value) -> String {
+pub(super) fn result_state(name: &str, result: &Value) -> String {
     if let Some(error) = result.get("error").filter(|v| !v.is_null() && **v != false) {
         return format!(
             "Failed: {}",

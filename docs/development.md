@@ -66,6 +66,7 @@ real worker, Docker, model-host, or recovery behavior.
 | Native effects/Docker profile/run-and-view | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted` | Real systemd worker and Docker, scripted model, archive and client review |
 | Live model path | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend live` | The live Ollama path, streaming, persistence, review and cleanup |
 | Continuous native execution | `./scripts/test-rust-continuous.sh --backend docker-scripted`, then `--backend live` | One real systemd/Docker workshop across compactions, final capture, purpose accounting and exact cleanup; live uses the reviewed local Qwen identity |
+| Saved continuous recipes | `./scripts/test-rust-registered-model.sh --continuous` | Real API/workbench save, revision, launch/replay, compactions, final file and purpose accounting on local Qwen |
 | Registered-model execution | `./scripts/test-rust-registered-model.sh` | Additional real Qwen API/workbench smoke, exact selection and replay; does not replace the original live gate |
 
 The Docker gates require the already-present locked image and supported local
@@ -162,5 +163,5 @@ Its own v2 golden does not replace memento goldens or native run-and-view gates.
 The compaction controller gate adds a separate `compaction-policy-v1.json` golden
 and explicit simulated publication acknowledgments. No host command or model call
 runs in this CPU gate. The separate [continuous native gate](rust-continuous-native.md)
-checks actual process continuity and final publication. Recipe/API/workbench
-integration remains #110 step C.
+checks actual process continuity and final publication. The saved-recipe API/workbench gate additionally verifies the immutable authoring
+and launch path.

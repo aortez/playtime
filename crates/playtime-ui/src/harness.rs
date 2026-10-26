@@ -52,13 +52,30 @@ pub fn lines(view: &HarnessView) -> Vec<String> {
                 s.tool_parse_retries, s.tool_parse_error_limit
             ),
         ]);
+    } else if let Some(s) = &view.compaction {
+        lines.extend([
+            format!(
+                "Compact at {}% context · retain {} complete exchanges",
+                s.trigger_percent, s.recent_exchanges
+            ),
+            format!(
+                "Summary cap: {} tokens · shared model and run budget",
+                thousands(s.summary_tokens)
+            ),
+            "One continuous workshop · final workspace capture only".into(),
+        ]);
     } else {
         lines.push("This service cannot execute this retained harness. Its recorded identity has been preserved.".into());
     }
     lines
 }
 pub fn draw(ui: &mut egui::Ui, harness: &RecipeHarness, draft: Option<&mut Draft>, busy: bool) {
-    ui.label(&harness.lines[0]);
+    let editing_continuous = draft.as_ref().is_some_and(|d| d.continuous());
+    if editing_continuous {
+        ui.label(format!("Source harness: {}", harness.id_label));
+    } else {
+        ui.label(&harness.lines[0]);
+    }
     if let Some(draft) = draft {
         ui.add_enabled_ui(!busy, |ui| {
             egui::ComboBox::from_label("Harness")
@@ -80,14 +97,19 @@ pub fn draw(ui: &mut egui::Ui, harness: &RecipeHarness, draft: Option<&mut Draft
             if draft.harness.is_some() && ui.small_button("Inherit source harness").clicked() {
                 draft.harness = None;
             }
+            if draft.continuous() {
+                draft.compaction.draw(ui);
+            }
         });
     }
-    ui.collapsing("Inherited harness settings (read only)", |ui| {
-        for line in &harness.lines[1..] {
-            ui.label(line);
-        }
-        ui.small("Preview shows the effective settings of the saved revision.");
-    });
+    if !editing_continuous {
+        ui.collapsing("Inherited harness settings (read only)", |ui| {
+            for line in &harness.lines[1..] {
+                ui.label(line);
+            }
+            ui.small("Preview shows the effective settings of the saved revision.");
+        });
+    }
     ui.collapsing("Harness requirements", |ui| {
         for h in &harness.catalog.harnesses {
             ui.label(format!("{} · version {}", h.name, h.version));

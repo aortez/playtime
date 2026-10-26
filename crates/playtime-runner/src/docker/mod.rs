@@ -18,7 +18,7 @@ mod model_settings;
 pub use model_settings::reviewed_model_capabilities;
 mod recipe;
 mod registered_model;
-pub use definition::FrozenRecipe;
+pub use definition::{CompactionDefinition, FrozenRecipe};
 pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
 pub use registered_model::{QWEN_MODEL_LOCK, reviewed_identity_capabilities};
 
@@ -69,8 +69,9 @@ pub fn digest() -> Result<Sha256Digest> {
         serde_json::to_value(&BOUNDS)?,
         // A worker that predates authoring must not accept an authored profile
         // merely because its ordinary recipe template is unchanged.
-        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1}),
+        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1}),
         serde_json::from_slice(QWEN_MODEL_LOCK)?,
+        serde_json::to_value(CompactionDefinition::default())?,
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))
 }

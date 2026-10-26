@@ -54,6 +54,91 @@ fn native_preparation_rejects_changed_bounds_harness_tools_and_seeds() {
             .is_ok()
     );
 }
+#[test]
+fn saved_continuous_definition_selects_only_its_exact_native_profile() {
+    use playtime_protocol::api::{CONTINUOUS_COMPACTION_V1, HarnessId, HarnessView};
+    use playtime_runner::docker::{FrozenRecipe, LiveHost, NativeProfile, Profile, Recipe};
+    let scenario: playtime_engine::simulation::Scenario =
+        serde_json::from_slice(playtime_runner::docker::LIVE_SCENARIO).unwrap();
+    let mut definition = FrozenRecipe::current(Recipe {
+        id: "continuous-saved".into(),
+        name: "Continuous saved".into(),
+        prompt: scenario.prompt,
+        protocol: scenario.protocol,
+        inventory: scenario.inventory,
+        parameters: scenario.parameters,
+        workspace_entries: 512,
+        model: playtime_runner::docker::Sampling {
+            thinking: "high".into(),
+            temperature: 0.8,
+            top_p: 0.95,
+            top_k: 40,
+            repeat_penalty: 1.0,
+        },
+        seeds: Default::default(),
+    })
+    .unwrap();
+    definition
+        .select_harness(&HarnessId::new(CONTINUOUS_COMPACTION_V1).unwrap())
+        .unwrap();
+    // Reference allocations remain unchanged; the summary cap fits its response.
+    definition
+        .compaction
+        .as_mut()
+        .unwrap()
+        .settings
+        .summary_tokens = 128;
+    let base = profile();
+    let host = LiveHost {
+        endpoint: "http://127.0.0.1:11434".into(),
+        addresses: vec!["127.0.0.1".parse().unwrap()],
+        live_lock: "/tmp/synthetic-model.lock".into(),
+    };
+    assert!(
+        Profile::freeze_definition(
+            definition.clone(),
+            base.selection.clone(),
+            base.daemon.clone(),
+            host.clone()
+        )
+        .is_err()
+    );
+    let profile =
+        NativeProfile::freeze_definition(definition.clone(), base.selection, base.daemon, host)
+            .unwrap();
+    let NativeProfile::Continuous(profile) = profile else {
+        panic!("wrong policy")
+    };
+    profile.validate().unwrap();
+    assert_eq!(
+        profile.config.parameters,
+        definition.recipe.parameters.common()
+    );
+    assert_eq!(profile.config.prompt, definition.recipe.prompt);
+    assert_eq!(profile.seeds, definition.recipe.seeds);
+    assert_eq!(
+        profile.config.protocol,
+        definition.compaction.as_ref().unwrap().protocol
+    );
+    let frozen = serde_json::to_value(&profile).unwrap();
+    assert_eq!(
+        HarnessView::from_configuration(&frozen).unwrap().unwrap(),
+        definition.harness_view().unwrap().harness
+    );
+    for (pointer, changed) in [
+        ("/config/settings/trigger_percent", json!(80)),
+        ("/config/parameters/limits/wall_seconds", json!(301)),
+        ("/config/protocol", json!("different instructions")),
+        ("/selection/executable", json!("relative/docker")),
+    ] {
+        let mut invalid = frozen.clone();
+        *invalid.pointer_mut(pointer).unwrap() = changed;
+        assert!(
+            NativeProfile::decode(&serde_json::to_vec(&invalid).unwrap()).is_err(),
+            "{pointer}"
+        );
+    }
+}
 struct Effects {
     work: VecDeque<CompletedResponse>,
     summaries: VecDeque<CompletedResponse>,

@@ -19,6 +19,8 @@ pub struct CompletedResponse {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContinuousProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<FrozenRecipe>,
     pub version: u32,
     pub profile: String,
     pub harness: String,
@@ -87,6 +89,7 @@ impl ContinuousProfile {
             Vec::new()
         };
         Ok(Self {
+            definition: None,
             version: 1,
             profile: CONTINUOUS_PROFILE.into(),
             harness: playtime_engine::compaction::HARNESS.into(),
@@ -115,6 +118,36 @@ impl ContinuousProfile {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if !self.selection.executable.is_absolute()
+            || !self.selection.socket.is_absolute()
+            || self.selection.executable_sha256.len() != 64
+            || !self
+                .selection
+                .executable_sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(Error::Invalid("invalid continuous Docker selection".into()));
+        }
+        if let Some(definition) = &self.definition {
+            let model = self
+                .model
+                .as_ref()
+                .ok_or_else(|| Error::Invalid("continuous recipes require a live model".into()))?;
+            let expected = Self::freeze_definition(
+                definition.clone(),
+                self.selection.clone(),
+                self.daemon.clone(),
+                model.host.clone(),
+            )?;
+            if serde_json::to_value(self)? != serde_json::to_value(expected)? || !model.host.valid()
+            {
+                return Err(Error::Invalid(
+                    "continuous recipe differs from its frozen definition".into(),
+                ));
+            }
+            return Ok(());
+        }
         let expected = Self::freeze(
             self.selection.clone(),
             self.daemon.clone(),
@@ -156,6 +189,43 @@ impl ContinuousProfile {
         Ok(())
     }
 
+    pub fn freeze_definition(
+        definition: FrozenRecipe,
+        selection: Selection,
+        daemon: DaemonIdentity,
+        host: LiveHost,
+    ) -> Result<Self> {
+        definition.executable()?;
+        let config = definition.compaction_config()?;
+        let mut base =
+            Profile::freeze_checked_recipe(definition.recipe.clone(), selection, daemon, host)?;
+        if let Some(selected) = &definition.model_registration {
+            let model = base.model.as_mut().unwrap();
+            model.lock = super::registered_model::selected_lock(selected);
+            model.registration = Some(selected.summary.clone());
+        }
+        Ok(Self {
+            version: 1,
+            profile: CONTINUOUS_PROFILE.into(),
+            harness: playtime_engine::compaction::HARNESS.into(),
+            mode: RunMode::Experiment,
+            config,
+            selection: base.selection,
+            daemon: base.daemon,
+            image_lock: base.image_lock,
+            helpers: base.helpers,
+            resources: base.resources,
+            capture: base.capture,
+            storage: base.storage,
+            command_return_ms: base.command_return_ms,
+            model: base.model,
+            seeds: definition.recipe.seeds.clone(),
+            work_responses: vec![],
+            summary_responses: vec![],
+            definition: Some(definition),
+        })
+    }
+
     pub(super) fn template(&self) -> Result<Value> {
         let mut value = serde_json::to_value(self)?;
         let fields = value.as_object_mut().unwrap();
@@ -169,11 +239,28 @@ impl ContinuousProfile {
 }
 
 /// Decoding selects an explicit profile family; a v2 test probe is never native.
+#[derive(Clone)]
 pub enum NativeProfile {
     Memento(Box<Profile>),
     Continuous(Box<ContinuousProfile>),
 }
 impl NativeProfile {
+    pub fn freeze_definition(
+        definition: FrozenRecipe,
+        selection: Selection,
+        daemon: DaemonIdentity,
+        host: LiveHost,
+    ) -> Result<Self> {
+        if definition.compaction.is_some() {
+            Ok(Self::Continuous(Box::new(
+                ContinuousProfile::freeze_definition(definition, selection, daemon, host)?,
+            )))
+        } else {
+            Ok(Self::Memento(Box::new(Profile::freeze_definition(
+                definition, selection, daemon, host,
+            )?)))
+        }
+    }
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let value: Value = serde_json::from_slice(bytes)?;
         let profile = if value["profile"] == CONTINUOUS_PROFILE {

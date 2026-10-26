@@ -115,7 +115,7 @@ pub struct ArchiveCapture {
     pub index: crate::execution::CaptureIndex,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct PurposeAccounting {
     pub admitted_calls: u64,
     pub settled_calls: u64,
@@ -123,11 +123,12 @@ pub struct PurposeAccounting {
     pub usage: UsageSummary,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct RequestAccounting {
     /// None when the archive predates admission evidence. Settlements alone
     /// cannot establish the number of attempted calls.
     pub model_calls: Option<u64>,
+    #[schema(value_type = std::collections::BTreeMap<String, PurposeAccounting>)]
     pub by_purpose: std::collections::BTreeMap<playtime_core::RequestPurpose, PurposeAccounting>,
     /// Missing purpose evidence remains explicit, including old omitted raw
     /// model requests; it is never guessed from turns, tool calls or phases.

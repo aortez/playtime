@@ -68,7 +68,7 @@ async fn edit_save_reopen_and_recover_offline_through_actual_catalog_and_http() 
         .as_ref()
         .unwrap();
     assert_eq!(harness.view.harness.id, MEMENTO_TURNS_V1);
-    assert_eq!(harness.catalog.harnesses.len(), 1);
+    assert_eq!(harness.catalog.harnesses.len(), 2);
     model.edit_recipe(true);
     let draft = model.authoring.draft.as_mut().unwrap();
     assert!(draft.harness.is_none());
@@ -109,6 +109,7 @@ async fn edit_save_reopen_and_recover_offline_through_actual_catalog_and_http() 
         .prepare_recipe_save(RecipeMutation::Revise {
             recipe_id: a.saved.as_ref().unwrap().recipe_id.clone(),
             request: ReviseRecipeRequest {
+                compaction: None,
                 harness: None,
                 model_registration: None,
                 model_settings: None,

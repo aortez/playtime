@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $# != 0 ]]; then
-    echo 'usage: PLAYTIME_LIVE_ENDPOINT=http://127.0.0.1:11435 ./scripts/test-rust-registered-model.sh' >&2
+if [[ $# != 0 && ( $# != 1 || $1 != --continuous ) ]]; then
+    echo 'usage: PLAYTIME_LIVE_ENDPOINT=http://127.0.0.1:11435 ./scripts/test-rust-registered-model.sh [--continuous]' >&2
     exit 2
 fi
 if systemctl --user list-units 'playtime-*.service' --state=active --no-legend --plain \
@@ -16,7 +16,7 @@ cargo run --locked -p xtask -- bundle-worker --output "$playtime_registered_root
 cargo build --locked -p playtime-server --bin playtimed -p playtime-ui \
     --example registered-model-e2e --features ui-snapshots --message-format=json-render-diagnostics \
     > "$playtime_registered_root/build.jsonl"
-python3 - "$playtime_registered_root" "${PLAYTIME_LIVE_ENDPOINT:-http://127.0.0.1:11435}" <<'PLAYTIME_REGISTERED_GATE'
+python3 - "$playtime_registered_root" "${PLAYTIME_LIVE_ENDPOINT:-http://127.0.0.1:11435}" "${1:-}" <<'PLAYTIME_REGISTERED_GATE'
 import json
 import os
 import pathlib
@@ -39,6 +39,16 @@ recipe = {
     'prompt': 'Use the controller session number. In Session 1, call exec with cwd /work and command "printf local-qwen-ok > probe.txt", then call end_session with finish_run=false and a memento asking the next session to read probe.txt. In Session 2, call read_file for /work/probe.txt, then call end_session with finish_run=true and report what you read. Act directly using tools.',
     'protocol': scenario['protocol'], 'inventory': scenario['inventory'],
 }
+continuous = sys.argv[3] == '--continuous'
+if continuous:
+    # Same common allocations as the reviewed step-B native compaction probe.
+    scenario['parameters']['limits'].update(wall_seconds=300, generated_tokens=16384,
+        context_tokens=16384, model_seconds=45, output_bytes=2048, log_bytes=16 << 20)
+    recipe['prompt'] = 'Repeatedly call exec with exactly these arguments: {"command":"bash /work/seeds/continuous-probe.sh","cwd":"/work","timeout_seconds":5}. The working directory is /work, never the script filename. This task requires 48 separate successful exec calls, one per response. Each call advances one stage. Continue until its output contains continuity-ok, then call finish_run alone with a short summary. Do not inspect or modify the script or other files. After compaction continue calling exec with those same arguments.'
+    seed_dir = root / 'seeds'
+    seed_dir.mkdir()
+    (seed_dir / 'continuous-probe.sh').write_bytes(pathlib.Path('crates/playtime-runner/src/docker/continuous-probe.sh').read_bytes())
+    recipe['seeds'] = 'seeds'
 lines = [f'{key} = {json.dumps(value)}' for key, value in recipe.items()]
 for name, table in [('parameters', {k: v for k, v in scenario['parameters'].items() if not isinstance(v, dict)}),
                     ('parameters.limits', scenario['parameters']['limits']),
@@ -63,7 +73,7 @@ with (root / 'daemon.log').open('w') as log:
             if daemon.poll() is not None or time.monotonic() >= deadline:
                 sys.exit('daemon readiness failed; see retained daemon.log')
             time.sleep(0.05)
-        result = subprocess.run([artifacts['registered-model-e2e'], str(connection), str(root / 'evidence')], timeout=720)
+        result = subprocess.run([artifacts['registered-model-e2e'], str(connection), str(root / 'evidence')] + (['--continuous'] if continuous else []), timeout=900)
         sys.exit(result.returncode)
     finally:
         daemon.terminate()
