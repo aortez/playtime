@@ -257,8 +257,13 @@ AccessKit's D-Bus runtime; avoid that cross-workspace behavior change.
 The adapter sets `Type=notify`, `NotifyAccess=main`, `Restart=no`, `UMask=0077`,
 `KillMode=mixed`, `SendSIGKILL=yes` and `TimeoutStopSec=180s`. Startup uses the
 remaining original startup allocation, at most 60 seconds; submission never
-extends the prepared deadline. `RuntimeMaxSec` uses the frozen wall allocation
-and starts at READY. Effective enforcement properties are checked on observation.
+extends the prepared deadline. `RuntimeMaxSec` is the frozen wall allocation
+plus a 180-second finishing margin and starts at READY. At its wall time the
+worker stops its own work, publishes, and keeps serving receipts until the
+coordinator stops it. Without the margin, systemd stopped the unit at that same
+moment, and the coordinator, which hadn't requested the stop, left the run
+`reconciling`. systemd's limit now stops only a worker that hasn't finished
+within the margin. Effective enforcement properties are checked on observation.
 The worker notification API sends only READY, never timeout extensions. D-Bus
 operations have five-second bounds; timed-out filesystem work retains one of four
 supervisor I/O permits until it settles.
@@ -307,7 +312,8 @@ cargo test --locked -p playtime-server --test lifecycle systemd_live -- --ignore
 ```
 
 The opt-in tests use unique units and private roots; they exercise the actual
-60-second startup bound, frozen wall timer, 180-second ignored-stop grace,
+60-second startup bound, frozen wall timer and its finishing margin (shortened to
+one second there), 180-second ignored-stop grace,
 descendant cleanup, cancellation before Begin, literal arguments, wrong invocation
 rejection, cancellation with corrupt private exit/identity/bootstrap files, and
 reattachment after killing the coordinator. They require no model,
