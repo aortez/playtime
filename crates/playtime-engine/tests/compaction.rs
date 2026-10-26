@@ -1020,18 +1020,73 @@ fn a_pending_retry_notice_stays_out_of_the_summary_and_opens_the_next_exchange()
         work.messages[..]
     );
 
-    // A summary request's parse failure still stops the run.
+    // A retried summary leaves the pending notice where it was and adds none,
+    // so the next work request is the same as without the retry.
     let mut run = compaction_with_pending_notice();
+    let summary = run.request().clone();
     run.complete(parse_failure());
-    assert_eq!(run.finalize().reason, StopReason::ToolParseRetryLimit);
-    let error = &run
+    assert_eq!(run.request().messages, summary.messages);
+    run.response(json!({"role":"assistant","content":"Summary: checked results."}));
+    assert_eq!(run.request().messages, work.messages);
+}
+
+#[test]
+fn summary_parse_failures_plan_the_same_compaction_again_until_the_consecutive_limit() {
+    let plans = |run: &Run| {
+        run.records
+            .iter()
+            .filter(|r| r.kind == "compaction_planned")
+            .map(|r| r.data.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut run = Run::new(config());
+    run.until_summary();
+    let summary = run.request().clone();
+    run.complete(parse_failure());
+    let retry = run.request().clone();
+    assert_eq!(retry.purpose, RequestPurpose::Compaction);
+    assert_eq!(retry.messages, summary.messages);
+    let [first, again] = &plans(&run)[..] else {
+        panic!("the retry plans the compaction once more")
+    };
+    assert_eq!(again["ordinal"], first["ordinal"]);
+    assert_eq!(again["before_messages"], first["before_messages"]);
+    run.response(json!({"role":"assistant","content":"Summary: checked results."}));
+    let applied = &run
         .records
         .iter()
         .rev()
-        .find(|r| r.kind == "model_error")
+        .find(|r| r.kind == "compaction_applied")
         .unwrap()
         .data;
-    assert_eq!(error["recovery_allowed"], false);
+    assert_eq!(applied["ordinal"], first["ordinal"]);
+    let work = run.request();
+    assert_eq!(work.purpose, RequestPurpose::Work);
+    assert!(!work.messages.contains(&notice()));
+
+    // Summaries stop after as many consecutive failures as work requests.
+    let mut run = Run::new(config());
+    run.until_summary();
+    for _ in 0..=compaction::TOOL_PARSE_RETRIES {
+        assert_eq!(run.request().purpose, RequestPurpose::Compaction);
+        run.complete(parse_failure());
+    }
+    let result = run.finalize();
+    assert_eq!(result.reason, StopReason::ToolParseRetryLimit);
+    assert_eq!(result.usage.unknown_requests, 6);
+    let allowed: Vec<_> = run
+        .records
+        .iter()
+        .filter(|r| r.kind == "model_error")
+        .map(|r| r.data["recovery_allowed"].clone())
+        .collect();
+    assert_eq!(allowed, [vec![json!(true); 5], vec![json!(false)]].concat());
+    assert_eq!(plans(&run).len(), 6);
+    assert!(
+        plans(&run)
+            .iter()
+            .all(|plan| plan["ordinal"] == plans(&run)[0]["ordinal"])
+    );
 }
 
 #[test]

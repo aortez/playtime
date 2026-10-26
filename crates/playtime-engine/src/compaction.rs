@@ -13,8 +13,8 @@ use crate::{FileIndex, context::encoded_size};
 pub const HARNESS: &str = "continuous_compaction_v1";
 pub const FINISH_SUMMARY_BYTES: usize = 8192;
 pub const DEFAULT_INSTRUCTIONS: &str = playtime_protocol::api::DEFAULT_COMPACTION_INSTRUCTIONS;
-/// Consecutive parse failures of work requests that are retried; one more
-/// stops the run.
+/// Consecutive parse failures of work or summary requests that are retried;
+/// one more stops the run.
 pub const TOOL_PARSE_RETRIES: u32 = 5;
 pub(crate) const MIN_TOOL_RESULT_BYTES: u64 = 512;
 

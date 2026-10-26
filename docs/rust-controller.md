@@ -157,7 +157,8 @@ Replacement retains the configured recent exchanges and installs a tagged
 assistant summary. Its byte estimate must strictly decrease against the old
 conversation's byte estimate (the same basis), fit below the trigger and leave
 all work reserves. Rewritten context cannot reuse a server measurement for a
-different prefix. Failure stops explicitly; there is no summarization retry loop.
+different prefix. A summary response the server can't parse is retried as below;
+any other failure stops explicitly.
 Observations retain source/retained request IDs, prior summary, exact before/after
 messages, estimates and their bases, summary content and outcome. Durable
 versioned source links and bounded archive projections are described in the
@@ -271,9 +272,12 @@ Continuous compaction has no sessions and no recipe parse limits. It retries a
 failed work request with memento's notice, minus its budget sentence, and that
 notice opens the next exchange. More than `TOOL_PARSE_RETRIES` (5) consecutive
 failures stop the run with `tool_parse_retry_limit`; admission enforces that
-bound independently of the policy. A failed summary request still stops. With no
-total ceiling, each failure's full unknown charge bounds the total through the
-run budget. Until 2026-10-26 (UTC), the first failure stopped a continuous run.
+bound independently of the policy. A summary request the server can't parse
+counts toward the same streak. It gets no notice: the policy plans the same
+compaction again, so every check sees the failed attempt's charge, and the new
+plan keeps the compaction's ordinal. With no total ceiling, each failure's full
+unknown charge bounds the total through the run budget. Until 2026-10-26 (UTC),
+the first failure stopped a continuous run.
 Neither ceiling resets the allocation or the charge for a failed request. Partial tools
 are observations only. A fresh session retains workspace/memento and optionally
 bounded evidence, but no prior messages, measured context, processes, or `/tmp`.
