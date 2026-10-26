@@ -168,6 +168,8 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
             harness,
         });
     let run = queries.run().map_err(evidence)?;
+    // Only execution records carry final captures; skip their archive pass otherwise.
+    let execution = run.execution.is_some();
     let f = frontier(&run.frontier);
     view.controller_phase = run.phase;
     view.usage = Some(run.usage);
@@ -390,7 +392,12 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
             )),
         });
     }
-    for item in queries.captures().map_err(evidence)? {
+    let captures = if execution {
+        queries.captures().map_err(evidence)?
+    } else {
+        Vec::new()
+    };
+    for item in captures {
         let sequence = *capture_sequences
             .get(&item.capture.index.path)
             .ok_or_else(|| evidence("capture sequence unavailable"))?;

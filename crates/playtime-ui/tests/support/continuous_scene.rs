@@ -60,7 +60,7 @@ pub fn events() -> Vec<EventEnvelope> {
             "compaction_planned",
             None,
             None,
-            json!({"ordinal":1,"source_requests":["r1"],"retained_requests":[],"previous_summary":null,"previous_summary_request":null,"before_messages":[],"input_bound":13000,"projected_tokens":14000,"estimate_basis":"input_bytes","evidence":{"schema_version":1,"requests":[{"request_id":"r1","purpose":"work","observation":null}],"plan":null}}),
+            json!({"ordinal":1,"source_requests":["r1"],"retained_requests":[],"previous_summary":null,"previous_summary_request":null,"before_messages":[],"input_bound":13000,"projected_tokens":14000,"estimate_basis":"input_bytes","summary_input_bound":12000,"summary_estimate_basis":"input_bytes","evidence":{"schema_version":1,"requests":[{"request_id":"r1","purpose":"work","observation":null}],"plan":null}}),
         ),
         observation(
             7,
@@ -89,6 +89,114 @@ pub fn events() -> Vec<EventEnvelope> {
             Some((3, "work")),
             None,
             json!({"request_id":"r3","summary":"The probe reports continuity-ok; final output is in /work/result.txt.","evidence":{"schema_version":1,"requests":[{"request_id":"r3","purpose":"work","observation":null}],"plan":null}}),
+        ),
+    ]
+}
+/// A summary that reaches its token limit, so the controller stops the run.
+pub fn failed_summary_events() -> Vec<EventEnvelope> {
+    vec![
+        observation(
+            1,
+            "controller_started",
+            None,
+            None,
+            json!({"parameters":{"limits":{"wall_seconds":300,"generated_tokens":16384}}}),
+        ),
+        observation(
+            2,
+            "model_request",
+            Some((1, "work")),
+            None,
+            json!({"purpose":"work","request_id":"r1","call":1}),
+        ),
+        observation(
+            3,
+            "model_response",
+            Some((1, "work")),
+            None,
+            json!({"call":1,"response":{"done":true,"message":{"content":"Stage 30 recorded; continuing the probe."}}}),
+        ),
+        observation(
+            4,
+            "model_completion",
+            Some((1, "work")),
+            None,
+            json!({"call":1,"finish_reason":"stop"}),
+        ),
+        observation(
+            5,
+            "compaction_planned",
+            None,
+            None,
+            json!({"ordinal":1,"source_requests":["r1"],"retained_requests":[],"previous_summary":null,"previous_summary_request":null,"before_messages":[],"input_bound":4800,"projected_tokens":5300,"estimate_basis":"server_usage_plus_new_bytes","summary_input_bound":14000,"summary_estimate_basis":"input_bytes","evidence":{"schema_version":1,"requests":[{"request_id":"r1","purpose":"work","observation":null}],"plan":null}}),
+        ),
+        observation(
+            6,
+            "model_request",
+            Some((2, "compaction")),
+            None,
+            json!({"purpose":"compaction","request_id":"r2","call":2}),
+        ),
+        observation(
+            7,
+            "model_response",
+            Some((2, "compaction")),
+            None,
+            json!({"call":2,"response":{"done":true,"message":{"thinking":"The summary must keep the task, the stage count and","content":""}}}),
+        ),
+        observation(
+            8,
+            "model_completion",
+            Some((2, "compaction")),
+            None,
+            json!({"call":2,"finish_reason":"length"}),
+        ),
+        observation(
+            9,
+            "controller_stop",
+            None,
+            None,
+            json!({"reason":"compaction_failed","usage":{"known_generated_tokens":2560,"unknown_reserved_tokens":0,"unknown_requests":0,"budget_charged_tokens":2560,"usage_complete":true}}),
+        ),
+        observation(
+            10,
+            "controller_finished",
+            None,
+            None,
+            json!({"reason":"compaction_failed","diagnostics":["summary requires explicit normal completion"]}),
+        ),
+    ]
+}
+/// Independent rejection records; a real run stops at the first one.
+pub fn rejected_events() -> Vec<EventEnvelope> {
+    vec![
+        observation(
+            1,
+            "model_request",
+            Some((1, "work")),
+            None,
+            json!({"purpose":"work","request_id":"r1","call":1}),
+        ),
+        observation(
+            2,
+            "model_response",
+            Some((1, "work")),
+            None,
+            json!({"call":1,"response":{"done":true,"message":{"tool_calls":[{"function":{"name":"finish_run","arguments":{"summary":"Done."}}},{"function":{"name":"exec","arguments":{"command":"ls"}}}]}}}),
+        ),
+        observation(
+            3,
+            "tool_batch_rejected",
+            Some((1, "work")),
+            None,
+            json!({"reason":"invalid_completion","error":"finish_run requires a normally completed response containing only that call"}),
+        ),
+        observation(
+            4,
+            "compaction_rejected",
+            None,
+            None,
+            json!({"ordinal":0,"reason":"context_limit","detail":"summary request cannot fit with its allowance and safety margin"}),
         ),
     ]
 }

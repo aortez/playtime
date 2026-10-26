@@ -441,7 +441,6 @@ performance evidence, not an end-to-end execution measurement. Service and
 Docker/live gates exercise real run inspection separately; the complete
 restart/recovery matrix remains unimplemented.
 
-
 ## Continuous compaction recipes
 
 The harness selector now offers **Continuous conversation with compaction**.
@@ -449,6 +448,9 @@ Its editor exposes trigger percentage, retained complete exchanges, summary cap
 and instructions. Memento handoff controls are inactive and hidden; shared model
 and budget settings remain inherited. See the
 [recipe workflow](rust-continuous-native.md#recipe-and-workbench-workflow).
+The readable trace explains a stopped run: rejection reasons and details, a
+response that reached its token limit, and the controller's stop reason and
+diagnostics.
 
 New reviewed synthetic screenshots:
 [editor](../crates/playtime-ui/tests/snapshots/compaction-editor.png),

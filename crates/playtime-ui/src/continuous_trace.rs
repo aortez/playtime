@@ -1,6 +1,6 @@
 //! Session-neutral archive presentation. Explicit identities group calls and
 //! tools; compaction evidence remains separate from the summary model response.
-use super::{Projection, Role, Section, excerpt, json, progress, words};
+use super::{Projection, Role, Section, excerpt, json, progress, thousands, words};
 use playtime_core::RequestPurpose;
 use playtime_protocol::{execution::Fact, observations::ObservationData};
 use serde_json::Value;
@@ -20,6 +20,13 @@ fn text(p: &mut Projection, value: &Value, field: &str, label: &str) {
         section(p, label, text);
     }
 }
+/// A recorded token estimate and the basis the policy used for it.
+fn estimate(value: &Value, tokens: &str, basis: &str, what: &str) -> String {
+    match value[tokens].as_u64() {
+        Some(n) => format!("{} {what}, from {}", thousands(n), words(&value[basis])),
+        None => "unavailable".into(),
+    }
+}
 pub(super) fn project(fact: &Fact, p: &mut Projection) {
     match fact {
         Fact::Observation(o) => {
@@ -34,7 +41,7 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                 p.display.call = Some(request.call.get());
                 p.display.purpose = Some(match request.purpose {
                     RequestPurpose::Compaction => "Compaction summary".into(),
-                    other => words(&other),
+                    other => progress::capitalized(&words(&other)),
                 });
                 p.display.tool = o.identity.tool_request_sequence.is_some();
                 p.key = o
@@ -76,6 +83,28 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                     text(p, &response["message"], "thinking", "Recorded thinking");
                     text(p, &response["message"], "content", "Model response");
                 }
+                // A normal stop, or no recorded reason, adds nothing. Any other
+                // reason replaces the response state; summaries and finish_run
+                // require a normal stop.
+                "model_completion" => match v["finish_reason"].as_str() {
+                    None | Some("stop") => (),
+                    Some("length") => {
+                        p.display.state = Some("Stopped at its token limit".into());
+                        section(
+                            p,
+                            "Completion",
+                            "The response reached its token limit before it finished (finish reason: length).",
+                        );
+                    }
+                    Some(other) => {
+                        p.display.state = Some(excerpt(&format!("Finish reason: {other}"), 120));
+                        section(
+                            p,
+                            "Completion",
+                            excerpt(&format!("Finish reason: {other}"), 512),
+                        );
+                    }
+                },
                 "model_error" => {
                     p.display.state = Some("Model error · partial inference may be present".into());
                     text(p, &v["error"], "message", "Error");
@@ -120,22 +149,37 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                 }
                 "compaction_planned" => {
                     p.title = format!("Compaction {} · planned", v["ordinal"]);
+                    // Either request can start a compaction, so show both.
                     section(
                         p,
                         "Context estimate",
                         format!(
-                            "{} projected tokens · basis {}",
-                            v["projected_tokens"],
-                            v["estimate_basis"].as_str().unwrap_or("unavailable")
+                            "Work request: {}\nSummary request: {}",
+                            estimate(v, "projected_tokens", "estimate_basis", "tokens projected"),
+                            estimate(
+                                v,
+                                "summary_input_bound",
+                                "summary_estimate_basis",
+                                "input tokens"
+                            )
                         ),
                     );
+                    let exchanges = |field: &str| v[field].as_array().map_or(0, Vec::len) as u64;
                     section(
                         p,
                         "Conversation selection",
                         format!(
-                            "{} older exchanges · {} recent exchanges retained. Inspect source for exact before-conversation and request links.",
-                            v["source_requests"].as_array().map_or(0, Vec::len),
-                            v["retained_requests"].as_array().map_or(0, Vec::len)
+                            "{} · {} retained. Inspect source for exact before-conversation and request links.",
+                            progress::count(
+                                exchanges("source_requests"),
+                                "older exchange",
+                                "older exchanges"
+                            ),
+                            progress::count(
+                                exchanges("retained_requests"),
+                                "recent exchange",
+                                "recent exchanges"
+                            )
                         ),
                     );
                 }
@@ -148,9 +192,24 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                         "Derived summary; exact resulting conversation and source request links are retained in source.",
                     );
                 }
-                "compaction_rejected" | "tool_batch_rejected" => {
-                    text(p, v, "reason", "Rejected");
-                    p.status = "Rejected · inspect source for details".into();
+                // Both rejections stop the run. A compaction rejected before its
+                // plan records the previous ordinal, so the title leaves it out.
+                "compaction_rejected" => {
+                    p.title = "Compaction rejected".into();
+                    p.status = "Rejected · the run stops".into();
+                    section(p, "Reason", progress::capitalized(&words(&v["reason"])));
+                    text(p, v, "detail", "Detail");
+                }
+                "tool_batch_rejected" => {
+                    p.display.state = Some("Tool calls rejected · the run stops".into());
+                    section(p, "Rejected", progress::capitalized(&words(&v["reason"])));
+                    text(p, v, "error", "Error");
+                }
+                "controller_stop" => {
+                    p.role = Role::Marker {
+                        text: format!("Controller stopped: {}", words(&v["reason"])),
+                        checkpoint: None,
+                    };
                 }
                 "completion_declared" => {
                     p.title = "Model declared completion".into();
@@ -163,7 +222,16 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                 }
                 "controller_finished" => {
                     p.finished = true;
-                    p.role = Role::Bookkeeping;
+                    let diagnostics: Vec<&str> = v["diagnostics"]
+                        .as_array()
+                        .map(|d| d.iter().filter_map(Value::as_str).collect())
+                        .unwrap_or_default();
+                    if diagnostics.is_empty() {
+                        p.role = Role::Bookkeeping;
+                    } else {
+                        p.title = "Controller diagnostics".into();
+                        section(p, "Diagnostics", diagnostics.join("\n"));
+                    }
                 }
                 "controller_started"
                 | "compaction_configured"
@@ -172,7 +240,7 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                 | "workspace_captured" => p.role = Role::Bookkeeping,
                 _ => (),
             }
-            if p.readable.is_empty() && !grouped {
+            if p.readable.is_empty() && !grouped && p.role == Role::Activity {
                 section(p, "Recorded data", "Inspect source for recorded details.");
             }
         }
@@ -186,8 +254,10 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                     words(reason),
                     match cleanup {
                         playtime_protocol::events::CleanupOutcome::Complete => "complete".into(),
-                        playtime_protocol::events::CleanupOutcome::Failed { errors } =>
-                            format!("failed ({} errors)", errors.len()),
+                        playtime_protocol::events::CleanupOutcome::Failed { errors } => format!(
+                            "failed ({})",
+                            progress::count(errors.len() as u64, "error", "errors")
+                        ),
                         playtime_protocol::events::CleanupOutcome::Unknown => "unknown".into(),
                     }
                 ),

@@ -1,7 +1,10 @@
 //! Immutable authoring snapshot. It contains no host bindings or credentials.
 use super::{IMAGE_LOCK, MODEL_LOCK, Recipe};
 use crate::{Error, Result};
-use playtime_protocol::api::{RecipeDefinition, RecipeId, RecipeSeed, RecipeSource, SavedRecipe};
+use playtime_protocol::api::{
+    CONTINUOUS_COMPACTION_V1, MEMENTO_TURNS_V1, RecipeDefinition, RecipeId, RecipeSeed,
+    RecipeSource, SavedRecipe,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -70,7 +73,7 @@ impl FrozenRecipe {
             return Err(Error::Invalid("unsupported recipe definition".into()));
         }
         if let Some(c) = &self.compaction {
-            if self.harness != playtime_protocol::api::CONTINUOUS_COMPACTION_V1
+            if self.harness != CONTINUOUS_COMPACTION_V1
                 || c.settings.validation_error().is_some()
                 || [&c.protocol, &c.inventory]
                     .iter()
@@ -78,7 +81,7 @@ impl FrozenRecipe {
             {
                 return Err(Error::Invalid("invalid compaction definition".into()));
             }
-        } else if self.harness == playtime_protocol::api::CONTINUOUS_COMPACTION_V1 {
+        } else if self.harness == CONTINUOUS_COMPACTION_V1 {
             return Err(Error::Invalid("missing compaction definition".into()));
         }
         if let Some(model) = &self.model_registration {
@@ -134,7 +137,7 @@ impl FrozenRecipe {
         self.validate()?;
         if !matches!(
             self.harness.as_str(),
-            "memento_turns_v1" | "continuous_compaction_v1"
+            MEMENTO_TURNS_V1 | CONTINUOUS_COMPACTION_V1
         ) || self.environment_lock != serde_json::from_slice::<Value>(IMAGE_LOCK)?
         {
             return Err(Error::Invalid(

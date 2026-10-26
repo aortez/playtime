@@ -56,9 +56,10 @@ pub struct RecipeDefinition {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CloneRecipeRequest {
+    /// Explicit settings for the continuous harness, applied after harness selection. Omission keeps the source's settings, or the defaults after a switch. Refused when the resulting harness is memento.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionSettings>,
-    /// Omission inherits the source harness. Switching installs that harness’s defaults; shared budgets are preserved.
+    /// Omission inherits the source harness. Switching to continuous installs the default compaction settings; switching to memento drops them and uses the source's retained memento settings. Shared budgets are preserved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>)]
     pub harness: Option<HarnessId>,
@@ -75,9 +76,10 @@ pub struct CloneRecipeRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReviseRecipeRequest {
+    /// Explicit settings for the continuous harness, applied after harness selection. Omission keeps the source's settings, or the defaults after a switch. Refused when the resulting harness is memento.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction: Option<CompactionSettings>,
-    /// Omission inherits the source harness. Switching installs that harness’s defaults; shared budgets are preserved.
+    /// Omission inherits the source harness. Switching to continuous installs the default compaction settings; switching to memento drops them and uses the source's retained memento settings. Shared budgets are preserved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>)]
     pub harness: Option<HarnessId>,

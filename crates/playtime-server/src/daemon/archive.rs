@@ -531,12 +531,17 @@ impl Archive {
         preview.prompt = profile.config.prompt.clone();
         preview.protocol = profile.config.protocol.clone();
         let model = profile.model.as_ref()?;
-        preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"], "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"], "settings":model.settings,"endpoint":model.host.endpoint,"addresses":model.host.addresses});
+        preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"],
+            "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"],
+            "settings":model.settings,"endpoint":model.host.endpoint,"addresses":model.host.addresses});
         if let Some(registration) = &model.registration {
             preview.model_identity["registration"] = serde_json::to_value(registration).ok()?;
             preview.model_identity["definition_sha256"] = model.lock["definition_sha256"].clone();
         }
-        preview.warnings = vec!["One continuous workshop. Compaction uses the same model and run budget. Only the final stopped workspace is captured; intermediate captures are unavailable.".into()];
+        preview.warnings = vec![
+            live_warning(model.registration.is_some()),
+            "One continuous workshop. Compaction uses the same model and run budget. Only the final stopped workspace is captured; intermediate captures are unavailable.".into(),
+        ];
         preview.backend = projection::live_backend();
         Some(preview)
     }
@@ -599,11 +604,7 @@ impl Archive {
             preview.model_identity["registration"] = serde_json::to_value(registration).unwrap();
             preview.model_identity["definition_sha256"] = model.lock["definition_sha256"].clone();
         }
-        preview.warnings = vec![if model.registration.is_some() {
-            "Live model: real inference on the selected registered identity. Tools execute in the locked Docker workshop. One live run at a time across checkouts."
-        } else {
-            "Live model: real inference on the locked model, and tools execute in the real locked Docker workshop. One live run at a time across checkouts."
-        }.into()];
+        preview.warnings = vec![live_warning(model.registration.is_some())];
         preview.backend = projection::live_backend();
         Some(preview)
     }
@@ -749,6 +750,15 @@ impl Archive {
         }
         Ok(snapshot.frontier().clone())
     }
+}
+/// Every live preview leads with this, whatever its harness.
+fn live_warning(registered: bool) -> String {
+    if registered {
+        "Live model: real inference on the selected registered identity. Tools execute in the locked Docker workshop. One live run at a time across checkouts."
+    } else {
+        "Live model: real inference on the locked model, and tools execute in the real locked Docker workshop. One live run at a time across checkouts."
+    }
+    .into()
 }
 fn storage(_: playtime_storage::StorageError) -> Error {
     Error::Invalid("archive confirmation verification failed")

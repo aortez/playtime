@@ -126,8 +126,20 @@ impl FrozenRecipe {
     }
     pub fn check_initial_context(&self) -> Result<()> {
         if self.compaction.is_some() {
-            playtime_engine::Controller::continuous(self.compaction_config()?, playtime_core::RunId::new("context-check").unwrap(), playtime_core::RunMode::Simulation, playtime_engine::simulation::SequentialIds, 0, playtime_engine::ToolPolicy::Simulation)
-                .map_err(|e| Error::Invalid(format!("Compaction settings cannot safely begin work: {}. Increase context capacity or reduce the prompt, response, summary or retained-exchange settings.", e.0)))?;
+            playtime_engine::Controller::continuous(
+                self.compaction_config()?,
+                playtime_core::RunId::new("context-check").unwrap(),
+                playtime_core::RunMode::Simulation,
+                playtime_engine::simulation::SequentialIds,
+                0,
+                playtime_engine::ToolPolicy::Simulation,
+            )
+            .map_err(|e| {
+                Error::Invalid(format!(
+                    "Compaction settings cannot safely begin work: {}. Increase context capacity or reduce the prompt, response, summary or retained-exchange settings.",
+                    e.0
+                ))
+            })?;
             return Ok(());
         }
         let required = playtime_engine::SessionInput {
