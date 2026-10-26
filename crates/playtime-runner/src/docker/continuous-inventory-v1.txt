@@ -1,14 +1,33 @@
-The locked workshop provides Python, Bash, Git, ripgrep, standard Unix tools,
-NumPy, SciPy, Matplotlib, Pillow, Playwright, Chromium, C/C++, Make, Node.js, npm
-and SQLite. Exact installed versions are listed in /opt/workshop/python-packages.txt
-and /opt/workshop/system-packages.txt. Installed collections are listed in
-/opt/workshop/toolsets.txt. There is no external network.
+Installed collections: core, computation, browser, systems
 
-/work is the bounded writable workspace. Seed inputs, when supplied, are in
-/work/seeds. /tmp is temporary storage. Background processes can run across
-conversation compactions; redirect their output to files. All processes stop at
-the end of the run. Only the final stopped workspace is captured.
+# Workshop
 
-read_file accepts UTF-8 text. Use exec for binary metadata or numerical checks;
-the model interface does not provide image or audio perception. Images and audio
-saved in the workspace are artifacts for the human reviewer.
+Your writable, persistent workspace is `/work`. It lasts for the whole run.
+There is no external network.
+
+Installed collections are listed in `/opt/workshop/toolsets.txt`.
+
+- **core**: Python, Bash, Git, ripgrep, standard Unix tools. Write and execute
+  programs, build your own helpers, and inspect their output.
+- **computation** (when installed): NumPy, SciPy, Matplotlib, Pillow. Numerical
+  work, simulations, plots, and image processing. See `computation.md` here.
+- **browser** (when installed): Playwright and Chromium. Exercise local web
+  applications, inspect their DOM, and capture images. See `browser.md` here.
+- **systems** (when installed): C/C++ compiler, Make, Node.js, npm, SQLite.
+  Build executables, JavaScript programs, and small databases.
+
+Exact installed versions are in `/opt/workshop/python-packages.txt` and
+`/opt/workshop/system-packages.txt`. You can read these files with `exec`.
+Offline package installation is limited to materials already in the image.
+
+Images and audio you save become artifacts for the human reviewer. The initial
+model interface returns text; it does not provide image or audio perception.
+Use numerical checks, DOM inspection, and other text observations as needed.
+`read_file` accepts UTF-8 text and rejects binary data. For image metadata, use
+`exec` with Pillow; for example, `Image.open(path).size` and `.mode`. Verify image
+contents with numerical checks; reading the file is not visual inspection.
+
+Shell commands have a timeout and an output limit. Save longer output in files
+and read relevant portions. Background processes keep running across
+conversation compactions until the run ends. Redirect their output to files.
+Only the final stopped `/work` is captured.

@@ -27,7 +27,10 @@ configurations. Preview and launch still require those execution capabilities.
 
 Definition schema 3 adds `compaction: { settings, protocol, inventory }` to the
 frozen source recipe. Selecting the harness freezes its own protocol/inventory;
-the old memento instructions do not go into continuous model requests. The task,
+the old memento instructions do not go into continuous model requests. The
+inventory describes one workshop that lasts the whole run and ends with the
+recipe's workspace, entry and `/tmp` limits, written at selection. Clone and
+revise don't change those limits, so the frozen line stays accurate. The task,
 seeds, model, sampling and common allocations remain inherited. Legacy session
 allocations/instructions remain inactive source data, enabling an explicit
 switch back to memento; they are not synthetic sessions or limits on continuous

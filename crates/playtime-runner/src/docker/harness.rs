@@ -1,4 +1,4 @@
-use super::{FrozenRecipe, IMAGE_LOCK};
+use super::{CompactionDefinition, FrozenRecipe, IMAGE_LOCK};
 use crate::{Error, Result};
 use playtime_protocol::api::*;
 
@@ -67,7 +67,8 @@ impl FrozenRecipe {
             ));
         }
         if id.as_str() == CONTINUOUS_COMPACTION_V1 {
-            self.compaction.get_or_insert_with(Default::default);
+            self.compaction
+                .get_or_insert_with(|| CompactionDefinition::new(&self.recipe));
             self.schema_version = 3;
         } else {
             self.compaction = None;

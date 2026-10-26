@@ -552,8 +552,10 @@ capability/schema entries are deliberate additive API changes. The HTTP schema
 golden adds only these fields/DTOs; existing response and memento behavior goldens
 remain unchanged. Installed harness enumeration now includes continuous compaction.
 The native capability digest changes to cover saved continuous profiles and their
-default protocol, inventory and instructions. Older worker bundles therefore can't
-run any Docker profile, memento included, through a new daemon; rebuild the bundle.
+default protocol, inventory and instructions. The inventory's last line is written
+from the recipe's limits, so the digest covers the reference recipe's version of
+it. Older worker bundles therefore can't run any Docker profile, memento included,
+through a new daemon; rebuild the bundle.
 No service ledger migration/reset or model/environment lock changes are involved.
 
 Continuous trace projection preserves run/request purpose identities and final

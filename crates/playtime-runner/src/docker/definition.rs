@@ -34,14 +34,33 @@ pub struct CompactionDefinition {
     pub protocol: String,
     pub inventory: String,
 }
-impl Default for CompactionDefinition {
-    fn default() -> Self {
+impl CompactionDefinition {
+    /// Defaults installed when a recipe switches harness. The inventory ends
+    /// with the recipe's own workshop capacity, so the frozen text is exactly
+    /// what the model receives.
+    pub fn new(recipe: &Recipe) -> Self {
+        let w = &recipe.parameters.workshop;
         Self {
             settings: Default::default(),
             protocol: include_str!("continuous-protocol-v1.txt").into(),
-            inventory: include_str!("continuous-inventory-v1.txt").into(),
+            inventory: format!(
+                "{}\nYour workspace /work holds {} and {} files and directories; /tmp holds {}. Both last until the run ends.\n",
+                include_str!("continuous-inventory-v1.txt"),
+                binary_size(w.workspace_bytes.get()),
+                recipe.workspace_entries,
+                binary_size(w.tmp_bytes.get()),
+            ),
         }
     }
+}
+/// The largest whole binary unit, such as 16 MiB, or exact bytes.
+fn binary_size(bytes: u64) -> String {
+    for (unit, shift) in [("GiB", 30), ("MiB", 20), ("KiB", 10)] {
+        if bytes >= 1 << shift && bytes.is_multiple_of(1 << shift) {
+            return format!("{} {unit}", bytes >> shift);
+        }
+    }
+    format!("{bytes} bytes")
 }
 impl FrozenRecipe {
     pub fn current(recipe: Recipe) -> Result<Self> {

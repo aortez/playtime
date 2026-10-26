@@ -71,7 +71,7 @@ pub fn digest() -> Result<Sha256Digest> {
         // merely because its ordinary recipe template is unchanged.
         serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1}),
         serde_json::from_slice(QWEN_MODEL_LOCK)?,
-        serde_json::to_value(CompactionDefinition::default())?,
+        serde_json::to_value(CompactionDefinition::new(&Recipe::reference()?))?,
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))
 }
