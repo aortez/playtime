@@ -408,6 +408,111 @@ fn log_omissions_keep_the_maintenance_purpose_and_unknown_charge() {
 }
 
 #[test]
+fn retained_and_omitted_request_prefixes_wait_for_admission_evidence() {
+    use playtime_protocol::execution::Record;
+    use playtime_storage::{ArchiveWriter, BatchClass};
+
+    let records: Vec<Record> =
+        serde_json::from_str(include_str!("fixtures/workspace-execution-v2.json")).unwrap();
+    let observation = records
+        .iter()
+        .find_map(|record| match &record.fact {
+            Fact::Observation(observation) if observation.observation_kind == "model_request" => {
+                Some(observation.clone())
+            }
+            _ => None,
+        })
+        .unwrap();
+    let mut intent = records
+        .iter()
+        .find_map(|record| match &record.fact {
+            Fact::EffectIntent(intent) if intent.effect_kind == "model" => Some(intent.clone()),
+            _ => None,
+        })
+        .unwrap();
+    // The prefix has a different envelope sequence/hash, and omissions have no
+    // retained observation source. Admission identity is sufficient here.
+    intent.sources.clear();
+    let settled = records
+        .iter()
+        .find(|record| matches!(record.fact, Fact::RequestSettled { .. }))
+        .unwrap();
+    let omission = Fact::ObservationOmitted {
+        controller_sequence: Some(observation.controller_sequence),
+        observation_kind: observation.observation_kind.clone(),
+        elapsed_ms: observation.elapsed_ms,
+        scope: observation.scope.clone(),
+        identity: observation.identity.clone(),
+        request: observation.request.clone(),
+        size_bytes: 3000,
+        reason: "archive_log_limit".into(),
+    };
+    for fact in [Fact::Observation(observation), omission] {
+        let temp = Temp::new();
+        let prepared =
+            probe::prepare(&temp.archive(), RunId::new("probe").unwrap(), &scenario()).unwrap();
+        let mut writer = ArchiveWriter::open_prepared(
+            temp.archive(),
+            &prepared.identity,
+            prepared.limits.clone(),
+        )
+        .unwrap();
+        let wire = |sequence, kind, data| {
+            format!("{}\n", json!({"schema_version":1,"run_id":"probe","sequence":sequence,"time":"2026-10-17T00:00:00Z","kind":kind,"data":data})).into_bytes()
+        };
+        writer
+            .append(
+                &[
+                    &wire(1, "run_started", json!({"mode":"simulation","input_manifest":prepared.identity.input_manifest})),
+                    &wire(2, "execution_v2", json!(Record::new(fact))),
+                ],
+                BatchClass::Finalization,
+            )
+            .unwrap();
+        let queries = ArchiveQueries::live(
+            temp.archive(),
+            StorageLimits::default(),
+            writer.confirmed_frontier(),
+        )
+        .unwrap();
+        let prefix = queries.request_accounting().unwrap();
+        assert_eq!(prefix.model_calls, None);
+        assert_eq!(prefix.by_purpose.len(), 1);
+        assert_eq!(prefix.by_purpose[&RequestPurpose::Work].admitted_calls, 0);
+        assert_eq!(prefix.by_purpose[&RequestPurpose::Work].settled_calls, 0);
+
+        writer
+            .append(
+                &[
+                    &wire(
+                        3,
+                        "execution_v2",
+                        json!(Record::new(Fact::EffectIntent(intent.clone()))),
+                    ),
+                    &wire(4, "execution_v2", json!(settled)),
+                ],
+                BatchClass::Finalization,
+            )
+            .unwrap();
+        // An existing read remains bound to its earlier confirmed frontier.
+        assert_eq!(queries.request_accounting().unwrap(), prefix);
+        drop(writer);
+        let accounting = ArchiveQueries::offline(temp.archive(), StorageLimits::default())
+            .unwrap()
+            .request_accounting()
+            .unwrap();
+        assert_eq!(accounting.model_calls, Some(1));
+        assert_eq!(accounting.by_purpose.len(), 1);
+        let work = &accounting.by_purpose[&RequestPurpose::Work];
+        assert_eq!(work.admitted_calls, 1);
+        assert_eq!(work.settled_calls, 1);
+        assert_eq!(work.usage.known_generated_tokens, 8);
+        assert_eq!(accounting.unclassified.admitted_calls, 0);
+        assert_eq!(accounting.unclassified.settled_calls, 0);
+    }
+}
+
+#[test]
 fn rejected_adapter_preflight_is_an_admitted_attempt_with_uncertain_usage() {
     let temp = Temp::new();
     let mut scenario = scenario();

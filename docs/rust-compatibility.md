@@ -37,6 +37,11 @@ New protocol, archive-driver and failure tests plus the separate
 keep unknown usage and unclassified legacy evidence explicit. No old goldens,
 Python controller/tests, database migrations or recovery semantics are changed.
 
+PR #141 review correction: purpose accounting also retains request identities
+from omitted v2 observations. A verified prefix before admission keeps its call
+count unavailable, just like a retained observation; later admission and settlement
+count the request once. Archive bytes and existing goldens remain unchanged.
+
 ## Memento policy extraction (#109 step B, 2026-10-25)
 
 The engine now separates private memento conversation/progression proposals from

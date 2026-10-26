@@ -1,7 +1,7 @@
 use super::*;
 use playtime_core::{GenerationUsage, RequestId, RequestPurpose, UsageTotals};
 use playtime_protocol::{
-    execution::{Fact, decode_capture_index},
+    execution::{Fact, Observation, decode_capture_index},
     v1::UsageSummary,
 };
 
@@ -56,8 +56,9 @@ impl ArchiveQueries {
                         attempt.admitted = true;
                         admission_evidence = true;
                     }
-                    Fact::Observation(observation) => {
-                        if let Some(request) = &observation.request {
+                    Fact::Observation(Observation { request, .. })
+                    | Fact::ObservationOmitted { request, .. } => {
+                        if let Some(request) = request {
                             attempts
                                 .entry(request.request_id.clone())
                                 .or_default()
