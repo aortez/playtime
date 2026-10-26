@@ -65,6 +65,7 @@ real worker, Docker, model-host, or recovery behavior.
 | Workspace capture | `./scripts/test-rust-docker-e2e.sh --case checkpoint` | Real stopped-workspace capture; additionally run the sandbox gate |
 | Native effects/Docker profile/run-and-view | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted` | Real systemd worker and Docker, scripted model, archive and client review |
 | Live model path | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend live` | The live Ollama path, streaming, persistence, review and cleanup |
+| Continuous native execution | `./scripts/test-rust-continuous.sh --backend docker-scripted`, then `--backend live` | One real systemd/Docker workshop across compactions, final capture, purpose accounting and exact cleanup; live uses the reviewed local Qwen identity |
 | Registered-model execution | `./scripts/test-rust-registered-model.sh` | Additional real Qwen API/workbench smoke, exact selection and replay; does not replace the original live gate |
 
 The Docker gates require the already-present locked image and supported local
@@ -159,6 +160,7 @@ cargo test -p playtime-runner --features test-harness --test workspace_probe --l
 CI runs these explicitly; the probe is excluded from default production builds.
 Its own v2 golden does not replace memento goldens or native run-and-view gates.
 The compaction controller gate adds a separate `compaction-policy-v1.json` golden
-and explicit simulated publication acknowledgments. The harness remains test-only;
-native metadata, archive/worker capability and launch/UI integration are later
-slices of #110. No host command or model call runs in this gate.
+and explicit simulated publication acknowledgments. No host command or model call
+runs in this CPU gate. The separate [continuous native gate](rust-continuous-native.md)
+checks actual process continuity and final publication. Recipe/API/workbench
+integration remains #110 step C.

@@ -4,6 +4,74 @@ use serde_json::json;
 use support::*;
 
 #[tokio::test]
+async fn continuous_workspace_has_no_session_and_cannot_restart_after_capture() {
+    let mut f = Fixture::initialized().await;
+    f.sandbox
+        .start_workspace(deadline(), CancellationToken::new())
+        .await
+        .unwrap();
+    let agent = f
+        .sandbox
+        .proposals()
+        .into_iter()
+        .find(|p| p.role == Role::Agent)
+        .unwrap();
+    assert_eq!(agent.session, None);
+    assert!(f.tool().await.is_ok());
+    assert!(
+        f.sandbox
+            .start_workspace(deadline(), CancellationToken::new())
+            .await
+            .is_err()
+    );
+    f.sandbox
+        .quiesce(deadline(), CancellationToken::new())
+        .await
+        .unwrap();
+    let seen = f.fake.seen().len();
+    assert!(
+        f.sandbox
+            .start_workspace(deadline(), CancellationToken::new())
+            .await
+            .is_err()
+    );
+    assert!(
+        f.sandbox
+            .start_session(2, deadline(), CancellationToken::new())
+            .await
+            .is_err()
+    );
+    assert_eq!(f.fake.seen().len(), seen);
+    assert!(f.cleanup().await.complete());
+}
+
+#[tokio::test]
+async fn uncertain_continuous_start_is_fenced_and_never_replayed() {
+    for op in ["container_create", "container_start"] {
+        let mut f = Fixture::initialized().await;
+        f.fake.inject(op, Injection::Lost(Fault::Io));
+        assert!(
+            f.sandbox
+                .start_workspace(deadline(), CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert!(f.sandbox.is_fenced());
+        let seen = f.fake.seen().len();
+        assert!(
+            f.sandbox
+                .start_workspace(deadline(), CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert!(f.tool().await.is_err());
+        assert_eq!(f.fake.seen().len(), seen);
+        assert!(f.cleanup().await.complete());
+        assert_eq!(f.fake.resources(), 0);
+    }
+}
+
+#[tokio::test]
 async fn ownership_precedes_mutations_and_session_reset_keeps_absolute_deadlines() {
     let mut f = Fixture::running().await;
     let proposals = f.sandbox.proposals();

@@ -35,6 +35,8 @@ invariants. Changes to the session-neutral contract also run
 Compaction-policy changes also run
 `cargo test -p playtime-engine --features test-harness --locked`;
 its deterministic controller gate does not establish native process continuity.
+Native compaction changes also run `./scripts/test-rust-continuous.sh --backend docker-scripted`
+and then `--backend live` sequentially; see `docs/rust-continuous-native.md`.
 `playtime-storage` owns synchronous portable archive I/O. Preserve its distinction
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`

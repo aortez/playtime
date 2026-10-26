@@ -57,15 +57,12 @@ impl Execution {
         let live = bootstrap.binding.kind == WorkerKind::DockerLive;
         let native = live || bootstrap.binding.kind == WorkerKind::DockerScripted;
         let profile = if native {
-            Some(serde_json::from_slice::<playtime_runner::docker::Profile>(
-                &bytes,
-            )?)
+            Some(playtime_runner::docker::NativeProfile::decode(&bytes)?)
         } else {
             None
         };
-        let scenario: Scenario = if let Some(profile) = &profile {
-            profile.validate()?;
-            if profile.model.is_some() != live {
+        let (wall_seconds, storage) = if let Some(profile) = &profile {
+            if profile.model().is_some() != live {
                 return Err(Error::Invalid("worker kind and frozen profile differ"));
             }
             if std::env::var_os("PLAYTIME_SYSTEMD_WORKER").is_none() {
@@ -73,41 +70,38 @@ impl Execution {
                     "real Docker effects require systemd supervision",
                 ));
             }
-            profile.scenario.clone()
+            (profile.wall_seconds(), profile.storage().clone())
         } else {
-            serde_json::from_slice(&bytes)?
+            let scenario: Scenario = serde_json::from_slice(&bytes)?;
+            (
+                scenario.parameters.limits.wall_seconds.get(),
+                StorageLimits {
+                    event_log_bytes: scenario.parameters.limits.log_bytes.get(),
+                    ..limits
+                },
+            )
         };
-        if scenario
-            .parameters
-            .limits
-            .wall_seconds
-            .get()
-            .checked_mul(1000)
-            != Some(bootstrap.wall_ms)
-        {
+        if wall_seconds.checked_mul(1000) != Some(bootstrap.wall_ms) {
             return Err(Error::Invalid(
                 "bootstrap wall allocation differs from frozen configuration",
             ));
         }
         let prepared = PreparedSimulation {
             identity: reader.identity().clone(),
-            limits: StorageLimits {
-                event_log_bytes: scenario.parameters.limits.log_bytes.get(),
-                ..limits
-            },
+            limits: storage,
         };
         // Take the machine-wide lock before any Docker or model work. Without
         // it this worker fails before Begin.
         let live_lock = profile
             .as_ref()
-            .and_then(|profile| profile.model.as_ref())
+            .and_then(|profile| profile.model())
             .map(|model| {
                 playtime_worker_control::FileLock::acquire(&model.host.live_lock)
                     .map_err(|_| Error::Invalid("another live run holds the live-model lock"))
             })
             .transpose()?;
         let owned = if let Some(profile) = profile {
-            let effects = crate::docker::NativeEffects::prepare(profile, bootstrap).await?;
+            let effects = crate::docker::NativeEffects::prepare_native(profile, bootstrap).await?;
             PreparedExecution::acquire_docker(&path, &prepared, Box::new(effects))?
         } else {
             PreparedExecution::acquire(&path, &prepared)?
@@ -180,6 +174,9 @@ impl ControlExecution for Execution {
             let result = owned.execute(&mut WorkClock::new(started_boot_ms), options);
             let success = match result {
                 Ok(report) => {
+                    for diagnostic in &report.diagnostics {
+                        eprintln!("worker execution: {diagnostic}");
+                    }
                     let mut terminal = report.terminal_committed
                         && report.result.as_ref().is_some_and(|result| {
                             !matches!(
@@ -202,7 +199,10 @@ impl ControlExecution for Execution {
                     }
                     terminal
                 }
-                Err(_) => false,
+                Err(error) => {
+                    eprintln!("worker execution failed: {error}");
+                    false
+                }
             };
             failed.store(!success, Ordering::Release);
             pending.store(false, Ordering::Release);

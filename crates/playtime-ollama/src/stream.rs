@@ -110,6 +110,7 @@ pub struct Decoder {
     records: u64,
     finished: bool,
     terminal_observed: bool,
+    finish_reason: Option<String>,
 }
 impl Decoder {
     pub fn new(limits: Limits) -> Result<Self> {
@@ -137,6 +138,7 @@ impl Decoder {
             records: 0,
             finished: false,
             terminal_observed: false,
+            finish_reason: None,
         })
     }
     pub fn partial(&self) -> &AssistantMessage {
@@ -150,6 +152,10 @@ impl Decoder {
     }
     pub fn terminal_observed(&self) -> bool {
         self.terminal_observed
+    }
+    /// Backend metadata only; absence never implies normal completion.
+    pub fn finish_reason(&self) -> Option<&str> {
+        self.finish_reason.as_deref()
     }
     pub fn pending_fragment(&self) -> &[u8] {
         if self.diagnostic.is_empty() {
@@ -291,6 +297,10 @@ impl Decoder {
             return Ok(None);
         }
         self.terminal_observed = true;
+        self.finish_reason = object
+            .get("done_reason")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let generated = object
             .get("eval_count")
             .and_then(Value::as_u64)

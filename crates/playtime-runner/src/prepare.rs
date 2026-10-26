@@ -191,6 +191,37 @@ pub fn prepare_docker_with_inputs(
     )
 }
 
+pub fn prepare_continuous_with_inputs(
+    path: &Path,
+    run_id: RunId,
+    profile: &crate::docker::ContinuousProfile,
+    bundle: WorkerBundle,
+    extra: Vec<FrozenInput>,
+) -> Result<PreparedSimulation> {
+    profile.validate()?;
+    if extra
+        .iter()
+        .any(|i| i.reference.path.as_str() == playtime_protocol::recovery::EXECUTION_CONTRACT)
+    {
+        return Err(Error::Invalid(
+            "simulation recovery cannot authorize continuous execution".into(),
+        ));
+    }
+    freeze_archive(
+        path,
+        run_id,
+        &serde_json::to_vec(profile)?,
+        bundle,
+        extra,
+        false,
+        None,
+        profile.mode,
+        profile.config.initial_workspace.clone(),
+        crate::docker::Profile::initial_bytes(),
+        profile.storage.clone(),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn freeze_archive(
     path: &Path,

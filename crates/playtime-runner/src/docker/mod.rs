@@ -9,7 +9,9 @@ use playtime_storage::StorageLimits;
 use serde::{Deserialize, Serialize};
 use std::{net::IpAddr, path::PathBuf};
 
+mod continuous;
 mod definition;
+pub use continuous::{CONTINUOUS_PROFILE, CompletedResponse, ContinuousProfile, NativeProfile};
 mod harness;
 pub use harness::harness_catalog;
 mod model_settings;
@@ -56,7 +58,14 @@ pub fn digest() -> Result<Sha256Digest> {
     let templates = [
         Profile::freeze(selection.clone(), daemon.clone())?.template()?,
         Profile::freeze_live(selection.clone(), daemon.clone(), host.clone())?.template()?,
-        Profile::freeze_recipe(Recipe::reference()?, selection, daemon, host)?.template()?,
+        Profile::freeze_recipe(
+            Recipe::reference()?,
+            selection.clone(),
+            daemon.clone(),
+            host,
+        )?
+        .template()?,
+        ContinuousProfile::freeze(selection, daemon, None)?.template()?,
         serde_json::to_value(&BOUNDS)?,
         // A worker that predates authoring must not accept an authored profile
         // merely because its ordinary recipe template is unchanged.

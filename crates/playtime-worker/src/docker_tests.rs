@@ -3,6 +3,7 @@
 use super::*;
 use playtime_docker::transport::{Fault, Operation, Outcome as TransportOutcome, Transport};
 use playtime_protocol::worker::{ControlId, WorkerKind};
+use playtime_runner::docker::Profile;
 use playtime_runner::{
     ArchiveQueries, Cancellation, DriverClock, DriverOptions, PreparedExecution,
 };
@@ -71,7 +72,12 @@ impl Transport for Port {
                 raw[..bytes]
                     .split(|b| *b == b'\n')
                     .filter_map(|l| serde_json::from_slice::<serde_json::Value>(l).ok())
-                    .any(|e| e["kind"] == "effect_intent" && e["data"]["effect_id"] == effect)
+                    .any(
+                        |e| (e["kind"] == "effect_intent" && e["data"]["effect_id"] == effect)
+                            || (e["kind"] == "execution_v2"
+                                && e["data"]["fact"]["kind"] == "effect_intent"
+                                && e["data"]["fact"]["data"]["effect_id"] == effect)
+                    )
             );
             self.fake.journal.proposals.lock().unwrap().push(p.clone());
         }
@@ -133,6 +139,11 @@ impl Transport for Port {
                 _ => (),
             }
             let value: serde_json::Value = serde_json::from_slice(payload).unwrap();
+            if value["arguments"]["command"] == "bash /work/seeds/continuous-probe.sh" {
+                return fake::response(
+                    serde_json::json!({"stdout":"checked workspace evidence ".repeat(100),"stderr":"","exit_code":0,"timed_out":false,"output_truncated":false,"duration_seconds":0.0}),
+                );
+            }
             if value["arguments"]["timeout_seconds"] == 0.1 {
                 return fake::response(
                     serde_json::json!({"stdout":"","stderr":"","exit_code":-9,"timed_out":true,"output_truncated":false,"duration_seconds":0.1}),
@@ -194,6 +205,15 @@ fn run_definition(
     live: Option<ollama::Fake>,
     definition: Option<playtime_runner::docker::FrozenRecipe>,
 ) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
+    run_native_definition(case, hooks, live, definition, false)
+}
+fn run_native_definition(
+    case: FaultCase,
+    hooks: Option<Box<dyn playtime_runner::WriterHooks>>,
+    live: Option<ollama::Fake>,
+    definition: Option<playtime_runner::docker::FrozenRecipe>,
+    continuous: bool,
+) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
     let is_live = live.is_some();
     let root = std::env::temp_dir().join(format!(
         "pt66-native-{}",
@@ -244,20 +264,34 @@ fn run_definition(
         live_lock: root.join("live-model.lock"),
     };
     let daemon = engine.identity().clone();
-    let profile = match (live.is_some(), definition) {
-        (true, Some(definition)) => Profile::freeze_definition(definition, selection, daemon, host),
-        (true, None) => Profile::freeze_live(selection, daemon, host),
-        (false, _) => Profile::freeze(selection, daemon),
+    let profile = if continuous {
+        NativeProfile::Continuous(Box::new(
+            playtime_runner::docker::ContinuousProfile::freeze(selection, daemon, None).unwrap(),
+        ))
+    } else {
+        NativeProfile::Memento(Box::new(
+            match (live.is_some(), definition) {
+                (true, Some(definition)) => {
+                    Profile::freeze_definition(definition, selection, daemon, host)
+                }
+                (true, None) => Profile::freeze_live(selection, daemon, host),
+                (false, _) => Profile::freeze(selection, daemon),
+            }
+            .unwrap(),
+        ))
+    };
+    let run_id = playtime_core::RunId::new("synthetic-native").unwrap();
+    let worker = playtime_runner::capture_demo_worker().unwrap();
+    let prepared = match &profile {
+        NativeProfile::Memento(p) => {
+            playtime_runner::prepare_docker_with_inputs(&archive, run_id, p, worker, vec![])
+        }
+        NativeProfile::Continuous(p) => {
+            playtime_runner::prepare_continuous_with_inputs(&archive, run_id, p, worker, vec![])
+        }
     }
     .unwrap();
-    let prepared = playtime_runner::prepare_docker_with_inputs(
-        &archive,
-        playtime_core::RunId::new("synthetic-native").unwrap(),
-        &profile,
-        playtime_runner::capture_demo_worker().unwrap(),
-        vec![],
-    )
-    .unwrap();
+    let profile = EffectProfile::from(profile);
     let id = || ControlId::new("0123456789abcdef0123456789abcdef".into()).unwrap();
     let binding = Binding {
         service_id: id(),
@@ -299,7 +333,11 @@ fn run_definition(
         Some(transport) => Model::Live(Box::new(
             Live::with_transport(Box::new(transport), profile.model.as_ref().unwrap()).unwrap(),
         )),
-        None => Model::Scripted(profile.scenario.models.clone().into()),
+        None if continuous => Model::ContinuousScripted {
+            work: profile.work_responses.clone().into(),
+            summaries: profile.summary_responses.clone().into(),
+        },
+        None => Model::Scripted(profile.models.clone().into()),
     };
     let effects = NativeEffects {
         prepared: Some((ready, owner, journal, root, model)),
@@ -331,6 +369,33 @@ fn run_definition(
     let report = owned.execute(&mut Clock, options).unwrap();
     (temp, port, report)
 }
+#[test]
+fn continuous_native_port_keeps_one_agent_and_retains_late_capture_on_cancel() {
+    for case in [FaultCase::None, FaultCase::CancelCapture] {
+        let (temp, port, report) = run_native_definition(case, None, None, None, true);
+        assert!(report.terminal_committed, "{:?}", report.diagnostics);
+        assert!(report.result.as_ref().unwrap().last_capture.is_some());
+        let queries = ArchiveQueries::offline(temp.0.join("archive"), Default::default()).unwrap();
+        assert_eq!(queries.captures().unwrap().len(), 1);
+        assert!(queries.checkpoints().unwrap().is_empty());
+        assert!(
+            queries.request_accounting().unwrap().by_purpose
+                [&playtime_core::RequestPurpose::Compaction]
+                .settled_calls
+                >= 2
+        );
+        assert_eq!(port.exports.load(Ordering::SeqCst), 1);
+        let proposals = port.fake.journal.proposals.lock().unwrap();
+        let agents: Vec<_> = proposals
+            .iter()
+            .filter(|p| p.role == playtime_docker::Role::Agent)
+            .collect();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].session, None);
+        assert_eq!(port.fake.resources(), 0);
+    }
+}
+
 #[test]
 fn native_ports_use_real_controller_writer_and_durable_proposals() {
     let (temp, port, report) = execute(FaultCase::None, None);
@@ -547,7 +612,7 @@ fn cumulative_capture_reservation_uses_confirmed_counts_and_exhausts_without_res
     )
     .unwrap();
     let usage = report.confirmed.usage();
-    let first = capture_profile(&profile, &report.confirmed).unwrap();
+    let first = capture_profile(&profile.clone().into(), &report.confirmed).unwrap();
     let actual: serde_json::Value = serde_json::to_value(&first).unwrap();
     assert_eq!(
         actual["remaining_references"],
@@ -561,7 +626,7 @@ fn cumulative_capture_reservation_uses_confirmed_counts_and_exhausts_without_res
             - profile.capture.memory_bytes * 2
     );
     profile.storage.references = usage.references + 18;
-    assert!(capture_profile(&profile, &report.confirmed).is_err());
+    assert!(capture_profile(&profile.clone().into(), &report.confirmed).is_err());
     assert!(
         CaptureProfile::prepare(
             profile.capture.clone(),
@@ -575,7 +640,7 @@ fn cumulative_capture_reservation_uses_confirmed_counts_and_exhausts_without_res
     profile.storage.references = u64::MAX;
     profile.storage.manifest_bytes = u64::MAX;
     assert!(
-        capture_profile(&profile, &report.confirmed).is_err(),
+        capture_profile(&profile.clone().into(), &report.confirmed).is_err(),
         "overflow must reject"
     );
 }

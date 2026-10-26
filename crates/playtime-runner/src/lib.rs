@@ -20,8 +20,9 @@ pub use clock::{Cancellation, DriverClock, VirtualClock};
 pub use driver::{DriverOptions, PreparedExecution, RunReport, run_prepared};
 pub use error::{Error, Result};
 pub use prepare::{
-    PreparedSimulation, WorkerBundle, capture_demo_worker, prepare_docker_with_inputs,
-    prepare_recoverable_simulation_with_inputs, prepare_simulation, prepare_simulation_with_inputs,
+    PreparedSimulation, WorkerBundle, capture_demo_worker, prepare_continuous_with_inputs,
+    prepare_docker_with_inputs, prepare_recoverable_simulation_with_inputs, prepare_simulation,
+    prepare_simulation_with_inputs,
 };
 pub use queries::ArchiveQueries;
 pub use receipt::LatestReceipt;

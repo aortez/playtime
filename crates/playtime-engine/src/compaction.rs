@@ -1,5 +1,5 @@
 //! Frozen configuration for the first continuous conversation policy.
-//! The controller entry point is test-only until native worker support ships.
+//! Native preparation freezes this configuration before worker admission.
 
 use std::num::NonZeroU64;
 
@@ -65,7 +65,6 @@ impl CompactionSettings {
         context_tokens.div_ceil(20).max(1024)
     }
 
-    #[cfg(feature = "test-harness")]
     pub(crate) fn threshold(&self, context_tokens: u64) -> u64 {
         ((u128::from(context_tokens) * u128::from(self.trigger_percent)).div_ceil(100)) as u64
     }

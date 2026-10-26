@@ -183,6 +183,46 @@ impl VerifiedBundle {
             extra,
         )?)
     }
+    pub fn prepare_continuous(
+        self,
+        path: &Path,
+        run_id: RunId,
+        profile: &playtime_runner::docker::ContinuousProfile,
+    ) -> Result<PreparedSimulation> {
+        profile.validate()?;
+        let capabilities = &self.descriptor.capabilities;
+        let profiles = playtime_runner::docker::digest()?;
+        if !(if profile.model.is_some() {
+            capabilities.implements_live(&profiles)
+        } else {
+            capabilities.implements_docker(&profiles)
+        }) {
+            return Err(Error::UnsupportedCapability);
+        }
+        let Self {
+            descriptor,
+            descriptor_bytes,
+            mut files,
+            ..
+        } = self;
+        let extra = vec![
+            frozen(wire::DESCRIPTOR, descriptor_bytes),
+            frozen(wire::BUILD, files.remove(wire::BUILD).unwrap()),
+        ];
+        Ok(playtime_runner::prepare_continuous_with_inputs(
+            path,
+            run_id,
+            profile,
+            WorkerBundle {
+                executable: files.remove(EXECUTABLE).unwrap(),
+                source: files.remove(SOURCE).unwrap(),
+                cargo_lock: files.remove(LOCK).unwrap(),
+                build: descriptor.worker.build,
+                platform: descriptor.worker.platform,
+            },
+            extra,
+        )?)
+    }
     /// Advertise recovery only for this validated bundle's supported capability.
     pub fn prepare_recoverable(
         self,

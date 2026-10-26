@@ -478,6 +478,15 @@ fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
         );
         assert!(!archive.exists());
     }
+    let base = docker_profile()?;
+    let continuous =
+        playtime_runner::docker::ContinuousProfile::freeze(base.selection, base.daemon, None)?;
+    assert!(
+        VerifiedBundle::open(&path)?
+            .prepare_continuous(&archive, RunId::new("older")?, &continuous)
+            .is_err()
+    );
+    assert!(!archive.exists());
     // The older capability set remains usable for ordinary simulation.
     VerifiedBundle::open(&path)?.prepare(
         &archive,
@@ -504,6 +513,15 @@ fn other_docker_profile_is_refused(bundle: &Path) -> Result<()> {
         );
         assert!(!archive.exists());
     }
+    let base = docker_profile()?;
+    let continuous =
+        playtime_runner::docker::ContinuousProfile::freeze(base.selection, base.daemon, None)?;
+    assert!(
+        VerifiedBundle::open(&path)?
+            .prepare_continuous(&archive, RunId::new("other")?, &continuous)
+            .is_err()
+    );
+    assert!(!archive.exists());
     println!("PASS bundle advertising other Docker profiles cannot prepare Docker or live runs");
     // Without the real-model capability, the same profiles allow only scripted runs.
     let path = rewritten(&case, bundle, "scripted-only-bundle", |capabilities| {

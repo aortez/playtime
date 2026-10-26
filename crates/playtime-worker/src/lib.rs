@@ -4,6 +4,7 @@ mod docker;
 mod elf;
 pub mod execution;
 mod files;
+mod native_profile;
 
 pub use elf::verify_static_elf;
 pub use files::PrivateDirectory;

@@ -81,6 +81,7 @@ pub struct Observation {
 
 impl Observation {
     pub fn validate_value(&self, value: &serde_json::Value) -> Result<(), ReadError> {
+        crate::compaction::validate(self, value)?;
         if self.observation_kind == "model_request" {
             let request = self.request.as_ref().ok_or_else(|| {
                 ReadError::malformed("model observation lacks request purpose/identity")

@@ -78,6 +78,7 @@ pub struct Sandbox {
     holder: Option<Resource>,
     agent: Option<Resource>,
     ordinal: u32,
+    continuous: bool,
     initialized: bool,
     fenced: bool,
     exporter_pending: bool,
@@ -263,6 +264,7 @@ impl Sandbox {
             holder: None,
             agent: None,
             ordinal: 0,
+            continuous: false,
             initialized: false,
             fenced: false,
             exporter_pending: false,
@@ -380,6 +382,41 @@ impl Sandbox {
         deadline: Instant,
         cancel: CancellationToken,
     ) -> Result<()> {
+        if self.continuous {
+            return Err(Error::new(
+                Failure::Fenced,
+                "start_session",
+                "continuous workspace cannot restart as a session",
+            ));
+        }
+        self.start_agent(ordinal, Some(ordinal), deadline, cancel)
+            .await
+    }
+
+    /// One run-scoped agent. Compaction never stops or replaces this process.
+    pub async fn start_workspace(
+        &mut self,
+        deadline: Instant,
+        cancel: CancellationToken,
+    ) -> Result<()> {
+        if self.ordinal != 0 || self.continuous {
+            return Err(Error::new(
+                Failure::Fenced,
+                "start_workspace",
+                "workspace agent cannot be restarted",
+            ));
+        }
+        self.continuous = true;
+        self.start_agent(1, None, deadline, cancel).await
+    }
+
+    async fn start_agent(
+        &mut self,
+        ordinal: u32,
+        session: Option<u32>,
+        deadline: Instant,
+        cancel: CancellationToken,
+    ) -> Result<()> {
         if !self.initialized
             || self.closed
             || self.fenced
@@ -398,7 +435,7 @@ impl Sandbox {
         let deadline = self.work_bound(deadline);
         self.verify_holder(deadline, cancel.clone()).await?;
         self.verify_mounts(deadline, cancel.clone()).await?;
-        let p = self.proposal(Role::Agent, Some(ordinal));
+        let p = self.proposal(Role::Agent, session);
         self.journal(&p, deadline, &cancel).await?;
         self.ordinal = ordinal;
         self.capture_deadline = None;

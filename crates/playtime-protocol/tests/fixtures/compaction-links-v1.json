@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "requests": [
+    {
+      "request_id": "r1",
+      "purpose": "work",
+      "observation": {
+        "controller_sequence": 2,
+        "archive_sequence": 4,
+        "record_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "request_id": "r2",
+      "purpose": "compaction",
+      "observation": null
+    }
+  ],
+  "plan": null
+}
