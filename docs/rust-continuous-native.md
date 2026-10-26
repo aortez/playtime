@@ -40,9 +40,11 @@ the result allowance or over eight calls, and a failed summary still stop the ru
 Definition schema 3 adds `compaction: { settings, protocol, inventory }` to the
 frozen source recipe. Selecting the harness freezes its own protocol/inventory;
 the old memento instructions do not go into continuous model requests. The
-inventory describes one workshop that lasts the whole run and ends with the
-recipe's workspace, entry and `/tmp` limits, written at selection. Clone and
-revise don't change those limits, so the frozen line stays accurate. The task,
+protocol ends with the recipe's wall time and generated-token budget and says
+that `finish_run` ends the run early. The inventory describes one workshop that
+lasts the whole run and ends with the recipe's workspace, entry and `/tmp`
+limits. Both lines are written at selection; clone and revise don't change those
+limits, so the frozen lines stay accurate. The task,
 seeds, model, sampling and common allocations remain inherited. Legacy session
 allocations/instructions remain inactive source data, enabling an explicit
 switch back to memento; they are not synthetic sessions or limits on continuous

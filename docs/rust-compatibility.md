@@ -593,3 +593,16 @@ pending notice stays out of the summary input. New CPU cases cover recovery and
 the notice. Memento behavior and goldens are unchanged. The new `continuous_tool_recovery`
 capability changes the native capability digest, so a new daemon refuses older
 worker bundles; rebuild the bundle.
+
+## Continuous run limits in the protocol
+
+Selecting `continuous_compaction_v1` now freezes a protocol that ends with the
+recipe's limits, for example "This run lasts at most 30 minutes or 300,000
+generated tokens, whichever comes first. Calling finish_run ends it early;
+unused time and tokens are not carried over." Before, a continuous model saw no
+limits, unlike memento's per-turn budget, and in a 10-minute gpt-oss trial it
+finished after 90 seconds. The line is written at selection, like the
+inventory's workspace line. Saved recipes that already selected continuous keep
+the protocol they froze. Schemas, the controller and its goldens are unchanged.
+The default definition is part of the native capability digest, so a new daemon
+refuses older worker bundles; rebuild the bundle.
