@@ -13,7 +13,8 @@ use tokio::{
     time::Instant,
 };
 
-const RUNS: usize = 16;
+/// Runs with a refresh entry at once; a new run takes an idle entry's place.
+pub(crate) const RUNS: usize = 16;
 pub(crate) const REFRESH_FLOOR: Duration = Duration::from_millis(250);
 const BACKOFF_MAX: Duration = Duration::from_secs(5);
 type Completion = Option<std::result::Result<Admission, Arc<Error>>>;

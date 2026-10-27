@@ -15,7 +15,7 @@ use playtime_worker_control::{
     Bootstrap, Credential, FileLock, boot_id, boot_ms, create_private_dir, digest, random_id,
     read_private, write_once,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 #[derive(Clone)]
 pub(super) struct Archive {
@@ -34,6 +34,37 @@ pub(super) struct Archive {
     pub live_endpoint: Option<String>,
     docker_transport: Arc<tokio::sync::Mutex<Option<playtime_docker::transport::Cli>>>,
     execution_gate: Arc<tokio::sync::Mutex<()>>,
+    snapshots: Arc<Snapshots>,
+}
+/// Snapshots this daemon's own verification produced, by run. A later read at
+/// the same confirmed frontier reuses one instead of verifying the archive
+/// again, with the uncommitted byte count that verification saw; a changed
+/// frontier or a restart verifies again. At most the runs the daemon refreshes
+/// at once are kept.
+#[derive(Default)]
+pub(super) struct Snapshots(std::sync::Mutex<HashMap<playtime_core::RunId, Snapshot>>);
+impl Snapshots {
+    pub(super) fn remember(&self, run: &playtime_core::RunId, snapshot: &Snapshot) {
+        let mut snapshots = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !snapshots.contains_key(run) && snapshots.len() >= crate::lifecycle::RUNS {
+            let stale = snapshots.keys().next().cloned();
+            if let Some(stale) = stale {
+                snapshots.remove(&stale);
+            }
+        }
+        snapshots.insert(run.clone(), snapshot.clone());
+    }
+    pub(super) fn remembered(
+        &self,
+        run: &playtime_core::RunId,
+        frontier: &EventFrontier,
+    ) -> Option<Snapshot> {
+        let snapshots = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        snapshots
+            .get(run)
+            .filter(|snapshot| snapshot.frontier() == frontier)
+            .cloned()
+    }
 }
 /// The live model as the daemon reaches it: host bindings frozen at startup
 /// and an adapter for read-only identity checks at admission.
@@ -272,6 +303,7 @@ impl Archive {
             live_endpoint: None,
             docker_transport: Arc::new(tokio::sync::Mutex::new(None)),
             execution_gate: Arc::new(tokio::sync::Mutex::new(())),
+            snapshots: Default::default(),
             bundle: Arc::new(bundle),
             scenario,
             bytes,
@@ -691,6 +723,12 @@ impl Archive {
         }
         let prepared = record.prepared.as_ref().ok_or(Error::Uncertain)?;
         let reader = self.reader(prepared)?;
+        if let Some(snapshot) = self
+            .snapshots
+            .remembered(&prepared.binding.run_id, &confirmation.frontier)
+        {
+            return Ok(Some((reader, snapshot)));
+        }
         let authorized = Authority {
             identity: confirmation.frontier.archive.clone(),
             prefix: ReadPrefix {
@@ -703,6 +741,7 @@ impl Archive {
         if snapshot.frontier() != &confirmation.frontier {
             return Err(Error::Uncertain);
         }
+        self.snapshots.remember(&prepared.binding.run_id, &snapshot);
         Ok(Some((reader, snapshot)))
     }
     fn reader(&self, prepared: &PreparedLaunch) -> life::Result<ArchiveReader> {
@@ -736,18 +775,23 @@ impl Archive {
             identity: reader.identity().clone(),
             prefix: prefix(receipt),
         };
-        let snapshot = reader.confirmed_snapshot(&authority).map_err(storage)?;
-        if let Some(previous) = previous {
-            if receipt.sequence < previous.sequence
-                || (receipt.sequence > previous.sequence && receipt.bytes <= previous.bytes)
-                || (receipt.sequence == previous.sequence && receipt != previous)
-            {
-                return Err(Error::Uncertain);
+        // One pass validates the receipt's prefix and, when there is one, the
+        // previous confirmation as an exact boundary within it.
+        let snapshot = match previous {
+            Some(previous) => {
+                if receipt.sequence < previous.sequence
+                    || (receipt.sequence > previous.sequence && receipt.bytes <= previous.bytes)
+                    || (receipt.sequence == previous.sequence && receipt != previous)
+                {
+                    return Err(Error::Uncertain);
+                }
+                reader
+                    .confirmed_snapshot_extending(&authority, prefix(previous))
+                    .map_err(storage)?
             }
-            reader
-                .sub_snapshot(&snapshot, prefix(previous))
-                .map_err(storage)?;
-        }
+            None => reader.confirmed_snapshot(&authority).map_err(storage)?,
+        };
+        self.snapshots.remember(&prepared.binding.run_id, &snapshot);
         Ok(snapshot.frontier().clone())
     }
 }

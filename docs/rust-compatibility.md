@@ -723,3 +723,30 @@ event schemas and the controller golden are unchanged; `model_error` kinds are
 an open vocabulary. The new `continuous_summary_tool_recovery` capability
 changes the native capability digest, so a new daemon refuses older worker
 bundles; rebuild the bundle.
+
+## One-pass prefix extension checks and reused snapshots
+
+`ArchiveReader::sub_snapshot` validated the covering prefix and then the
+historical position in two complete passes over the event log, and the daemon's
+confirmation of each worker status made three such passes (`confirmed_snapshot`
+plus `sub_snapshot` for the previous receipt) before the projection scanned the
+log once more. On a 14.5 MB, 3,203-record archive, each pass took about a
+second in a release daemon and 15 s in a debug one, so during a 10-minute
+continuous run the published view fell behind by 65 to 85 s near the end and the
+terminal state followed the archive by about six minutes.
+
+The scan now takes an optional checkpoint position and verifies it where the
+pass crosses its byte count, by sequence and running SHA-256, so a sub-snapshot
+is one pass, and the new `confirmed_snapshot_extending` verifies a reply's prefix
+and its extension of the previous confirmation in one pass. A position inside a
+record, with another history or with the wrong sequence is `invalid_cursor`
+rather than corruption, once the whole prefix has validated; over HTTP that
+mapping was already `invalid_cursor`. The daemon keeps the snapshot its own
+verification produced, for at most the 16 runs it refreshes at once, and a
+projection or completion check at the same confirmed frontier reuses it instead
+of verifying again; a changed frontier or a restarted daemon verifies again. The
+projection built from it still reads the history in pages of 200 records, and
+each page validates the complete committed prefix, so a projection's passes
+still grow with the log. Archive and event schemas, the storage limits and every
+verification rule are unchanged; a history page still validates its complete
+covering prefix.

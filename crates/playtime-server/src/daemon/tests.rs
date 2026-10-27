@@ -702,3 +702,61 @@ fn authoring_startup_tolerates_only_execution_limitations() {
         "catalog_corrupt"
     );
 }
+#[test]
+fn remembered_snapshots_serve_their_exact_frontier_for_at_most_the_refreshed_runs() {
+    let root = Root::new();
+    let f = fixture::two_session().unwrap();
+    let mut writer = ArchiveWriter::create(
+        root.0.join("archive"),
+        f.descriptor.clone(),
+        f.manifest,
+        &f.inputs,
+        StorageLimits::default(),
+    )
+    .unwrap();
+    for artifact in &f.artifacts {
+        writer
+            .publish_artifact(&artifact.reference, &artifact.bytes)
+            .unwrap();
+    }
+    writer.append(&f.events[..1], BatchClass::Ordinary).unwrap();
+    let first_receipt = writer.confirmed_frontier().clone();
+    writer
+        .append(&f.events[1..], BatchClass::Finalization)
+        .unwrap();
+    let reader = ArchiveReader::open(root.0.join("archive"), StorageLimits::default()).unwrap();
+    let first = reader.live_snapshot(&first_receipt).unwrap();
+    let last = reader.live_snapshot(writer.confirmed_frontier()).unwrap();
+    let run = &f.descriptor.run_id;
+    let snapshots = super::archive::Snapshots::default();
+    assert!(snapshots.remembered(run, first.frontier()).is_none());
+    snapshots.remember(run, &first);
+    let hit = snapshots.remembered(run, first.frontier()).unwrap();
+    assert_eq!(hit.frontier(), first.frontier());
+    assert_eq!(hit.inspection(), first.inspection());
+    // Only the run's last verified frontier is served, and only to that run.
+    assert!(snapshots.remembered(run, last.frontier()).is_none());
+    snapshots.remember(run, &last);
+    assert!(snapshots.remembered(run, first.frontier()).is_none());
+    assert_eq!(
+        snapshots
+            .remembered(run, last.frontier())
+            .unwrap()
+            .frontier(),
+        last.frontier()
+    );
+    let others: Vec<_> = (0..crate::lifecycle::RUNS)
+        .map(|n| playtime_core::RunId::new(format!("other-{n}")).unwrap())
+        .collect();
+    assert!(snapshots.remembered(&others[0], last.frontier()).is_none());
+    // At most the runs the daemon refreshes at once keep a snapshot, so one
+    // of these seventeen loses its own and the rest keep theirs.
+    for other in &others {
+        snapshots.remember(other, &last);
+    }
+    let kept = std::iter::once(run)
+        .chain(&others)
+        .filter(|run| snapshots.remembered(run, last.frontier()).is_some())
+        .count();
+    assert_eq!(kept, crate::lifecycle::RUNS);
+}
