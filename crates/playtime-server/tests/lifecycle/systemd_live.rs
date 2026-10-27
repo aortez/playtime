@@ -57,6 +57,8 @@ impl Drop for Cleanup {
         }
     }
 }
+/// The finishing margin after the wall time, shortened for these tests.
+const FINISH_MS: u64 = 1000;
 async fn setup(
     wall_ms: u64,
     ignore_stop: bool,
@@ -64,7 +66,8 @@ async fn setup(
     let supervisor = Arc::new(
         SystemdSupervisor::connect()
             .await
-            .expect("real user systemd/cgroup v2 required; no fixture fallback"),
+            .expect("real user systemd/cgroup v2 required; no fixture fallback")
+            .with_finish_margin(Duration::from_millis(FINISH_MS)),
     );
     let root = Root::new();
     let inner = FixtureArchive::new(
@@ -212,7 +215,8 @@ async fn systemd_wall_deadline_starts_at_ready_and_survives_coordinator_exit() {
     drop(c);
     let exit = stopped(&supervisor, &launch, Duration::from_secs(15)).await;
     assert_eq!(exit.result, "timeout");
-    assert!(exit.exit.unwrap().observed_boot_ms >= start + 1500);
+    // systemd allows the finishing margin after the wall time.
+    assert!(exit.exit.unwrap().observed_boot_ms >= start + 1500 + FINISH_MS);
     assert_eq!(
         read_private(&launch.private_dir.join("signal.fixture.json"), 128).unwrap(),
         b"deadline"

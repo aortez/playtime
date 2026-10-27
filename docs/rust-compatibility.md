@@ -626,3 +626,20 @@ two reviewed screenshots change; in the wide one, the launch row moves below the
 fold, and `harness-editor.png` still shows it. The new `continuous_finish_choice`
 capability changes the native capability digest, so a new daemon refuses older
 worker bundles; rebuild the bundle.
+
+## Runs that end at their wall time
+
+A worker's systemd unit now has `RuntimeMaxSec` set to the frozen wall allocation
+plus 180 seconds, instead of the allocation alone. Both clocks started at READY,
+so systemd stopped every run that reached its wall time at the moment its
+controller stopped. The worker still finished its archive under SIGTERM, but the
+coordinator hadn't requested that stop and left the run `reconciling`
+(`worker_unavailable`) until an operator released it. A continuous trial without
+`finish_run` ended this way on 2026-10-26. Now the controller's own clock ends the
+run, and the coordinator confirms completion and stops the unit as for other
+normal endings. A worker that hasn't finished within the margin is still stopped,
+and a stop request keeps its 180-second timeout.
+
+Units created by an older daemon fail the new property check, so let runs finish
+before upgrading the daemon. Wire formats, archives, worker bundles and goldens are
+unchanged.

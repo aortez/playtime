@@ -26,11 +26,16 @@ const MANAGER_IFACE: &str = "org.freedesktop.systemd1.Manager";
 const UNIT_IFACE: &str = "org.freedesktop.systemd1.Unit";
 const SERVICE_IFACE: &str = "org.freedesktop.systemd1.Service";
 const DEADLINE: Duration = Duration::from_secs(5);
+/// At its wall time, a worker stops its own work, publishes and waits for the
+/// coordinator's stop. A systemd stop first is unexplained to the coordinator,
+/// so the runtime limit adds this margin, the same as the stop timeout.
+pub const FINISH_MARGIN: Duration = Duration::from_secs(180);
 type Properties = Vec<(String, OwnedValue)>;
 
 pub struct SystemdSupervisor {
     connection: Connection,
     filesystem: Arc<tokio::sync::Semaphore>,
+    finish_ms: u64,
 }
 impl SystemdSupervisor {
     /// No fallback to a subprocess: unavailable managers/capabilities are explicit.
@@ -53,9 +58,15 @@ impl SystemdSupervisor {
             Ok(Self {
                 connection,
                 filesystem: Arc::new(tokio::sync::Semaphore::new(4)),
+                finish_ms: FINISH_MARGIN.as_millis() as u64,
             })
         })
         .await
+    }
+    /// Replaces [`FINISH_MARGIN`], so real-systemd tests can wait less.
+    pub fn with_finish_margin(mut self, margin: Duration) -> Self {
+        self.finish_ms = margin.as_millis() as u64;
+        self
     }
     async fn filesystem<T: Send + 'static>(
         &self,
@@ -109,7 +120,8 @@ impl SystemdSupervisor {
     async fn observation(&self, launch: &PreparedLaunch) -> Result<SupervisorObservation> {
         let properties = self.properties(launch).await?;
         let launch = launch.clone();
-        self.filesystem(move || observe_files(&launch, properties))
+        let finish_ms = self.finish_ms;
+        self.filesystem(move || observe_files(&launch, properties, finish_ms))
             .await
     }
     async fn endpoint(&self, launch: &PreparedLaunch) -> Result<Endpoint> {
@@ -166,7 +178,10 @@ impl Supervisor for SystemdSupervisor {
         bounded(async {
             validate_unit(launch)?;
             let copy = launch.clone();
-            let properties = self.filesystem(move || launch_properties(&copy)).await?;
+            let finish_ms = self.finish_ms;
+            let properties = self
+                .filesystem(move || launch_properties(&copy, finish_ms))
+                .await?;
             let aux: Vec<(String, Properties)> = Vec::new();
             // StartTransientUnit returns its job path without waiting for READY.
             // "fail" forbids replacing a preexisting job. Existing units fail too.
@@ -246,7 +261,7 @@ fn property<'a>(name: &str, value: impl Into<Value<'a>>) -> (String, OwnedValue)
         value.into().try_to_owned().expect("owned D-Bus property"),
     )
 }
-fn launch_properties(launch: &PreparedLaunch) -> Result<Properties> {
+fn launch_properties(launch: &PreparedLaunch, finish_ms: u64) -> Result<Properties> {
     let bootstrap: Bootstrap = serde_json::from_slice(&read_private(&launch.bootstrap, 65_536)?)?;
     if bootstrap.binding != launch.binding
         || bootstrap.private_dir != launch.private_dir
@@ -292,7 +307,7 @@ fn launch_properties(launch: &PreparedLaunch) -> Result<Properties> {
         property("UMask", 0o077u32),
         property("TimeoutStartUSec", startup_ms * 1000),
         property("TimeoutStopUSec", 180_000_000u64),
-        property("RuntimeMaxUSec", bootstrap.wall_ms * 1000),
+        property("RuntimeMaxUSec", (bootstrap.wall_ms + finish_ms) * 1000),
         property("RuntimeRandomizedExtraUSec", 0u64),
         property("KillMode", "mixed"),
         property("SendSIGKILL", true),
@@ -366,6 +381,7 @@ fn verify_manager(
 fn observe_files(
     launch: &PreparedLaunch,
     properties: Option<(HashMap<String, OwnedValue>, HashMap<String, OwnedValue>)>,
+    finish_ms: u64,
 ) -> Result<SupervisorObservation> {
     let exit = worker::read_exit(&launch.private_dir)?;
     if let Some(exit) = &exit
@@ -394,7 +410,8 @@ fn observe_files(
             let bootstrap: Bootstrap =
                 serde_json::from_slice(&read_private(&launch.bootstrap, 65_536)?)?;
             if bootstrap.binding != launch.binding
-                || number::<u64>(&service, "RuntimeMaxUSec")? != bootstrap.wall_ms * 1000
+                || number::<u64>(&service, "RuntimeMaxUSec")?
+                    != (bootstrap.wall_ms + finish_ms) * 1000
             {
                 return Err(Error::Invalid("systemd wall allocation changed"));
             }
