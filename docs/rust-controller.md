@@ -112,7 +112,8 @@ bytes. The constructor also rejects initial inputs that cannot do work below the
 trigger with required reserves. It never edits a retained allocation to make a
 configuration fit.
 
-One exchange is an assistant response and all its tool results. System/inventory
+One exchange is an assistant response and all its tool results, after any
+notices the controller added for that request. System/inventory
 instructions and the original task stay verbatim. A work request's projected
 occupancy is its estimated input (including tools) plus its actual output
 allowance. The independent strict fit check adds a fixed safety margin
@@ -133,7 +134,7 @@ measured prefix and the ordinary work reserve covers that continuation.
 
 The aggregate retained result allowance is the existing `output_bytes` setting
 for this policy, divided among a response's tool calls. Each needs at least 512
-bytes; oversized batches are rejected before effects. Actual fitted message
+bytes; an oversized batch stops the run before effects. Actual fitted message
 sizes are checked by the runtime independently of policy; full bounded results
 and explicit shortening notices remain in observations. Memento keeps its
 existing result-fitting semantics and wording.
@@ -168,8 +169,15 @@ or canceled plan cannot inherit the previous work request's purpose.
 Work exposes `exec`, `read_file`, `write_file` and `finish_run`. The latter takes
 exactly one non-whitespace `summary` string of at most 8 KiB and must be the sole
 tool call in a normally completed response. The controller validates the entire
-batch before tool effects. This v1 policy fails closed on malformed/mixed calls;
-ordinary prose does not finish. A valid declaration enters final-only capture;
+batch before tool effects. A malformed or mixed finish stops the run with
+`invalid_completion`, and ordinary prose does not finish. A response that calls
+no tool gets a notice to continue or call `finish_run`; otherwise the next request
+would end with the model's own message, and gpt-oss then returned empty
+one-token responses until the run stopped. When an ordinary call
+is invalid, no call in the batch runs, but the run continues. Each call's result
+is an error: its own, or "Not run because another call in this response was
+invalid". Until 2026-10-26 (UTC), such a batch stopped the run. A valid
+declaration enters final-only capture;
 publication acknowledgment is still required before `agent_finished`. Capture
 failure, cleanup failure, cancellation and late receipts retain their independent
 evidence and established first-stop precedence.
@@ -252,6 +260,13 @@ ceiling, `tool_parse_error_limit` (default `tool_parse_retries + 1`), counts per
 session: reaching it ends that session through the normal handoff, recorded as
 `early_handoff` with reason `tool_parse_error_limit`, and the next session counts
 from zero. Before 2026-10-18 this ceiling covered the whole run and stopped it.
+Continuous compaction has no sessions and no recipe parse limits. It retries a
+failed work request with memento's notice, minus its budget sentence, and that
+notice opens the next exchange. More than `TOOL_PARSE_RETRIES` (5) consecutive
+failures stop the run with `tool_parse_retry_limit`; admission enforces that
+bound independently of the policy. A failed summary request still stops. With no
+total ceiling, each failure's full unknown charge bounds the total through the
+run budget. Until 2026-10-26 (UTC), the first failure stopped a continuous run.
 Neither ceiling resets the allocation or the charge for a failed request. Partial tools
 are observations only. A fresh session retains workspace/memento and optionally
 bounded evidence, but no prior messages, measured context, processes, or `/tmp`.

@@ -29,6 +29,14 @@ context and an 8,192-token summary cap, the reserve keeps projected work below
 No model, Docker or workshop connection is needed to read or edit saved
 configurations. Preview and launch still require those execution capabilities.
 
+The model can correct its own tool-call mistakes. A batch with an invalid
+ordinary call runs none of its calls and returns each call's error to the model.
+When the server can't parse a work response's tool call, the request is retried
+with a notice, up to five times in a row, and the failed attempt is charged its
+full allowance as unknown usage. A response that calls no tool is followed by a
+notice to continue or call `finish_run`. A malformed or mixed finish, a batch over
+the result allowance or over eight calls, and a failed summary still stop the run.
+
 Definition schema 3 adds `compaction: { settings, protocol, inventory }` to the
 frozen source recipe. Selecting the harness freezes its own protocol/inventory;
 the old memento instructions do not go into continuous model requests. The
@@ -72,7 +80,8 @@ comparison remain #111.
 `ContinuousProfile::freeze_definition` reconstructs a saved recipe's exact active
 configuration and selected model identity. `NativeProfile` dispatches preparation
 to the correct family; a memento profile rejects a continuous definition. The
-capability digest includes the continuous recipe format and default input texts.
+capability digest includes the continuous recipe format, default input texts and
+tool-call recovery.
 
 For the separate fixed native smoke, `ContinuousProfile::freeze` produces
 `docker_continuous_compaction_v1`. Its validator reconstructs the exact supported

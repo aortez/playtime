@@ -414,8 +414,7 @@ fn successful_finish_and_next_session_require_actual_publication() {
 }
 
 #[cfg(feature = "test-harness")]
-#[test]
-fn compaction_proposals_cannot_grant_tokens_tools_or_completion() {
+fn compaction_idle() -> TestController {
     use crate::compaction::{CompactionConfig, CompactionSettings};
     let scenario: Scenario =
         serde_json::from_str(include_str!("../../../tests/fixtures/two-session.json")).unwrap();
@@ -438,6 +437,13 @@ fn compaction_proposals_cannot_grant_tokens_tools_or_completion() {
         Controller::test_compaction(config, RunId::new("policy-test").unwrap(), SequentialIds, 0)
             .unwrap();
     complete_idle(&mut controller, Outcome::WorkspaceStarted);
+    controller
+}
+
+#[cfg(feature = "test-harness")]
+#[test]
+fn compaction_proposals_cannot_grant_tokens_tools_or_completion() {
+    let mut controller = compaction_idle();
     for purpose in [
         RequestPurpose::Work,
         RequestPurpose::Compaction,
@@ -488,4 +494,24 @@ fn compaction_proposals_cannot_grant_tokens_tools_or_completion() {
     );
     assert_eq!(request.context_reserve, 3277);
     assert_eq!(controller.reserved_tokens(), 7);
+}
+
+#[cfg(feature = "test-harness")]
+#[test]
+fn compaction_work_cannot_exceed_the_consecutive_parse_retry_limit() {
+    let mut controller = compaction_idle();
+    let work = || {
+        Proposal::Infer(Inference {
+            purpose: RequestPurpose::Work,
+            messages: vec![json!({"role":"user","content":"request"})],
+            tools: crate::compaction::tools(),
+        })
+    };
+    controller.parse_streak = crate::compaction::TOOL_PARSE_RETRIES + 1;
+    assert!(controller.apply_proposal(work()).is_err());
+    assert!(controller.pending().is_none());
+    assert_eq!(controller.reserved_tokens(), 0);
+    controller.parse_streak = crate::compaction::TOOL_PARSE_RETRIES;
+    controller.apply_proposal(work()).unwrap();
+    assert!(controller.pending().is_some());
 }

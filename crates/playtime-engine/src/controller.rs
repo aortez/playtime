@@ -103,6 +103,7 @@ pub struct Controller<I: IdSource> {
     handoff_attempts: u32,
     current_handoff: bool,
     tool_calls_remaining: usize,
+    batch_rejected: bool,
     tool: Option<ActiveTool>,
     commands: Vec<CommandObservation>,
     ended: bool,
@@ -282,6 +283,7 @@ impl<I: IdSource> Controller<I> {
             handoff_attempts: 0,
             current_handoff: false,
             tool_calls_remaining: 0,
+            batch_rejected: false,
             tool: None,
             commands: Vec::new(),
             ended: false,
@@ -1086,7 +1088,9 @@ impl<I: IdSource> Controller<I> {
                     self.stop(reason);
                     return;
                 }
-                Ok(Some(summary)) if request.purpose == RequestPurpose::Work => {
+                Ok(crate::compaction::Batch::Valid(Some(summary)))
+                    if request.purpose == RequestPurpose::Work =>
+                {
                     self.emit(
                         "completion_declared",
                         json!({"request_id":request.request_id,"summary":summary}),
@@ -1096,7 +1100,9 @@ impl<I: IdSource> Controller<I> {
                     self.stage = Stage::Checkpoint;
                     return;
                 }
-                _ => {}
+                Ok(batch) => {
+                    self.batch_rejected = matches!(batch, crate::compaction::Batch::Rejected)
+                }
             }
         }
         if response.message["tool_calls"]
@@ -1201,6 +1207,11 @@ impl<I: IdSource> Controller<I> {
             } else {
                 Some("Tool is unavailable for this request purpose".into())
             }
+            .or_else(|| {
+                // A rejected batch runs none of its calls.
+                self.batch_rejected
+                    .then(|| "Not run because another call in this response was invalid".into())
+            })
         };
         let save_memory = self.config.memento.is_some() && name == "end_session";
         let mut active = ActiveTool {

@@ -564,3 +564,32 @@ explicit. New synthetic wide/narrow editor and trace screenshots cover this UI;
 existing screenshot baselines remain unchanged. See
 [continuous execution](rust-continuous-native.md) for active versus inactive
 parameters, native verification, and the bounded final-file listing.
+
+## Continuous tool-call recovery
+
+`continuous_compaction_v1` no longer stops at a model's first tool-call mistake.
+A batch with an invalid ordinary call still runs none of its calls. Each call now
+gets an error result and work continues; before, the run stopped with
+`tool_parse_retry_limit`. A work request whose tool call the server can't parse
+is retried with memento's notice, without its budget sentence. More than five
+consecutive failures stop the run with `tool_parse_retry_limit`. A notice opens
+the next exchange, so compaction keeps it with the response that follows. A
+malformed or mixed finish, an oversized batch, more than eight calls and a failed
+summary still stop as before. A recovered batch's calls appear as `tool_request`
+and `tool_result` records without dispatch, as invalid memento calls do. They
+record no `tool_batch_rejected` observation; that kind still means the run
+stopped.
+
+A work response that calls no tool is now followed by a notice to continue or
+call `finish_run`. Without it, the next request ended with the model's own
+message; in a gpt-oss trial that produced 153 empty one-token responses in 54
+seconds. The notice opens the next exchange, like a retry notice.
+
+Archive, API and settings schemas are unchanged. `compaction-policy-v1.json`
+changes deliberately: its responses call no tools, so each later input grows by
+204 bytes per notice in the conversation. Request IDs, order, seeds, allowances,
+estimate bases, compaction points and the final result are unchanged, and a
+pending notice stays out of the summary input. New CPU cases cover recovery and
+the notice. Memento behavior and goldens are unchanged. The new `continuous_tool_recovery`
+capability changes the native capability digest, so a new daemon refuses older
+worker bundles; rebuild the bundle.

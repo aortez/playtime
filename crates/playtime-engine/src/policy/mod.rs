@@ -272,6 +272,9 @@ impl Policy {
     pub fn recovery(&self, view: View<'_>, error: &ModelFailure) -> Recovery {
         match self {
             Self::Memento(policy) => policy.recovery(view.memento(), error),
+            Self::Compaction(policy) if policy.retries(view, error) => {
+                Recovery::Retry { end_session: false }
+            }
             _ => Recovery::Stop(match error {
                 ModelFailure::Parse(_) => StopReason::ToolParseRetryLimit,
                 ModelFailure::Connection(_) => StopReason::ModelConnectionError,
@@ -286,7 +289,9 @@ impl Policy {
     pub fn retry(&mut self, view: View<'_>) {
         match self {
             Self::Memento(policy) => policy.retry(view.memento()),
-            _ => unreachable!("test policy never retries"),
+            Self::Compaction(policy) => policy.retry(),
+            #[cfg(feature = "test-harness")]
+            Self::Probe(_) => unreachable!("test policy never retries"),
         }
     }
     pub fn fit_result(

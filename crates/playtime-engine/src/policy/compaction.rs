@@ -8,11 +8,19 @@ use serde_json::{Value, json};
 
 use super::{Inference, Proposal, View};
 use crate::{
-    ModelResponse, ToolRequest,
+    ModelFailure, ModelResponse, ToolRequest,
     compaction::{CompactionConfig, CompactionSettings},
     context::{ContextWindow, encoded_size, fit_tool_result_with_notice, message, tool_message},
 };
 
+/// Memento's parse retry notice, without its budget sentence: continuous
+/// requests carry no budget.
+const PARSE_RETRY_NOTICE: &str = "The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments.";
+/// Follows a response that called no tool. Otherwise the next request would end
+/// with the model's own message and leave it nothing to answer.
+const CONTINUE_NOTICE: &str = "Your last response did not call a tool, so the run continues. Continue independently, or call finish_run alone if the task is finished; ordinary prose does not finish the run.";
+
+/// Controller notices, then a response and its tool results.
 #[derive(Clone)]
 struct Exchange {
     request_id: RequestId,
@@ -34,6 +42,8 @@ pub(crate) struct Compaction {
     summary: Option<Value>,
     exchanges: Vec<Exchange>,
     current: Option<Exchange>,
+    /// Notices for the next work request. They open its exchange.
+    notices: Vec<Value>,
     calls: VecDeque<Value>,
     ordinal: u64,
     observations: VecDeque<(&'static str, Value)>,
@@ -53,6 +63,7 @@ impl Compaction {
             summary: None,
             exchanges: Vec::new(),
             current: None,
+            notices: Vec::new(),
             calls: VecDeque::new(),
             ordinal: 0,
             observations: VecDeque::new(),
@@ -67,6 +78,14 @@ impl Compaction {
                 .iter()
                 .flat_map(|exchange| exchange.messages.clone()),
         );
+        messages
+    }
+
+    /// The next work input. Pending notices belong to the next exchange, so a
+    /// summary never covers them.
+    fn work_messages(&self, exchanges: &[Exchange], summary: Option<&Value>) -> Vec<Value> {
+        let mut messages = self.messages(exchanges, summary);
+        messages.extend(self.notices.iter().cloned());
         messages
     }
 
@@ -135,7 +154,7 @@ impl Compaction {
             return Proposal::Stop(StopReason::TokenLimit);
         }
         let tools = crate::compaction::tools();
-        let messages = self.messages(&self.exchanges, self.summary.as_ref());
+        let messages = self.work_messages(&self.exchanges, self.summary.as_ref());
         let (input, basis) = context.estimate(&messages, &tools);
         let allowance = limits
             .tokens_per_call
@@ -246,7 +265,7 @@ impl Compaction {
                     "Derived memory from earlier exchanges; retain uncertainty and verify claims:\n{summary}"
                 ),
             );
-            let after = self.messages(&self.exchanges[older..], Some(&candidate));
+            let after = self.work_messages(&self.exchanges[older..], Some(&candidate));
             let tools = crate::compaction::tools();
             // Rewritten input cannot borrow server measurements of another
             // prefix. Compare before/after bytes on the same conservative basis.
@@ -287,15 +306,20 @@ impl Compaction {
                 .into();
             self.current = Some(Exchange {
                 request_id,
-                messages: vec![response.message],
+                messages: self.notices.drain(..).chain([response.message]).collect(),
             });
             self.stage = Stage::Calls;
         }
     }
 
     pub fn fit_result(&self, view: View<'_>, name: &str, original: &Value) -> Value {
-        let used: u64 = self.current.as_ref().unwrap().messages[1..]
+        let used: u64 = self
+            .current
+            .as_ref()
+            .unwrap()
+            .messages
             .iter()
+            .filter(|message| message["role"] == "tool")
             .map(encoded_size)
             .sum();
         let available = view
@@ -320,8 +344,24 @@ impl Compaction {
             .messages
             .push(tool_message(name, result));
     }
+    /// A work request retries a parse failure, as in memento. A failed summary
+    /// still stops: there is no summarization retry loop.
+    pub fn retries(&self, view: View<'_>, error: &ModelFailure) -> bool {
+        matches!(error, ModelFailure::Parse(_))
+            && matches!(self.stage, Stage::Ready)
+            && view.facts.parse_streak <= crate::compaction::TOOL_PARSE_RETRIES
+    }
+    pub fn retry(&mut self) {
+        self.notices.push(message("user", PARSE_RETRY_NOTICE));
+    }
     pub fn after_response(&mut self) {
-        self.exchanges.push(self.current.take().unwrap());
+        // A retried request left no response, so it adds no exchange.
+        if let Some(exchange) = self.current.take() {
+            if exchange.messages.last().unwrap()["role"] == "assistant" {
+                self.notices.push(message("user", CONTINUE_NOTICE));
+            }
+            self.exchanges.push(exchange);
+        }
         self.stage = Stage::Ready;
     }
     pub fn started(&mut self) {
