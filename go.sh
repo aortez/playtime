@@ -3,10 +3,10 @@
 #
 # The daemon runs as a systemd user service on a persistent data directory, so
 # it outlives this script and the workbench, and a running experiment is never
-# interrupted. The script builds the worker bundle and the playtimed, playtime
-# and playtime-ui binaries, starts or restarts the daemon with the recipe
-# catalog and the live model endpoint, prints the useful commands and opens the
-# workbench.
+# interrupted. The script builds the worker bundle and release builds of the
+# playtimed, playtime and playtime-ui binaries, starts or restarts the daemon
+# with the recipe catalog and the live model endpoint, prints the useful
+# commands and opens the workbench.
 set -euo pipefail
 
 usage() {
@@ -104,7 +104,7 @@ if (( build )); then
     say "Building the worker bundle: $bundle"
     cargo run --quiet --locked -p xtask -- bundle-worker --output "$bundle"
     say "Building playtimed, playtime and playtime-ui"
-    cargo build --quiet --locked -p playtime-server --bin playtimed -p playtime-cli --bin playtime \
+    cargo build --quiet --locked --release -p playtime-server --bin playtimed -p playtime-cli --bin playtime \
         -p playtime-ui --bin playtime-ui
     printf '%s\n' "$bundle" > "$data/bundle.latest"
     # Keep the three newest bundles. Runs keep their own frozen copies.
@@ -120,7 +120,7 @@ if (( build )); then
 elif ! daemon_active; then
     bundle=$(cat "$data/bundle.latest" 2> /dev/null || true)
     [[ -n $bundle && -d $bundle ]] || die "no bundle recorded under $data; run without --no-build first"
-    [[ -x target/debug/playtimed ]] || die "no target/debug/playtimed; run without --no-build first"
+    [[ -x target/release/playtimed ]] || die "no target/release/playtimed; run without --no-build first"
 fi
 
 conn=$root/.playtime/connection.json
@@ -130,7 +130,7 @@ if ! daemon_active; then
     say "Starting $unit on $root"
     systemd-run --user --quiet --unit "$unit" --description "Playtime daemon from $here" \
         --working-directory "$here" \
-        "$here/target/debug/playtimed" --listen 127.0.0.1:0 --root "$root" --bundle "$bundle" \
+        "$here/target/release/playtimed" --listen 127.0.0.1:0 --root "$root" --bundle "$bundle" \
         --docker-scripted --ollama-endpoint "$ollama" --recipes "$here/recipes"
     for _ in $(seq 240); do
         [[ -f $conn ]] && break
@@ -144,7 +144,7 @@ if ! daemon_active; then
 fi
 
 endpoint=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["endpoint"])' "$conn")
-cli=("$here/target/debug/playtime" --connection-file "$conn")
+cli=("$here/target/release/playtime" --connection-file "$conn")
 say "Daemon $unit at $endpoint, root $root"
 if worker_active; then
     say "An experiment is running. A new launch gets run_busy until it ends."
@@ -156,7 +156,7 @@ say "Recipes:"
 "${cli[@]}" recipes list || true
 cat <<INFO
 
-Workbench   $here/target/debug/playtime-ui --connection-file $conn
+Workbench   $here/target/release/playtime-ui --connection-file $conn
 Runs        ${cli[*]} runs list
 Cancel      ${cli[*]} runs cancel RUN_ID --wait
 Release     ${cli[*]} runs release RUN_ID --reason TEXT
@@ -168,4 +168,4 @@ if [[ -n ${PLAYTIME_NO_UI:-} ]]; then
     exit 0
 fi
 say "Opening the workbench. Closing it leaves the daemon and any experiment running."
-exec "$here/target/debug/playtime-ui" --connection-file "$conn"
+exec "$here/target/release/playtime-ui" --connection-file "$conn"
