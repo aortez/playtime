@@ -3,10 +3,10 @@
 #
 # The daemon runs as a systemd user service on a persistent data directory, so
 # it outlives this script and the workbench, and a running experiment is never
-# interrupted. The script builds the worker bundle and release builds of the playtimed, playtime
-# and playtime-ui binaries, starts or restarts the daemon with the recipe
-# catalog and the live model endpoint, prints the useful commands and opens the
-# workbench.
+# interrupted. The script builds the worker bundle and release builds of the
+# playtimed, playtime and playtime-ui binaries, starts or restarts the daemon
+# with the recipe catalog and the live model endpoint, prints the useful
+# commands and opens the workbench.
 set -euo pipefail
 
 usage() {
