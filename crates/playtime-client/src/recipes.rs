@@ -118,27 +118,28 @@ impl Client {
         Ok(response)
     }
     fn check_harness_selection(&self, request: &RecipeMutation) -> Result<()> {
-        if (compaction_settings(request).is_some()
-            || selected_harness(request).is_some_and(|id| id.as_str() == CONTINUOUS_COMPACTION_V1))
-            && !self
-                .capabilities()
-                .features
-                .iter()
-                .any(|f| f == RECIPE_COMPACTION_SETTINGS)
-        {
-            return Err(Error::UnsupportedCapability);
-        }
-        if selected_harness(request).is_some()
-            && !self
-                .capabilities()
-                .features
-                .iter()
-                .any(|f| f == RECIPE_HARNESS_SELECTION)
-        {
-            return Err(Error::UnsupportedCapability);
-        }
-        Ok(())
+        check_harness_features(&self.capabilities().features, request)
     }
+}
+/// Refuses harness fields that the service doesn't advertise.
+fn check_harness_features(features: &[String], request: &RecipeMutation) -> Result<()> {
+    if (compaction_settings(request).is_some()
+        || selected_harness(request).is_some_and(|id| id.as_str() == CONTINUOUS_COMPACTION_V1))
+        && !features.iter().any(|f| f == RECIPE_COMPACTION_SETTINGS)
+    {
+        return Err(Error::UnsupportedCapability);
+    }
+    if compaction_settings(request).is_some_and(|s| !s.allow_finish_run)
+        && !features.iter().any(|f| f == RECIPE_COMPACTION_FINISH)
+    {
+        return Err(Error::UnsupportedCapability);
+    }
+    if selected_harness(request).is_some()
+        && !features.iter().any(|f| f == RECIPE_HARNESS_SELECTION)
+    {
+        return Err(Error::UnsupportedCapability);
+    }
+    Ok(())
 }
 fn compaction_settings(request: &RecipeMutation) -> Option<&CompactionSettings> {
     match request {
@@ -457,4 +458,35 @@ fn read(
         return Err(StateError::Invalid);
     }
     Ok(Some(receipt))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn leaving_out_finish_run_needs_a_service_that_offers_the_choice() {
+        let revise = |allow_finish_run| RecipeMutation::Revise {
+            recipe_id: RecipeId::new("continuous").unwrap(),
+            request: ReviseRecipeRequest {
+                compaction: Some(CompactionSettings {
+                    allow_finish_run,
+                    ..Default::default()
+                }),
+                harness: None,
+                expected_head: RecipeId::new("continuous").unwrap(),
+                name: "Continuous".into(),
+                prompt: "Explore.".into(),
+                model_settings: None,
+                model_registration: None,
+            },
+        };
+        let older = [RECIPE_COMPACTION_SETTINGS.to_owned()];
+        check_harness_features(&older, &revise(true)).unwrap();
+        assert!(matches!(
+            check_harness_features(&older, &revise(false)),
+            Err(Error::UnsupportedCapability)
+        ));
+        let current = [older[0].clone(), RECIPE_COMPACTION_FINISH.to_owned()];
+        check_harness_features(&current, &revise(false)).unwrap();
+    }
 }

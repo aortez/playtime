@@ -71,6 +71,9 @@ pub fn lines(view: &HarnessView) -> Vec<String> {
             ),
             "One continuous workshop · final workspace capture only".into(),
         ]);
+        if !s.allow_finish_run {
+            lines.push("No finish_run · the run lasts until its time or token limit".into());
+        }
     } else {
         lines.push("This service cannot execute this retained harness. Its recorded identity has been preserved.".into());
     }
@@ -105,7 +108,11 @@ pub fn draw(ui: &mut egui::Ui, harness: &RecipeHarness, draft: Option<&mut Draft
                 draft.harness = None;
             }
             if draft.continuous() {
-                draft.compaction.draw(ui);
+                let finish_choice = harness.catalog.harnesses.iter().any(|h| {
+                    h.id.as_str() == CONTINUOUS_COMPACTION_V1
+                        && h.settings.iter().any(|s| s == "allow_finish_run")
+                });
+                draft.compaction.draw(ui, finish_choice);
             }
         });
     }

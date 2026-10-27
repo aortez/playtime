@@ -176,6 +176,12 @@ async fn compaction_editor_preserves_invalid_input_and_emits_explicit_settings()
     h.run();
     assert!(h.query_by_label("Context trigger (%)").is_some());
     assert!(h.query_by_label("Memento handoff limit (tokens)").is_none());
+    let limit_note = "Without finish_run, the run lasts until its time or token limit.";
+    assert!(h.query_by_label(limit_note).is_none());
+    h.get_by_label("The model can end the run with finish_run")
+        .click();
+    h.run();
+    assert!(h.query_by_label(limit_note).is_some());
     let draft = h.state_mut().model.authoring.draft.as_mut().unwrap();
     draft.compaction.trigger = "-".into();
     assert!(!draft.valid());
@@ -185,7 +191,9 @@ async fn compaction_editor_preserves_invalid_input_and_emits_explicit_settings()
     let RecipeMutation::Clone { request } = draft.request().unwrap() else {
         panic!()
     };
-    assert_eq!(request.compaction.unwrap().trigger_percent, 70);
+    let compaction = request.compaction.unwrap();
+    assert_eq!(compaction.trigger_percent, 70);
+    assert!(!compaction.allow_finish_run);
     assert_eq!(request.harness.unwrap().as_str(), CONTINUOUS_COMPACTION_V1);
     draft.harness = Some(HarnessId::new(MEMENTO_TURNS_V1).unwrap());
     let RecipeMutation::Clone { request } = draft.request().unwrap() else {
@@ -265,4 +273,19 @@ async fn final_files_replace_the_inactive_memory_panel_and_reject_stale_replies(
         h.query_by_label("Listing limit reached; this listing is incomplete.")
             .is_some()
     );
+}
+
+#[test]
+fn readback_says_when_the_model_cannot_end_the_run() {
+    let note = "No finish_run · the run lasts until its time or token limit";
+    let mut view = HarnessView {
+        id: CONTINUOUS_COMPACTION_V1.into(),
+        supported: true,
+        version: Some(1),
+        settings: None,
+        compaction: Some(CompactionSettings::default()),
+    };
+    assert!(!playtime_ui::harness::lines(&view).iter().any(|l| l == note));
+    view.compaction.as_mut().unwrap().allow_finish_run = false;
+    assert_eq!(playtime_ui::harness::lines(&view).last().unwrap(), note);
 }

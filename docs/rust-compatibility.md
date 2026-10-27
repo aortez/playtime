@@ -606,3 +606,23 @@ inventory's workspace line. Saved recipes that already selected continuous keep
 the protocol they froze. Schemas, the controller and its goldens are unchanged.
 The default definition is part of the native capability digest, so a new daemon
 refuses older worker bundles; rebuild the bundle.
+
+## Optional finish_run in continuous runs
+
+Continuous compaction settings gain `allow_finish_run`, true by default. When it
+is false, work requests offer only `exec`, `read_file` and `write_file`, and the
+run lasts until its time or token limit. A `finish_run` call is an ordinary
+unavailable tool, and the no-tool notice says the run ends when its budget runs
+out. The protocol is rewritten from a separate versioned text,
+`continuous-protocol-no-finish-v1.txt`, that never names the tool. In a
+10-minute gpt-oss trial that offered finish_run, the model finished after 77
+seconds even with its limits in the protocol.
+
+The field is omitted when true, so existing settings, definitions, digests and
+the controller golden are unchanged. The HTTP schema golden adds only the
+property. `recipe_compaction_finish_v1` advertises it, and clients refuse to send
+`false` to a service without it. The continuous editor shows a checkbox, so its
+two reviewed screenshots change; in the wide one, the launch row moves below the
+fold, and `harness-editor.png` still shows it. The new `continuous_finish_choice`
+capability changes the native capability digest, so a new daemon refuses older
+worker bundles; rebuild the bundle.

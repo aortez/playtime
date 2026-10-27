@@ -675,6 +675,11 @@
       "CompactionSettings": {
         "additionalProperties": false,
         "properties": {
+          "allow_finish_run": {
+            "default": true,
+            "description": "Whether the model is offered finish_run. Without it, the run lasts until\nits time or token limit. Omitted when true, so definitions saved before\nthis setting keep their exact bytes.",
+            "type": "boolean"
+          },
           "instructions": {
             "type": "string"
           },

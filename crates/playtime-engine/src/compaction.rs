@@ -26,6 +26,19 @@ pub struct CompactionSettings {
     pub recent_exchanges: u8,
     pub summary_tokens: NonZeroU64,
     pub instructions: String,
+    /// Without finish_run, the run lasts until its time or token limit. Omitted
+    /// when true, so configurations frozen before this setting keep their bytes.
+    #[serde(
+        default = "default_allow_finish_run",
+        skip_serializing_if = "is_default_allow_finish_run"
+    )]
+    pub allow_finish_run: bool,
+}
+fn default_allow_finish_run() -> bool {
+    true
+}
+fn is_default_allow_finish_run(allow: &bool) -> bool {
+    *allow
 }
 
 impl Default for CompactionSettings {
@@ -36,6 +49,7 @@ impl Default for CompactionSettings {
             recent_exchanges: 2,
             summary_tokens: NonZeroU64::new(2048).unwrap(),
             instructions: DEFAULT_INSTRUCTIONS.into(),
+            allow_finish_run: true,
         }
     }
 }
@@ -53,6 +67,7 @@ impl TryFrom<&playtime_protocol::api::CompactionSettings> for CompactionSettings
             summary_tokens: NonZeroU64::new(settings.summary_tokens)
                 .ok_or(InvalidValue("summary cap must be positive"))?,
             instructions: settings.instructions.clone(),
+            allow_finish_run: settings.allow_finish_run,
         })
     }
 }
@@ -113,11 +128,14 @@ impl CompactionConfig {
     }
 }
 
-pub(crate) fn tools() -> Vec<Value> {
+pub(crate) fn tools(allow_finish_run: bool) -> Vec<Value> {
     let mut tools = crate::policy::memento_contract::TOOLS[..3].to_vec();
     tools[0]["function"]["description"] = json!(
         "Execute a bounded Bash command in the owned workshop. Processes continue through conversation compaction and stop when the run ends."
     );
+    if !allow_finish_run {
+        return tools;
+    }
     tools.push(json!({
         "type":"function",
         "function": {
@@ -145,14 +163,17 @@ pub(crate) fn validate_tools(
     message: &Value,
     finish_reason: Option<&str>,
     result_allowance: u64,
+    allow_finish_run: bool,
 ) -> Result<Batch, (playtime_core::StopReason, String)> {
     use playtime_core::StopReason;
     let Some(calls) = message["tool_calls"].as_array() else {
         return Ok(Batch::Valid(None));
     };
-    let has_finish = calls
-        .iter()
-        .any(|call| call["function"]["name"] == "finish_run");
+    // Without the tool, a finish_run call is an ordinary invalid call.
+    let has_finish = allow_finish_run
+        && calls
+            .iter()
+            .any(|call| call["function"]["name"] == "finish_run");
     if has_finish && (calls.len() != 1 || finish_reason != Some("stop")) {
         return Err((
             StopReason::InvalidCompletion,
@@ -168,7 +189,9 @@ pub(crate) fn validate_tools(
     for call in calls {
         let name = call["function"]["name"].as_str().unwrap_or("");
         let arguments = &call["function"]["arguments"];
-        if let Some(error) = crate::validation::validate_call(&tools(), name, arguments) {
+        if let Some(error) =
+            crate::validation::validate_call(&tools(allow_finish_run), name, arguments)
+        {
             if !has_finish {
                 return Ok(Batch::Rejected);
             }

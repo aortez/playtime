@@ -414,7 +414,7 @@ fn successful_finish_and_next_session_require_actual_publication() {
 }
 
 #[cfg(feature = "test-harness")]
-fn compaction_idle() -> TestController {
+fn compaction_idle(allow_finish_run: bool) -> TestController {
     use crate::compaction::{CompactionConfig, CompactionSettings};
     let scenario: Scenario =
         serde_json::from_str(include_str!("../../../tests/fixtures/two-session.json")).unwrap();
@@ -424,6 +424,7 @@ fn compaction_idle() -> TestController {
     let config = CompactionConfig {
         settings: CompactionSettings {
             summary_tokens: 20.try_into().unwrap(),
+            allow_finish_run,
             ..CompactionSettings::default()
         },
         parameters,
@@ -443,7 +444,7 @@ fn compaction_idle() -> TestController {
 #[cfg(feature = "test-harness")]
 #[test]
 fn compaction_proposals_cannot_grant_tokens_tools_or_completion() {
-    let mut controller = compaction_idle();
+    let mut controller = compaction_idle(true);
     for purpose in [
         RequestPurpose::Work,
         RequestPurpose::Compaction,
@@ -499,12 +500,12 @@ fn compaction_proposals_cannot_grant_tokens_tools_or_completion() {
 #[cfg(feature = "test-harness")]
 #[test]
 fn compaction_work_cannot_exceed_the_consecutive_parse_retry_limit() {
-    let mut controller = compaction_idle();
+    let mut controller = compaction_idle(true);
     let work = || {
         Proposal::Infer(Inference {
             purpose: RequestPurpose::Work,
             messages: vec![json!({"role":"user","content":"request"})],
-            tools: crate::compaction::tools(),
+            tools: crate::compaction::tools(true),
         })
     };
     controller.parse_streak = crate::compaction::TOOL_PARSE_RETRIES + 1;
@@ -513,5 +514,22 @@ fn compaction_work_cannot_exceed_the_consecutive_parse_retry_limit() {
     assert_eq!(controller.reserved_tokens(), 0);
     controller.parse_streak = crate::compaction::TOOL_PARSE_RETRIES;
     controller.apply_proposal(work()).unwrap();
+    assert!(controller.pending().is_some());
+}
+
+#[cfg(feature = "test-harness")]
+#[test]
+fn compaction_work_cannot_offer_a_withheld_finish_run() {
+    let mut controller = compaction_idle(false);
+    let work = |allow_finish_run| {
+        Proposal::Infer(Inference {
+            purpose: RequestPurpose::Work,
+            messages: vec![json!({"role":"user","content":"request"})],
+            tools: crate::compaction::tools(allow_finish_run),
+        })
+    };
+    assert!(controller.apply_proposal(work(true)).is_err());
+    assert!(controller.pending().is_none());
+    controller.apply_proposal(work(false)).unwrap();
     assert!(controller.pending().is_some());
 }

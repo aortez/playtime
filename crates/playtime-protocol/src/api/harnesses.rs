@@ -8,6 +8,8 @@ pub const RECIPE_HARNESS_SELECTION: &str = "recipe_harness_selection_v1";
 pub const MEMENTO_TURNS_V1: &str = "memento_turns_v1";
 pub const CONTINUOUS_COMPACTION_V1: &str = "continuous_compaction_v1";
 pub const RECIPE_COMPACTION_SETTINGS: &str = "recipe_compaction_settings_v1";
+/// Advertises the optional `allow_finish_run` compaction setting.
+pub const RECIPE_COMPACTION_FINISH: &str = "recipe_compaction_finish_v1";
 pub const DEFAULT_COMPACTION_INSTRUCTIONS: &str = "Summarize the older conversation for continued work. Preserve goals, decisions, useful file paths, verified results, failures, unresolved questions, and a concrete next action. Distinguish observations from assumptions. Incorporate still-relevant facts from the previous summary. Return only the summary, without tools.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -18,6 +20,21 @@ pub struct CompactionSettings {
     pub recent_exchanges: u8,
     pub summary_tokens: u64,
     pub instructions: String,
+    /// Whether the model is offered finish_run. Without it, the run lasts until
+    /// its time or token limit. Omitted when true, so definitions saved before
+    /// this setting keep their exact bytes.
+    #[serde(
+        default = "default_allow_finish_run",
+        skip_serializing_if = "is_default_allow_finish_run"
+    )]
+    #[schema(default = true)]
+    pub allow_finish_run: bool,
+}
+fn default_allow_finish_run() -> bool {
+    true
+}
+fn is_default_allow_finish_run(allow: &bool) -> bool {
+    *allow
 }
 impl Default for CompactionSettings {
     fn default() -> Self {
@@ -27,6 +44,7 @@ impl Default for CompactionSettings {
             recent_exchanges: 2,
             summary_tokens: 2048,
             instructions: DEFAULT_COMPACTION_INSTRUCTIONS.into(),
+            allow_finish_run: true,
         }
     }
 }

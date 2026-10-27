@@ -39,16 +39,10 @@ impl CompactionDefinition {
     /// the recipe's own run limits and the inventory with its workshop capacity,
     /// so the frozen text is exactly what the model receives.
     pub fn new(recipe: &Recipe) -> Self {
-        let l = &recipe.parameters.limits;
         let w = &recipe.parameters.workshop;
         Self {
             settings: Default::default(),
-            protocol: format!(
-                "{}\nThis run lasts at most {} or {} generated tokens, whichever comes first. Calling finish_run ends it early; unused time and tokens are not carried over.\n",
-                include_str!("continuous-protocol-v1.txt"),
-                duration(l.wall_seconds.get()),
-                grouped(l.generated_tokens.get()),
-            ),
+            protocol: Self::protocol(recipe, true),
             inventory: format!(
                 "{}\nYour workspace /work holds {} and {} files and directories; /tmp holds {}. Both last until the run ends.\n",
                 include_str!("continuous-inventory-v1.txt"),
@@ -56,6 +50,26 @@ impl CompactionDefinition {
                 recipe.workspace_entries,
                 binary_size(w.tmp_bytes.get()),
             ),
+        }
+    }
+    /// The protocol for this recipe's limits. Without finish_run it says the run
+    /// lasts until a limit, and its text never names the tool.
+    pub fn protocol(recipe: &Recipe, allow_finish_run: bool) -> String {
+        let l = &recipe.parameters.limits;
+        let (time, tokens) = (
+            duration(l.wall_seconds.get()),
+            grouped(l.generated_tokens.get()),
+        );
+        if allow_finish_run {
+            format!(
+                "{}\nThis run lasts at most {time} or {tokens} generated tokens, whichever comes first. Calling finish_run ends it early; unused time and tokens are not carried over.\n",
+                include_str!("continuous-protocol-v1.txt"),
+            )
+        } else {
+            format!(
+                "{}\nThis run lasts {time} or {tokens} generated tokens, whichever comes first.\n",
+                include_str!("continuous-protocol-no-finish-v1.txt"),
+            )
         }
     }
 }

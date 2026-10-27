@@ -171,6 +171,34 @@ async fn compaction_saves_freeze_active_inputs_and_remain_editable_without_execu
         c.inherited["recipe"]["protocol"],
         source.inherited["recipe"]["protocol"]
     );
+    // Leaving out finish_run saves the protocol that says the run lasts until a
+    // limit. The default stays omitted, as in definitions saved before it.
+    let mut withheld = revise(&c, "continuous to its limits");
+    if let RecipeMutation::Revise { request, .. } = &mut withheld {
+        request.harness = Some(HarnessId::new(CONTINUOUS_COMPACTION_V1).unwrap());
+        request.compaction = Some(CompactionSettings {
+            allow_finish_run: false,
+            ..Default::default()
+        });
+    }
+    let d = offline
+        .save(key("withheld"), withheld)
+        .await
+        .unwrap()
+        .definition;
+    let compaction = &d.inherited["compaction"];
+    assert_eq!(compaction["settings"]["allow_finish_run"], false);
+    let protocol = compaction["protocol"].as_str().unwrap();
+    assert!(protocol.contains("The run ends only when its time or token budget runs out"));
+    assert!(!protocol.contains("finish_run"));
+    let earlier = &b.inherited["compaction"];
+    assert!(earlier["settings"].get("allow_finish_run").is_none());
+    assert!(
+        earlier["protocol"]
+            .as_str()
+            .unwrap()
+            .contains("Calling finish_run ends it early")
+    );
 }
 #[tokio::test]
 async fn harness_selection_is_exact_inherited_and_replayable_without_execution() {

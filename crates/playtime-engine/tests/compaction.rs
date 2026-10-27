@@ -1136,3 +1136,65 @@ fn completion_requires_explicit_normal_termination_metadata() {
         assert_eq!(run.finalize().reason, StopReason::InvalidCompletion);
     }
 }
+
+fn continue_to_limit_notice() -> Value {
+    json!({"role":"user","content":"Your last response did not call a tool, so the run continues. Continue independently; the run ends when its time or token budget runs out."})
+}
+
+#[test]
+fn without_finish_run_a_run_continues_until_its_budget_runs_out() {
+    let mut config = config();
+    config.settings.allow_finish_run = false;
+    config.parameters.limits.generated_tokens = 40.try_into().unwrap();
+    let mut run = Run::new(config);
+    let names: Vec<&str> = run
+        .request()
+        .tools
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["exec", "read_file", "write_file"]);
+    // finish_run is then an ordinary unavailable tool. Even beside a valid
+    // call it doesn't stop the run, and nothing runs.
+    run.response(json!({"role":"assistant","tool_calls":[
+        call("exec",json!({"command":"never execute"})),
+        call("finish_run",json!({"summary":"Done."})),
+    ]}));
+    let results: Vec<Value> = run
+        .request()
+        .messages
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(|m| serde_json::from_str(m["content"].as_str().unwrap()).unwrap())
+        .collect();
+    assert_eq!(
+        results,
+        [
+            json!({"error":"Not run because another call in this response was invalid"}),
+            json!({"error":"Tool is unavailable for this request purpose"}),
+        ]
+    );
+    assert!(
+        !run.dispatches
+            .iter()
+            .any(|e| matches!(e.kind, EffectKind::Tool(_)))
+    );
+    assert!(
+        !run.records
+            .iter()
+            .any(|r| r.kind == "completion_declared" || r.kind == "tool_batch_rejected")
+    );
+    let prose = json!({"role":"assistant","content":"I am done."});
+    run.response(prose.clone());
+    let messages = run.request().messages.clone();
+    assert_eq!(
+        messages[messages.len() - 2..],
+        [prose, continue_to_limit_notice()]
+    );
+    run.response(json!({"role":"assistant","content":"Still done."}));
+    run.response(json!({"role":"assistant","content":"Nothing more."}));
+    let result = run.finalize();
+    assert_eq!(result.reason, StopReason::TokenLimit);
+    assert_eq!(result.usage.known_generated_tokens, 40);
+    assert!(run.records.iter().any(|r| r.kind == "workspace_captured"));
+}
