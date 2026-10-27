@@ -18,12 +18,23 @@ Defaults are 75%, two retained exchanges, 2,048 summary tokens and the versioned
 summary instruction template. The summary cap must fit the selected response
 cap; initial work must fit with the controller's reserves. Saving rejects
 impossible combinations, including prompt-only edits with inherited settings.
+The trigger is an upper bound. Each work request must also leave the work
+reserve: the safety margin, summary cap, instruction message and output limit.
+The summary after the next exchange must fit too, and that check estimates the
+request from its bytes. Either check can fire first. In the saved-recipe gate's
+16,384-token context, the summary check starts compaction near 5,300 projected
+tokens, well before the 75% trigger at 12,288. With Curiosity's 65,536-token
+context and an 8,192-token summary cap, the reserve keeps projected work below
+37,336 tokens, 57% of context.
 No model, Docker or workshop connection is needed to read or edit saved
 configurations. Preview and launch still require those execution capabilities.
 
 Definition schema 3 adds `compaction: { settings, protocol, inventory }` to the
 frozen source recipe. Selecting the harness freezes its own protocol/inventory;
-the old memento instructions do not go into continuous model requests. The task,
+the old memento instructions do not go into continuous model requests. The
+inventory describes one workshop that lasts the whole run and ends with the
+recipe's workspace, entry and `/tmp` limits, written at selection. Clone and
+revise don't change those limits, so the frozen line stays accurate. The task,
 seeds, model, sampling and common allocations remain inherited. Legacy session
 allocations/instructions remain inactive source data, enabling an explicit
 switch back to memento; they are not synthetic sessions or limits on continuous
@@ -40,7 +51,10 @@ migration, data reset, model lock or workshop image change is needed.
 
 Readable traces group work and summary calls by explicit request identity, keep
 compaction plans/applied summaries separate, and distinguish completion claims
-from terminal outcomes. **Inspect source** retains exact before/after
+from terminal outcomes. Each compaction plan shows both the work and summary
+request estimates. Rejections show their reason and detail, a response that
+reaches its token limit says so, and the controller's stop reason and
+diagnostics appear where it stopped. **Inspect source** retains exact before/after
 conversations, request links, model output and estimate bases; externally
 retained observations offer verified payload loading. The run header separates
 work/compaction accounting without turning unknown usage into zero.
@@ -49,20 +63,22 @@ work/compaction accounting without turning unknown usage into zero.
 index from the published archive. Open text/images or download verified content
 through the existing inspector. The exact index records unavailable files too.
 The search is bounded to 12,800 artifacts and 4 MiB of prepared metadata;
-reaching either bound marks the listing incomplete. There are no intermediate workspace snapshots or memory checkpoints.
-Richer occupancy visualization and comparison remain #111.
+reaching either bound marks the listing incomplete. There are no intermediate
+workspace snapshots or memory checkpoints. Richer occupancy visualization and
+comparison remain #111.
 
 ## Preparation and ownership
 
-`ContinuousProfile::freeze_definition` reconstructs a saved recipe’s exact active
+`ContinuousProfile::freeze_definition` reconstructs a saved recipe's exact active
 configuration and selected model identity. `NativeProfile` dispatches preparation
 to the correct family; a memento profile rejects a continuous definition. The
 capability digest includes the continuous recipe format and default input texts.
 
-For the separate fixed native smoke, `ContinuousProfile::freeze` produces `docker_continuous_compaction_v1`. Its
-validator reconstructs the exact supported template, including seeds, tool
-responses, limits, helper/image identities and model settings. The worker bundle's
-native capability digest includes that template and the reviewed model lock.
+For the separate fixed native smoke, `ContinuousProfile::freeze` produces
+`docker_continuous_compaction_v1`. Its validator reconstructs the exact supported
+template, including seeds, tool responses, limits, helper/image identities and
+model settings. The worker bundle's native capability digest includes that
+template and the reviewed model lock.
 `VerifiedBundle::prepare_continuous` checks capability compatibility before
 freezing the archive; worker admission checks the profile family, manifest v2,
 executable, mode, allocations and backend identity again. The test-only workspace

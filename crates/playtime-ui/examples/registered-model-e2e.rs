@@ -261,6 +261,13 @@ async fn main() -> Result<()> {
     if preview.harness.as_ref() != Some(&selected_harness) {
         return Err("preview differs from saved harness selection/settings".into());
     }
+    if !preview
+        .warnings
+        .first()
+        .is_some_and(|w| w.starts_with("Live model: real inference"))
+    {
+        return Err("preview omits the live-model warning".into());
+    }
     if preview.model_identity["registration"] != serde_json::to_value(&registered.registration)?
         || preview.model_identity["name"] != "qwen3:1.7b"
     {

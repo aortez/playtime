@@ -1,6 +1,7 @@
 #![cfg(feature = "ui-snapshots")]
 mod common;
 #[path = "support/continuous_scene.rs"]
+#[allow(dead_code)]
 mod continuous_scene;
 #[path = "support/model_scenes.rs"]
 mod model_scenes;

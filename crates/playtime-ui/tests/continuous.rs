@@ -50,8 +50,114 @@ fn continuous_calls_and_compaction_remain_readable_across_backfill() {
     }));
     assert!(forward.iter().any(|r| r.0 == "Tool · exec"
         && r.1 == "Exit status: 0"
-        && r.2.as_deref() == Some("Call 1 · work")));
+        && r.2.as_deref() == Some("Call 1 · Work")));
     assert!(forward.iter().any(|r| r.0 == "Model declared completion"));
+}
+
+type ReadableRow = (String, String, bool, Vec<(String, String)>);
+/// Readable rows, checked to match when history arrives in reverse.
+fn readable(events: Vec<playtime_protocol::events::EventEnvelope>) -> Vec<ReadableRow> {
+    let build = |events: &mut dyn Iterator<Item = playtime_protocol::events::EventEnvelope>| {
+        let mut t = Transcript::default();
+        for e in events {
+            t.apply(e, None).unwrap();
+        }
+        t.window(View::Readable, 0, 64)
+            .rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.title,
+                    r.status,
+                    r.marker,
+                    r.sections
+                        .into_iter()
+                        .map(|s| (s.label, s.text))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let forward = build(&mut events.clone().into_iter());
+    assert_eq!(forward, build(&mut events.into_iter().rev()));
+    forward
+}
+fn row<'a>(rows: &'a [ReadableRow], title: &str) -> &'a ReadableRow {
+    rows.iter()
+        .find(|r| r.0 == title)
+        .unwrap_or_else(|| panic!("missing row {title}: {rows:#?}"))
+}
+
+#[test]
+fn summary_at_its_token_limit_explains_why_the_run_stopped() {
+    let rows = readable(scene::failed_summary_events());
+    // A normal stop leaves the response state; the capped summary replaces it.
+    assert_eq!(row(&rows, "Call 1 · Work").1, "Response recorded");
+    let summary = row(&rows, "Call 2 · Compaction summary");
+    assert_eq!(summary.1, "Stopped at its token limit");
+    assert!(summary.3.contains(&(
+        "Completion".into(),
+        "The response reached its token limit before it finished (finish reason: length).".into()
+    )));
+    let plan = row(&rows, "Compaction 1 · planned");
+    assert_eq!(
+        plan.3,
+        [
+            (
+                "Context estimate".into(),
+                "Work request: 5,300 tokens projected, from server usage plus new bytes\nSummary request: 14,000 input tokens, from input bytes".into()
+            ),
+            (
+                "Conversation selection".into(),
+                "1 older exchange · 0 recent exchanges retained. Inspect source for exact before-conversation and request links.".into()
+            ),
+        ]
+    );
+    let stop = row(&rows, "Controller stopped: compaction failed");
+    assert!(stop.2 && stop.3.is_empty());
+    assert_eq!(
+        row(&rows, "Controller diagnostics").3,
+        [(
+            "Diagnostics".into(),
+            "summary requires explicit normal completion".into()
+        )]
+    );
+    assert!(
+        !rows
+            .iter()
+            .flat_map(|r| &r.3)
+            .any(|s| s.0 == "Recorded data")
+    );
+}
+
+#[test]
+fn rejections_show_their_reason_and_detail() {
+    let rows = readable(scene::rejected_events());
+    let call = row(&rows, "Call 1 · Work");
+    assert_eq!(call.1, "Tool calls rejected · the run stops");
+    assert_eq!(
+        call.3,
+        [
+            ("Rejected".into(), "Invalid completion".into()),
+            (
+                "Error".into(),
+                "finish_run requires a normally completed response containing only that call"
+                    .into()
+            ),
+        ]
+    );
+    let rejected = row(&rows, "Compaction rejected");
+    assert_eq!(rejected.1, "Rejected · the run stops");
+    assert_eq!(
+        rejected.3,
+        [
+            ("Reason".into(), "Context limit".into()),
+            (
+                "Detail".into(),
+                "summary request cannot fit with its allowance and safety margin".into()
+            ),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -86,6 +192,30 @@ async fn compaction_editor_preserves_invalid_input_and_emits_explicit_settings()
         panic!()
     };
     assert!(request.compaction.is_none());
+}
+
+#[tokio::test]
+async fn continuous_drafts_ignore_the_hidden_handoff_field() {
+    let app = common::model_settings_editor().await;
+    let mut h = Harness::builder()
+        .with_size([1440.0, 1200.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    let field = "Memento handoff limit (tokens)";
+    h.get_by_label(field).focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.get_by_label(field).type_text("not a number");
+    h.run();
+    let draft = h.state_mut().model.authoring.draft.as_mut().unwrap();
+    assert!(draft.request().is_err());
+    // Once the field is hidden, its unsaved text can't block the save.
+    draft.harness = Some(HarnessId::new(CONTINUOUS_COMPACTION_V1).unwrap());
+    let RecipeMutation::Clone { request } = draft.request().unwrap() else {
+        panic!()
+    };
+    assert_eq!(request.model_settings.unwrap().handoff_tokens, 8192);
 }
 
 #[tokio::test]

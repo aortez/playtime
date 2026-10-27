@@ -1,7 +1,10 @@
 //! Immutable authoring snapshot. It contains no host bindings or credentials.
 use super::{IMAGE_LOCK, MODEL_LOCK, Recipe};
 use crate::{Error, Result};
-use playtime_protocol::api::{RecipeDefinition, RecipeId, RecipeSeed, RecipeSource, SavedRecipe};
+use playtime_protocol::api::{
+    CONTINUOUS_COMPACTION_V1, MEMENTO_TURNS_V1, RecipeDefinition, RecipeId, RecipeSeed,
+    RecipeSource, SavedRecipe,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -31,14 +34,33 @@ pub struct CompactionDefinition {
     pub protocol: String,
     pub inventory: String,
 }
-impl Default for CompactionDefinition {
-    fn default() -> Self {
+impl CompactionDefinition {
+    /// Defaults installed when a recipe switches harness. The inventory ends
+    /// with the recipe's own workshop capacity, so the frozen text is exactly
+    /// what the model receives.
+    pub fn new(recipe: &Recipe) -> Self {
+        let w = &recipe.parameters.workshop;
         Self {
             settings: Default::default(),
             protocol: include_str!("continuous-protocol-v1.txt").into(),
-            inventory: include_str!("continuous-inventory-v1.txt").into(),
+            inventory: format!(
+                "{}\nYour workspace /work holds {} and {} files and directories; /tmp holds {}. Both last until the run ends.\n",
+                include_str!("continuous-inventory-v1.txt"),
+                binary_size(w.workspace_bytes.get()),
+                recipe.workspace_entries,
+                binary_size(w.tmp_bytes.get()),
+            ),
         }
     }
+}
+/// The largest whole binary unit, such as 16 MiB, or exact bytes.
+fn binary_size(bytes: u64) -> String {
+    for (unit, shift) in [("GiB", 30), ("MiB", 20), ("KiB", 10)] {
+        if bytes >= 1 << shift && bytes.is_multiple_of(1 << shift) {
+            return format!("{} {unit}", bytes >> shift);
+        }
+    }
+    format!("{bytes} bytes")
 }
 impl FrozenRecipe {
     pub fn current(recipe: Recipe) -> Result<Self> {
@@ -70,7 +92,7 @@ impl FrozenRecipe {
             return Err(Error::Invalid("unsupported recipe definition".into()));
         }
         if let Some(c) = &self.compaction {
-            if self.harness != playtime_protocol::api::CONTINUOUS_COMPACTION_V1
+            if self.harness != CONTINUOUS_COMPACTION_V1
                 || c.settings.validation_error().is_some()
                 || [&c.protocol, &c.inventory]
                     .iter()
@@ -78,7 +100,7 @@ impl FrozenRecipe {
             {
                 return Err(Error::Invalid("invalid compaction definition".into()));
             }
-        } else if self.harness == playtime_protocol::api::CONTINUOUS_COMPACTION_V1 {
+        } else if self.harness == CONTINUOUS_COMPACTION_V1 {
             return Err(Error::Invalid("missing compaction definition".into()));
         }
         if let Some(model) = &self.model_registration {
@@ -134,7 +156,7 @@ impl FrozenRecipe {
         self.validate()?;
         if !matches!(
             self.harness.as_str(),
-            "memento_turns_v1" | "continuous_compaction_v1"
+            MEMENTO_TURNS_V1 | CONTINUOUS_COMPACTION_V1
         ) || self.environment_lock != serde_json::from_slice::<Value>(IMAGE_LOCK)?
         {
             return Err(Error::Invalid(

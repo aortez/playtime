@@ -163,5 +163,5 @@ Its own v2 golden does not replace memento goldens or native run-and-view gates.
 The compaction controller gate adds a separate `compaction-policy-v1.json` golden
 and explicit simulated publication acknowledgments. No host command or model call
 runs in this CPU gate. The separate [continuous native gate](rust-continuous-native.md)
-checks actual process continuity and final publication. The saved-recipe API/workbench gate additionally verifies the immutable authoring
-and launch path.
+checks actual process continuity and final publication. The saved-recipe
+API/workbench gate additionally verifies the immutable authoring and launch path.

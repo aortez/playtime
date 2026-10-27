@@ -360,6 +360,44 @@ fn an_outcome_recorded_before_the_run_ends_still_shows() {
 }
 
 #[test]
+fn purpose_accounting_keeps_unknown_usage_and_missing_purposes_explicit() {
+    use playtime_core::RequestPurpose;
+    use playtime_protocol::archive_queries::{PurposeAccounting, RequestAccounting};
+    let purpose = |admitted, settled, not_dispatched, usage| PurposeAccounting {
+        admitted_calls: admitted,
+        settled_calls: settled,
+        not_dispatched_calls: not_dispatched,
+        usage,
+    };
+    let mut view = ended();
+    view.request_accounting = Some(RequestAccounting {
+        model_calls: Some(4),
+        by_purpose: [
+            (RequestPurpose::Work, purpose(3, 2, 1, usage(1200, 0, 0))),
+            (
+                RequestPurpose::Compaction,
+                purpose(1, 1, 0, usage(0, 512, 1)),
+            ),
+        ]
+        .into(),
+        unclassified: purpose(0, 1, 0, usage(40, 0, 0)),
+    });
+    let lines = details(&view);
+    for expected in [
+        "Work: 3 calls admitted · 2 settled · 1 not dispatched · 1,200 tokens reported · 1,200 tokens charged · no unknown usage",
+        "Compaction: 1 call admitted · 1 settled · 0 tokens reported · 512 tokens charged · 1 request with unknown usage",
+        "Unclassified: 0 calls admitted · 1 settled · 40 tokens reported · 40 tokens charged · no unknown usage",
+    ] {
+        assert!(
+            lines.iter().any(|l| l == expected),
+            "{expected}: {lines:#?}"
+        );
+    }
+    view.request_accounting.as_mut().unwrap().unclassified = purpose(0, 0, 0, usage(0, 0, 0));
+    assert!(!details(&view).iter().any(|l| l.starts_with("Unclassified")));
+}
+
+#[test]
 fn an_ended_run_counts_only_the_sessions_it_completed() {
     // The model error interrupts session 2's checkpoint.
     let transcript = indexed(&partial_failure(), 47);

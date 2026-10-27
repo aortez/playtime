@@ -54,9 +54,16 @@ pub fn lines(view: &HarnessView) -> Vec<String> {
         ]);
     } else if let Some(s) = &view.compaction {
         lines.extend([
+            // The policy also compacts when the next summary request might not
+            // fit, which happens before the trigger in small contexts.
             format!(
-                "Compact at {}% context · retain {} complete exchanges",
-                s.trigger_percent, s.recent_exchanges
+                "Compact at {}% of context, or earlier when a summary request needs room · retain {}",
+                s.trigger_percent,
+                progress::count(
+                    u64::from(s.recent_exchanges),
+                    "complete exchange",
+                    "complete exchanges"
+                )
             ),
             format!(
                 "Summary cap: {} tokens · shared model and run budget",

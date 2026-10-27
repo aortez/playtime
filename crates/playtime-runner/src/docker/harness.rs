@@ -1,10 +1,13 @@
-use super::{FrozenRecipe, IMAGE_LOCK};
+use super::{CompactionDefinition, FrozenRecipe, IMAGE_LOCK};
 use crate::{Error, Result};
 use playtime_protocol::api::*;
 
 /// Installed support only; no model, Docker, or host probing.
 pub fn harness_catalog() -> Result<HarnessCatalog> {
     let image: serde_json::Value = serde_json::from_slice(IMAGE_LOCK)?;
+    let image_id = image["image_id"]
+        .as_str()
+        .ok_or_else(|| Error::Invalid("missing workshop identity".into()))?;
     Ok(HarnessCatalog {
         schema_version: 1,
         harnesses: vec![
@@ -25,10 +28,7 @@ pub fn harness_catalog() -> Result<HarnessCatalog> {
                 .map(str::to_owned)
                 .collect(),
                 required_model_capabilities: vec!["completion".into(), "tools".into()],
-                required_workshop_image: image["image_id"]
-                    .as_str()
-                    .ok_or_else(|| Error::Invalid("missing workshop identity".into()))?
-                    .into(),
+                required_workshop_image: image_id.into(),
             },
             HarnessDescriptor {
                 id: HarnessId::new(CONTINUOUS_COMPACTION_V1)?,
@@ -44,7 +44,7 @@ pub fn harness_catalog() -> Result<HarnessCatalog> {
                 .map(str::to_owned)
                 .collect(),
                 required_model_capabilities: vec!["completion".into(), "tools".into()],
-                required_workshop_image: image["image_id"].as_str().unwrap().into(),
+                required_workshop_image: image_id.into(),
             },
         ],
     })
@@ -67,7 +67,8 @@ impl FrozenRecipe {
             ));
         }
         if id.as_str() == CONTINUOUS_COMPACTION_V1 {
-            self.compaction.get_or_insert_with(Default::default);
+            self.compaction
+                .get_or_insert_with(|| CompactionDefinition::new(&self.recipe));
             self.schema_version = 3;
         } else {
             self.compaction = None;
@@ -95,7 +96,7 @@ impl FrozenRecipe {
             .compaction
             .as_ref()
             .ok_or_else(|| Error::Invalid("missing compaction inputs".into()))?;
-        let settings = serde_json::from_value(serde_json::to_value(&c.settings)?)?;
+        let settings = (&c.settings).try_into()?;
         Ok(playtime_engine::compaction::CompactionConfig {
             parameters: self.recipe.parameters.common(),
             protocol: c.protocol.clone(),

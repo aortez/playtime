@@ -37,6 +37,23 @@ impl Default for CompactionSettings {
     }
 }
 
+/// The authored API settings. `validate` still checks them against the run.
+impl TryFrom<&playtime_protocol::api::CompactionSettings> for CompactionSettings {
+    type Error = InvalidValue;
+    fn try_from(
+        settings: &playtime_protocol::api::CompactionSettings,
+    ) -> Result<Self, InvalidValue> {
+        Ok(Self {
+            schema_version: settings.schema_version,
+            trigger_percent: settings.trigger_percent,
+            recent_exchanges: settings.recent_exchanges,
+            summary_tokens: NonZeroU64::new(settings.summary_tokens)
+                .ok_or(InvalidValue("summary cap must be positive"))?,
+            instructions: settings.instructions.clone(),
+        })
+    }
+}
+
 impl CompactionSettings {
     pub fn validate(&self, parameters: &CommonParameters) -> Result<(), InvalidValue> {
         parameters.validate()?;

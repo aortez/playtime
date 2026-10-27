@@ -619,7 +619,8 @@
           "compaction": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/CompactionSettings"
+                "$ref": "#/components/schemas/CompactionSettings",
+                "description": "Explicit settings for the continuous harness, applied after harness selection. Omission keeps the source's settings, or the defaults after a switch. Refused when the resulting harness is memento."
               },
               {
                 "type": "null"
@@ -627,7 +628,7 @@
             ]
           },
           "harness": {
-            "description": "Omission inherits the source harness. Switching installs that harness’s defaults; shared budgets are preserved.",
+            "description": "Omission inherits the source harness. Switching to continuous installs the default compaction settings; switching to memento drops them and uses the source's retained memento settings. Shared budgets are preserved.",
             "type": [
               "string",
               "null"
@@ -2845,7 +2846,8 @@
           "compaction": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/CompactionSettings"
+                "$ref": "#/components/schemas/CompactionSettings",
+                "description": "Explicit settings for the continuous harness, applied after harness selection. Omission keeps the source's settings, or the defaults after a switch. Refused when the resulting harness is memento."
               },
               {
                 "type": "null"
@@ -2856,7 +2858,7 @@
             "$ref": "#/components/schemas/RecipeId"
           },
           "harness": {
-            "description": "Omission inherits the source harness. Switching installs that harness’s defaults; shared budgets are preserved.",
+            "description": "Omission inherits the source harness. Switching to continuous installs the default compaction settings; switching to memento drops them and uses the source's retained memento settings. Shared budgets are preserved.",
             "type": [
               "string",
               "null"

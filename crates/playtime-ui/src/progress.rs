@@ -489,11 +489,20 @@ pub fn details(run: &RunView) -> Vec<String> {
     }
     lines.push(accounting(run));
     if let Some(accounting) = &run.request_accounting {
-        for (purpose, item) in &accounting.by_purpose {
-            lines.push(format!("{}: {} calls admitted · {} tokens reported · {} tokens charged · {} requests with unknown usage", words(purpose), thousands(item.admitted_calls), thousands(item.usage.known_generated_tokens), thousands(item.usage.budget_charged_tokens), thousands(item.usage.unknown_requests)));
+        let classified = accounting
+            .by_purpose
+            .iter()
+            .map(|(purpose, item)| (capitalized(&words(purpose)), item));
+        let unclassified = &accounting.unclassified;
+        // Missing purpose evidence stays visible instead of joining a purpose.
+        let unclassified = (unclassified.admitted_calls > 0
+            || unclassified.settled_calls > 0
+            || unclassified.not_dispatched_calls > 0)
+            .then(|| ("Unclassified".to_owned(), unclassified));
+        for (purpose, item) in classified.chain(unclassified) {
+            lines.push(purpose_accounting(&purpose, item));
         }
     }
-
     if let Some(c) = &run.contention {
         let timed = count(c.timed_requests, "timed request", "timed requests");
         lines.push(if c.possible {
@@ -518,6 +527,41 @@ pub fn details(run: &RunView) -> Vec<String> {
 
 /// Settled or known usage, conservative charges for unknown usage and the
 /// allowance still held for unsettled requests. Unavailable is never zero.
+/// One request purpose's calls and tokens. Unknown usage stays explicit.
+fn purpose_accounting(
+    purpose: &str,
+    item: &playtime_protocol::archive_queries::PurposeAccounting,
+) -> String {
+    let mut parts = vec![format!(
+        "{purpose}: {} · {} settled",
+        count(item.admitted_calls, "call admitted", "calls admitted"),
+        thousands(item.settled_calls)
+    )];
+    if item.not_dispatched_calls > 0 {
+        parts.push(format!(
+            "{} not dispatched",
+            thousands(item.not_dispatched_calls)
+        ));
+    }
+    parts.push(format!(
+        "{} tokens reported",
+        thousands(item.usage.known_generated_tokens)
+    ));
+    parts.push(format!(
+        "{} tokens charged",
+        thousands(item.usage.budget_charged_tokens)
+    ));
+    parts.push(if item.usage.unknown_requests == 0 {
+        "no unknown usage".into()
+    } else {
+        count(
+            item.usage.unknown_requests,
+            "request with unknown usage",
+            "requests with unknown usage",
+        )
+    });
+    parts.join(" · ")
+}
 fn accounting(run: &RunView) -> String {
     let Some(usage) = &run.usage else {
         return "Token accounting unavailable".into();

@@ -110,6 +110,29 @@ fn saved_continuous_definition_selects_only_its_exact_native_profile() {
         panic!("wrong policy")
     };
     profile.validate().unwrap();
+    // The frozen inventory states this recipe's own workshop capacity.
+    assert_eq!(
+        profile.config.inventory,
+        definition.compaction.as_ref().unwrap().inventory
+    );
+    assert!(profile.config.inventory.ends_with(
+        "\nYour workspace /work holds 8 MiB and 512 files and directories; /tmp holds 16 MiB. Both last until the run ends.\n"
+    ));
+    let mut curiosity = definition.recipe.clone();
+    curiosity.parameters.workshop.workspace_bytes = (16 << 20).try_into().unwrap();
+    curiosity.parameters.workshop.tmp_bytes = (1 << 30).try_into().unwrap();
+    curiosity.workspace_entries = 900;
+    assert!(
+        playtime_runner::docker::CompactionDefinition::new(&curiosity)
+            .inventory
+            .ends_with("\nYour workspace /work holds 16 MiB and 900 files and directories; /tmp holds 1 GiB. Both last until the run ends.\n")
+    );
+    curiosity.parameters.workshop.workspace_bytes = (3 << 19).try_into().unwrap();
+    assert!(
+        playtime_runner::docker::CompactionDefinition::new(&curiosity)
+            .inventory
+            .contains("/work holds 1536 KiB and 900 files")
+    );
     assert_eq!(
         profile.config.parameters,
         definition.recipe.parameters.common()

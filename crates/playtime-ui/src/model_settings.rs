@@ -61,7 +61,12 @@ impl SettingsDraft {
             temperature: number(&f[0])?,
             context_tokens: number(&f[1])?,
             tokens_per_call: number(&f[2])?,
-            handoff_tokens: number(&f[3])?,
+            // Continuous recipes hide the handoff field and keep its saved value.
+            handoff_tokens: if self.continuous {
+                self.original.settings.handoff_tokens
+            } else {
+                number(&f[3])?
+            },
             top_p: number(&f[4])?,
             top_k: number(&f[5])?,
             repeat_penalty: number(&f[6])?,

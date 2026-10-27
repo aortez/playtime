@@ -557,7 +557,6 @@ Completion means that manual workflow works through the common API with frozen
 inputs and existing enforcement guarantees. It does not mean daemon recovery,
 external harness execution, or unattended studies have been delivered.
 
-
 ## Continuous harness delivery (#110)
 
 The saved recipe/API/workbench path now supports `continuous_compaction_v1`.

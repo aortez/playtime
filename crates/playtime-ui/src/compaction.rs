@@ -66,6 +66,6 @@ impl Draft {
                 .char_limit(65536),
         )
         .labelled_by(label.id);
-        ui.small("Summaries use the selected model and whole-run budget. The workshop stays alive; only the final stopped workspace is captured.");
+        ui.small("Summaries use the selected model and whole-run budget. Compaction can start before the trigger when a summary request needs room. The workshop stays alive; only the final stopped workspace is captured.");
     }
 }
