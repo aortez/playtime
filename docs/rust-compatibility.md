@@ -659,3 +659,20 @@ at selection, so saved recipes that already selected continuous keep the
 inventory they froze. Schemas, the controller and its goldens are unchanged. The
 default definition is part of the native capability digest, so a new daemon
 refuses older worker bundles; rebuild the bundle.
+
+## Continuous summary retries
+
+A summary request that the server can't parse is now retried like a work
+request: it counts toward the same five consecutive retries, and the failed
+attempt is charged its full allowance as unknown usage. The retry has no notice.
+The policy plans the same compaction again, so its budget and fit checks see the
+charge, and sends the same summary request. The new `compaction_planned` record
+keeps the compaction's ordinal, so the applied compaction has the ordinal of its
+last plan. Before, the first such failure stopped the run with
+`tool_parse_retry_limit`, though nothing had been retried. A 10-minute gpt-oss
+trial stopped that way at its first compaction, 82 seconds in: the model
+answered with a tool call that Ollama couldn't parse, though summary requests
+offer no tools. Other summary failures still stop the run. Archive and event
+schemas and the controller golden are unchanged. The new
+`continuous_summary_recovery` capability changes the native capability digest,
+so a new daemon refuses older worker bundles; rebuild the bundle.

@@ -346,15 +346,22 @@ impl Compaction {
             .messages
             .push(tool_message(name, result));
     }
-    /// A work request retries a parse failure, as in memento. A failed summary
-    /// still stops: there is no summarization retry loop.
+    /// A parse failure is retried, as in memento, for a work request or a
+    /// summary. Other summary failures still stop.
     pub fn retries(&self, view: View<'_>, error: &ModelFailure) -> bool {
         matches!(error, ModelFailure::Parse(_))
-            && matches!(self.stage, Stage::Ready)
+            && matches!(self.stage, Stage::Ready | Stage::Summary { .. })
             && view.facts.parse_streak <= crate::compaction::TOOL_PARSE_RETRIES
     }
     pub fn retry(&mut self) {
-        self.notices.push(message("user", PARSE_RETRY_NOTICE));
+        if let Stage::Summary { .. } = self.stage {
+            // The compaction is planned again, so its checks see the failed
+            // attempt's charge, and keeps its ordinal. The work notice would
+            // describe a response the next exchange never had.
+            self.ordinal -= 1;
+        } else {
+            self.notices.push(message("user", PARSE_RETRY_NOTICE));
+        }
     }
     pub fn after_response(&mut self, view: View<'_>) {
         // A retried request left no response, so it adds no exchange.

@@ -33,12 +33,15 @@ configurations. Preview and launch still require those execution capabilities.
 
 The model can correct its own tool-call mistakes. A batch with an invalid
 ordinary call runs none of its calls and returns each call's error to the model.
-When the server can't parse a work response's tool call, the request is retried
-with a notice, up to five times in a row, and the failed attempt is charged its
-full allowance as unknown usage. A response that calls no tool is followed by a
-notice to continue or call `finish_run`, or, when the recipe leaves that tool out,
-to continue until the budget runs out. A malformed or mixed finish, a batch over
-the result allowance or over eight calls, and a failed summary still stop the run.
+When the server can't parse a response's tool call, the request is retried, up to
+five times in a row, and the failed attempt is charged its full allowance as
+unknown usage. A work request is retried with a notice. A summary request is
+planned again and sent unchanged; gpt-oss has answered one with a tool call even
+though summary requests offer no tools. A response that calls no tool is
+followed by a notice to continue or call `finish_run`, or, when the recipe leaves
+that tool out, to continue until the budget runs out. A malformed or mixed
+finish, a batch over the result allowance or over eight calls, and any other
+summary failure still stop the run.
 
 Definition schema 3 adds `compaction: { settings, protocol, inventory }` to the
 frozen source recipe. Selecting the harness freezes its own protocol/inventory;
@@ -98,7 +101,7 @@ comparison remain #111.
 configuration and selected model identity. `NativeProfile` dispatches preparation
 to the correct family; a memento profile rejects a continuous definition. The
 capability digest includes the continuous recipe format, default input texts,
-tool-call recovery and the finish choice.
+tool-call and summary recovery and the finish choice.
 
 For the separate fixed native smoke, `ContinuousProfile::freeze` produces
 `docker_continuous_compaction_v1`. Its validator reconstructs the exact supported
