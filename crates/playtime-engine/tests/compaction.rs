@@ -112,6 +112,23 @@ impl Run {
             finish_reason: "stop".into(),
         });
     }
+    /// A response the server measured: its prompt counts the request's bytes,
+    /// so a later estimate can extend a measured prefix.
+    fn measured(&mut self, message: Value) {
+        let request = self.request();
+        let prompt = serde_json::to_vec(&json!({"messages":request.messages,"tools":request.tools}))
+            .unwrap()
+            .len() as u64;
+        self.complete(Outcome::ModelCompleted {
+            response: ModelResponse {
+                done: true,
+                generated_tokens: Some(10),
+                prompt_tokens: Some(prompt),
+                message,
+            },
+            finish_reason: "stop".into(),
+        });
+    }
     fn until_summary(&mut self) {
         for n in 0..20 {
             if self.request().purpose == RequestPurpose::Compaction {
@@ -1416,9 +1433,17 @@ fn tool_call_summaries_plan_the_same_compaction_again_until_the_consecutive_limi
             .collect::<Vec<_>>()
     };
     let mut run = Run::new(config());
-    run.until_summary();
+    for n in 0..20 {
+        if run.request().purpose == RequestPurpose::Compaction {
+            break;
+        }
+        run.measured(
+            json!({"role":"assistant","content":format!("Exchange {n}: {}", "x".repeat(3000))}),
+        );
+    }
     let summary = run.request().clone();
-    run.response(tool_call_summary());
+    assert_eq!(summary.purpose, RequestPurpose::Compaction);
+    run.measured(tool_call_summary());
     // The settled attempt is charged its known usage, not an allowance, and
     // the failure is not a tool parse error.
     let error = errors(&run).pop().unwrap();
@@ -1441,6 +1466,17 @@ fn tool_call_summaries_plan_the_same_compaction_again_until_the_consecutive_limi
     };
     assert_eq!(again["ordinal"], first["ordinal"]);
     assert_eq!(again["before_messages"], first["before_messages"]);
+    // The attempt leaves the measured context alone, so the retry is planned
+    // from the basis the first attempt had.
+    assert_eq!(first["estimate_basis"], "server_usage_plus_new_bytes");
+    for field in [
+        "estimate_basis",
+        "input_bound",
+        "summary_estimate_basis",
+        "summary_input_bound",
+    ] {
+        assert_eq!(again[field], first[field], "{field}");
+    }
     run.response(json!({"role":"assistant","content":"Summary: checked results."}));
     let applied = &run
         .records
@@ -1453,8 +1489,13 @@ fn tool_call_summaries_plan_the_same_compaction_again_until_the_consecutive_limi
     let work = run.request();
     assert_eq!(work.purpose, RequestPurpose::Work);
     assert!(!work.messages.contains(&notice()));
-    // An accepted summary ends the streak: the next compaction's failure is
-    // the first of a new streak.
+    // An accepted summary ends the streak: a work request's parse failure
+    // right after it, and the next compaction's failure, each open a new one.
+    run.complete(parse_failure());
+    let error = errors(&run).pop().unwrap();
+    assert_eq!(error["error"]["kind"], "parse");
+    assert_eq!(error["consecutive_errors"], 1);
+    assert_eq!(error["recovery_allowed"], true);
     run.until_summary();
     run.response(tool_call_summary());
     let error = errors(&run).pop().unwrap();

@@ -708,6 +708,8 @@ five consecutive retries, the policy plans the same compaction again under the
 same ordinal, and no notice is sent. The response settled normally, so the
 attempt is charged its known usage rather than a full unknown allowance, and the
 `model_error` record has kind `summary_tools` with no budget charge of its own.
+The attempt leaves the measured context unchanged, so the retry is planned from
+the basis the first attempt had, as a retry after a parse failure is.
 A settled summary no longer resets the consecutive-error streak; only an
 accepted summary does, so settled and unparseable summary failures count
 together. Exceeding the streak with tool-call summaries stops with
