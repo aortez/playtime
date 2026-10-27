@@ -37,8 +37,11 @@ ordinary call runs none of its calls and returns each call's error to the model.
 When the server can't parse a response's tool call, the request is retried, up to
 five times in a row, and the failed attempt is charged its full allowance as
 unknown usage. A work request is retried with a notice. A summary request is
-planned again and sent unchanged; gpt-oss has answered one with a tool call even
-though summary requests offer no tools. A response that calls no tool is
+planned again and sent unchanged. A summary answered with tool calls, which
+summary requests never offer, is retried the same way within the same five,
+charged its actual usage; gpt-oss has answered summary requests with calls to
+`exec` and to a `container.exec` tool that exists nowhere in Playtime, after
+reasoning that it should check a file size first. A response that calls no tool is
 followed by a notice to continue or call `finish_run`, or, when the recipe leaves
 that tool out, to continue until the budget runs out. A malformed or mixed
 finish, a batch over the result allowance or over eight calls, and any other

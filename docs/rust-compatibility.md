@@ -700,6 +700,30 @@ the result are unchanged. Archive and event schemas are unchanged. The new
 `continuous_transcript_summary` capability changes the native capability digest,
 so a new daemon refuses older worker bundles; rebuild the bundle.
 
+## Continuous summaries answered with tool calls
+
+A summary request answered with tool calls, although summary requests offer no
+tools, is now retried like one the server can't parse: it counts toward the same
+five consecutive retries, the policy plans the same compaction again under the
+same ordinal, and no notice is sent. The response settled normally, so the
+attempt is charged its known usage rather than a full unknown allowance, and the
+`model_error` record has kind `summary_tools` with no budget charge of its own.
+The attempt leaves the measured context unchanged, so the retry is planned from
+the basis the first attempt had, as a retry after a parse failure is.
+A settled summary no longer resets the consecutive-error streak; only an
+accepted summary does, so settled and unparseable summary failures count
+together. Exceeding the streak with tool-call summaries stops with
+`compaction_failed`. Before, the first such response stopped the run with
+`compaction_failed` and the diagnostic "summary returned tools despite its
+tool-free contract". The first live run on main after transcript summaries
+stopped that way at its first compaction, 189 seconds in: gpt-oss reasoned that
+it should check a file size before writing the summary and called
+`container.exec`, a tool that exists nowhere in Playtime (#153). Archive and
+event schemas and the controller golden are unchanged; `model_error` kinds are
+an open vocabulary. The new `continuous_summary_tool_recovery` capability
+changes the native capability digest, so a new daemon refuses older worker
+bundles; rebuild the bundle.
+
 ## One-pass prefix extension checks and reused snapshots
 
 `ArchiveReader::sub_snapshot` validated the covering prefix and then the

@@ -31,7 +31,7 @@ rustup target add x86_64-unknown-linux-musl --toolchain 1.94.1
 ./go.sh
 ```
 
-`go.sh` builds a frozen worker bundle and the daemon/client binaries, starts the
+`go.sh` builds a frozen worker bundle and release daemon/client binaries, starts the
 `playtimed-go` systemd user service, and opens the workbench. With this machine's
 defaults, data lives in `/home/data2/playtime` and the connection file is
 `/home/data2/playtime/root/.playtime/connection.json`. `./go.sh --help` lists the
