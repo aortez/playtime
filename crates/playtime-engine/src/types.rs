@@ -255,6 +255,10 @@ pub struct ModelResponse {
 #[serde(tag = "kind", content = "message", rename_all = "snake_case")]
 pub enum ModelFailure {
     Parse(String),
+    /// A summary request answered with tool calls although it offered no
+    /// tools. The response settled with known usage; the policy decides
+    /// whether the compaction is planned again.
+    SummaryTools(String),
     Connection(String),
     Incomplete(String),
     MissingUsage(String),

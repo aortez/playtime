@@ -1028,7 +1028,12 @@ impl<I: IdSource> Controller<I> {
             },
             totals: self.totals.into(),
         });
-        self.parse_streak = 0;
+        // A summary that settles can still be rejected below, and that
+        // rejection counts toward the same streak as an unparseable one, so
+        // only an accepted summary ends a summary streak.
+        if request.purpose != RequestPurpose::Compaction {
+            self.parse_streak = 0;
+        }
         self.emit("request_settled", json!({"call": self.model_calls,
             "usage": GenerationUsage::Known { generated_tokens: tokens }, "totals": UsageSummary::from(self.totals)}));
         self.emit(
@@ -1076,9 +1081,16 @@ impl<I: IdSource> Controller<I> {
                     .as_array()
                     .is_some_and(|calls| !calls.is_empty())
             {
-                self.diagnostic("summary returned tools despite its tool-free contract");
-                self.stop(StopReason::CompactionFailed);
+                // The attempt's known usage is already charged and nothing is
+                // reserved, so this records the failure and asks the policy
+                // whether to plan the compaction again.
+                self.model_error(ModelFailure::SummaryTools(
+                    "summary returned tools despite its tool-free contract".into(),
+                ));
                 return;
+            }
+            if request.purpose == RequestPurpose::Compaction {
+                self.parse_streak = 0;
             }
             match crate::compaction::validate_tools(
                 &response.message,
@@ -1146,6 +1158,11 @@ impl<I: IdSource> Controller<I> {
         if matches!(error, ModelFailure::Parse(_)) {
             self.parse_errors += 1;
             self.session_parse_errors += 1;
+        }
+        if matches!(
+            error,
+            ModelFailure::Parse(_) | ModelFailure::SummaryTools(_)
+        ) {
             self.parse_streak += 1;
         }
         let decision = self.policy.recovery(

@@ -277,6 +277,7 @@ impl Policy {
             }
             _ => Recovery::Stop(match error {
                 ModelFailure::Parse(_) => StopReason::ToolParseRetryLimit,
+                ModelFailure::SummaryTools(_) => StopReason::CompactionFailed,
                 ModelFailure::Connection(_) => StopReason::ModelConnectionError,
                 ModelFailure::Incomplete(_) => StopReason::IncompleteModelResponse,
                 ModelFailure::MissingUsage(_) => StopReason::MissingTokenUsage,
