@@ -171,4 +171,30 @@ fn one_pass_extension_checks_verify_the_previous_prefix_as_an_exact_boundary() {
             .code,
         ErrorCode::CursorAhead
     );
+
+    // A prefix that fails its own validation is corruption, not a bad
+    // position, even when the difference first shows at the position.
+    let path = temp.archive().join("events.jsonl");
+    let mut bytes = std::fs::read(&path).unwrap();
+    let second = bytes
+        .windows(9)
+        .position(|window| window == b"12:00:01Z")
+        .unwrap();
+    assert!((second as u64) < first.prefix.bytes);
+    bytes[second + 7] = b'0';
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(
+        reader
+            .confirmed_snapshot_extending(&last, first.prefix.clone())
+            .unwrap_err()
+            .code,
+        ErrorCode::ArchiveCorrupt
+    );
+    assert_eq!(
+        reader
+            .sub_snapshot(&covering, first.prefix)
+            .unwrap_err()
+            .code,
+        ErrorCode::ArchiveCorrupt
+    );
 }

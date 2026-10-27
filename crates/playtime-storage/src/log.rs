@@ -15,10 +15,8 @@ use playtime_protocol::{
 use rustix::fs::OFlags;
 use sha2::{Digest, Sha256};
 
-use crate::ReadPrefix;
-
 use crate::{
-    ErrorCode, Result, StorageError, StorageLimits,
+    ErrorCode, ReadPrefix, Result, StorageError, StorageLimits,
     files::{Directory, digest_value, utf8},
     reader::StoredEvent,
 };
@@ -458,7 +456,9 @@ pub(crate) struct ScanOptions<'a> {
 /// Validates the committed prefix at `frontier` in one pass. A checkpoint
 /// position beneath it is checked where the pass crosses its byte count:
 /// the sequence and running SHA-256 must match there exactly, so a position
-/// inside a record or with another history fails without a second pass.
+/// inside a record or with another history fails without a second pass. The
+/// pass still runs to the frontier first, so a prefix that fails its own
+/// validation reports corruption rather than a bad position.
 pub(crate) fn scan(
     directory: &Directory,
     descriptor: &ArchiveDescriptor,
@@ -503,15 +503,16 @@ pub(crate) fn scan(
     let mut page_full = false;
     let mut consumed = 0;
     let mut checkpoint_state = None;
+    let mut checkpoint_crossed = false;
     if let Some(prefix) = checkpoint
         && prefix.bytes == 0
     {
-        if prefix.sequence != 0
-            || prefix.sha256 != digest_value(Sha256::new().finalize().as_slice())
+        checkpoint_crossed = true;
+        if prefix.sequence == 0
+            && prefix.sha256 == digest_value(Sha256::new().finalize().as_slice())
         {
-            return Err(checkpoint_mismatch());
+            checkpoint_state = Some(state.clone());
         }
-        checkpoint_state = Some(state.clone());
     }
     loop {
         let mut bytes = Vec::new();
@@ -541,16 +542,16 @@ pub(crate) fn scan(
             }
         }
         if let Some(prefix) = checkpoint
-            && checkpoint_state.is_none()
+            && !checkpoint_crossed
             && consumed >= prefix.bytes
         {
-            if consumed != prefix.bytes
-                || state.sequence != prefix.sequence
-                || digest_value(hash.clone().finalize().as_slice()) != prefix.sha256
+            checkpoint_crossed = true;
+            if consumed == prefix.bytes
+                && state.sequence == prefix.sequence
+                && digest_value(hash.clone().finalize().as_slice()) == prefix.sha256
             {
-                return Err(checkpoint_mismatch());
+                checkpoint_state = Some(state.clone());
             }
-            checkpoint_state = Some(state.clone());
         }
         if !page_full && state.sequence > after && events.len() < limit as usize {
             // Returning fewer than limit is allowed; every page still has a

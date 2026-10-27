@@ -716,9 +716,13 @@ pass crosses its byte count, by sequence and running SHA-256, so a sub-snapshot
 is one pass, and the new `confirmed_snapshot_extending` verifies a reply's prefix
 and its extension of the previous confirmation in one pass. A position inside a
 record, with another history or with the wrong sequence is `invalid_cursor`
-rather than corruption; over HTTP that mapping was already `invalid_cursor`. The
-daemon keeps the snapshot its own verification produced, for at most 16 runs,
-and a projection or completion check at the same confirmed frontier reuses it
-instead of scanning again; a changed frontier or a restarted daemon verifies
-again. Archive and event schemas, the storage limits and every verification rule
-are unchanged; a history page still validates its complete covering prefix.
+rather than corruption, once the whole prefix has validated; over HTTP that
+mapping was already `invalid_cursor`. The daemon keeps the snapshot its own
+verification produced, for at most the 16 runs it refreshes at once, and a
+projection or completion check at the same confirmed frontier reuses it instead
+of verifying again; a changed frontier or a restarted daemon verifies again. The
+projection built from it still reads the history in pages of 200 records, and
+each page validates the complete committed prefix, so a projection's passes
+still grow with the log. Archive and event schemas, the storage limits and every
+verification rule are unchanged; a history page still validates its complete
+covering prefix.

@@ -34,14 +34,38 @@ pub(super) struct Archive {
     pub live_endpoint: Option<String>,
     docker_transport: Arc<tokio::sync::Mutex<Option<playtime_docker::transport::Cli>>>,
     execution_gate: Arc<tokio::sync::Mutex<()>>,
-    /// Snapshots this daemon's own verification produced, by run. A later read
-    /// at the same confirmed frontier reuses one instead of scanning the
-    /// archive again; a changed frontier or a restart verifies again.
-    snapshots: Arc<std::sync::Mutex<HashMap<playtime_core::RunId, Snapshot>>>,
+    snapshots: Arc<Snapshots>,
 }
-/// Runs whose last verified snapshot is kept; the daemon refreshes at most
-/// that many runs at once as well.
-const REMEMBERED_SNAPSHOTS: usize = 16;
+/// Snapshots this daemon's own verification produced, by run. A later read at
+/// the same confirmed frontier reuses one instead of verifying the archive
+/// again, with the uncommitted byte count that verification saw; a changed
+/// frontier or a restart verifies again. At most the runs the daemon refreshes
+/// at once are kept.
+#[derive(Default)]
+pub(super) struct Snapshots(std::sync::Mutex<HashMap<playtime_core::RunId, Snapshot>>);
+impl Snapshots {
+    pub(super) fn remember(&self, run: &playtime_core::RunId, snapshot: &Snapshot) {
+        let mut snapshots = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !snapshots.contains_key(run) && snapshots.len() >= crate::lifecycle::RUNS {
+            let stale = snapshots.keys().next().cloned();
+            if let Some(stale) = stale {
+                snapshots.remove(&stale);
+            }
+        }
+        snapshots.insert(run.clone(), snapshot.clone());
+    }
+    pub(super) fn remembered(
+        &self,
+        run: &playtime_core::RunId,
+        frontier: &EventFrontier,
+    ) -> Option<Snapshot> {
+        let snapshots = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        snapshots
+            .get(run)
+            .filter(|snapshot| snapshot.frontier() == frontier)
+            .cloned()
+    }
+}
 /// The live model as the daemon reaches it: host bindings frozen at startup
 /// and an adapter for read-only identity checks at admission.
 pub(super) struct Live {
@@ -699,7 +723,10 @@ impl Archive {
         }
         let prepared = record.prepared.as_ref().ok_or(Error::Uncertain)?;
         let reader = self.reader(prepared)?;
-        if let Some(snapshot) = self.remembered(&prepared.binding.run_id, &confirmation.frontier) {
+        if let Some(snapshot) = self
+            .snapshots
+            .remembered(&prepared.binding.run_id, &confirmation.frontier)
+        {
             return Ok(Some((reader, snapshot)));
         }
         let authorized = Authority {
@@ -714,25 +741,8 @@ impl Archive {
         if snapshot.frontier() != &confirmation.frontier {
             return Err(Error::Uncertain);
         }
-        self.remember(&prepared.binding.run_id, &snapshot);
+        self.snapshots.remember(&prepared.binding.run_id, &snapshot);
         Ok(Some((reader, snapshot)))
-    }
-    fn remember(&self, run: &playtime_core::RunId, snapshot: &Snapshot) {
-        let mut snapshots = self.snapshots.lock().unwrap_or_else(|e| e.into_inner());
-        if !snapshots.contains_key(run) && snapshots.len() >= REMEMBERED_SNAPSHOTS {
-            let stale = snapshots.keys().next().cloned();
-            if let Some(stale) = stale {
-                snapshots.remove(&stale);
-            }
-        }
-        snapshots.insert(run.clone(), snapshot.clone());
-    }
-    fn remembered(&self, run: &playtime_core::RunId, frontier: &EventFrontier) -> Option<Snapshot> {
-        let snapshots = self.snapshots.lock().unwrap_or_else(|e| e.into_inner());
-        snapshots
-            .get(run)
-            .filter(|snapshot| snapshot.frontier() == frontier)
-            .cloned()
     }
     fn reader(&self, prepared: &PreparedLaunch) -> life::Result<ArchiveReader> {
         let reader = ArchiveReader::open(
@@ -781,7 +791,7 @@ impl Archive {
             }
             None => reader.confirmed_snapshot(&authority).map_err(storage)?,
         };
-        self.remember(&prepared.binding.run_id, &snapshot);
+        self.snapshots.remember(&prepared.binding.run_id, &snapshot);
         Ok(snapshot.frontier().clone())
     }
 }

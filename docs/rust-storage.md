@@ -134,8 +134,9 @@ Every snapshot/page validates the complete selected prefix, including sequence
 continuity, exact hash, terminal accounting, and referenced content. A
 sub-snapshot, or a confirmed read that must extend an earlier position, checks
 that inner position during the same pass, at its exact byte count, by sequence
-and running digest, instead of scanning the prefix again; a position inside a
-record or with another history is an invalid cursor. Raw event
+and running digest, instead of scanning the prefix again; once the whole prefix
+has validated, a position inside a record or with another history is an invalid
+cursor. Raw event
 bytes and their individual SHA-256 digests are returned with parsed envelopes.
 This is a bounded linear scan, without a persistent index; later indexes must
 preserve these verification/authority rules. A page may return fewer records
