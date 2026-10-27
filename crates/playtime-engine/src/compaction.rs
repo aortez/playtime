@@ -8,7 +8,10 @@ use playtime_protocol::archive::ContentRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{FileIndex, context::encoded_size};
+use crate::{
+    FileIndex,
+    context::{encoded_size, message},
+};
 
 pub const HARNESS: &str = "continuous_compaction_v1";
 pub const FINISH_SUMMARY_BYTES: usize = 8192;
@@ -17,6 +20,55 @@ pub const DEFAULT_INSTRUCTIONS: &str = playtime_protocol::api::DEFAULT_COMPACTIO
 /// one more stops the run.
 pub const TOOL_PARSE_RETRIES: u32 = 5;
 pub(crate) const MIN_TOOL_RESULT_BYTES: u64 = 512;
+/// The system message of a transcript summary request. It replaces the agent's
+/// protocol, so nothing in the request asks the model to keep working.
+pub const SUMMARY_SYSTEM: &str = "You summarize an agent's earlier work so it can continue from your summary. The user message gives the agent's task, its previous summary if any, and the older conversation as text. You have no tools. Reply with the summary only.";
+
+/// A summary request that gives the conversation as text: the task, the
+/// message holding any previous summary, each message of the older
+/// conversation, then the instructions. It carries no tool-call history to
+/// continue and no thinking, which gpt-oss's template drops from these turns
+/// anyway.
+pub fn summary_transcript(
+    prompt: &str,
+    summary: Option<&str>,
+    conversation: &[Value],
+    instructions: &str,
+) -> Vec<Value> {
+    let mut text = format!("The agent's task:\n{prompt}");
+    if let Some(summary) = summary {
+        text.push_str(&format!("\n\n{summary}"));
+    }
+    text.push_str("\n\nThe older conversation, oldest first:");
+    for message in conversation {
+        let content = message["content"].as_str().unwrap_or("");
+        match message["role"].as_str() {
+            Some("assistant") => {
+                let calls = message["tool_calls"]
+                    .as_array()
+                    .map_or(&[][..], Vec::as_slice);
+                if !content.is_empty() || calls.is_empty() {
+                    text.push_str(&format!("\n\n[agent]\n{content}"));
+                }
+                for call in calls {
+                    let function = &call["function"];
+                    text.push_str(&format!(
+                        "\n\n[agent calls {}]\n{}",
+                        function["name"].as_str().unwrap_or("unknown"),
+                        function["arguments"]
+                    ));
+                }
+            }
+            Some("tool") => text.push_str(&format!(
+                "\n\n[{} result]\n{content}",
+                message["tool_name"].as_str().unwrap_or("unknown")
+            )),
+            _ => text.push_str(&format!("\n\n[controller]\n{content}")),
+        }
+    }
+    text.push_str(&format!("\n\n{instructions}"));
+    vec![message("system", SUMMARY_SYSTEM), message("user", text)]
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

@@ -24,10 +24,11 @@ The trigger is an upper bound. Each work request must also leave the work
 reserve: the safety margin, summary cap, instruction message and output limit.
 The summary after the next exchange must fit too, and that check estimates the
 request from its bytes. Either check can fire first. In the saved-recipe gate's
-16,384-token context, the summary check starts compaction near 5,300 projected
-tokens, well before the 75% trigger at 12,288. With Curiosity's 65,536-token
-context and an 8,192-token summary cap, the reserve keeps projected work below
-37,336 tokens, 57% of context.
+16,384-token context, with summaries still sent as conversations, the summary
+check started compaction near 5,300 projected tokens, well before the 75%
+trigger at 12,288. With Curiosity's 65,536-token context and an 8,192-token
+summary cap, the reserve keeps projected work below 37,336 tokens, 57% of
+context.
 No model, Docker or workshop connection is needed to read or edit saved
 configurations. Preview and launch still require those execution capabilities.
 
@@ -42,6 +43,13 @@ followed by a notice to continue or call `finish_run`, or, when the recipe leave
 that tool out, to continue until the budget runs out. A malformed or mixed
 finish, a batch over the result allowance or over eight calls, and any other
 summary failure still stop the run.
+
+A summary request gives the older conversation as text, in one user message
+under a short summarizer system message instead of the agent's protocol, and
+leaves out thinking. Sent as the agent's own tool-call history under its
+protocol, summary requests read to gpt-oss as its next work turn, and it called
+tools. With zero retained exchanges, a summary request still extends the
+measured work conversation; see the [controller](rust-controller.md).
 
 Definition schema 3 adds `compaction: { settings, protocol, inventory }` to the
 frozen source recipe. Selecting the harness freezes its own protocol/inventory;
@@ -101,7 +109,7 @@ comparison remain #111.
 configuration and selected model identity. `NativeProfile` dispatches preparation
 to the correct family; a memento profile rejects a continuous definition. The
 capability digest includes the continuous recipe format, default input texts,
-tool-call and summary recovery and the finish choice.
+tool-call and summary recovery, the finish choice and transcript summaries.
 
 For the separate fixed native smoke, `ContinuousProfile::freeze` produces
 `docker_continuous_compaction_v1`. Its validator reconstructs the exact supported

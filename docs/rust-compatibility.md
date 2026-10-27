@@ -676,3 +676,26 @@ offer no tools. Other summary failures still stop the run. Archive and event
 schemas and the controller golden are unchanged. The new
 `continuous_summary_recovery` capability changes the native capability digest,
 so a new daemon refuses older worker bundles; rebuild the bundle.
+
+## Continuous summary transcripts
+
+With recent exchanges retained, a continuous summary request now has two
+messages. A short system message replaces the agent's protocol and inventory,
+and one user message gives, as text, the task, the message holding any previous
+summary, the older exchanges and the compaction instructions. Responses appear
+as their content and tool calls, followed by their results and notices; thinking
+is left out. Before, the request repeated the work conversation's native
+messages, tool calls and thinking under the agent's protocol, then the
+instructions. In 10-minute gpt-oss trials, the model treated that request as its
+next work turn. One first summary came back as a tool call that Ollama couldn't
+parse, and another as a valid `exec` call, which stopped the run with
+`compaction_failed`. In those trials, thinking was 24–54% of the 50–53K-byte
+summary requests, and gpt-oss's template drops it anyway: Ollama counted only
+6.4K–10.9K prompt tokens. With zero retained exchanges, the request still
+extends the measured work conversation, because the work reserve covers only
+that continuation. In the controller golden, the three summary requests' message
+hashes and input bounds change (6,830 to 6,979 and 7,186 to 7,294), and so do the
+plans' `summary_input_bound`. Work requests, compaction points, replacements and
+the result are unchanged. Archive and event schemas are unchanged. The new
+`continuous_transcript_summary` capability changes the native capability digest,
+so a new daemon refuses older worker bundles; rebuild the bundle.
