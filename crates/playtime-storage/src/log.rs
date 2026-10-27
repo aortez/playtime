@@ -15,6 +15,8 @@ use playtime_protocol::{
 use rustix::fs::OFlags;
 use sha2::{Digest, Sha256};
 
+use crate::ReadPrefix;
+
 use crate::{
     ErrorCode, Result, StorageError, StorageLimits,
     files::{Directory, digest_value, utf8},
@@ -432,17 +434,52 @@ pub(crate) struct Scan {
     pub state: LogState,
     pub events: Vec<StoredEvent>,
     pub suffix_bytes: u64,
+    /// The state at the requested checkpoint, verified as an exact record
+    /// boundary of the scanned prefix during the same pass.
+    pub checkpoint: Option<LogState>,
 }
 
+fn checkpoint_mismatch() -> StorageError {
+    StorageError::new(
+        ErrorCode::InvalidCursor,
+        "checkpoint prefix is not an exact record boundary of the committed prefix",
+    )
+}
+
+/// What one pass returns besides validation: a page of events after a
+/// sequence, and the state at a checkpoint position beneath the frontier.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ScanOptions<'a> {
+    pub after: u64,
+    pub limit: u32,
+    pub checkpoint: Option<&'a ReadPrefix>,
+}
+
+/// Validates the committed prefix at `frontier` in one pass. A checkpoint
+/// position beneath it is checked where the pass crosses its byte count:
+/// the sequence and running SHA-256 must match there exactly, so a position
+/// inside a record or with another history fails without a second pass.
 pub(crate) fn scan(
     directory: &Directory,
     descriptor: &ArchiveDescriptor,
     manifest: &InputManifest,
     frontier: &EventFrontier,
     limits: &StorageLimits,
-    after: u64,
-    limit: u32,
+    options: ScanOptions<'_>,
 ) -> Result<Scan> {
+    let ScanOptions {
+        after,
+        limit,
+        checkpoint,
+    } = options;
+    if checkpoint.is_some_and(|prefix| {
+        prefix.bytes > frontier.committed_bytes || prefix.sequence > frontier.committed_sequence
+    }) {
+        return Err(StorageError::new(
+            ErrorCode::CursorAhead,
+            "checkpoint prefix exceeds the committed prefix",
+        ));
+    }
     if frontier.committed_bytes > limits.event_log_bytes
         || frontier.committed_sequence > limits.events
     {
@@ -465,6 +502,17 @@ pub(crate) fn scan(
     let mut page_bytes = 0;
     let mut page_full = false;
     let mut consumed = 0;
+    let mut checkpoint_state = None;
+    if let Some(prefix) = checkpoint
+        && prefix.bytes == 0
+    {
+        if prefix.sequence != 0
+            || prefix.sha256 != digest_value(Sha256::new().finalize().as_slice())
+        {
+            return Err(checkpoint_mismatch());
+        }
+        checkpoint_state = Some(state.clone());
+    }
     loop {
         let mut bytes = Vec::new();
         let count = reader
@@ -492,6 +540,18 @@ pub(crate) fn scan(
                 directory.verify(&reference, limits.content_bytes)?;
             }
         }
+        if let Some(prefix) = checkpoint
+            && checkpoint_state.is_none()
+            && consumed >= prefix.bytes
+        {
+            if consumed != prefix.bytes
+                || state.sequence != prefix.sequence
+                || digest_value(hash.clone().finalize().as_slice()) != prefix.sha256
+            {
+                return Err(checkpoint_mismatch());
+            }
+            checkpoint_state = Some(state.clone());
+        }
         if !page_full && state.sequence > after && events.len() < limit as usize {
             // Returning fewer than limit is allowed; every page still has a
             // strict byte bound. Validate the rest of the prefix before return.
@@ -513,10 +573,14 @@ pub(crate) fn scan(
             "committed prefix length, sequence, or SHA-256 mismatch",
         ));
     }
+    if checkpoint.is_some() && checkpoint_state.is_none() {
+        return Err(checkpoint_mismatch());
+    }
     Ok(Scan {
         state,
         events,
         suffix_bytes: length - frontier.committed_bytes,
+        checkpoint: checkpoint_state,
     })
 }
 

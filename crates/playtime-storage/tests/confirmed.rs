@@ -97,3 +97,78 @@ fn remote_confirmation_revalidates_committed_content() {
         ErrorCode::ContentMismatch
     );
 }
+
+#[test]
+fn one_pass_extension_checks_verify_the_previous_prefix_as_an_exact_boundary() {
+    let temp = Temp::new();
+    let (mut writer, fixture) = writer(&temp, StorageLimits::default());
+    artifacts(&mut writer, &fixture);
+    writer
+        .append(&fixture.events[..1], BatchClass::Ordinary)
+        .unwrap();
+    let first = authority(writer.confirmed_frontier());
+    writer
+        .append(&fixture.events[1..], BatchClass::Finalization)
+        .unwrap();
+    let last = authority(writer.confirmed_frontier());
+    let reader = reader(&temp);
+    let old = reader.confirmed_snapshot(&first).unwrap();
+    let covering = reader.confirmed_snapshot(&last).unwrap();
+
+    // Extending the first confirmation, or the same one, is one verified pass
+    // with the same result as a plain confirmed read.
+    for previous in [first.prefix.clone(), last.prefix.clone()] {
+        let extended = reader
+            .confirmed_snapshot_extending(&last, previous)
+            .unwrap();
+        assert_eq!(extended.frontier(), covering.frontier());
+        assert_eq!(extended.inspection(), covering.inspection());
+    }
+    let empty = ReadPrefix {
+        sequence: 0,
+        bytes: 0,
+        sha256: playtime_storage::sha256(b""),
+    };
+    assert_eq!(
+        reader
+            .confirmed_snapshot_extending(&last, empty)
+            .unwrap()
+            .frontier(),
+        covering.frontier()
+    );
+    // A sub-snapshot from that pass equals a pass that stops at the position.
+    let sub = reader
+        .sub_snapshot(&covering, first.prefix.clone())
+        .unwrap();
+    assert_eq!(sub.frontier(), old.frontier());
+    assert_eq!(sub.inspection(), old.inspection());
+
+    // A position inside a record, with another history or with the wrong
+    // sequence is refused, and one beyond the confirmation is ahead.
+    let mut inside = first.prefix.clone();
+    inside.bytes -= 1;
+    let mut forged = first.prefix.clone();
+    forged.sha256 = last.prefix.sha256.clone();
+    let mut wrong = first.prefix.clone();
+    wrong.sequence += 1;
+    for previous in [inside, forged, wrong] {
+        assert_eq!(
+            reader
+                .confirmed_snapshot_extending(&last, previous.clone())
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidCursor
+        );
+        assert_eq!(
+            reader.sub_snapshot(&covering, previous).unwrap_err().code,
+            ErrorCode::InvalidCursor
+        );
+    }
+    assert_eq!(
+        reader
+            .confirmed_snapshot_extending(&first, last.prefix.clone())
+            .unwrap_err()
+            .code,
+        ErrorCode::CursorAhead
+    );
+}

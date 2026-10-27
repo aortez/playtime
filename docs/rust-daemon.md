@@ -78,6 +78,7 @@ pub trait ConfirmationAuthority {
     fn authorize(&self, archive: &ArchiveIdentity) -> Result<ReadPrefix>;
 }
 ArchiveReader::confirmed_snapshot(&dyn ConfirmationAuthority) -> Result<Snapshot>
+ArchiveReader::confirmed_snapshot_extending(&dyn ConfirmationAuthority, ReadPrefix) -> Result<Snapshot>
 ArchiveReader::sub_snapshot(&Snapshot, ReadPrefix) -> Result<Snapshot>
 ArchiveQueries::from_snapshot(ArchiveReader, Snapshot) -> Result<ArchiveQueries>
 ```
@@ -94,18 +95,24 @@ Storage verifies inputs, exact JSONL prefix, sequence/byte count/digest, known
 records and referenced/transitive content. It does not read the current marker
 for these operations. Its deterministic v1 marker identity describes the selected
 prefix, without manufacturing a commit receipt. Historical positions must be
-beneath a trusted covering snapshot and independently verify both prefixes.
+beneath a trusted covering snapshot, and one pass verifies both prefixes: the
+covering prefix completely, and the position as an exact record boundary within
+it, by sequence and running digest.
 
 Publication order is explicit:
 
 1. The coordinator authenticates Status and rejects regression/conflict.
-2. The archive port validates the actual bytes and extension of the previous
-   confirmed prefix, outside a ledger transaction.
+2. The archive port validates the actual bytes of the reply's prefix and, in the
+   same pass, that it exactly extends the previous confirmed prefix, outside a
+   ledger transaction.
 3. A guarded FULL-synchronous ledger transaction saves worker status and the
    separate `confirmed_read` boundary/provenance, checking ownership generation
    and admission revision again.
 4. The application constructs and swaps a verified projection from that saved
-   boundary, then wakes shared observers. No handler publishes candidate reads.
+   boundary, then wakes shared observers. It reuses the snapshot the port's own
+   verification produced for that boundary, for at most 16 runs; a changed
+   boundary or a restarted daemon verifies again. No handler publishes
+   candidate reads.
 
 Ledger version 5 preserves admission/service identity and migrates versions 1–4.
 Version 5 adds the optional operator release; older binaries refuse it.
