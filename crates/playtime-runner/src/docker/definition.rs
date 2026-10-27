@@ -35,14 +35,20 @@ pub struct CompactionDefinition {
     pub inventory: String,
 }
 impl CompactionDefinition {
-    /// Defaults installed when a recipe switches harness. The inventory ends
-    /// with the recipe's own workshop capacity, so the frozen text is exactly
-    /// what the model receives.
+    /// Defaults installed when a recipe switches harness. The protocol ends with
+    /// the recipe's own run limits and the inventory with its workshop capacity,
+    /// so the frozen text is exactly what the model receives.
     pub fn new(recipe: &Recipe) -> Self {
+        let l = &recipe.parameters.limits;
         let w = &recipe.parameters.workshop;
         Self {
             settings: Default::default(),
-            protocol: include_str!("continuous-protocol-v1.txt").into(),
+            protocol: format!(
+                "{}\nThis run lasts at most {} or {} generated tokens, whichever comes first. Calling finish_run ends it early; unused time and tokens are not carried over.\n",
+                include_str!("continuous-protocol-v1.txt"),
+                duration(l.wall_seconds.get()),
+                grouped(l.generated_tokens.get()),
+            ),
             inventory: format!(
                 "{}\nYour workspace /work holds {} and {} files and directories; /tmp holds {}. Both last until the run ends.\n",
                 include_str!("continuous-inventory-v1.txt"),
@@ -52,6 +58,26 @@ impl CompactionDefinition {
             ),
         }
     }
+}
+/// The largest whole unit of time, such as 30 minutes, or exact seconds.
+fn duration(seconds: u64) -> String {
+    let (count, unit) = [(3600, "hour"), (60, "minute")]
+        .into_iter()
+        .find(|&(size, _)| seconds >= size && seconds.is_multiple_of(size))
+        .map_or((seconds, "second"), |(size, unit)| (seconds / size, unit));
+    format!("{count} {unit}{}", if count == 1 { "" } else { "s" })
+}
+/// A count with thousands separators, such as 300,000.
+fn grouped(count: u64) -> String {
+    let digits = count.to_string();
+    let mut text = String::new();
+    for (index, digit) in digits.char_indices() {
+        if index > 0 && (digits.len() - index).is_multiple_of(3) {
+            text.push(',');
+        }
+        text.push(digit);
+    }
+    text
 }
 /// The largest whole binary unit, such as 16 MiB, or exact bytes.
 fn binary_size(bytes: u64) -> String {

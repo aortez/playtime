@@ -133,6 +133,34 @@ fn saved_continuous_definition_selects_only_its_exact_native_profile() {
             .inventory
             .contains("/work holds 1536 KiB and 900 files")
     );
+    // The frozen protocol states this recipe's own run limits after the shared text.
+    assert_eq!(
+        profile.config.protocol,
+        definition.compaction.as_ref().unwrap().protocol
+    );
+    assert!(
+        profile
+            .config
+            .protocol
+            .starts_with(include_str!("../src/docker/continuous-protocol-v1.txt"))
+    );
+    let mut protocol = |wall: u64, tokens: u64| {
+        curiosity.parameters.limits.wall_seconds = wall.try_into().unwrap();
+        curiosity.parameters.limits.generated_tokens = tokens.try_into().unwrap();
+        playtime_runner::docker::CompactionDefinition::new(&curiosity).protocol
+    };
+    assert!(protocol(1800, 300_000).ends_with(
+        "\nThis run lasts at most 30 minutes or 300,000 generated tokens, whichever comes first. Calling finish_run ends it early; unused time and tokens are not carried over.\n"
+    ));
+    for (wall, tokens, limits) in [
+        (600, 100_000, "10 minutes or 100,000 generated"),
+        (60, 999, "1 minute or 999 generated"),
+        (7200, 1_000_000, "2 hours or 1,000,000 generated"),
+        (90, 1_500, "90 seconds or 1,500 generated"),
+        (1, 12_345, "1 second or 12,345 generated"),
+    ] {
+        assert!(protocol(wall, tokens).contains(&format!("at most {limits} tokens")));
+    }
     assert_eq!(
         profile.config.parameters,
         definition.recipe.parameters.common()
