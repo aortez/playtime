@@ -1,5 +1,5 @@
 //! Immutable authoring snapshot. It contains no host bindings or credentials.
-use super::{IMAGE_LOCK, MODEL_LOCK, Recipe};
+use super::{IMAGE_LOCK, MODEL_LOCK, RETURN_OVERHEAD_MS, Recipe};
 use crate::{Error, Result};
 use playtime_protocol::api::{
     CONTINUOUS_COMPACTION_V1, MEMENTO_TURNS_V1, RecipeDefinition, RecipeId, RecipeSeed,
@@ -36,19 +36,24 @@ pub struct CompactionDefinition {
 }
 impl CompactionDefinition {
     /// Defaults installed when a recipe switches harness. The protocol ends with
-    /// the recipe's own run limits and the inventory with its workshop capacity,
-    /// so the frozen text is exactly what the model receives.
+    /// the recipe's own run limits and the inventory with its workshop capacity
+    /// and command limits, so the frozen text is exactly what the model receives.
     pub fn new(recipe: &Recipe) -> Self {
-        let w = &recipe.parameters.workshop;
+        let (w, l) = (&recipe.parameters.workshop, &recipe.parameters.limits);
+        // The bridge stops a command at its cap less the Docker return allowance,
+        // and kills the command's process group with it.
+        let command_ms = (l.command_seconds.get() * 1000).saturating_sub(RETURN_OVERHEAD_MS);
         Self {
             settings: Default::default(),
             protocol: Self::protocol(recipe, true),
             inventory: format!(
-                "{}\nYour workspace /work holds {} and {} files and directories; /tmp holds {}. Both last until the run ends.\n",
+                "{}\nYour workspace /work holds {} and {} files and directories; /tmp holds {}. Both last until the run ends.\nA command still running after {} is stopped, along with any background jobs it started. The tool results of one response share {}; longer output is shortened. For longer work, start a background job with its output in a file, such as `python3 job.py > job.log 2>&1 &`, and check the file in later calls.\n",
                 include_str!("continuous-inventory-v1.txt"),
                 binary_size(w.workspace_bytes.get()),
                 recipe.workspace_entries,
                 binary_size(w.tmp_bytes.get()),
+                duration(command_ms / 1000),
+                binary_size(l.output_bytes.get()),
             ),
         }
     }

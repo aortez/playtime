@@ -643,3 +643,19 @@ and a stop request keeps its 180-second timeout.
 Units created by an older daemon fail the new property check, so let runs finish
 before upgrading the daemon. Wire formats, archives, worker bundles and goldens are
 unchanged.
+
+## Continuous command limits in the inventory
+
+The frozen continuous inventory now ends with the recipe's command limits, for
+example "A command still running after 57 seconds is stopped, along with any
+background jobs it started. The tool results of one response share 16 KiB;
+longer output is shortened." It then suggests starting longer jobs in the
+background with their output in a file. The time is `command_seconds` less the
+3-second return allowance, which is when the bridge kills the command's process
+group. Before, the inventory said only that commands have a timeout and an
+output limit. In a 10-minute gpt-oss trial, the model's later renders ran into
+the limit it hadn't been told. Like the workspace line, the paragraph is written
+at selection, so saved recipes that already selected continuous keep the
+inventory they froze. Schemas, the controller and its goldens are unchanged. The
+default definition is part of the native capability digest, so a new daemon
+refuses older worker bundles; rebuild the bundle.
