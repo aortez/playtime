@@ -364,11 +364,16 @@ impl Compaction {
             .push(tool_message(name, result));
     }
     /// A parse failure is retried, as in memento, for a work request or a
-    /// summary. Other summary failures still stop.
+    /// summary. A summary answered with tool calls is retried the same way:
+    /// parsed or not, the model took the summary request for a work turn.
+    /// Other summary failures still stop.
     pub fn retries(&self, view: View<'_>, error: &ModelFailure) -> bool {
-        matches!(error, ModelFailure::Parse(_))
-            && matches!(self.stage, Stage::Ready | Stage::Summary { .. })
-            && view.facts.parse_streak <= crate::compaction::TOOL_PARSE_RETRIES
+        let recoverable = match error {
+            ModelFailure::Parse(_) => matches!(self.stage, Stage::Ready | Stage::Summary { .. }),
+            ModelFailure::SummaryTools(_) => matches!(self.stage, Stage::Summary { .. }),
+            _ => false,
+        };
+        recoverable && view.facts.parse_streak <= crate::compaction::TOOL_PARSE_RETRIES
     }
     pub fn retry(&mut self) {
         if let Stage::Summary { .. } = self.stage {

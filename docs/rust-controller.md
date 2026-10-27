@@ -279,11 +279,17 @@ failed work request with memento's notice, minus its budget sentence, and that
 notice opens the next exchange. More than `TOOL_PARSE_RETRIES` (5) consecutive
 failures stop the run with `tool_parse_retry_limit`; admission enforces that
 bound independently of the policy. A summary request the server can't parse
-counts toward the same streak. It gets no notice: the policy plans the same
-compaction again, so every check sees the failed attempt's charge, and the new
-plan keeps the compaction's ordinal. With no total ceiling, each failure's full
-unknown charge bounds the total through the run budget. Until 2026-10-26 (UTC),
-the first failure stopped a continuous run.
+counts toward the same streak, and so does a summary answered with tool calls
+although the request offered none (`model_error` kind `summary_tools`): the
+response settles with its known usage first, the attempt leaves the measured
+context unchanged, as a parse failure does, and the streak resets only when a
+summary is accepted. Neither gets a notice: the policy plans the same compaction
+again, so every check sees the failed attempt's charge, and the new plan keeps
+the compaction's ordinal. Exceeding the streak with tool-call summaries stops
+with `compaction_failed`. With no total ceiling, each failure's charge bounds
+the total through the run budget. Until 2026-10-26 (UTC), the first failure
+stopped a continuous run, and until 2026-10-27 so did the first tool-call
+summary.
 Neither ceiling resets the allocation or the charge for a failed request. Partial tools
 are observations only. A fresh session retains workspace/memento and optionally
 bounded evidence, but no prior messages, measured context, processes, or `/tmp`.

@@ -112,6 +112,23 @@ impl Run {
             finish_reason: "stop".into(),
         });
     }
+    /// A response the server measured: its prompt counts the request's bytes,
+    /// so a later estimate can extend a measured prefix.
+    fn measured(&mut self, message: Value) {
+        let request = self.request();
+        let prompt = serde_json::to_vec(&json!({"messages":request.messages,"tools":request.tools}))
+            .unwrap()
+            .len() as u64;
+        self.complete(Outcome::ModelCompleted {
+            response: ModelResponse {
+                done: true,
+                generated_tokens: Some(10),
+                prompt_tokens: Some(prompt),
+                message,
+            },
+            finish_reason: "stop".into(),
+        });
+    }
     fn until_summary(&mut self) {
         for n in 0..20 {
             if self.request().purpose == RequestPurpose::Compaction {
@@ -512,7 +529,21 @@ fn summary_requires_normal_completion_final_content_and_progress() {
             }
         };
         let allowance = run.request().maximum_tokens;
+        let summary = run.request().clone();
         run.complete(outcome);
+        if case == 6 {
+            // A summary's tool calls never execute; the compaction is planned
+            // again instead of stopping.
+            assert!(
+                !run.dispatches
+                    .iter()
+                    .any(|e| matches!(e.kind, EffectKind::Tool(_)))
+            );
+            assert_eq!(run.request().purpose, RequestPurpose::Compaction);
+            assert_eq!(run.request().messages, summary.messages);
+            assert!(!run.records.iter().any(|r| r.kind == "compaction_applied"));
+            continue;
+        }
         let result = run.finalize();
         assert_eq!(
             result.reason,
@@ -521,7 +552,6 @@ fn summary_requires_normal_completion_final_content_and_progress() {
                 3 => StopReason::CompactionNoProgress,
                 4 => StopReason::MissingTokenUsage,
                 5 => StopReason::IncompleteModelResponse,
-                6 => StopReason::CompactionFailed,
                 _ => StopReason::TokenLimitExceededByServer,
             }
         );
@@ -1380,4 +1410,140 @@ fn without_finish_run_a_run_continues_until_its_budget_runs_out() {
     assert_eq!(result.reason, StopReason::TokenLimit);
     assert_eq!(result.usage.known_generated_tokens, 40);
     assert!(run.records.iter().any(|r| r.kind == "workspace_captured"));
+}
+
+fn tool_call_summary() -> Value {
+    json!({"role":"assistant","content":"","tool_calls":[{"function":{"name":"exec","arguments":{"command":"ls -lh random_walk.png"}}}]})
+}
+
+#[test]
+fn tool_call_summaries_plan_the_same_compaction_again_until_the_consecutive_limit() {
+    let plans = |run: &Run| {
+        run.records
+            .iter()
+            .filter(|r| r.kind == "compaction_planned")
+            .map(|r| r.data.clone())
+            .collect::<Vec<_>>()
+    };
+    let errors = |run: &Run| {
+        run.records
+            .iter()
+            .filter(|r| r.kind == "model_error")
+            .map(|r| r.data.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut run = Run::new(config());
+    for n in 0..20 {
+        if run.request().purpose == RequestPurpose::Compaction {
+            break;
+        }
+        run.measured(
+            json!({"role":"assistant","content":format!("Exchange {n}: {}", "x".repeat(3000))}),
+        );
+    }
+    let summary = run.request().clone();
+    assert_eq!(summary.purpose, RequestPurpose::Compaction);
+    run.measured(tool_call_summary());
+    // The settled attempt is charged its known usage, not an allowance, and
+    // the failure is not a tool parse error.
+    let error = errors(&run).pop().unwrap();
+    assert_eq!(error["error"]["kind"], "summary_tools");
+    assert_eq!(error["recovery_allowed"], true);
+    assert_eq!(error["token_budget_charge"], 0);
+    assert_eq!(error["consecutive_errors"], 1);
+    assert_eq!(error["tool_parse_errors"], 0);
+    assert!(
+        run.records
+            .iter()
+            .filter(|r| r.kind == "request_settled")
+            .all(|r| r.data["usage"]["status"] == "known")
+    );
+    let retry = run.request().clone();
+    assert_eq!(retry.purpose, RequestPurpose::Compaction);
+    assert_eq!(retry.messages, summary.messages);
+    let [first, again] = &plans(&run)[..] else {
+        panic!("the retry plans the compaction once more")
+    };
+    assert_eq!(again["ordinal"], first["ordinal"]);
+    assert_eq!(again["before_messages"], first["before_messages"]);
+    // The attempt leaves the measured context alone, so the retry is planned
+    // from the basis the first attempt had.
+    assert_eq!(first["estimate_basis"], "server_usage_plus_new_bytes");
+    for field in [
+        "estimate_basis",
+        "input_bound",
+        "summary_estimate_basis",
+        "summary_input_bound",
+    ] {
+        assert_eq!(again[field], first[field], "{field}");
+    }
+    run.response(json!({"role":"assistant","content":"Summary: checked results."}));
+    let applied = &run
+        .records
+        .iter()
+        .rev()
+        .find(|r| r.kind == "compaction_applied")
+        .unwrap()
+        .data;
+    assert_eq!(applied["ordinal"], first["ordinal"]);
+    let work = run.request();
+    assert_eq!(work.purpose, RequestPurpose::Work);
+    assert!(!work.messages.contains(&notice()));
+    // An accepted summary ends the streak: a work request's parse failure
+    // right after it, and the next compaction's failure, each open a new one.
+    run.complete(parse_failure());
+    let error = errors(&run).pop().unwrap();
+    assert_eq!(error["error"]["kind"], "parse");
+    assert_eq!(error["consecutive_errors"], 1);
+    assert_eq!(error["recovery_allowed"], true);
+    run.until_summary();
+    run.response(tool_call_summary());
+    let error = errors(&run).pop().unwrap();
+    assert_eq!(error["consecutive_errors"], 1);
+    assert_eq!(error["recovery_allowed"], true);
+    assert_eq!(run.request().purpose, RequestPurpose::Compaction);
+
+    // Unparseable and tool-call summaries share one streak, and a sixth
+    // consecutive failure stops the run with the last failure's reason.
+    let mut run = Run::new(config());
+    run.until_summary();
+    for n in 0..=compaction::TOOL_PARSE_RETRIES {
+        assert_eq!(run.request().purpose, RequestPurpose::Compaction);
+        if n % 2 == 0 {
+            run.complete(parse_failure());
+        } else {
+            run.response(tool_call_summary());
+        }
+    }
+    let result = run.finalize();
+    assert_eq!(result.reason, StopReason::CompactionFailed);
+    assert_eq!(result.usage.unknown_requests, 3);
+    let errors = errors(&run);
+    assert_eq!(
+        errors
+            .iter()
+            .map(|e| e["recovery_allowed"].clone())
+            .collect::<Vec<_>>(),
+        [vec![json!(true); 5], vec![json!(false)]].concat()
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .map(|e| e["consecutive_errors"].clone())
+            .collect::<Vec<_>>(),
+        (1..=6).map(|n| json!(n)).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .map(|e| e["error"]["kind"].clone())
+            .collect::<Vec<_>>(),
+        ["parse", "summary_tools"].repeat(3)
+    );
+    assert_eq!(plans(&run).len(), 6);
+    assert!(
+        plans(&run)
+            .iter()
+            .all(|plan| plan["ordinal"] == plans(&run)[0]["ordinal"])
+    );
 }

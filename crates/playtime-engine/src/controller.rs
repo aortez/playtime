@@ -1028,7 +1028,12 @@ impl<I: IdSource> Controller<I> {
             },
             totals: self.totals.into(),
         });
-        self.parse_streak = 0;
+        // A summary that settles can still be rejected below, and that
+        // rejection counts toward the same streak as an unparseable one, so
+        // only an accepted summary ends a summary streak.
+        if request.purpose != RequestPurpose::Compaction {
+            self.parse_streak = 0;
+        }
         self.emit("request_settled", json!({"call": self.model_calls,
             "usage": GenerationUsage::Known { generated_tokens: tokens }, "totals": UsageSummary::from(self.totals)}));
         self.emit(
@@ -1043,15 +1048,25 @@ impl<I: IdSource> Controller<I> {
         }
         // Measured context belongs to the actual admitted input plus response,
         // never to history rewritten by a policy. Admission estimates the next
-        // proposal against this verified prefix.
-        let mut observed_messages = request.messages;
-        observed_messages.push(response.message.clone());
-        self.context.observe(
-            &observed_messages,
-            &request.tools,
-            response.prompt_tokens,
-            tokens,
-        );
+        // proposal against this verified prefix. A summary answered with tool
+        // calls is planned again unchanged, like one the server can't parse,
+        // so that attempt leaves the measurement alone and the retry keeps
+        // the basis the first attempt had.
+        let summary_tools = self.config.compaction.is_some()
+            && request.purpose == RequestPurpose::Compaction
+            && response.message["tool_calls"]
+                .as_array()
+                .is_some_and(|calls| !calls.is_empty());
+        if !summary_tools {
+            let mut observed_messages = request.messages;
+            observed_messages.push(response.message.clone());
+            self.context.observe(
+                &observed_messages,
+                &request.tools,
+                response.prompt_tokens,
+                tokens,
+            );
+        }
         if let Some(allow_finish_run) = self
             .config
             .compaction
@@ -1071,14 +1086,17 @@ impl<I: IdSource> Controller<I> {
                 self.stop(StopReason::CompactionFailed);
                 return;
             }
-            if request.purpose == RequestPurpose::Compaction
-                && response.message["tool_calls"]
-                    .as_array()
-                    .is_some_and(|calls| !calls.is_empty())
-            {
-                self.diagnostic("summary returned tools despite its tool-free contract");
-                self.stop(StopReason::CompactionFailed);
+            if summary_tools {
+                // The attempt's known usage is already charged and nothing is
+                // reserved, so this records the failure and asks the policy
+                // whether to plan the compaction again.
+                self.model_error(ModelFailure::SummaryTools(
+                    "summary returned tools despite its tool-free contract".into(),
+                ));
                 return;
+            }
+            if request.purpose == RequestPurpose::Compaction {
+                self.parse_streak = 0;
             }
             match crate::compaction::validate_tools(
                 &response.message,
@@ -1146,6 +1164,11 @@ impl<I: IdSource> Controller<I> {
         if matches!(error, ModelFailure::Parse(_)) {
             self.parse_errors += 1;
             self.session_parse_errors += 1;
+        }
+        if matches!(
+            error,
+            ModelFailure::Parse(_) | ModelFailure::SummaryTools(_)
+        ) {
             self.parse_streak += 1;
         }
         let decision = self.policy.recovery(
