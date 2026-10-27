@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::{Inference, Proposal, View};
 use crate::{
     ModelFailure, ModelResponse, ToolRequest,
-    compaction::{CompactionConfig, CompactionSettings},
+    compaction::{CompactionConfig, CompactionSettings, summary_transcript},
     context::{ContextWindow, encoded_size, fit_tool_result_with_notice, message, tool_message},
 };
 
@@ -92,9 +92,26 @@ impl Compaction {
     }
 
     fn summary_messages(&self, older: usize, config: &CompactionConfig) -> Vec<Value> {
-        let mut messages = self.messages(&self.exchanges[..older], self.summary.as_ref());
-        messages.push(message("user", &config.settings.instructions));
-        messages
+        if config.settings.recent_exchanges == 0 {
+            // Nothing bounds the bytes of the next response, which joins this
+            // summary. Extending the measured work prefix lets server usage
+            // bound the request instead.
+            let mut messages = self.messages(&self.exchanges[..older], self.summary.as_ref());
+            messages.push(message("user", &config.settings.instructions));
+            return messages;
+        }
+        let conversation: Vec<Value> = self.exchanges[..older]
+            .iter()
+            .flat_map(|exchange| exchange.messages.clone())
+            .collect();
+        summary_transcript(
+            &config.prompt,
+            self.summary
+                .as_ref()
+                .and_then(|summary| summary["content"].as_str()),
+            &conversation,
+            &config.settings.instructions,
+        )
     }
 
     fn summary_fits_after_next_work(&self, config: &CompactionConfig) -> bool {

@@ -139,9 +139,15 @@ sizes are checked by the runtime independently of policy; full bounded results
 and explicit shortening notices remain in observations. Memento keeps its
 existing result-fitting semantics and wording.
 
-Summarization receives the original instructions/task, preceding derived summary,
-older complete exchanges and the compaction instructions, with no tools. It
-uses the same request IDs, global call/seed ordering, timeout, wall deadline and
+A summary request has no tools and two messages. A short system message replaces
+the agent's protocol and inventory. One user message gives, as text, the task,
+the message holding any previous summary, each message of the older complete
+exchanges and the compaction instructions. Responses appear as their content and
+tool calls, marked `[agent]` and `[agent calls NAME]`; results are marked
+`[NAME result]` and notices `[controller]`. Thinking is left out. With no
+retained suffix, the request instead extends the measured work conversation with
+the instructions, the continuation the work reserve covers. Summarization uses
+the same request IDs, global call/seed ordering, timeout, wall deadline and
 generation allocation. The policy requires enough remaining generation for the
 summary cap and another work call; runtime admission independently reserves the
 work allowance. Compaction cannot grant itself a separate budget.

@@ -58,10 +58,10 @@
     {
       "call": 5,
       "context_basis": "input_bytes",
-      "context_input_bound": 6830,
+      "context_input_bound": 6979,
       "context_reserve": 1024,
       "maximum_tokens": 256,
-      "messages_sha256": "372057801b39360bb673dc89ba8207f47fea81816e8f2a51f4c203b9606cae29",
+      "messages_sha256": "5c74e70d6e0a654b09c3a1d6c89706f69f08e6ae6303db39203e5bad53e34f0a",
       "purpose": "compaction",
       "request_id": "r5",
       "sampling_seed": 1046,
@@ -94,10 +94,10 @@
     {
       "call": 8,
       "context_basis": "input_bytes",
-      "context_input_bound": 7186,
+      "context_input_bound": 7294,
       "context_reserve": 1024,
       "maximum_tokens": 256,
-      "messages_sha256": "40a0da78d8cabf1d283e5848006924d89ff79a6845408ba0600186e6c62120f0",
+      "messages_sha256": "05124b12af3b9d3ae465bab405c72e916afd199f30d37c6fc9344464d45683eb",
       "purpose": "compaction",
       "request_id": "r8",
       "sampling_seed": 1049,
@@ -130,10 +130,10 @@
     {
       "call": 11,
       "context_basis": "input_bytes",
-      "context_input_bound": 7186,
+      "context_input_bound": 7294,
       "context_reserve": 1024,
       "maximum_tokens": 256,
-      "messages_sha256": "5e7179f6d8ebc10185e04238bc9b493d1f99f187e252714078ada64eb30d0372",
+      "messages_sha256": "6379e1fe6ebbd8f67c4873a6ff1f0ad7f12fc758133a79e0a2a75bbb9f4736da",
       "purpose": "compaction",
       "request_id": "r11",
       "sampling_seed": 1052,
@@ -313,7 +313,7 @@
           "r2"
         ],
         "summary_estimate_basis": "input_bytes",
-        "summary_input_bound": 6830
+        "summary_input_bound": 6979
       },
       "kind": "compaction_planned",
       "sequence": 22
@@ -353,7 +353,7 @@
           "r4"
         ],
         "summary_estimate_basis": "input_bytes",
-        "summary_input_bound": 7186
+        "summary_input_bound": 7294
       },
       "kind": "compaction_planned",
       "sequence": 36
@@ -393,7 +393,7 @@
           "r7"
         ],
         "summary_estimate_basis": "input_bytes",
-        "summary_input_bound": 7186
+        "summary_input_bound": 7294
       },
       "kind": "compaction_planned",
       "sequence": 50

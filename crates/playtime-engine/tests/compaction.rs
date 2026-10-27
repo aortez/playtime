@@ -203,7 +203,19 @@ fn repeated_compaction_preserves_root_recent_exchanges_previous_summary_and_glob
         run.until_summary();
         let request = run.request().clone();
         assert!(request.tools.is_empty());
-        assert_eq!(request.messages[..2], root);
+        // The conversation arrives as text under the summarizer's own system
+        // message, with the task but not the agent's protocol.
+        let [system, transcript] = &request.messages[..] else {
+            panic!("a summary request is one transcript")
+        };
+        assert_eq!(
+            *system,
+            json!({"role":"system","content":compaction::SUMMARY_SYSTEM})
+        );
+        let transcript = transcript["content"].as_str().unwrap();
+        assert!(transcript.starts_with(&format!("The agent's task:\n{}", run.config.prompt)));
+        assert!(transcript.ends_with(&format!("\n\n{}", run.config.settings.instructions)));
+        assert!(!transcript.contains(&run.config.protocol));
         assert_eq!(request.maximum_tokens, 256);
         assert_eq!(request.context_reserve, 1024);
         let started = &run
@@ -370,22 +382,32 @@ fn reported_usage_compacts_before_the_next_summary_outgrows_context() {
                 // into the summary and make its byte estimate exceed the bound.
                 // With retention one this is the entire current prefix, which
                 // must not borrow today's measurement for tomorrow's summary.
-                let mut deferred = plan["before_messages"].as_array().unwrap().clone();
-                deferred.truncate(deferred.len() - usize::from(retained) + 1);
-                deferred.push(json!({"role":"user","content":run.config.settings.instructions}));
+                // The plan's work input is the root, any earlier summary, the
+                // exchanges and the next request's notice. Each exchange but
+                // the run's first is a continue notice and a reply.
+                let before = plan["before_messages"].as_array().unwrap();
+                let earlier = before[root.len()]["content"]
+                    .as_str()
+                    .filter(|s| s.starts_with("Derived memory"));
+                let start = root.len() + usize::from(earlier.is_some());
+                let mut deferred = before[start..before.len() - 1].to_vec();
+                deferred.truncate(deferred.len() - 2 * (usize::from(retained) - 1));
+                let deferred = compaction::summary_transcript(
+                    &run.config.prompt,
+                    earlier,
+                    &deferred,
+                    &run.config.settings.instructions,
+                );
                 let deferred_bytes = serde_json::to_vec(&json!({"messages":deferred,"tools":[]}))
                     .unwrap()
                     .len() as u64;
                 assert!(
                     deferred_bytes + request.maximum_tokens + request.context_reserve >= context
                 );
-                assert_eq!(&request.messages[..root.len()], &root);
+                let transcript = serde_json::to_string(&request.messages).unwrap();
+                assert!(transcript.contains(&run.config.prompt));
                 for n in work_calls - u64::from(retained) + 1..=work_calls {
-                    assert!(!request.messages.iter().any(|m| {
-                        m["content"]
-                            .as_str()
-                            .is_some_and(|s| s.starts_with(&format!("Exchange {n}:")))
-                    }));
+                    assert!(!transcript.contains(&format!("Exchange {n}:")));
                 }
                 if summaries > 0 {
                     assert!(request.messages.iter().any(|m| {
@@ -984,8 +1006,10 @@ fn compaction_with_pending_notice() -> Run {
 fn a_pending_retry_notice_stays_out_of_the_summary_and_opens_the_next_exchange() {
     let mut run = compaction_with_pending_notice();
     let summary = run.request().clone();
-    let instructions = summary.messages.len() - 1;
-    assert_eq!(summary.messages[instructions - 1]["role"], "assistant");
+    let transcript = summary.messages[1]["content"].as_str().unwrap();
+    // The summary ends with the agent's last older reply, not the notice.
+    let last = transcript.rsplit("\n\n[").next().unwrap();
+    assert!(last.starts_with("agent]\n"), "{last}");
     let plan = run
         .records
         .iter()
@@ -1086,6 +1110,110 @@ fn summary_parse_failures_plan_the_same_compaction_again_until_the_consecutive_l
         plans(&run)
             .iter()
             .all(|plan| plan["ordinal"] == plans(&run)[0]["ordinal"])
+    );
+}
+
+#[test]
+fn summary_requests_carry_the_older_conversation_as_text_without_thinking_or_tools() {
+    let mut run = Run::new(config());
+    // A prose reply is followed by a continue notice, which opens the next
+    // exchange.
+    run.response(json!({"role":"assistant","thinking":"hidden plan","content":"Looking around."}));
+    for n in 1..20 {
+        if run.request().purpose == RequestPurpose::Compaction {
+            break;
+        }
+        run.response(
+            json!({"role":"assistant","thinking":format!("hidden plan {n} {}", "y".repeat(1500)),
+            "tool_calls":[call("exec",json!({"command":format!("echo \"step {n}\"")}))]}),
+        );
+        run.complete(Outcome::Tool(
+            json!({"exit_code":0,"stdout":format!("step {n}\n"),"stderr":"","timed_out":false}),
+        ));
+    }
+    let request = run.request().clone();
+    assert_eq!(request.purpose, RequestPurpose::Compaction);
+    assert!(request.tools.is_empty());
+    let [system, transcript] = &request.messages[..] else {
+        panic!("a summary request is one transcript")
+    };
+    assert_eq!(
+        *system,
+        json!({"role":"system","content":compaction::SUMMARY_SYSTEM})
+    );
+    assert_eq!(transcript.as_object().unwrap().len(), 2);
+    let text = transcript["content"].as_str().unwrap();
+    assert!(!text.contains("hidden plan"));
+    assert!(!text.contains(&run.config.protocol) && !text.contains(&run.config.inventory));
+    let plan = &run
+        .records
+        .iter()
+        .find(|r| r.kind == "compaction_planned")
+        .unwrap()
+        .data;
+    let before = plan["before_messages"].as_array().unwrap();
+    let result = before.iter().find(|m| m["role"] == "tool").unwrap();
+    let opening = format!(
+        "The agent's task:\n{}\n\nThe older conversation, oldest first:\n\n[agent]\nLooking around.\n\n[controller]\n{}\n\n[agent calls exec]\n{{\"command\":\"echo \\\"step 1\\\"\"}}\n\n[exec result]\n{}\n\n[agent calls exec]\n",
+        run.config.prompt,
+        continue_notice()["content"].as_str().unwrap(),
+        result["content"].as_str().unwrap()
+    );
+    assert!(text.starts_with(&opening), "{text}");
+
+    // The next summary carries the previous one in the message that replaced
+    // it.
+    run.response(json!({"role":"assistant","content":"Summary one."}));
+    for n in 20..40 {
+        if run.request().purpose == RequestPurpose::Compaction {
+            break;
+        }
+        run.response(
+            json!({"role":"assistant","content":format!("Exchange {n}: {}", "x".repeat(1500))}),
+        );
+    }
+    let request = run.request();
+    assert_eq!(request.purpose, RequestPurpose::Compaction);
+    let text = request.messages[1]["content"].as_str().unwrap();
+    assert!(text.starts_with(&format!(
+        "The agent's task:\n{}\n\nDerived memory from earlier exchanges; retain uncertainty and verify claims:\nSummary one.\n\nThe older conversation, oldest first:\n\n",
+        run.config.prompt
+    )));
+    assert!(text.ends_with(&format!("\n\n{}", run.config.settings.instructions)));
+}
+
+#[test]
+fn without_retained_exchanges_a_summary_extends_the_measured_work_prefix() {
+    let mut config = config();
+    config.settings.recent_exchanges = 0;
+    let mut run = Run::new(config);
+    let work = run.request().clone();
+    let reply = json!({"role":"assistant","thinking":"plan","content":"tiny"});
+    run.complete(Outcome::ModelCompleted {
+        response: ModelResponse {
+            done: true,
+            generated_tokens: Some(10),
+            prompt_tokens: Some(12000),
+            message: reply.clone(),
+        },
+        finish_reason: "stop".into(),
+    });
+    let summary = run.request();
+    assert_eq!(summary.purpose, RequestPurpose::Compaction);
+    let instructions = json!({"role":"user","content":run.config.settings.instructions});
+    assert_eq!(
+        summary.messages,
+        [work.messages, vec![reply, instructions]].concat()
+    );
+    let plan = &run
+        .records
+        .iter()
+        .find(|r| r.kind == "compaction_planned")
+        .unwrap()
+        .data;
+    assert_eq!(
+        plan["summary_estimate_basis"],
+        "server_usage_plus_new_bytes"
     );
 }
 
