@@ -774,4 +774,10 @@ archive and HTTP schemas and the runner's bounds are unchanged. The reviewed
 approval: gpt-oss:120b generates about 30 tokens per second on the Framework,
 so an 8,192-token call can take close to 300 s, and the 180 s set for the 20B
 stopped a 60-minute run after one 163 s think; the controller's timeout stop
-is not recoverable. Existing archives keep their frozen recipes.
+is not recoverable. Existing archives keep their frozen recipes. The
+protocol's compaction evidence validator accepts the `calibrated_bytes`
+basis; the first calibrated `compaction_applied` record of a live run was
+rejected as malformed before that, which stopped the archive writer while
+the worker stayed alive and the daemon reconciled. The scripted continuous
+gate's summary responses now carry a prompt measurement so that gate
+publishes calibrated records through the validator.

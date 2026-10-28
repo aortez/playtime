@@ -67,24 +67,28 @@ impl ContinuousProfile {
             initial_workspace: base.config().initial_workspace,
             initial_files: Default::default(),
         };
-        let completed = |message| CompletedResponse {
+        let completed = |message, prompt_tokens| CompletedResponse {
             response: ModelResponse {
                 message,
                 done: true,
                 generated_tokens: Some(32),
-                prompt_tokens: None,
+                prompt_tokens,
             },
             finish_reason: "stop".into(),
         };
         let work_responses = if model.is_none() {
-            (0..48).map(|_| completed(json!({"role":"assistant","tool_calls":[{"function":{"name":"exec","arguments":{"command":"bash /work/seeds/continuous-probe.sh"}}}]})))
-                .chain(std::iter::once(completed(json!({"role":"assistant","tool_calls":[{"function":{"name":"finish_run","arguments":{"summary":"The counter survived compaction and continuity-ok was recorded."}}}]}))))
+            (0..48).map(|_| completed(json!({"role":"assistant","tool_calls":[{"function":{"name":"exec","arguments":{"command":"bash /work/seeds/continuous-probe.sh"}}}]}), None))
+                .chain(std::iter::once(completed(json!({"role":"assistant","tool_calls":[{"function":{"name":"finish_run","arguments":{"summary":"The counter survived compaction and continuity-ok was recorded."}}}]}), None)))
                 .collect()
         } else {
             Vec::new()
         };
+        // Summary responses carry a prompt measurement, so the replacement
+        // after each compaction is estimated at a calibrated rate and the
+        // archive validator sees calibrated compaction records in this gate.
+        // Work responses stay unmeasured, which keeps the work trigger on bytes.
         let summary_responses = if model.is_none() {
-            (0..48).map(|_| completed(json!({"role":"assistant","content":"Continue calling bash /work/seeds/continuous-probe.sh until continuity-ok, then finish_run. The owned workshop and counter must persist."}))).collect()
+            (0..48).map(|_| completed(json!({"role":"assistant","content":"Continue calling bash /work/seeds/continuous-probe.sh until continuity-ok, then finish_run. The owned workshop and counter must persist."}), Some(2048))).collect()
         } else {
             Vec::new()
         };
