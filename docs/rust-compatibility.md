@@ -769,4 +769,9 @@ estimate. A summary that the run's measured pace says cannot finish before the
 wall deadline is deferred with a `compaction_deferred` record while work still
 fits. The policy facts gain the remaining wall time, model time and known
 tokens. The compaction contract golden adds the two fields; memento goldens,
-archive and HTTP schemas, limits and recipes are unchanged.
+archive and HTTP schemas and the runner's bounds are unchanged. The reviewed
+`curiosity` recipe raises `model_seconds` from 180 to 400 with the owner's
+approval: gpt-oss:120b generates about 30 tokens per second on the Framework,
+so an 8,192-token call can take close to 300 s, and the 180 s set for the 20B
+stopped a 60-minute run after one 163 s think; the controller's timeout stop
+is not recoverable. Existing archives keep their frozen recipes.

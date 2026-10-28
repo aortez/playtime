@@ -98,7 +98,11 @@ generated_tokens = 300000
 tokens_per_call = 8192
 handoff_tokens = 8192
 context_tokens = 65536
-model_seconds = 180
+# 400 s per model call: gpt-oss:120b generates about 30 tokens/s on the
+# Framework, so an 8,192-token call can take close to 300 s with its prompt
+# processing. The 180 s set for the 20B stopped a run after one 163 s think.
+# Raised with the owner's approval on 2026-10-28.
+model_seconds = 400
 command_seconds = 60
 output_bytes = 16384
 memento_bytes = 8192

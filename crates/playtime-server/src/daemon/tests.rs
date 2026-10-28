@@ -455,7 +455,7 @@ fn the_reviewed_catalog_loads_the_owner_confirmed_curiosity_recipe() {
             limits.tool_parse_retries,
             limits.tool_parse_error_limit.map(|n| n.get()),
         ),
-        (180, 60, 16_384, 8192, 64 << 20, 5, Some(8))
+        (400, 60, 16_384, 8192, 64 << 20, 5, Some(8))
     );
     assert_eq!(
         (
