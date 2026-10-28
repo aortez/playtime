@@ -126,11 +126,31 @@ stops rather than silently reducing retention.
 With recent exchanges retained, the policy also checks the summary that would
 be needed after one more work exchange. Its older prefix is already known: the
 next response and its tool results will stay in the retained suffix. This check
-uses encoded bytes, since dropping that suffix invalidates the next server
+starts from encoded bytes, since dropping that suffix invalidates the next server
 measurement. If the deferred summary would not fit with its instructions, output
 allowance and safety margin, compaction runs at the current boundary while its
 smaller input still fits. With no retained suffix, summarization extends the
 measured prefix and the ordinary work reserve covers that continuation.
+
+Bytes stand in for tokens only until the server has measured a prompt. Every
+accepted response reports the prompt tokens of the exact input it answered, and
+the context window keeps the densest such measurement as its calibration. Input
+that cannot borrow a measured prefix, which is a summary transcript, the
+replacement after a summary and any rewritten history, is then estimated at
+that rate with a 3/2 density allowance, never above its byte count, and its
+request records say `calibrated_bytes` instead of `input_bytes`. The reserves
+stay in bytes. Before calibration, gpt-oss summary transcripts ran about 3.7
+bytes per token, so the byte bound overstated them almost fourfold and the
+replacement check once stopped a run whose replacement was 12% of its context.
+
+A summary that cannot finish before the wall deadline produces nothing and is
+charged its whole allowance, so the policy defers it. When work still fits and
+only the deferred-summary check fails, it estimates the summary from the run's
+measured pace: all model time so far against known generated tokens, prompt
+processing assumed ten times faster than generation, and the whole summary cap
+generated. If that exceeds the remaining wall time, it records
+`compaction_deferred` and proposes the next work request instead. Work that no
+longer fits still compacts, whatever the time left.
 
 The aggregate retained result allowance is the existing `output_bytes` setting
 for this policy, divided among a response's tool calls. Each needs at least 512

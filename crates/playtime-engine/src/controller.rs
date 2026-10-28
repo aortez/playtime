@@ -99,6 +99,9 @@ pub struct Controller<I: IdSource> {
     last_capture: Option<Capture>,
     workspace_started: bool,
     context: ContextWindow,
+    /// Time inside dispatched model requests, for the policy's pace estimates.
+    model_ms: u64,
+    request_started_ms: Option<u64>,
     turns: u32,
     handoff_attempts: u32,
     current_handoff: bool,
@@ -279,6 +282,8 @@ impl<I: IdSource> Controller<I> {
             last_capture: None,
             workspace_started: false,
             context: ContextWindow::default(),
+            model_ms: 0,
+            request_started_ms: None,
             turns: 0,
             handoff_attempts: 0,
             current_handoff: false,
@@ -441,6 +446,15 @@ impl<I: IdSource> Controller<I> {
                     .is_some_and(|effect| effect.id == effect_id) =>
             {
                 self.pending_started = true;
+                if matches!(
+                    self.pending.as_ref(),
+                    Some(Effect {
+                        kind: EffectKind::Model(_),
+                        ..
+                    })
+                ) {
+                    self.request_started_ms = Some(self.now_ms);
+                }
                 if let Some((id, _, started)) = &mut self.publication
                     && *id == effect_id
                 {
@@ -688,7 +702,17 @@ impl<I: IdSource> Controller<I> {
         };
     }
 
+    /// Charge a dispatched model request's wall time to the model, once.
+    fn account_model_time(&mut self) {
+        if let Some(started) = self.request_started_ms.take() {
+            self.model_ms = self
+                .model_ms
+                .saturating_add(self.now_ms.saturating_sub(started));
+        }
+    }
+
     fn settle_unknown(&mut self) {
+        self.account_model_time();
         if let Some(reserved_tokens) = self.reservation.take() {
             let request = self
                 .request_context
@@ -1021,6 +1045,7 @@ impl<I: IdSource> Controller<I> {
             return;
         }
         self.reservation = None;
+        self.account_model_time();
         self.control(ControlFact::RequestSettled {
             request: self.request_context.clone().unwrap(),
             usage: GenerationUsage::Known {
@@ -1057,6 +1082,10 @@ impl<I: IdSource> Controller<I> {
             && response.message["tool_calls"]
                 .as_array()
                 .is_some_and(|calls| !calls.is_empty());
+        // The prompt count measures the exact input, whatever the policy does
+        // with the prefix afterwards, so it always calibrates the byte estimates.
+        self.context
+            .calibrate(&request.messages, &request.tools, response.prompt_tokens);
         if !summary_tools {
             let mut observed_messages = request.messages;
             observed_messages.push(response.message.clone());

@@ -23,7 +23,10 @@ impossible combinations, including prompt-only edits with inherited settings.
 The trigger is an upper bound. Each work request must also leave the work
 reserve: the safety margin, summary cap, instruction message and output limit.
 The summary after the next exchange must fit too, and that check estimates the
-request from its bytes. Either check can fire first. In the saved-recipe gate's
+request from its bytes, at the token rate the server's prompt measurements have
+calibrated once there is one. Either check can fire first. Near the wall
+deadline, a summary that the run's measured pace says cannot finish is deferred
+and work continues; see the [controller](rust-controller.md). In the saved-recipe gate's
 16,384-token context, with summaries still sent as conversations, the summary
 check started compaction near 5,300 projected tokens, well before the 75%
 trigger at 12,288. With Curiosity's 65,536-token context and an 8,192-token

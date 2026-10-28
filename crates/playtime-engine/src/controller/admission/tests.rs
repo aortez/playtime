@@ -224,18 +224,27 @@ fn context_fit_uses_actual_proposed_messages_and_verified_measurements() {
     let mut controller = idle();
     accept_calls(&mut controller, Vec::new());
     // Rewritten history cannot borrow the low server measurement of a different
-    // prefix. The estimator must count these actual proposed bytes again.
+    // prefix. The estimator must count these actual proposed bytes again, at
+    // the token rate the accepted call measured.
     let mut proposal = inference(false);
     proposal.messages[0]["content"] = json!("changed prefix");
     let expected = encoded_size(&json!({"messages": proposal.messages, "tools": proposal.tools}));
+    let calibration = controller
+        .context
+        .calibration()
+        .expect("accepted call calibrates");
     controller
         .apply_proposal(Proposal::Infer(proposal))
         .unwrap();
     let EffectKind::Model(request) = &controller.pending().unwrap().kind else {
         panic!()
     };
-    assert_eq!(request.context_basis, "input_bytes");
-    assert_eq!(request.context_input_bound, expected);
+    assert_eq!(request.context_basis, "calibrated_bytes");
+    assert_eq!(
+        request.context_input_bound,
+        crate::context::calibrated_tokens(expected, Some(calibration)).0
+    );
+    assert!(request.context_input_bound < expected);
 
     let mut controller = idle();
     accept_calls(&mut controller, Vec::new());

@@ -750,3 +750,23 @@ each page validates the complete committed prefix, so a projection's passes
 still grow with the log. Archive and event schemas, the storage limits and every
 verification rule are unchanged; a history page still validates its complete
 covering prefix.
+
+## Calibrated context estimates and deferred summaries (2026-10-28)
+
+The continuous policy counted every byte of unmeasured input as a token: the
+summary transcript, the replacement after a summary and rewritten history. On
+the Framework's 120B runs that overstated gpt-oss text almost fourfold, fired
+compaction at 48% of a 65,536-token context and then stopped a 30-minute run
+after its first summary because a 29,402-byte replacement, about 8K real
+tokens, failed the 29,144-token room check by 258 bytes. The context window now
+keeps the densest server prompt measurement of the run and estimates unmeasured
+input at that rate with a 3/2 density allowance, never above the byte count;
+reserves stay in bytes. Request records and the `compaction_planned`,
+`compaction_applied` and `compaction_deferred` records report the basis
+`calibrated_bytes` once a measurement exists; `compaction_planned` adds the
+`calibration` it used and `compaction_applied` adds `input_bytes` beside its
+estimate. A summary that the run's measured pace says cannot finish before the
+wall deadline is deferred with a `compaction_deferred` record while work still
+fits. The policy facts gain the remaining wall time, model time and known
+tokens. The compaction contract golden adds the two fields; memento goldens,
+archive and HTTP schemas, limits and recipes are unchanged.

@@ -10,8 +10,20 @@ use super::{Inference, Proposal, View};
 use crate::{
     ModelFailure, ModelResponse, ToolRequest,
     compaction::{CompactionConfig, CompactionSettings, summary_transcript},
-    context::{ContextWindow, encoded_size, fit_tool_result_with_notice, message, tool_message},
+    context::{
+        Calibration, ContextWindow, calibrated_tokens, encoded_size, fit_tool_result_with_notice,
+        message, tool_message,
+    },
 };
+
+/// Prompt processing is assumed at least this many times faster than
+/// generation when estimating how long a summary request takes. Batched
+/// prompt evaluation ran 18 to 30 times faster than decoding on the Framework
+/// and on an RTX 4090; the estimate stays pessimistic without hardware facts.
+const PROMPT_SPEEDUP: u64 = 10;
+/// Pace estimates need this much measured model time before a compaction can
+/// be deferred for lack of wall time.
+const PACE_MINIMUM_MS: u64 = 10_000;
 
 /// Memento's parse retry notice, without its budget sentence: continuous
 /// requests carry no budget.
@@ -114,7 +126,11 @@ impl Compaction {
         )
     }
 
-    fn summary_fits_after_next_work(&self, config: &CompactionConfig) -> bool {
+    fn summary_fits_after_next_work(
+        &self,
+        config: &CompactionConfig,
+        calibration: Option<Calibration>,
+    ) -> bool {
         let retained = usize::from(config.settings.recent_exchanges);
         if retained == 0 {
             // Without a retained suffix, summarization extends the measured
@@ -124,15 +140,19 @@ impl Compaction {
         // The next response and its tool results will be retained. Only the
         // oldest retained exchange can enter the next summary, and it is
         // already complete. Dropping the new suffix invalidates the next
-        // server measurement, even if this prefix is measured right now.
+        // server measurement, even if this prefix is measured right now, so
+        // the transcript is estimated from its bytes at the calibrated rate.
         let older = (self.exchanges.len() + 1).saturating_sub(retained);
         let messages = self.summary_messages(older, config);
-        encoded_size(&json!({"messages":messages,"tools":[]}))
-            .saturating_add(config.settings.summary_tokens.get())
-            .saturating_add(CompactionSettings::safety_margin(
-                config.parameters.limits.context_tokens.get(),
-            ))
-            < config.parameters.limits.context_tokens.get()
+        calibrated_tokens(
+            encoded_size(&json!({"messages":messages,"tools":[]})),
+            calibration,
+        )
+        .0
+        .saturating_add(config.settings.summary_tokens.get())
+        .saturating_add(CompactionSettings::safety_margin(
+            config.parameters.limits.context_tokens.get(),
+        )) < config.parameters.limits.context_tokens.get()
     }
 
     pub fn initial_fits(&self, config: &CompactionConfig) -> bool {
@@ -180,10 +200,9 @@ impl Compaction {
             .get()
             .min(view.facts.remaining_tokens);
         let projected = input.saturating_add(allowance);
-        if projected < config.settings.threshold(limits.context_tokens.get())
-            && projected.saturating_add(config.work_reserve()) < limits.context_tokens.get()
-            && self.summary_fits_after_next_work(config)
-        {
+        let fits_now = projected < config.settings.threshold(limits.context_tokens.get())
+            && projected.saturating_add(config.work_reserve()) < limits.context_tokens.get();
+        if fits_now && self.summary_fits_after_next_work(config, view.facts.calibration) {
             return Proposal::Infer(Inference {
                 purpose: RequestPurpose::Work,
                 messages,
@@ -226,6 +245,25 @@ impl Compaction {
                 "summary request cannot fit with its allowance and safety margin",
             );
         }
+        // Work still fits; only the summary after the next exchange would not.
+        // When the wall deadline cannot hold the summary itself, that summary
+        // would be cut, so the run keeps working instead.
+        if fits_now && let Some(expected_ms) = self.summary_cannot_finish(view, summary_input) {
+            self.observations.push_back((
+                "compaction_deferred",
+                json!({
+                    "ordinal":self.ordinal + 1, "remaining_ms":view.facts.remaining_ms,
+                    "expected_summary_ms":expected_ms, "summary_input_bound":summary_input,
+                    "summary_estimate_basis":summary_basis, "model_ms":view.facts.model_ms,
+                    "known_generated_tokens":view.facts.known_generated_tokens
+                }),
+            ));
+            return Proposal::Infer(Inference {
+                purpose: RequestPurpose::Work,
+                messages,
+                tools,
+            });
+        }
         let before_bytes = encoded_size(&json!({"messages":messages, "tools":tools}));
         self.ordinal += 1;
         self.observations.push_back(("compaction_planned", json!({
@@ -236,7 +274,7 @@ impl Compaction {
             "before_messages":messages,
             "input_bound":input, "estimate_basis":basis, "projected_tokens":projected,
             "summary_input_bound":summary_input, "summary_estimate_basis":summary_basis,
-            "progress_input_bytes":before_bytes
+            "progress_input_bytes":before_bytes, "calibration":view.facts.calibration
         })));
         self.stage = Stage::Summary {
             older,
@@ -247,6 +285,30 @@ impl Compaction {
             messages: summary_messages,
             tools: Vec::new(),
         })
+    }
+
+    /// The milliseconds a summary request is expected to take, when the run's
+    /// measured pace says it cannot finish before the wall deadline. The
+    /// generation pace counts all model time against known tokens, and the
+    /// summary is assumed to use its whole cap, so the estimate errs long.
+    fn summary_cannot_finish(&self, view: View<'_>, summary_input: u64) -> Option<u64> {
+        let facts = view.facts;
+        if facts.model_ms < PACE_MINIMUM_MS || facts.known_generated_tokens == 0 {
+            return None;
+        }
+        let ms_per_token = facts.model_ms.div_ceil(facts.known_generated_tokens);
+        let config = view.config.compaction.as_ref().unwrap();
+        let expected_ms = summary_input
+            .saturating_mul(ms_per_token)
+            .div_ceil(PROMPT_SPEEDUP)
+            .saturating_add(
+                config
+                    .settings
+                    .summary_tokens
+                    .get()
+                    .saturating_mul(ms_per_token),
+            );
+        (facts.remaining_ms < expected_ms).then_some(expected_ms)
     }
 
     fn reject(&mut self, reason: StopReason, detail: &'static str) -> Proposal {
@@ -287,10 +349,13 @@ impl Compaction {
             let after = self.work_messages(&self.exchanges[older..], Some(&candidate));
             let tools = crate::compaction::tools(config.settings.allow_finish_run);
             // Rewritten input cannot borrow server measurements of another
-            // prefix. Compare before/after bytes on the same conservative basis.
+            // prefix. Progress compares before/after bytes on the same basis;
+            // the room for continued work uses the calibrated token estimate.
             let after_bytes = encoded_size(&json!({"messages":after,"tools":tools}));
+            let (after_tokens, after_basis) =
+                calibrated_tokens(after_bytes, view.facts.calibration);
             let projected =
-                after_bytes.saturating_add(config.parameters.limits.tokens_per_call.get());
+                after_tokens.saturating_add(config.parameters.limits.tokens_per_call.get());
             if after_bytes >= before_bytes
                 || projected
                     >= config
@@ -309,9 +374,9 @@ impl Compaction {
                 "compaction_applied",
                 json!({
                     "ordinal":self.ordinal, "summary_request_id":request_id,
-                    "summary":summary, "messages":after, "input_bound":after_bytes,
-                    "estimate_basis":"input_bytes", "projected_tokens":projected,
-                    "before_progress_input_bytes":before_bytes
+                    "summary":summary, "messages":after, "input_bound":after_tokens,
+                    "estimate_basis":after_basis, "input_bytes":after_bytes,
+                    "projected_tokens":projected, "before_progress_input_bytes":before_bytes
                 }),
             ));
             self.exchanges.drain(..older);

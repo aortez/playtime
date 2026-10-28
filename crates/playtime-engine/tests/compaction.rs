@@ -358,7 +358,7 @@ fn reported_usage_compacts_before_the_next_summary_outgrows_context() {
         let reserve = run.request().context_reserve;
         let mut work_calls = 0;
         let mut summaries = 0;
-        for _ in 0..40 {
+        for _ in 0..120 {
             assert_eq!(run.controller.terminal_decision(), None);
             let request = run.request().clone();
             let prompt_tokens =
@@ -374,7 +374,7 @@ fn reported_usage_compacts_before_the_next_summary_outgrows_context() {
                 )
             } else {
                 assert_eq!(request.purpose, RequestPurpose::Compaction);
-                assert_eq!(request.context_basis, "input_bytes");
+                assert_eq!(request.context_basis, "calibrated_bytes");
                 assert!(
                     request.context_input_bound + request.maximum_tokens + request.context_reserve
                         < context
@@ -418,6 +418,20 @@ fn reported_usage_compacts_before_the_next_summary_outgrows_context() {
                 let deferred_bytes = serde_json::to_vec(&json!({"messages":deferred,"tools":[]}))
                     .unwrap()
                     .len() as u64;
+                // Estimated at the measured eight bytes per token, assumed
+                // half again as dense: three tokens per sixteen bytes.
+                let calibration = &plan["calibration"];
+                let (rate_tokens, rate_bytes) = (
+                    calibration["tokens"].as_u64().unwrap(),
+                    calibration["bytes"].as_u64().unwrap(),
+                );
+                assert!((rate_tokens * 8).abs_diff(rate_bytes) * 100 <= rate_bytes);
+                let deferred_tokens = (deferred_bytes * rate_tokens * 3)
+                    .div_ceil(rate_bytes * 2)
+                    .min(deferred_bytes);
+                assert!(
+                    deferred_tokens + request.maximum_tokens + request.context_reserve >= context
+                );
                 assert!(
                     deferred_bytes + request.maximum_tokens + request.context_reserve >= context
                 );
@@ -463,6 +477,148 @@ fn reported_usage_compacts_before_the_next_summary_outgrows_context() {
         );
         assert!(!run.records.iter().any(|r| r.kind == "compaction_rejected"));
         run.response(finish(json!("done after repeated measured compaction")));
+        assert_eq!(run.finalize().reason, StopReason::AgentFinished);
+    }
+}
+
+impl Run {
+    /// A measured response that took `ms` of model time and generated
+    /// `generated` tokens, as the controller's pace facts will see it.
+    fn measured_slow(&mut self, message: Value, ms: u64, generated: u64) {
+        let request = self.request().clone();
+        let prompt = serde_json::to_vec(&json!({"messages":request.messages,"tools":request.tools}))
+            .unwrap()
+            .len() as u64;
+        let effect = self.dispatch();
+        self.now += ms;
+        self.input(Input::Complete {
+            effect_id: effect.id,
+            outcome: Outcome::ModelCompleted {
+                response: ModelResponse {
+                    done: true,
+                    generated_tokens: Some(generated),
+                    prompt_tokens: Some(prompt.div_ceil(8)),
+                    message,
+                },
+                finish_reason: "stop".into(),
+            },
+        });
+    }
+}
+
+/// The Framework's second 120B run died here: the summary succeeded, but the
+/// replacement's bytes, counted as tokens, left no room for continued work,
+/// although its real size was a small fraction of the context.
+#[test]
+fn calibrated_replacement_keeps_working_where_bytes_would_stop() {
+    let mut config = config();
+    config.parameters.limits.generated_tokens = 50000.try_into().unwrap();
+    config.parameters.limits.log_bytes = 8000000.try_into().unwrap();
+    let context = config.parameters.limits.context_tokens.get();
+    let threshold = (context * u64::from(config.settings.trigger_percent)).div_ceil(100);
+    let allowance = config.parameters.limits.tokens_per_call.get();
+    let mut run = Run::new(config);
+    let reserve = run.request().context_reserve;
+    // Sparse prose measured at eight bytes per token; two retained exchanges
+    // alone outweigh the room the byte basis would leave.
+    let mut calls = 0;
+    while run.request().purpose == RequestPurpose::Work {
+        calls += 1;
+        assert!(calls < 60, "no compaction was planned");
+        run.measured_slow(
+            json!({"role":"assistant","content":format!("Exchange {calls}: {}", "x".repeat(6000))}),
+            1,
+            10,
+        );
+    }
+    run.measured_slow(
+        json!({"role":"assistant","content":"Summary 1: checked results, next action."}),
+        1,
+        10,
+    );
+    let applied = run
+        .records
+        .iter()
+        .find(|r| r.kind == "compaction_applied")
+        .expect("compaction applied")
+        .data
+        .clone();
+    assert_eq!(applied["estimate_basis"], "calibrated_bytes");
+    let bytes = applied["input_bytes"].as_u64().unwrap();
+    let tokens = applied["input_bound"].as_u64().unwrap();
+    assert!(
+        bytes + allowance >= threshold,
+        "bytes {bytes} would have failed the trigger"
+    );
+    assert!(tokens + allowance < threshold && tokens + allowance + reserve < context);
+    let expected = (bytes * 3).div_ceil(16);
+    assert!(
+        tokens.abs_diff(expected) * 100 <= expected,
+        "{tokens} vs {expected}"
+    );
+    assert!(!run.records.iter().any(|r| r.kind == "compaction_rejected"));
+    assert_eq!(run.controller.terminal_decision(), None);
+    assert_eq!(run.request().purpose, RequestPurpose::Work);
+    assert_eq!(run.request().context_basis, "calibrated_bytes");
+    run.response(finish(json!("done after a calibrated compaction")));
+    assert_eq!(run.finalize().reason, StopReason::AgentFinished);
+}
+
+/// A summary planned with less wall time than it needs is cut by the deadline
+/// and produces nothing, so a run whose work still fits keeps working instead.
+#[test]
+fn compaction_is_deferred_when_the_summary_cannot_finish_before_the_deadline() {
+    for late in [false, true] {
+        let mut config = config();
+        config.parameters.limits.generated_tokens = 50000.try_into().unwrap();
+        config.parameters.limits.log_bytes = 8000000.try_into().unwrap();
+        if late {
+            // A 100 s run. Every call below takes 2 s for 20 tokens, so by the
+            // time the summary check fires, a summary of the transcript at ten
+            // times that pace, plus its whole cap, no longer fits the rest.
+            config.parameters.limits.wall_seconds = 100.try_into().unwrap();
+        }
+        let mut run = Run::new(config);
+        let mut calls = 0;
+        let deferred = loop {
+            calls += 1;
+            assert!(calls < 60, "neither a compaction nor a deferral happened");
+            let deferred = run
+                .records
+                .iter()
+                .find(|r| r.kind == "compaction_deferred")
+                .map(|r| r.data.clone());
+            if deferred.is_some() || run.request().purpose == RequestPurpose::Compaction {
+                break deferred;
+            }
+            run.measured_slow(
+                json!({"role":"assistant","content":format!("Exchange {calls}: {}", "x".repeat(3000))}),
+                2000,
+                20,
+            );
+        };
+        assert_eq!(run.controller.terminal_decision(), None);
+        if late {
+            let deferred = deferred.expect("late compaction is deferred");
+            assert_eq!(run.request().purpose, RequestPurpose::Work);
+            let remaining = deferred["remaining_ms"].as_u64().unwrap();
+            let expected = deferred["expected_summary_ms"].as_u64().unwrap();
+            assert!(remaining < 100_000 && expected > remaining, "{deferred}");
+            assert_eq!(deferred["summary_estimate_basis"], "calibrated_bytes");
+            assert_eq!(deferred["ordinal"], 1);
+            assert!(deferred["model_ms"].as_u64().unwrap() >= 10_000);
+            assert!(!run.records.iter().any(|r| r.kind == "compaction_planned"));
+        } else {
+            assert!(deferred.is_none(), "{deferred:?}");
+            assert_eq!(run.request().purpose, RequestPurpose::Compaction);
+            run.measured_slow(
+                json!({"role":"assistant","content":"Summary 1: checked results, next action."}),
+                2000,
+                20,
+            );
+            assert_eq!(run.request().purpose, RequestPurpose::Work);
+        }
+        run.response(finish(json!("done")));
         assert_eq!(run.finalize().reason, StopReason::AgentFinished);
     }
 }
