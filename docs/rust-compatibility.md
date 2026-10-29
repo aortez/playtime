@@ -780,4 +780,11 @@ basis; the first calibrated `compaction_applied` record of a live run was
 rejected as malformed before that, which stopped the archive writer while
 the worker stayed alive and the daemon reconciled. The scripted continuous
 gate's summary responses now carry a prompt measurement so that gate
-publishes calibrated records through the validator.
+publishes calibrated records through the validator. A review of the branch
+extended its deferral workload past the first deferral: the run stopped at its
+context limit at 60 s of 100 s, because deferred work had outgrown the summary
+and the reserve then forced one that could not fit. Deferral now applies to the
+trigger alone; the reserve and the summary-fit checks compact whatever the time
+left, and the pace behind the deferral estimate counts only requests with known
+usage, since failed calls added model time without tokens and made the
+hour-long run's estimate about three times too long.

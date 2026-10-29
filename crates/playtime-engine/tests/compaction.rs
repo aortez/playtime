@@ -612,10 +612,13 @@ fn late_summaries_are_deferred_past_the_percentage_trigger_too() {
     assert_eq!(run.finalize().reason, StopReason::AgentFinished);
 }
 
-/// A summary planned with less wall time than it needs is cut by the deadline
-/// and produces nothing, so a run whose work still fits keeps working instead.
+/// The summary-fit check starts compaction in this 16K context well before
+/// the trigger. Such a compaction is planned even when the run's pace says
+/// the summary cannot finish before the wall deadline, since deferring it
+/// would let the next exchange outgrow the summary. Only the trigger defers,
+/// as the two tests below show.
 #[test]
-fn compaction_is_deferred_when_the_summary_cannot_finish_before_the_deadline() {
+fn summary_fit_compactions_are_planned_whatever_the_time_left() {
     for late in [false, true] {
         let mut config = config();
         config.parameters.limits.generated_tokens = 50000.try_into().unwrap();
@@ -626,48 +629,117 @@ fn compaction_is_deferred_when_the_summary_cannot_finish_before_the_deadline() {
             // times that pace, plus its whole cap, no longer fits the rest.
             config.parameters.limits.wall_seconds = 100.try_into().unwrap();
         }
+        let context = config.parameters.limits.context_tokens.get();
+        let summary_cap = config.settings.summary_tokens.get();
+        let threshold = (context * u64::from(config.settings.trigger_percent)).div_ceil(100);
         let mut run = Run::new(config);
         let mut calls = 0;
-        let deferred = loop {
+        while run.request().purpose == RequestPurpose::Work {
             calls += 1;
-            assert!(calls < 60, "neither a compaction nor a deferral happened");
-            let deferred = run
-                .records
-                .iter()
-                .find(|r| r.kind == "compaction_deferred")
-                .map(|r| r.data.clone());
-            if deferred.is_some() || run.request().purpose == RequestPurpose::Compaction {
-                break deferred;
-            }
+            assert!(calls < 60, "no compaction was planned");
             run.measured_slow(
                 json!({"role":"assistant","content":format!("Exchange {calls}: {}", "x".repeat(3000))}),
                 2000,
                 20,
             );
-        };
-        assert_eq!(run.controller.terminal_decision(), None);
-        if late {
-            let deferred = deferred.expect("late compaction is deferred");
-            assert_eq!(run.request().purpose, RequestPurpose::Work);
-            let remaining = deferred["remaining_ms"].as_u64().unwrap();
-            let expected = deferred["expected_summary_ms"].as_u64().unwrap();
-            assert!(remaining < 100_000 && expected > remaining, "{deferred}");
-            assert_eq!(deferred["summary_estimate_basis"], "calibrated_bytes");
-            assert_eq!(deferred["ordinal"], 1);
-            assert!(deferred["model_ms"].as_u64().unwrap() >= 10_000);
-            assert!(!run.records.iter().any(|r| r.kind == "compaction_planned"));
-        } else {
-            assert!(deferred.is_none(), "{deferred:?}");
-            assert_eq!(run.request().purpose, RequestPurpose::Compaction);
-            run.measured_slow(
-                json!({"role":"assistant","content":"Summary 1: checked results, next action."}),
-                2000,
-                20,
-            );
-            assert_eq!(run.request().purpose, RequestPurpose::Work);
         }
+        assert_eq!(run.controller.terminal_decision(), None);
+        assert!(!run.records.iter().any(|r| r.kind == "compaction_deferred"));
+        let planned = run
+            .records
+            .iter()
+            .find(|r| r.kind == "compaction_planned")
+            .expect("compaction planned")
+            .data
+            .clone();
+        // The summary-fit check fired, not the trigger.
+        assert!(
+            planned["projected_tokens"].as_u64().unwrap() < threshold,
+            "{planned}"
+        );
+        if late {
+            // At 100 ms per token the summary needs more than the time left,
+            // and it is planned anyway.
+            let summary_input = planned["summary_input_bound"].as_u64().unwrap();
+            let expected_ms = summary_input * 100 / 10 + summary_cap * 100;
+            assert!(
+                expected_ms > 100_000 - run.now,
+                "{planned} at {} ms",
+                run.now
+            );
+        }
+        run.measured_slow(
+            json!({"role":"assistant","content":"Summary 1: checked results, next action."}),
+            2000,
+            20,
+        );
+        assert_eq!(run.request().purpose, RequestPurpose::Work);
         run.response(finish(json!("done")));
         assert_eq!(run.finalize().reason, StopReason::AgentFinished);
+    }
+}
+
+/// Deferral never gives up the next summary. Extending the late case above
+/// past its first deferral once stopped the run with `ContextLimit` at 60 s
+/// of 100 s: deferred work outgrew the summary, and the reserve then forced
+/// one that could not fit. Deferral applies to the percentage trigger alone;
+/// the reserve and the summary-fit checks compact whatever the time left, so
+/// the run reaches the wall with a summary always within reach.
+#[test]
+fn deferral_keeps_the_next_summary_within_reach() {
+    for early_trigger in [false, true] {
+        let mut config = config();
+        config.parameters.limits.generated_tokens = 50000.try_into().unwrap();
+        config.parameters.limits.log_bytes = 8000000.try_into().unwrap();
+        config.parameters.limits.wall_seconds = 100.try_into().unwrap();
+        let (bytes, generated) = if early_trigger {
+            // The trigger fires first, far from the reserve, and five tokens
+            // per 2 s call says no summary can finish, so work is deferred
+            // from the first trigger until the summary-fit check fires.
+            config.settings.trigger_percent = 20;
+            (2000, 5)
+        } else {
+            (3000, 20)
+        };
+        let mut run = Run::new(config);
+        let mut calls = 0;
+        while run.controller.terminal_decision().is_none() {
+            calls += 1;
+            assert!(calls < 80, "the run never reached the wall");
+            if run.now >= 100_000 {
+                run.input(Input::Tick);
+                continue;
+            }
+            let message = if run.request().purpose == RequestPurpose::Compaction {
+                json!({"role":"assistant","content":format!("Summary at {} ms: checked results, next action.", run.now)})
+            } else {
+                json!({"role":"assistant","content":format!("Exchange {calls}: {}", "x".repeat(bytes))})
+            };
+            run.measured_slow(message, 2000, generated);
+        }
+        let kinds: Vec<String> = run
+            .records
+            .iter()
+            .filter(|r| r.kind.starts_with("compaction_"))
+            .map(|r| r.kind.clone())
+            .collect();
+        let result = run.finalize();
+        assert_eq!(result.reason, StopReason::WallLimit, "{kinds:?}");
+        assert!(
+            !kinds.iter().any(|k| k == "compaction_rejected"),
+            "{kinds:?}"
+        );
+        assert!(kinds.iter().any(|k| k == "compaction_applied"), "{kinds:?}");
+        if early_trigger {
+            let deferred = kinds
+                .iter()
+                .position(|k| k == "compaction_deferred")
+                .expect("work was deferred");
+            assert!(
+                kinds[deferred..].iter().any(|k| k == "compaction_planned"),
+                "{kinds:?}"
+            );
+        }
     }
 }
 

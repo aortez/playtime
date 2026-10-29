@@ -206,7 +206,9 @@ impl Compaction {
             projected.saturating_add(config.work_reserve()) < limits.context_tokens.get();
         let fits_now =
             projected < config.settings.threshold(limits.context_tokens.get()) && fits_reserve;
-        if fits_now && self.summary_fits_after_next_work(config, view.facts.calibration) {
+        let summary_fits_after_work =
+            self.summary_fits_after_next_work(config, view.facts.calibration);
+        if fits_now && summary_fits_after_work {
             return Proposal::Infer(Inference {
                 purpose: RequestPurpose::Work,
                 messages,
@@ -218,9 +220,12 @@ impl Compaction {
             .len()
             .saturating_sub(usize::from(config.settings.recent_exchanges));
         // A summary the wall deadline cannot hold produces nothing and is
-        // charged its whole allowance, so while work still fits with its
-        // reserve the run keeps working past the trigger instead.
-        if older > 0 && fits_reserve {
+        // charged its whole allowance, so the run keeps working past the
+        // trigger instead. Only the trigger is deferred: the reserve and the
+        // summary-fit checks compact whatever the time left, since deferring
+        // them lets work outgrow the summary, and the run would then stop at
+        // its context limit with nothing to recover.
+        if older > 0 && fits_reserve && summary_fits_after_work {
             let summary_messages = self.summary_messages(older, config);
             let (summary_input, summary_basis) = context.estimate(&summary_messages, &[]);
             if let Some(expected_ms) = self.summary_cannot_finish(view, summary_input) {
@@ -299,8 +304,9 @@ impl Compaction {
 
     /// The milliseconds a summary request is expected to take, when the run's
     /// measured pace says it cannot finish before the wall deadline. The
-    /// generation pace counts all model time against known tokens, and the
-    /// summary is assumed to use its whole cap, so the estimate errs long.
+    /// generation pace counts the model time of requests with known usage
+    /// against their tokens, and the summary is assumed to use its whole cap,
+    /// so the estimate errs long.
     fn summary_cannot_finish(&self, view: View<'_>, summary_input: u64) -> Option<u64> {
         let facts = view.facts;
         if facts.model_ms < PACE_MINIMUM_MS || facts.known_generated_tokens == 0 {

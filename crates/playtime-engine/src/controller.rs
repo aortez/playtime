@@ -712,7 +712,9 @@ impl<I: IdSource> Controller<I> {
     }
 
     fn settle_unknown(&mut self) {
-        self.account_model_time();
+        // Unknown usage has no tokens to pace against, so its time stays out
+        // of the generation pace instead of slowing it.
+        self.request_started_ms = None;
         if let Some(reserved_tokens) = self.reservation.take() {
             let request = self
                 .request_context
