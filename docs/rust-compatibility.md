@@ -767,7 +767,7 @@ reserves stay in bytes. Request records and the `compaction_planned`,
 `calibration` it used and `compaction_applied` adds `input_bytes` beside its
 estimate. A summary that the run's measured pace says cannot finish before the
 wall deadline is deferred with a `compaction_deferred` record while work still
-fits. The policy facts gain the remaining wall time, model time and known
+fits with its reserve, past the trigger if need be. The policy facts gain the remaining wall time, model time and known
 tokens. The compaction contract golden adds the two fields; memento goldens,
 archive and HTTP schemas and the runner's bounds are unchanged. The reviewed
 `curiosity` recipe raises `model_seconds` from 180 to 400 with the owner's

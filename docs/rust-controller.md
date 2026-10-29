@@ -144,13 +144,15 @@ bytes per token, so the byte bound overstated them almost fourfold and the
 replacement check once stopped a run whose replacement was 12% of its context.
 
 A summary that cannot finish before the wall deadline produces nothing and is
-charged its whole allowance, so the policy defers it. When work still fits and
-only the deferred-summary check fails, it estimates the summary from the run's
-measured pace: all model time so far against known generated tokens, prompt
-processing assumed ten times faster than generation, and the whole summary cap
-generated. If that exceeds the remaining wall time, it records
+charged its whole allowance, so the policy defers it. The trigger is where
+compaction is preferred; the work reserve is where work stops fitting. When
+the trigger or the deferred-summary check would start compaction but the next
+work request still fits with its reserve, the policy estimates the summary from
+the run's measured pace: all model time so far against known generated tokens,
+prompt processing assumed ten times faster than generation, and the whole
+summary cap generated. If that exceeds the remaining wall time, it records
 `compaction_deferred` and proposes the next work request instead. Work that no
-longer fits still compacts, whatever the time left.
+longer fits with its reserve still compacts, whatever the time left.
 
 The aggregate retained result allowance is the existing `output_bytes` setting
 for this policy, divided among a response's tool calls. Each needs at least 512

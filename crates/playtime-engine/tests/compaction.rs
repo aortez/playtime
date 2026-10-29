@@ -564,6 +564,54 @@ fn calibrated_replacement_keeps_working_where_bytes_would_stop() {
     assert_eq!(run.finalize().reason, StopReason::AgentFinished);
 }
 
+/// The Framework's hour-long run lost its last 64 s to a summary planned at
+/// the percentage trigger. Past the trigger, work that still fits with its
+/// reserve continues while a summary could not finish.
+#[test]
+fn late_summaries_are_deferred_past_the_percentage_trigger_too() {
+    let mut config = config();
+    config.parameters.limits.generated_tokens = 50000.try_into().unwrap();
+    config.parameters.limits.log_bytes = 8000000.try_into().unwrap();
+    config.parameters.limits.wall_seconds = 100.try_into().unwrap();
+    // The trigger comes early; the reserve bound is far away.
+    config.settings.trigger_percent = 20;
+    let context = config.parameters.limits.context_tokens.get();
+    let threshold = (context * 20).div_ceil(100);
+    let mut run = Run::new(config);
+    let reserve = run.request().context_reserve;
+    let mut calls = 0;
+    let deferred = loop {
+        calls += 1;
+        assert!(calls < 40, "neither a compaction nor a deferral happened");
+        if let Some(record) = run.records.iter().find(|r| r.kind == "compaction_deferred") {
+            break record.data.clone();
+        }
+        assert_eq!(
+            run.request().purpose,
+            RequestPurpose::Work,
+            "compaction was planned"
+        );
+        // Four seconds for twenty tokens: a slow model near its deadline.
+        run.measured_slow(
+            json!({"role":"assistant","content":format!("Exchange {calls}: {}", "x".repeat(3000))}),
+            4000,
+            20,
+        );
+    };
+    let projected = deferred["projected_tokens"].as_u64().unwrap();
+    assert!(projected >= threshold, "{deferred}");
+    assert!(projected + reserve < context);
+    assert_eq!(deferred["estimate_basis"], "server_usage_plus_new_bytes");
+    assert!(
+        deferred["expected_summary_ms"].as_u64().unwrap()
+            > deferred["remaining_ms"].as_u64().unwrap()
+    );
+    assert_eq!(run.request().purpose, RequestPurpose::Work);
+    assert!(!run.records.iter().any(|r| r.kind == "compaction_planned"));
+    run.response(finish(json!("done past the trigger")));
+    assert_eq!(run.finalize().reason, StopReason::AgentFinished);
+}
+
 /// A summary planned with less wall time than it needs is cut by the deadline
 /// and produces nothing, so a run whose work still fits keeps working instead.
 #[test]

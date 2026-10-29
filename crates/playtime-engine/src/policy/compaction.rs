@@ -200,8 +200,12 @@ impl Compaction {
             .get()
             .min(view.facts.remaining_tokens);
         let projected = input.saturating_add(allowance);
-        let fits_now = projected < config.settings.threshold(limits.context_tokens.get())
-            && projected.saturating_add(config.work_reserve()) < limits.context_tokens.get();
+        // The trigger is where compaction is preferred; the reserve is where
+        // work stops fitting.
+        let fits_reserve =
+            projected.saturating_add(config.work_reserve()) < limits.context_tokens.get();
+        let fits_now =
+            projected < config.settings.threshold(limits.context_tokens.get()) && fits_reserve;
         if fits_now && self.summary_fits_after_next_work(config, view.facts.calibration) {
             return Proposal::Infer(Inference {
                 purpose: RequestPurpose::Work,
@@ -213,6 +217,31 @@ impl Compaction {
             .exchanges
             .len()
             .saturating_sub(usize::from(config.settings.recent_exchanges));
+        // A summary the wall deadline cannot hold produces nothing and is
+        // charged its whole allowance, so while work still fits with its
+        // reserve the run keeps working past the trigger instead.
+        if older > 0 && fits_reserve {
+            let summary_messages = self.summary_messages(older, config);
+            let (summary_input, summary_basis) = context.estimate(&summary_messages, &[]);
+            if let Some(expected_ms) = self.summary_cannot_finish(view, summary_input) {
+                self.observations.push_back((
+                    "compaction_deferred",
+                    json!({
+                        "ordinal":self.ordinal + 1, "remaining_ms":view.facts.remaining_ms,
+                        "expected_summary_ms":expected_ms, "summary_input_bound":summary_input,
+                        "summary_estimate_basis":summary_basis, "input_bound":input,
+                        "estimate_basis":basis, "projected_tokens":projected,
+                        "model_ms":view.facts.model_ms,
+                        "known_generated_tokens":view.facts.known_generated_tokens
+                    }),
+                ));
+                return Proposal::Infer(Inference {
+                    purpose: RequestPurpose::Work,
+                    messages,
+                    tools,
+                });
+            }
+        }
         if older == 0 {
             return self.reject(
                 StopReason::ContextLimit,
@@ -244,25 +273,6 @@ impl Compaction {
                 StopReason::ContextLimit,
                 "summary request cannot fit with its allowance and safety margin",
             );
-        }
-        // Work still fits; only the summary after the next exchange would not.
-        // When the wall deadline cannot hold the summary itself, that summary
-        // would be cut, so the run keeps working instead.
-        if fits_now && let Some(expected_ms) = self.summary_cannot_finish(view, summary_input) {
-            self.observations.push_back((
-                "compaction_deferred",
-                json!({
-                    "ordinal":self.ordinal + 1, "remaining_ms":view.facts.remaining_ms,
-                    "expected_summary_ms":expected_ms, "summary_input_bound":summary_input,
-                    "summary_estimate_basis":summary_basis, "model_ms":view.facts.model_ms,
-                    "known_generated_tokens":view.facts.known_generated_tokens
-                }),
-            ));
-            return Proposal::Infer(Inference {
-                purpose: RequestPurpose::Work,
-                messages,
-                tools,
-            });
         }
         let before_bytes = encoded_size(&json!({"messages":messages, "tools":tools}));
         self.ordinal += 1;
