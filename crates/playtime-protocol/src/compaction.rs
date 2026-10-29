@@ -54,6 +54,7 @@ pub fn evidence_kind(kind: &str) -> bool {
     matches!(
         kind,
         "compaction_configured"
+            | "compaction_deferred"
             | "compaction_planned"
             | "compaction_applied"
             | "compaction_rejected"

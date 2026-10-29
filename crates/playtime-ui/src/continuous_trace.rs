@@ -183,6 +183,36 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                         ),
                     );
                 }
+                "compaction_deferred" => {
+                    p.title = format!("Compaction {} · deferred", v["ordinal"]);
+                    let seconds = |field: &str| match v[field].as_u64() {
+                        Some(ms) => format!("{} s", thousands(ms.div_ceil(1000))),
+                        None => "unavailable".into(),
+                    };
+                    section(
+                        p,
+                        "Time",
+                        format!(
+                            "{} left; at the run's measured pace a summary was expected to take {}, so work continues past the trigger.",
+                            seconds("remaining_ms"),
+                            seconds("expected_summary_ms")
+                        ),
+                    );
+                    section(
+                        p,
+                        "Context estimate",
+                        format!(
+                            "Work request: {}\nSummary request: {}",
+                            estimate(v, "projected_tokens", "estimate_basis", "tokens projected"),
+                            estimate(
+                                v,
+                                "summary_input_bound",
+                                "summary_estimate_basis",
+                                "input tokens"
+                            )
+                        ),
+                    );
+                }
                 "compaction_applied" => {
                     p.title = format!("Compaction {} · applied", v["ordinal"]);
                     text(p, v, "summary", "Applied summary");

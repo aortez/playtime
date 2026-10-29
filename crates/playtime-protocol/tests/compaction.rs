@@ -93,3 +93,40 @@ fn compaction_records_accept_every_estimate_basis_the_engine_reports() {
     let (observation, value) = applied_record("tokens");
     assert!(playtime_protocol::compaction::validate(&observation, &value).is_err());
 }
+
+/// A deferral explains why a run kept working past its trigger. It is
+/// compaction evidence without links, like a rejection, so the history query
+/// returns it and the validator lets it through unchanged.
+#[test]
+fn deferred_records_are_unlinked_compaction_evidence() {
+    use playtime_core::RequestScope;
+    use playtime_protocol::{
+        compaction::{evidence_kind, linked_kind, validate},
+        execution::Observation,
+        observations::{ObservationData, ObservationIdentity},
+    };
+    assert!(evidence_kind("compaction_deferred"));
+    assert!(!linked_kind("compaction_deferred"));
+    let observation = Observation {
+        controller_sequence: 40.try_into().unwrap(),
+        elapsed_ms: 3_536_000,
+        scope: RequestScope::Run,
+        observation_kind: "compaction_deferred".into(),
+        identity: ObservationIdentity {
+            effect_id: None,
+            request_id: None,
+            tool_request_sequence: None,
+        },
+        request: None,
+        data: ObservationData::Inline {
+            value: serde_json::Value::Null,
+        },
+    };
+    let value = serde_json::json!({
+        "ordinal": 5, "remaining_ms": 64_000, "expected_summary_ms": 290_000,
+        "summary_input_bound": 24_900, "summary_estimate_basis": "calibrated_bytes",
+        "input_bound": 29_500, "estimate_basis": "server_usage_plus_new_bytes",
+        "projected_tokens": 37_692, "model_ms": 3_460_000, "known_generated_tokens": 78_000
+    });
+    assert_eq!(validate(&observation, &value).unwrap(), None);
+}

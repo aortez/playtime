@@ -787,4 +787,8 @@ and the reserve then forced one that could not fit. Deferral now applies to the
 trigger alone; the reserve and the summary-fit checks compact whatever the time
 left, and the pace behind the deferral estimate counts only requests with known
 usage, since failed calls added model time without tokens and made the
-hour-long run's estimate about three times too long.
+hour-long run's estimate about three times too long. `compaction_deferred`
+joins the compaction-history evidence kinds, unlinked and unvalidated like
+`compaction_rejected`, so the history query returns the explanation for
+continuing past the trigger, and the workbench trace labels it; the HTTP
+schema is unchanged.
