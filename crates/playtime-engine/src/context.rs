@@ -63,8 +63,14 @@ pub struct Calibration {
 /// Unmeasured text is assumed this much denser than the densest measured
 /// prompt, as a fraction: 3/2. Summary transcripts leave out thinking, so they
 /// pack more tokens per byte than the work prompts they come from; the
-/// 30-minute Framework runs measured up to 1.47x. The estimate never exceeds
-/// the byte count, so it is never looser than the byte bound it replaces.
+/// 30-minute Framework runs measured up to 1.47x. This is a heuristic, not a
+/// bound: content denser than the measured prompts, such as base64, hex or
+/// minified code, is underestimated until the server measures it, and capping
+/// the estimate at the byte count only stops it exceeding bytes; it does not
+/// keep the byte bound's conservatism. Work requests count their unmeasured
+/// tail in bytes, so the estimate only ever covers the summary transcript and
+/// the replacement, and the summary request measures the transcript before
+/// the replacement check.
 const DENSITY_NUMERATOR: u64 = 3;
 const DENSITY_DENOMINATOR: u64 = 2;
 
@@ -274,6 +280,43 @@ mod tests {
         );
         current[0] = message("user", "New session");
         assert_eq!(window.estimate(&current, &TOOLS).1, "input_bytes");
+    }
+
+    #[test]
+    fn denser_content_is_underestimated_until_the_server_measures_it() {
+        let mut window = ContextWindow::default();
+        let prose = vec![message("user", "words ".repeat(800))];
+        let bytes = encoded_size(&json!({"messages": prose, "tools": &*TOOLS}));
+        // Prose at five bytes per token.
+        window.calibrate(&prose, &TOOLS, Some(bytes / 5));
+        // A base64 dump at two bytes per token is estimated at three tokens
+        // per ten bytes, below its real five per ten, until it is measured.
+        let dense_bytes = 10_000;
+        let real = dense_bytes / 2;
+        let (estimate, basis) = calibrated_tokens(dense_bytes, window.calibration());
+        assert_eq!(
+            (estimate, basis),
+            ((dense_bytes * 3).div_ceil(10), "calibrated_bytes")
+        );
+        assert!(estimate < real);
+        // The server measures such a prompt; the densest measurement wins and
+        // later estimates cover it, at three tokens per four bytes.
+        let dense = vec![message("tool", "A".repeat(10_000))];
+        let dense_total = encoded_size(&json!({"messages": dense, "tools": &*TOOLS}));
+        window.calibrate(&dense, &TOOLS, Some(dense_total / 2));
+        assert_eq!(
+            window.calibration(),
+            Some(Calibration {
+                tokens: dense_total / 2,
+                bytes: dense_total
+            })
+        );
+        let (after, _) = calibrated_tokens(dense_bytes, window.calibration());
+        assert_eq!(after, (dense_bytes * 3).div_ceil(4));
+        assert!(after >= real && after < dense_bytes);
+        // A later sparse prompt does not loosen it.
+        window.calibrate(&prose, &TOOLS, Some(bytes / 5));
+        assert_eq!(window.calibration().unwrap().bytes, dense_total);
     }
 
     #[test]

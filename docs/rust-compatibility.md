@@ -791,4 +791,8 @@ hour-long run's estimate about three times too long. `compaction_deferred`
 joins the compaction-history evidence kinds, unlinked and unvalidated like
 `compaction_rejected`, so the history query returns the explanation for
 continuing past the trigger, and the workbench trace labels it; the HTTP
-schema is unchanged.
+schema is unchanged. The calibration comment and the controller docs now
+describe the estimate as a heuristic rather than a bound, since content denser
+than the measured prompts is underestimated until the server measures it; a
+unit test covers a change in content density and an engine test a summary
+transcript measured denser than its estimate.

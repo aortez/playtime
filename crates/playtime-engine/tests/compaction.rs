@@ -564,6 +564,86 @@ fn calibrated_replacement_keeps_working_where_bytes_would_stop() {
     assert_eq!(run.finalize().reason, StopReason::AgentFinished);
 }
 
+/// The calibrated estimate is a heuristic. A summary transcript the server
+/// measures denser than estimated re-calibrates the window before the
+/// replacement check, so the replacement and later estimates follow the
+/// measured density instead of the stale one.
+#[test]
+fn a_denser_summary_measurement_recalibrates_the_replacement_check() {
+    let mut config = config();
+    config.parameters.limits.generated_tokens = 50000.try_into().unwrap();
+    config.parameters.limits.log_bytes = 8000000.try_into().unwrap();
+    let mut run = Run::new(config);
+    let mut calls = 0;
+    while run.request().purpose == RequestPurpose::Work {
+        calls += 1;
+        assert!(calls < 60, "no compaction was planned");
+        // Work prompts measured at eight bytes per token.
+        run.measured_slow(
+            json!({"role":"assistant","content":format!("Exchange {calls}: {}", "x".repeat(3000))}),
+            1,
+            10,
+        );
+    }
+    let planned = run
+        .records
+        .iter()
+        .find(|r| r.kind == "compaction_planned")
+        .expect("compaction planned")
+        .data
+        .clone();
+    assert_eq!(planned["summary_estimate_basis"], "calibrated_bytes");
+    let estimated = planned["summary_input_bound"].as_u64().unwrap();
+    // The server counts the transcript at two bytes per token, four times
+    // denser than the work prompts and beyond the 3/2 allowance.
+    let request = run.request().clone();
+    let summary_bytes =
+        serde_json::to_vec(&json!({"messages":request.messages,"tools":request.tools}))
+            .unwrap()
+            .len() as u64;
+    let measured = summary_bytes / 2;
+    assert!(
+        measured > estimated,
+        "{measured} measured, {estimated} estimated"
+    );
+    let effect = run.dispatch();
+    run.now += 1;
+    run.input(Input::Complete {
+        effect_id: effect.id,
+        outcome: Outcome::ModelCompleted {
+            response: ModelResponse {
+                done: true,
+                generated_tokens: Some(10),
+                prompt_tokens: Some(measured),
+                message: json!({"role":"assistant","content":"Summary 1: checked results, next action."}),
+            },
+            finish_reason: "stop".into(),
+        },
+    });
+    let applied = run
+        .records
+        .iter()
+        .find(|r| r.kind == "compaction_applied")
+        .expect("compaction applied")
+        .data
+        .clone();
+    assert_eq!(applied["estimate_basis"], "calibrated_bytes");
+    let bytes = applied["input_bytes"].as_u64().unwrap();
+    let tokens = applied["input_bound"].as_u64().unwrap();
+    // Three tokens per four bytes now, not three per sixteen.
+    let expected = (bytes * 3).div_ceil(4);
+    assert!(
+        tokens.abs_diff(expected) * 100 <= expected,
+        "{tokens} vs {expected}"
+    );
+    assert_eq!(run.controller.terminal_decision(), None);
+    assert_eq!(run.request().purpose, RequestPurpose::Work);
+    assert_eq!(run.request().context_basis, "calibrated_bytes");
+    assert_eq!(run.request().context_input_bound, tokens);
+    run.response(finish(json!("done after a re-measured summary")));
+    assert_eq!(run.finalize().reason, StopReason::AgentFinished);
+}
+
 /// The Framework's hour-long run lost its last 64 s to a summary planned at
 /// the percentage trigger. Past the trigger, work that still fits with its
 /// reserve continues while a summary could not finish.
