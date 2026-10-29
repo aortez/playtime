@@ -750,3 +750,49 @@ each page validates the complete committed prefix, so a projection's passes
 still grow with the log. Archive and event schemas, the storage limits and every
 verification rule are unchanged; a history page still validates its complete
 covering prefix.
+
+## Calibrated context estimates and deferred summaries (2026-10-28)
+
+The continuous policy counted every byte of unmeasured input as a token: the
+summary transcript, the replacement after a summary and rewritten history. On
+the Framework's 120B runs that overstated gpt-oss text almost fourfold, fired
+compaction at 48% of a 65,536-token context and then stopped a 30-minute run
+after its first summary because a 29,402-byte replacement, about 8K real
+tokens, failed the 29,144-token room check by 258 bytes. The context window now
+keeps the densest server prompt measurement of the run and estimates unmeasured
+input at that rate with a 3/2 density allowance, never above the byte count;
+reserves stay in bytes. Request records and the `compaction_planned`,
+`compaction_applied` and `compaction_deferred` records report the basis
+`calibrated_bytes` once a measurement exists; `compaction_planned` adds the
+`calibration` it used and `compaction_applied` adds `input_bytes` beside its
+estimate. A summary that the run's measured pace says cannot finish before the
+wall deadline is deferred with a `compaction_deferred` record while work still
+fits with its reserve, past the trigger if need be. The policy facts gain the remaining wall time, model time and known
+tokens. The compaction contract golden adds the two fields; memento goldens,
+archive and HTTP schemas and the runner's bounds are unchanged. The reviewed
+`curiosity` recipe raises `model_seconds` from 180 to 400 with the owner's
+approval: gpt-oss:120b generates about 30 tokens per second on the Framework,
+so an 8,192-token call can take close to 300 s, and the 180 s set for the 20B
+stopped a 60-minute run after one 163 s think; the controller's timeout stop
+is not recoverable. Existing archives keep their frozen recipes. The
+protocol's compaction evidence validator accepts the `calibrated_bytes`
+basis; the first calibrated `compaction_applied` record of a live run was
+rejected as malformed before that, which stopped the archive writer while
+the worker stayed alive and the daemon reconciled. The scripted continuous
+gate's summary responses now carry a prompt measurement so that gate
+publishes calibrated records through the validator. A review of the branch
+extended its deferral workload past the first deferral: the run stopped at its
+context limit at 60 s of 100 s, because deferred work had outgrown the summary
+and the reserve then forced one that could not fit. Deferral now applies to the
+trigger alone; the reserve and the summary-fit checks compact whatever the time
+left, and the pace behind the deferral estimate counts only requests with known
+usage, since failed calls added model time without tokens and made the
+hour-long run's estimate about three times too long. `compaction_deferred`
+joins the compaction-history evidence kinds, unlinked and unvalidated like
+`compaction_rejected`, so the history query returns the explanation for
+continuing past the trigger, and the workbench trace labels it; the HTTP
+schema is unchanged. The calibration comment and the controller docs now
+describe the estimate as a heuristic rather than a bound, since content denser
+than the measured prompts is underestimated until the server measures it; a
+unit test covers a change in content density and an engine test a summary
+transcript measured denser than its estimate.

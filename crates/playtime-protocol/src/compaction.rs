@@ -54,6 +54,7 @@ pub fn evidence_kind(kind: &str) -> bool {
     matches!(
         kind,
         "compaction_configured"
+            | "compaction_deferred"
             | "compaction_planned"
             | "compaction_applied"
             | "compaction_rejected"
@@ -158,7 +159,7 @@ pub fn validate(
         }
         if !matches!(
             value["estimate_basis"].as_str(),
-            Some("input_bytes" | "server_usage_plus_new_bytes")
+            Some("input_bytes" | "calibrated_bytes" | "server_usage_plus_new_bytes")
         ) {
             return Err(fail());
         }

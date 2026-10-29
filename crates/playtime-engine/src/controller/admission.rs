@@ -11,6 +11,10 @@ impl<I: IdSource> Controller<I> {
     pub(super) fn facts(&self) -> Facts {
         Facts {
             remaining_tokens: self.remaining_tokens(),
+            remaining_ms: self.deadline_ms.saturating_sub(self.now_ms),
+            model_ms: self.model_ms,
+            known_generated_tokens: self.totals.known_generated_tokens(),
+            calibration: self.context.calibration(),
             session: self.session,
             turns: self.turns,
             handoff_attempts: self.handoff_attempts,

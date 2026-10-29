@@ -298,6 +298,7 @@
     {
       "data": {
         "before_messages_sha256": "dbf8a76a4d1ad445cace6fc7a88496cdb5a91bc0ab30d7ae9281bf9c3c25311c",
+        "calibration": null,
         "estimate_basis": "input_bytes",
         "input_bound": 14605,
         "ordinal": 1,
@@ -323,6 +324,7 @@
         "before_progress_input_bytes": 14605,
         "estimate_basis": "input_bytes",
         "input_bound": 8461,
+        "input_bytes": 8461,
         "messages_sha256": "e4f225c9e600b8d645bef3e05fe4306222e0d355c92438aee5aaf4d10e8ecfcf",
         "ordinal": 1,
         "projected_tokens": 8973,
@@ -335,6 +337,7 @@
     {
       "data": {
         "before_messages_sha256": "fefbdb37f94e5123fac394615f35a8e126c383961a97d9f6c56e99436612976f",
+        "calibration": null,
         "estimate_basis": "input_bytes",
         "input_bound": 14961,
         "ordinal": 2,
@@ -363,6 +366,7 @@
         "before_progress_input_bytes": 14961,
         "estimate_basis": "input_bytes",
         "input_bound": 8461,
+        "input_bytes": 8461,
         "messages_sha256": "63a57d312abf8e6e2335bb365c1fbcf48ae1fdedac6b44dd5cc095fe702bf151",
         "ordinal": 2,
         "projected_tokens": 8973,
@@ -375,6 +379,7 @@
     {
       "data": {
         "before_messages_sha256": "aaf6c4317d47390e27dae7537359d3e2a2d6f6d49c889952bf56f5ced4af21f9",
+        "calibration": null,
         "estimate_basis": "input_bytes",
         "input_bound": 14961,
         "ordinal": 3,
@@ -403,6 +408,7 @@
         "before_progress_input_bytes": 14961,
         "estimate_basis": "input_bytes",
         "input_bound": 8461,
+        "input_bytes": 8461,
         "messages_sha256": "c7cc8b0ea00ef7725d43efdd5b5437728e70e2f736fbf37240e976973ec8d3ae",
         "ordinal": 3,
         "projected_tokens": 8973,

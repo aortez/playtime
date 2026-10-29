@@ -34,3 +34,99 @@ fn versioned_source_links_preserve_missing_evidence_explicitly() {
         links
     );
 }
+
+fn applied_record(basis: &str) -> (playtime_protocol::execution::Observation, serde_json::Value) {
+    use playtime_core::RequestScope;
+    use playtime_protocol::{
+        execution::{Observation, RequestIdentity},
+        observations::{ObservationData, ObservationIdentity},
+    };
+    let request_id = RequestId::new("r5").unwrap();
+    let observation = Observation {
+        controller_sequence: 26.try_into().unwrap(),
+        elapsed_ms: 1000,
+        scope: RequestScope::Run,
+        observation_kind: "compaction_applied".into(),
+        identity: ObservationIdentity {
+            effect_id: Some(5.try_into().unwrap()),
+            request_id: Some(request_id.clone()),
+            tool_request_sequence: None,
+        },
+        request: Some(RequestIdentity {
+            effect_id: 5.try_into().unwrap(),
+            request_id,
+            call: 5.try_into().unwrap(),
+            scope: RequestScope::Run,
+            purpose: RequestPurpose::Compaction,
+        }),
+        data: ObservationData::Inline {
+            value: serde_json::Value::Null,
+        },
+    };
+    let value = serde_json::json!({
+        "ordinal": 1, "summary_request_id": "r5", "summary": "Summary 1: checked results.",
+        "messages": [], "input_bound": 8461, "input_bytes": 8461, "estimate_basis": basis,
+        "projected_tokens": 8973, "before_progress_input_bytes": 14605,
+        "evidence": {"schema_version": 1, "plan": null,
+            "requests": [{"request_id": "r5", "purpose": "compaction", "observation": null}]}
+    });
+    (observation, value)
+}
+
+/// A live run's first calibrated `compaction_applied` record was once rejected
+/// here as malformed, which stopped its archive writer.
+#[test]
+fn compaction_records_accept_every_estimate_basis_the_engine_reports() {
+    for basis in [
+        "input_bytes",
+        "calibrated_bytes",
+        "server_usage_plus_new_bytes",
+    ] {
+        let (observation, value) = applied_record(basis);
+        assert!(
+            playtime_protocol::compaction::validate(&observation, &value)
+                .unwrap()
+                .is_some(),
+            "{basis}"
+        );
+    }
+    let (observation, value) = applied_record("tokens");
+    assert!(playtime_protocol::compaction::validate(&observation, &value).is_err());
+}
+
+/// A deferral explains why a run kept working past its trigger. It is
+/// compaction evidence without links, like a rejection, so the history query
+/// returns it and the validator lets it through unchanged.
+#[test]
+fn deferred_records_are_unlinked_compaction_evidence() {
+    use playtime_core::RequestScope;
+    use playtime_protocol::{
+        compaction::{evidence_kind, linked_kind, validate},
+        execution::Observation,
+        observations::{ObservationData, ObservationIdentity},
+    };
+    assert!(evidence_kind("compaction_deferred"));
+    assert!(!linked_kind("compaction_deferred"));
+    let observation = Observation {
+        controller_sequence: 40.try_into().unwrap(),
+        elapsed_ms: 3_536_000,
+        scope: RequestScope::Run,
+        observation_kind: "compaction_deferred".into(),
+        identity: ObservationIdentity {
+            effect_id: None,
+            request_id: None,
+            tool_request_sequence: None,
+        },
+        request: None,
+        data: ObservationData::Inline {
+            value: serde_json::Value::Null,
+        },
+    };
+    let value = serde_json::json!({
+        "ordinal": 5, "remaining_ms": 64_000, "expected_summary_ms": 290_000,
+        "summary_input_bound": 24_900, "summary_estimate_basis": "calibrated_bytes",
+        "input_bound": 29_500, "estimate_basis": "server_usage_plus_new_bytes",
+        "projected_tokens": 37_692, "model_ms": 3_460_000, "known_generated_tokens": 78_000
+    });
+    assert_eq!(validate(&observation, &value).unwrap(), None);
+}

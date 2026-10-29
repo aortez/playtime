@@ -14,7 +14,8 @@ use playtime_core::{RequestPurpose, StopReason};
 use serde_json::Value;
 
 use crate::{
-    ControllerConfig, Memory, ModelFailure, RuntimeConfig, ToolRequest, context::ContextWindow,
+    ControllerConfig, Memory, ModelFailure, RuntimeConfig, ToolRequest,
+    context::{Calibration, ContextWindow},
     evidence::Evidence,
 };
 
@@ -50,6 +51,13 @@ impl<'a> View<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct Facts {
     pub remaining_tokens: u64,
+    /// Wall time left before the run's deadline.
+    pub remaining_ms: u64,
+    /// Time spent inside dispatched model requests, settled known or unknown.
+    pub model_ms: u64,
+    pub known_generated_tokens: u64,
+    /// The densest server prompt measurement so far, if any.
+    pub calibration: Option<Calibration>,
     pub session: u32,
     pub turns: u32,
     pub handoff_attempts: u32,

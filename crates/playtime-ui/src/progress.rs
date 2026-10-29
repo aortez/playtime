@@ -119,7 +119,9 @@ impl Update {
             "tool_request" => value
                 .and_then(|v| v["name"].as_str())
                 .map(|s| Activity::Tool(excerpt(s, 60))),
-            "model_response" | "tool_result" | "compaction_applied" => Some(Activity::Working),
+            "model_response" | "tool_result" | "compaction_applied" | "compaction_deferred" => {
+                Some(Activity::Working)
+            }
             "controller_finished" => Some(Activity::Phase(RunPhase::Terminal)),
             _ => None,
         };
