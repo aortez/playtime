@@ -14,6 +14,7 @@ use playtime_ui::{
     ui::Workbench,
 };
 use serde_json::json;
+use std::time::{Duration, Instant};
 
 fn parse(jsonl: &str) -> Vec<EventEnvelope> {
     jsonl
@@ -117,15 +118,19 @@ fn ended() -> RunView {
 fn progress_follows_the_run_against_its_frozen_limits() {
     let records = records();
     let at = |last, complete| indexed(&records, last).progress(complete);
+    let first = at(1, false);
     assert_eq!(
-        at(1, false),
+        first,
         Progress {
             limits: Some(FIXTURE),
             elapsed_ms: Some(0),
             activity: Some("starting the run".into()),
+            // A live record notes when it arrived.
+            received: first.received,
             ..Default::default()
         }
     );
+    assert!(first.received.is_some());
     let steps = |last, complete| {
         let p = at(last, complete);
         (p.session, p.turn, p.activity)
@@ -248,8 +253,9 @@ fn while_history_loads_only_current_values_show() {
     {
         transcript.apply(event.clone(), None).unwrap();
     }
+    let live = transcript.progress(false);
     assert_eq!(
-        transcript.progress(false),
+        live,
         Progress {
             limits: None,
             session: Some(2),
@@ -257,6 +263,8 @@ fn while_history_loads_only_current_values_show() {
             turn: None,
             elapsed_ms: Some(350),
             activity: Some("running a command".into()),
+            received: live.received,
+            ..Default::default()
         }
     );
     // Earlier history arrives afterwards, in order.
@@ -288,11 +296,14 @@ fn while_history_loads_only_current_values_show() {
 fn a_live_run_leads_with_progress_and_an_ended_run_with_its_outcome() {
     let records = records();
     let progress = indexed(&records, 41).progress(true);
+    // The context line follows the latest request, with no compaction harness
+    // and nothing failed to count.
     assert_eq!(
         lead(&running(), &progress),
         [
             "Session 2 of 3 · turn 1 of 2 · running a command",
             "21 of 1,000 tokens charged · 0:00 of 5:00 wall time",
+            "Context: 2,797 of 32,768 tokens from input bytes",
         ]
     );
     assert_eq!(
@@ -308,6 +319,7 @@ fn a_live_run_leads_with_progress_and_an_ended_run_with_its_outcome() {
         [
             "Ended: agent finished · 2 of 3 sessions completed · 26 of 1,000 tokens charged",
             "Cleanup complete · 0:00 of 5:00 wall time",
+            "Context: 3,431 of 32,768 tokens from input bytes",
         ]
     );
 
@@ -323,6 +335,7 @@ fn a_live_run_leads_with_progress_and_an_ended_run_with_its_outcome() {
         turn: Some(3),
         elapsed_ms: Some(750_400),
         activity: Some("running a command".into()),
+        ..Default::default()
     };
     assert_eq!(
         lead(&view, &progress),
@@ -334,6 +347,29 @@ fn a_live_run_leads_with_progress_and_an_ended_run_with_its_outcome() {
     assert_eq!(
         details(&view)[1],
         "Settled: 50,000 tokens reported · 7 requests with unknown usage, charged 57,344 · 8,192 tokens held for 1 unsettled request"
+    );
+}
+
+#[test]
+fn a_quiet_live_run_says_how_long_since_its_last_record() {
+    let records = records();
+    let quiet = |seconds| {
+        Instant::now()
+            .checked_sub(Duration::from_secs(seconds))
+            .unwrap()
+    };
+    let mut progress = indexed(&records, 41).progress(true);
+    progress.received = Some(quiet(10));
+    assert!(!lead(&running(), &progress)[1].contains("no new records"));
+    progress.received = Some(quiet(95));
+    assert!(lead(&running(), &progress)[1].ends_with("wall time · no new records for 1:35"));
+    // An ended run has nothing more to wait for.
+    let mut progress = indexed(&records, 59).progress(true);
+    progress.received = Some(quiet(95));
+    assert!(
+        !lead(&ended(), &progress)
+            .concat()
+            .contains("no new records")
     );
 }
 

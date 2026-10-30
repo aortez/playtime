@@ -4,6 +4,7 @@ mod scene;
 use egui_kittest::{Harness, kittest::Queryable};
 use playtime_protocol::api::*;
 use playtime_ui::{
+    progress::{Compactions, ContextUsage, lead},
     transcript::{Transcript, View},
     ui::Workbench,
 };
@@ -92,9 +93,10 @@ fn row<'a>(rows: &'a [ReadableRow], title: &str) -> &'a ReadableRow {
 fn summary_at_its_token_limit_explains_why_the_run_stopped() {
     let rows = readable(scene::failed_summary_events());
     // A normal stop leaves the response state; the capped summary replaces it.
-    assert_eq!(row(&rows, "Call 1 · Work").1, "Response recorded");
+    // Either way the call's duration follows.
+    assert_eq!(row(&rows, "Call 1 · Work").1, "Response recorded · 1.0 s");
     let summary = row(&rows, "Call 2 · Compaction summary");
-    assert_eq!(summary.1, "Stopped at its token limit");
+    assert_eq!(summary.1, "Stopped at its token limit · 1.0 s");
     assert!(summary.3.contains(&(
         "Completion".into(),
         "The response reached its token limit before it finished (finish reason: length).".into()
@@ -134,7 +136,7 @@ fn summary_at_its_token_limit_explains_why_the_run_stopped() {
 fn rejections_show_their_reason_and_detail() {
     let rows = readable(scene::rejected_events());
     let call = row(&rows, "Call 1 · Work");
-    assert_eq!(call.1, "Tool calls rejected · the run stops");
+    assert_eq!(call.1, "Tool calls rejected · the run stops · 1.0 s");
     assert_eq!(
         call.3,
         [
@@ -156,6 +158,111 @@ fn rejections_show_their_reason_and_detail() {
                 "Detail".into(),
                 "summary request cannot fit with its allowance and safety margin".into()
             ),
+        ]
+    );
+}
+
+/// The contract fixture's completed run, as the header tests use it.
+fn completed_run() -> RunView {
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../playtime-server/tests/fixtures/http-contract.json"
+    ))
+    .unwrap();
+    serde_json::from_value(contract["completed_run"].clone()).unwrap()
+}
+
+#[test]
+fn calls_show_their_cost_and_the_header_sums_context_and_compactions() {
+    let rows = readable(scene::events());
+    assert_eq!(
+        row(&rows, "Call 1 · Work").1,
+        "Response recorded · 1.0 s · 1,200 prompt tokens · 48 generated · 48 tokens/s"
+    );
+    assert_eq!(
+        row(&rows, "Call 2 · Compaction summary").1,
+        "Response recorded · 1.0 s · 11,800 prompt tokens · 36 generated · 36 tokens/s"
+    );
+    // A tool has no cost of its own.
+    assert_eq!(row(&rows, "Tool · exec").1, "Exit status: 0");
+    let mut t = Transcript::default();
+    for e in scene::events() {
+        t.apply(e, None).unwrap();
+    }
+    // Until earlier history has loaded the counts would be partial, so the
+    // header shows none of them.
+    let loading = t.progress(false);
+    assert!(loading.context.is_none() && loading.compactions.is_none());
+    assert_eq!((loading.model_errors, loading.failed_tools), (0, 0));
+    let p = t.progress(true);
+    assert_eq!(
+        p.context,
+        Some(ContextUsage {
+            tokens: 1150,
+            basis: "input_bytes".into(),
+            capacity: Some(32768),
+        })
+    );
+    assert_eq!(
+        p.compactions,
+        Some(Compactions {
+            trigger_percent: Some(75),
+            planned: 1,
+            applied: 1,
+            deferred: 0,
+            rejected: 0,
+        })
+    );
+    assert_eq!((p.model_errors, p.failed_tools), (0, 0));
+    let lines = lead(&completed_run(), &p);
+    assert_eq!(
+        lines[2..],
+        [
+            "Context: 1,150 of 32,768 tokens from input bytes · compaction trigger 75% · compactions: 1 planned · 1 applied"
+        ]
+    );
+}
+
+#[test]
+fn the_header_counts_errors_failed_tools_deferrals_and_rejections() {
+    let rows = readable(scene::troubled_events());
+    assert_eq!(
+        row(&rows, "Call 1 · Work").1,
+        "Model error · partial inference may be present · 1.0 s"
+    );
+    assert_eq!(
+        row(&rows, "Call 2 · Work").1,
+        "Response recorded · 1.0 s · 20,480 prompt tokens · 10 generated · 10 tokens/s"
+    );
+    assert_eq!(row(&rows, "Tool · exec").1, "Failed · exit status: 1");
+    let mut t = Transcript::default();
+    for e in scene::troubled_events() {
+        t.apply(e, None).unwrap();
+    }
+    let p = t.progress(true);
+    assert_eq!(
+        p.context,
+        Some(ContextUsage {
+            tokens: 20480,
+            basis: "calibrated_prefix_plus_new_bytes".into(),
+            capacity: Some(32768),
+        })
+    );
+    assert_eq!(
+        p.compactions,
+        Some(Compactions {
+            trigger_percent: Some(50),
+            planned: 1,
+            applied: 0,
+            deferred: 1,
+            rejected: 1,
+        })
+    );
+    assert_eq!((p.model_errors, p.failed_tools), (1, 1));
+    assert_eq!(
+        lead(&completed_run(), &p)[2..],
+        [
+            "Context: 20,480 of 32,768 tokens from calibrated prefix plus new bytes · compaction trigger 50% · compactions: 1 planned · 0 applied · 1 deferred · 1 rejected",
+            "1 model error · 1 failed tool result",
         ]
     );
 }

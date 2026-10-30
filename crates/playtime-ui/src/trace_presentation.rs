@@ -1,6 +1,6 @@
 //! Readable projections of recorded observations. Never interprets model text as
 //! proof of execution, publication, or artifact correctness.
-use super::{Section, excerpt, size};
+use super::{Section, excerpt, size, thousands};
 use playtime_protocol::observations::{DecodedObservation, KnownObservation, ObservationPayload};
 use serde_json::Value;
 
@@ -15,11 +15,19 @@ pub(super) struct Display {
     pub(super) state: Option<String>,
     state_sequence: u64,
     pub(super) pending: bool,
+    /// Controller time when the model request was recorded.
+    pub(super) requested_ms: Option<u64>,
+    /// Controller time when its response or error was recorded.
+    pub(super) answered_ms: Option<u64>,
+    /// The server's counts for the response, when it reported them.
+    pub(super) prompt_tokens: Option<u64>,
+    pub(super) generated_tokens: Option<u64>,
 }
 impl Display {
     pub fn tracked_bytes(&self) -> usize {
-        // Family map/key, member slot and bounded title/status metadata.
-        self.family.as_ref().map_or(0, |s| s.len() * 3) + if self.tool { 768 } else { 256 }
+        // Family map/key, member slot, bounded title/status metadata and the
+        // call's cost.
+        self.family.as_ref().map_or(0, |s| s.len() * 3) + if self.tool { 768 } else { 288 }
     }
     pub fn merge(&mut self, other: &Self, sequence: u64) {
         if let Some(call) = other.call {
@@ -37,6 +45,52 @@ impl Display {
             self.state_sequence = sequence;
             self.pending = other.pending;
         }
+        for (mine, theirs) in [
+            (&mut self.requested_ms, other.requested_ms),
+            (&mut self.answered_ms, other.answered_ms),
+            (&mut self.prompt_tokens, other.prompt_tokens),
+            (&mut self.generated_tokens, other.generated_tokens),
+        ] {
+            if theirs.is_some() {
+                *mine = theirs;
+            }
+        }
+    }
+    /// The call's duration, the server's prompt and generated counts and the
+    /// generated tokens over the whole call, once its response or error is
+    /// recorded. An unreported count is left out, never shown as zero.
+    pub fn cost(&self) -> Option<String> {
+        let answered = self.answered_ms?;
+        let mut parts = vec![];
+        let seconds = self
+            .requested_ms
+            .filter(|requested| *requested <= answered)
+            .map(|requested| {
+                let ms = answered - requested;
+                parts.push(duration_words(ms));
+                ms as f64 / 1000.0
+            });
+        if let Some(prompt) = self.prompt_tokens {
+            parts.push(format!("{} prompt tokens", thousands(prompt)));
+        }
+        if let Some(generated) = self.generated_tokens {
+            parts.push(format!(
+                "{} generated{}",
+                thousands(generated),
+                if self.prompt_tokens.is_some() {
+                    ""
+                } else {
+                    " tokens"
+                }
+            ));
+            if let Some(seconds) = seconds
+                && seconds >= 1.0
+                && generated > 0
+            {
+                parts.push(format!("{:.0} tokens/s", generated as f64 / seconds));
+            }
+        }
+        (!parts.is_empty()).then(|| parts.join(" · "))
     }
     pub fn heading(&self) -> Option<String> {
         if self.tool {
@@ -77,7 +131,21 @@ impl Display {
                 .into(),
             );
         }
-        self.state.clone()
+        match (self.state.clone(), self.cost()) {
+            (Some(state), Some(cost)) => Some(format!("{state} · {cost}")),
+            (state, cost) => state.or(cost),
+        }
+    }
+}
+/// A call's duration: milliseconds under a second, tenths under ten seconds
+/// and whole seconds beyond.
+pub(super) fn duration_words(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{ms} ms")
+    } else if ms < 10_000 {
+        format!("{:.1} s", ms as f64 / 1000.0)
+    } else {
+        format!("{} s", thousands(ms / 1000))
     }
 }
 fn push(parts: &mut Vec<Section>, label: &str, text: impl Into<String>) {
@@ -153,6 +221,12 @@ pub(super) fn observation(o: &DecodedObservation) -> (Display, Vec<Section>) {
             }
             .into(),
         );
+        // A retained payload still names its kind, so the call keeps its time.
+        match record.observation_kind.as_str() {
+            "model_request" => d.requested_ms = Some(record.elapsed_ms),
+            "model_response" | "model_error" => d.answered_ms = Some(record.elapsed_ms),
+            _ => (),
+        }
         push(
             &mut parts,
             "Recorded data",
@@ -190,6 +264,7 @@ pub(super) fn observation(o: &DecodedObservation) -> (Display, Vec<Section>) {
             d.call = Some(r.call.get());
             d.handoff = r.handoff;
             d.state = Some("Awaiting model response".into());
+            d.requested_ms = Some(record.elapsed_ms);
         }
         KnownObservation::ModelChunk { call, chunk } => {
             d.call = Some(call.get());
@@ -209,6 +284,9 @@ pub(super) fn observation(o: &DecodedObservation) -> (Display, Vec<Section>) {
                 }
                 .into(),
             );
+            d.answered_ms = Some(record.elapsed_ms);
+            d.prompt_tokens = response.prompt_tokens;
+            d.generated_tokens = response.generated_tokens;
             field(
                 &mut parts,
                 &response.message,
@@ -219,6 +297,7 @@ pub(super) fn observation(o: &DecodedObservation) -> (Display, Vec<Section>) {
         }
         KnownObservation::ModelError { error, .. } => {
             d.state = Some("Model error · partial inference may be present".into());
+            d.answered_ms = Some(record.elapsed_ms);
             push(&mut parts, "Error", &error.message);
         }
         KnownObservation::RequestNotDispatched { call, .. } => {

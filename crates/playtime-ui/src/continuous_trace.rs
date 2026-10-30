@@ -49,6 +49,13 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                     .tool_request_sequence
                     .map_or_else(|| format!("model:{family}"), |id| format!("tool:run:{id}"));
             }
+            // The call's time comes from the records' controller clock, whether
+            // or not a payload is retained elsewhere.
+            match o.observation_kind.as_str() {
+                "model_request" => p.display.requested_ms = Some(o.elapsed_ms),
+                "model_response" | "model_error" => p.display.answered_ms = Some(o.elapsed_ms),
+                _ => (),
+            }
             let ObservationData::Inline { value: v } = &o.data else {
                 p.status = "Retained payload · inspect verified source".into();
                 section(
@@ -80,6 +87,10 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                         }
                         .into(),
                     );
+                    if final_response {
+                        p.display.prompt_tokens = response["prompt_tokens"].as_u64();
+                        p.display.generated_tokens = response["generated_tokens"].as_u64();
+                    }
                     text(p, &response["message"], "thinking", "Recorded thinking");
                     text(p, &response["message"], "content", "Model response");
                 }

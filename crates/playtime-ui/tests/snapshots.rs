@@ -303,14 +303,18 @@ async fn reviewed_workbench_screens() {
             draft.prompt = "Explore a question raised by the seed files. Keep verified results and uncertainty clear; finish when the work is complete.".into();
         }
         if name == "compaction-trace" {
+            // The timeline starts at the compaction; the header sums the
+            // whole scene.
             let mut transcript = Transcript::default();
-            for event in continuous_scene::events()
-                .into_iter()
-                .filter(|e| e.sequence.get() >= 6)
-            {
-                transcript.apply(event, None).unwrap();
+            let mut whole = Transcript::default();
+            for event in continuous_scene::events() {
+                if event.sequence.get() >= 7 {
+                    transcript.apply(event.clone(), None).unwrap();
+                }
+                whole.apply(event, None).unwrap();
             }
             app.model.window = transcript.window(View::Readable, 0, 64);
+            app.model.window.progress = whole.progress(true);
             app.model.recipes[0].name = "Continuous compaction example".into();
             app.model.history =
                 "Synthetic continuous execution evidence · no model or worker".into();
