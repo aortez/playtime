@@ -146,8 +146,13 @@ The calibrated estimate is a heuristic, not a bound. The allowance covered the
 1.47x measured when thinking was dropped, but content denser than the measured
 prompts, such as base64, hex or minified code, is underestimated until the
 server measures it, and the byte cap only stops the estimate exceeding bytes.
-Work requests count their unmeasured tail in bytes, so the estimate only ever
-covers the summary transcript and the replacement; the summary request
+Requests add their new bytes one to one to a measured prefix. When a response
+brings no prompt count, a request that extended a measured prefix keeps it, and
+one that did not, such as the replacement after a compaction, anchors the
+window at its admitted estimate, so the requests after it add their new bytes
+to that estimate instead of being rescaled whole at the calibrated rate; their
+records say `calibrated_prefix_plus_new_bytes`. The estimate therefore only
+ever covers the summary transcript and the replacement; the summary request
 measures the transcript before the replacement check, the densest measurement
 wins, and the summary-fit check carries the safety margin.
 
