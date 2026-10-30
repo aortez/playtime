@@ -67,12 +67,19 @@ pub struct Calibration {
 /// bound: content denser than the measured prompts, such as base64, hex or
 /// minified code, is underestimated until the server measures it, and capping
 /// the estimate at the byte count only stops it exceeding bytes; it does not
-/// keep the byte bound's conservatism. Work requests count their unmeasured
-/// tail in bytes, so the estimate only ever covers the summary transcript and
-/// the replacement, and the summary request measures the transcript before
-/// the replacement check.
+/// keep the byte bound's conservatism. Requests add their new bytes one to
+/// one to a measured prefix or, when a response brought no measurement, to
+/// the admitted estimate of the request before them, so the estimate only
+/// ever covers the summary transcript and the replacement, and the summary
+/// request measures the transcript before the replacement check.
 const DENSITY_NUMERATOR: u64 = 3;
 const DENSITY_DENOMINATOR: u64 = 2;
+
+/// The basis of an estimate that extends a server-measured prefix.
+const MEASURED_PREFIX: &str = "server_usage_plus_new_bytes";
+/// The basis of an estimate that extends an admitted calibrated estimate
+/// whose response brought no measurement.
+const ESTIMATED_PREFIX: &str = "calibrated_prefix_plus_new_bytes";
 
 /// Tokens for `bytes` of unmeasured input and the basis that produced them.
 pub(crate) fn calibrated_tokens(
@@ -100,22 +107,40 @@ pub(crate) struct ContextWindow {
     messages: Vec<Value>,
     tools: Vec<Value>,
     tokens: Option<u64>,
+    /// The basis later estimates report when they extend the anchor.
+    basis: &'static str,
     calibration: Option<Calibration>,
 }
 
 impl ContextWindow {
+    /// Anchor the window on a request and its response. A server prompt
+    /// measurement anchors the exact input. Without one, a request that
+    /// extended an anchor keeps it, so its tail stays counted in bytes, and a
+    /// request estimated whole at the calibrated rate, such as the replacement
+    /// after a compaction, anchors the window at its admitted estimate: the
+    /// requests after it add their new bytes one to one instead of being
+    /// rescaled whole, new tool output included. Byte-counted input needs no
+    /// anchor; its bytes already bound every later request.
     pub fn observe(
         &mut self,
         messages: &[Value],
         tools: &[Value],
         prompt: Option<u64>,
         tokens: u64,
+        admitted: u64,
+        admitted_basis: &str,
     ) {
-        if let Some(prompt) = prompt.filter(|n| *n > 0) {
-            self.messages = messages.to_vec();
-            self.tools = tools.to_vec();
-            self.tokens = Some(prompt.saturating_add(tokens));
-        }
+        let (anchor, basis) = match prompt.filter(|n| *n > 0) {
+            Some(prompt) => (prompt, MEASURED_PREFIX),
+            None if admitted_basis == "calibrated_bytes" || admitted_basis == ESTIMATED_PREFIX => {
+                (admitted, ESTIMATED_PREFIX)
+            }
+            None => return,
+        };
+        self.messages = messages.to_vec();
+        self.tools = tools.to_vec();
+        self.tokens = Some(anchor.saturating_add(tokens));
+        self.basis = basis;
     }
 
     /// Record the server's prompt measurement of a request's exact input. The
@@ -155,7 +180,7 @@ impl ContextWindow {
             };
             return (
                 tokens.saturating_add(extra).saturating_add(changed_tools),
-                "server_usage_plus_new_bytes",
+                self.basis,
             );
         }
         calibrated_tokens(
@@ -268,7 +293,7 @@ mod tests {
             message("user", "Explore"),
             message("assistant", "Look around"),
         ];
-        window.observe(&initial, &TOOLS, Some(100), 20);
+        window.observe(&initial, &TOOLS, Some(100), 20, 0, "input_bytes");
         let mut current = initial.clone();
         current.push(message("tool", "Evidence"));
         assert_eq!(
@@ -280,6 +305,78 @@ mod tests {
         );
         current[0] = message("user", "New session");
         assert_eq!(window.estimate(&current, &TOOLS).1, "input_bytes");
+    }
+
+    #[test]
+    fn a_response_without_a_measurement_anchors_the_admitted_estimate() {
+        let mut window = ContextWindow::default();
+        let measured = vec![message("user", "Explore"), message("assistant", "Look")];
+        window.observe(&measured, &TOOLS, Some(100), 20, 0, "input_bytes");
+        window.calibrate(&measured, &TOOLS, Some(100));
+        // A request extending the measured prefix keeps it when its response
+        // brings no measurement: its tail stays counted in bytes.
+        let mut extended = measured.clone();
+        extended.push(message("tool", "Evidence"));
+        let (admitted, basis) = window.estimate(&extended, &TOOLS);
+        assert_eq!(basis, "server_usage_plus_new_bytes");
+        let mut answered = extended.clone();
+        answered.push(message("assistant", "Noted"));
+        window.observe(&answered, &TOOLS, None, 7, admitted, basis);
+        let mut next = answered.clone();
+        next.push(message("tool", "More evidence"));
+        assert_eq!(
+            window.estimate(&next, &TOOLS),
+            (
+                120 + encoded_size(&json!(&next[2..])),
+                "server_usage_plus_new_bytes"
+            )
+        );
+        // A replacement matches no measured prefix and is estimated whole at
+        // the calibrated rate. When its response brings no measurement, it
+        // anchors that estimate, and later requests add their bytes to it.
+        let replacement = vec![message("user", "Explore"), message("assistant", "Summary")];
+        let (admitted, basis) = window.estimate(&replacement, &TOOLS);
+        assert_eq!(basis, "calibrated_bytes");
+        let mut answered = replacement.clone();
+        answered.push(message("assistant", "Continuing"));
+        window.observe(&answered, &TOOLS, None, 9, admitted, basis);
+        let mut next = answered.clone();
+        next.push(message("tool", "x".repeat(1716)));
+        assert_eq!(
+            window.estimate(&next, &TOOLS),
+            (
+                admitted + 9 + encoded_size(&json!(&next[3..])),
+                "calibrated_prefix_plus_new_bytes"
+            )
+        );
+        // The anchor moves forward with each unmeasured response, and a
+        // measured one restores the server basis.
+        let (admitted, basis) = window.estimate(&next, &TOOLS);
+        let mut answered = next.clone();
+        answered.push(message("assistant", "Still going"));
+        window.observe(&answered, &TOOLS, None, 4, admitted, basis);
+        let mut after = answered.clone();
+        after.push(message("tool", "y".repeat(500)));
+        assert_eq!(
+            window.estimate(&after, &TOOLS),
+            (
+                admitted + 4 + encoded_size(&json!(&after[5..])),
+                "calibrated_prefix_plus_new_bytes"
+            )
+        );
+        let (admitted, basis) = window.estimate(&after, &TOOLS);
+        let mut answered = after.clone();
+        answered.push(message("assistant", "Measured"));
+        window.observe(&answered, &TOOLS, Some(900), 3, admitted, basis);
+        let mut last = answered.clone();
+        last.push(message("tool", "z"));
+        assert_eq!(
+            window.estimate(&last, &TOOLS),
+            (
+                903 + encoded_size(&json!(&last[7..])),
+                "server_usage_plus_new_bytes"
+            )
+        );
     }
 
     #[test]

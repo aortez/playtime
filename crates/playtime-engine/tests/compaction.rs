@@ -644,6 +644,71 @@ fn a_denser_summary_measurement_recalibrates_the_replacement_check() {
     assert_eq!(run.finalize().reason, StopReason::AgentFinished);
 }
 
+/// After a compaction the replacement matches no measured prefix. A work
+/// response without a prompt count once left every later request rescaled
+/// whole at the calibrated rate, new tool output included: 1,716 new bytes
+/// raised the estimate by 342 tokens. The request anchors the window at its
+/// admitted estimate instead, so the requests after it add their new bytes
+/// one to one until a measurement arrives.
+#[test]
+fn unmeasured_work_after_compaction_counts_its_new_bytes() {
+    let mut config = config();
+    config.parameters.limits.generated_tokens = 50000.try_into().unwrap();
+    config.parameters.limits.log_bytes = 8000000.try_into().unwrap();
+    let mut run = Run::new(config);
+    let mut calls = 0;
+    while run.request().purpose == RequestPurpose::Work {
+        calls += 1;
+        assert!(calls < 60, "no compaction was planned");
+        run.measured_slow(
+            json!({"role":"assistant","content":format!("Exchange {calls}: {}", "x".repeat(3000))}),
+            1,
+            10,
+        );
+    }
+    run.measured_slow(
+        json!({"role":"assistant","content":"Summary 1: checked results, next action."}),
+        1,
+        10,
+    );
+    let first = run.request().clone();
+    assert_eq!(first.context_basis, "calibrated_bytes");
+    // A tool call answered without a prompt count, then 1,716 bytes of output.
+    run.response(
+        json!({"role":"assistant","tool_calls":[call("exec",json!({"command":"inspect"}))]}),
+    );
+    run.complete(Outcome::Tool(
+        json!({"exit_code":0,"stdout":"y".repeat(1716),"stderr":"","timed_out":false}),
+    ));
+    let second = run.request().clone();
+    assert_eq!(second.context_basis, "calibrated_prefix_plus_new_bytes");
+    assert!(
+        second.context_input_bound >= first.context_input_bound + 10 + 1716,
+        "{} after {}",
+        second.context_input_bound,
+        first.context_input_bound
+    );
+    run.response(
+        json!({"role":"assistant","tool_calls":[call("exec",json!({"command":"again"}))]}),
+    );
+    run.complete(Outcome::Tool(
+        json!({"exit_code":0,"stdout":"z".repeat(1000),"stderr":"","timed_out":false}),
+    ));
+    let third = run.request().clone();
+    assert_eq!(third.context_basis, "calibrated_prefix_plus_new_bytes");
+    assert!(third.context_input_bound >= second.context_input_bound + 10 + 1000);
+    // A measured response restores the server basis.
+    run.measured_slow(
+        json!({"role":"assistant","content":"Exchange measured again."}),
+        1,
+        10,
+    );
+    assert_eq!(run.request().purpose, RequestPurpose::Work);
+    assert_eq!(run.request().context_basis, "server_usage_plus_new_bytes");
+    run.response(finish(json!("done with unmeasured work counted in bytes")));
+    assert_eq!(run.finalize().reason, StopReason::AgentFinished);
+}
+
 /// The Framework's hour-long run lost its last 64 s to a summary planned at
 /// the percentage trigger. Past the trigger, work that still fits with its
 /// reserve continues while a summary could not finish.

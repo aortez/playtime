@@ -80,6 +80,7 @@ fn compaction_records_accept_every_estimate_basis_the_engine_reports() {
     for basis in [
         "input_bytes",
         "calibrated_bytes",
+        "calibrated_prefix_plus_new_bytes",
         "server_usage_plus_new_bytes",
     ] {
         let (observation, value) = applied_record(basis);
