@@ -1096,6 +1096,8 @@ impl<I: IdSource> Controller<I> {
                 &request.tools,
                 response.prompt_tokens,
                 tokens,
+                request.context_input_bound,
+                &request.context_basis,
             );
         }
         if let Some(allow_finish_run) = self

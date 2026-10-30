@@ -795,4 +795,11 @@ schema is unchanged. The calibration comment and the controller docs now
 describe the estimate as a heuristic rather than a bound, since content denser
 than the measured prompts is underestimated until the server measures it; a
 unit test covers a change in content density and an engine test a summary
-transcript measured denser than its estimate.
+transcript measured denser than its estimate. A fourth estimate basis,
+`calibrated_prefix_plus_new_bytes`, marks requests that extend the admitted
+estimate of a calibrated request whose response brought no prompt count, such
+as the replacement after a compaction on a backend that omits the count.
+Before it, every request after such a response was rescaled whole at the
+calibrated rate, new tool output included, which is why the scripted
+continuous gate's compaction count fell from 15 to 5 once its summaries
+carried a measurement. The validator accepts the basis.
