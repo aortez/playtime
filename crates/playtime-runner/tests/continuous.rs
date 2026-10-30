@@ -92,6 +92,7 @@ fn saved_continuous_definition() -> playtime_runner::docker::FrozenRecipe {
 }
 fn synthetic_host() -> playtime_runner::docker::LiveHost {
     playtime_runner::docker::LiveHost {
+        target: None,
         endpoint: "http://127.0.0.1:11434".into(),
         addresses: vec!["127.0.0.1".parse().unwrap()],
         live_lock: "/tmp/synthetic-model.lock".into(),

@@ -200,6 +200,7 @@ impl Run {
             records.clear();
         }
         let view = RunView {
+            target: None,
             request_accounting: None,
             harness: None,
             accounting_coverage: None,
@@ -337,6 +338,7 @@ struct State {
 }
 
 pub struct Fixture {
+    targets: BTreeMap<String, (InferenceTarget, std::sync::Arc<crate::models::ModelBrowser>)>,
     catalog: Option<crate::catalog::Catalog>,
     models: Option<std::sync::Arc<crate::models::ModelBrowser>>,
     registrations: Option<crate::registrations::Registry>,
@@ -350,6 +352,7 @@ impl Fixture {
     }
     pub fn with_limits(service: ServiceId, limits: ApiLimits) -> Self {
         Self {
+            targets: Default::default(),
             catalog: None,
             models: None,
             registrations: None,
@@ -379,6 +382,31 @@ impl Fixture {
         self.models = registry.browser();
         self.registrations = Some(registry);
         self
+    }
+    /// Metadata contract only. Targets do not grant this fixture execution support.
+    pub fn with_targets(mut self, targets: InferenceTargets) -> Result<Self> {
+        crate::targets::validate(&targets).map_err(|_| ApiError::new("invalid_parameters"))?;
+        for target in targets.targets {
+            let browser = std::sync::Arc::new(crate::models::ModelBrowser::new(&target.endpoint)?);
+            self.targets.insert(target.id.clone(), (target, browser));
+        }
+        Ok(self)
+    }
+    fn target_browser(
+        &self,
+        target: Option<&str>,
+    ) -> Result<std::sync::Arc<crate::models::ModelBrowser>> {
+        match target {
+            Some(id) => self
+                .targets
+                .get(id)
+                .map(|(_, b)| b.clone())
+                .ok_or_else(|| ApiError::new("invalid_parameters")),
+            None => self
+                .models
+                .clone()
+                .ok_or_else(|| ApiError::new("backend_unavailable")),
+        }
     }
     pub fn calls(&self) -> Vec<Call> {
         self.state.lock().unwrap().calls.clone()
@@ -499,6 +527,36 @@ fn page<T: Serialize>(
 
 #[async_trait]
 impl Application for Fixture {
+    async fn inference_targets(&self) -> Result<InferenceTargets> {
+        Ok(InferenceTargets {
+            schema_version: 1,
+            targets: self.targets.values().map(|(t, _)| t.clone()).collect(),
+        })
+    }
+    async fn model_inventory_on(&self, target: Option<String>) -> Result<ModelInventory> {
+        self.target_browser(target.as_deref())?.inventory().await
+    }
+    async fn inspect_model_on(
+        &self,
+        target: Option<String>,
+        request: ModelInspectRequest,
+    ) -> Result<ModelInspection> {
+        self.target_browser(target.as_deref())?
+            .inspect(request)
+            .await
+    }
+    async fn model_review_on(
+        &self,
+        target: Option<String>,
+        request: ModelInspectRequest,
+    ) -> Result<ModelRegistrationReview> {
+        if target.is_none() {
+            return self.model_review(request).await;
+        }
+        self.target_browser(target.as_deref())?
+            .review(&self.service, request)
+            .await
+    }
     async fn model_review(&self, request: ModelInspectRequest) -> Result<ModelRegistrationReview> {
         self.registrations
             .as_ref()
@@ -567,7 +625,8 @@ impl Application for Fixture {
             backend: identity(),
             modes: vec![RunMode::Simulation],
             features: [
-                self.models.as_ref().map(|_| MODEL_DISCOVERY.into()),
+                (self.models.is_some() || !self.targets.is_empty()).then(|| MODEL_DISCOVERY.into()),
+                (!self.targets.is_empty()).then(|| INFERENCE_TARGETS.into()),
                 self.registrations
                     .as_ref()
                     .map(|_| MODEL_REGISTRATION.into()),
@@ -711,6 +770,7 @@ impl Application for Fixture {
         ))
         .unwrap();
         Ok(Preview {
+            target: None,
             harness: None,
             recipe_id: recipe,
             mode: request.mode,

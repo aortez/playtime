@@ -264,6 +264,7 @@ impl NormalService {
         // must retain one worker, not merely reuse a client-side receipt.
         let pending = client.prepare_launch(
             LaunchRequest {
+                target: None,
                 recipe_id: acceptance.run.recipe_id.clone(),
                 mode: acceptance.run.mode,
                 preview_revision: acceptance.run.preview_revision.clone(),

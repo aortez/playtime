@@ -253,3 +253,12 @@ A test supervisor is not a systemd smoke;
 [Worker lifecycle](rust-worker-lifecycle.md#real-systemd-supervision) documents
 the opt-in real-systemd boundary. None of this fixture validation requires
 a model, Docker daemon, GPU, or desktop.
+
+## Inference target selection
+
+`playtime targets` lists configured inference locations without probing them.
+`playtime --target ID models` reads that target's installed-model metadata.
+`--target ID` also scopes `recipes preview` and `run`; it is retained in the launch
+receipt. `launches retry` always uses the original retained target. See
+[named inference targets](rust-inference-targets.md) for daemon configuration and
+examples. Simulation and scripted Docker previews do not use inference targets.

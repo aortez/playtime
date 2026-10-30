@@ -7,6 +7,8 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdmissionRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     pub recipe_id: String,
     pub mode: RunMode,
     pub preview_revision: String,

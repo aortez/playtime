@@ -24,7 +24,8 @@ The current model is `gpt-oss:20b`, with the default endpoint
 model weights. Startup verifies the locked identities; it does not pull images,
 download models, or silently refresh locks. See the
 [Docker requirements](docs/rust-docker.md#supported-selection-and-readiness) and
-[live-model guide](docs/rust-live-model.md).
+[live-model guide](docs/rust-live-model.md). To choose between multiple inference machines,
+configure [named targets](docs/rust-inference-targets.md).
 
 ```sh
 rustup target add x86_64-unknown-linux-musl --toolchain 1.94.1
@@ -35,12 +36,24 @@ rustup target add x86_64-unknown-linux-musl --toolchain 1.94.1
 `playtimed-go` systemd user service, and opens the workbench. With this machine's
 defaults, data lives in `/home/data2/playtime` and the connection file is
 `/home/data2/playtime/root/.playtime/connection.json`. `./go.sh --help` lists the
-data-directory, endpoint, and unit settings.
+data-directory, target configuration, and unit settings. By default the launcher
+loads `config/inference-targets.example.json`, with Bird and Framework available
+in the inference-target picker. Set `PLAYTIME_TARGETS` to use another JSON file,
+or `PLAYTIME_OLLAMA` for the legacy single-endpoint workflow (not both).
 
 ```sh
 ./go.sh --no-build   # Reopen the workbench using the existing build.
 ./go.sh --stop       # Stop the daemon between runs.
+./go.sh --no-build --history  # Choose a retained service history to view.
+./go.sh --list-histories     # List roots without starting a daemon.
 ```
+
+History selection searches up to six levels under `PLAYTIME_DATA`; you can also
+pass `--history /absolute/service-root`. It opens that original service root in
+a separate daemon/workbench, preserving its ledger and archive provenance.
+Histories are not merged. New launches from that workbench stay in the selected
+history; plain `./go.sh` continues to use the main root. `--no-build` reuses an
+already running daemon's configuration; run without it to apply target changes.
 
 Closing the workbench leaves the daemon and experiment running. Do not restart
 the daemon during a run: automatic reattachment is not implemented. For manual

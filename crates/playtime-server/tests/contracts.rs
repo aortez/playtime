@@ -165,6 +165,7 @@ async fn empty_reconciled_prefix_has_valid_anchors_and_no_invented_outcome() {
         .client
         .prepare_launch(
             LaunchRequest {
+                target: None,
                 recipe_id: preview.recipe_id,
                 mode: preview.mode,
                 preview_revision: preview.preview_revision,

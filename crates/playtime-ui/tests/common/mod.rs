@@ -14,6 +14,7 @@ pub async fn demo(launcher: bool) -> Workbench {
         .preview(
             RecipeId::new("fixture-example").unwrap(),
             PreviewRequest {
+                target: None,
                 mode: RunMode::Simulation,
             },
         )

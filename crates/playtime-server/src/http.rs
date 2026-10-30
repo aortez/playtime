@@ -343,11 +343,19 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
     let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
     let limits = server.limits();
     let app = &server.application;
+    let target = single_header(request.headers(), TARGET_HEADER)?.map(str::to_owned);
+    if target.as_deref().is_some_and(|id| !valid_id(id)) {
+        return Err(ApiError::new("invalid_parameters"));
+    }
     let status = 200;
     if parts.first() == Some(&"api") && parts.get(1) != Some(&"v1") {
         return Err(ApiError::new("unsupported_version"));
     }
     match (method.as_str(), parts.as_slice()) {
+        ("GET", ["api", "v1", "targets"]) => {
+            no_query(&request)?;
+            json(&app.inference_targets().await?, status, limits.json_bytes)
+        }
         ("GET", ["api", "v1", "capabilities"]) => {
             no_query(&request)?;
             json(&server.capabilities, status, limits.json_bytes)
@@ -359,7 +367,8 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
         ("POST", ["api", "v1", "models", "review"]) => {
             no_query(&request)?;
             json(
-                &app.model_review(body(request, limits).await?).await?,
+                &app.model_review_on(target, body(request, limits).await?)
+                    .await?,
                 200,
                 limits.json_bytes,
             )
@@ -406,12 +415,17 @@ async fn handle(server: Arc<Server>, request: Request) -> Result<Response> {
         }
         ("GET", ["api", "v1", "models"]) => {
             no_query(&request)?;
-            json(&app.model_inventory().await?, 200, limits.json_bytes)
+            json(
+                &app.model_inventory_on(target).await?,
+                200,
+                limits.json_bytes,
+            )
         }
         ("POST", ["api", "v1", "models", "inspect"]) => {
             no_query(&request)?;
             json(
-                &app.inspect_model(body(request, limits).await?).await?,
+                &app.inspect_model_on(target, body(request, limits).await?)
+                    .await?,
                 200,
                 limits.json_bytes,
             )

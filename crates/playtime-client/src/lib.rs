@@ -132,6 +132,7 @@ pub struct PendingLaunch {
 
 #[derive(Clone)]
 pub struct Client {
+    target: Option<String>,
     http: reqwest::Client,
     endpoint: Url,
     service: ServiceId,
@@ -248,12 +249,50 @@ impl Client {
             return Err(Error::InvalidResponse);
         }
         Ok(Self {
+            target: None,
             http,
             endpoint: url,
             service: capabilities.service_id.clone(),
             capabilities,
             limits,
         })
+    }
+    /// Select inference for metadata and new previews. Durable launch bodies carry their own target.
+    pub fn with_target(&self, target: Option<String>) -> Result<Self> {
+        if target.as_deref().is_some_and(|id| !valid_id(id)) {
+            return Err(Error::InvalidResponse);
+        }
+        if target.is_some()
+            && !self
+                .capabilities
+                .features
+                .iter()
+                .any(|f| f == INFERENCE_TARGETS)
+        {
+            return Err(Error::Api {
+                status: 422,
+                response: playtime_protocol::v1::ErrorResponse {
+                    code: "unsupported_capability".into(),
+                    message: "This service does not support named inference targets".into(),
+                    request_id: None,
+                    details: Default::default(),
+                },
+            });
+        }
+        Ok(Self {
+            target,
+            ..self.clone()
+        })
+    }
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
+    }
+    pub async fn inference_targets(&self) -> Result<InferenceTargets> {
+        let value: InferenceTargets = self.json(self.request(Method::GET, "targets")).await?;
+        if !value.valid() {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(value)
     }
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
@@ -265,12 +304,20 @@ impl Client {
         &self.service
     }
     fn request(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
-        self.http
+        let request = self
+            .http
             .request(
                 method,
                 self.endpoint.join(&format!("api/v1/{path}")).unwrap(),
             )
-            .header(SERVICE_HEADER, self.service.as_str())
+            .header(SERVICE_HEADER, self.service.as_str());
+        if matches!(path, "models" | "models/inspect" | "models/review")
+            && let Some(target) = &self.target
+        {
+            request.header(TARGET_HEADER, target)
+        } else {
+            request
+        }
     }
     fn check_response(&self, response: &Response) -> Result<()> {
         if response.status().as_u16() != 401
@@ -311,7 +358,17 @@ impl Client {
         let preview: Preview = self
             .json(
                 self.request(Method::POST, &format!("recipes/{recipe}/preview"))
-                    .json(&PreviewRequest { mode }),
+                    .json(&PreviewRequest {
+                        target: if matches!(
+                            mode,
+                            playtime_core::RunMode::LiveSmoke | playtime_core::RunMode::Experiment
+                        ) {
+                            self.target.clone()
+                        } else {
+                            None
+                        },
+                        mode,
+                    }),
             )
             .await?;
         preview
@@ -319,6 +376,20 @@ impl Client {
             .validate()
             .map_err(|_| Error::InvalidResponse)?;
         if preview.recipe_id != *recipe || preview.mode != mode {
+            return Err(Error::InvalidResponse);
+        }
+        if preview.target.as_ref().is_some_and(|t| !t.valid())
+            || (matches!(
+                mode,
+                playtime_core::RunMode::LiveSmoke | playtime_core::RunMode::Experiment
+            ) && preview.target.as_ref().map(|t| t.id.as_str()) != self.target())
+            || preview.target.as_ref().is_some_and(|t| {
+                preview
+                    .effective_configuration
+                    .pointer("/model/host/target")
+                    != serde_json::to_value(t).ok().as_ref()
+            })
+        {
             return Err(Error::InvalidResponse);
         }
         harnesses::validate_preview(
@@ -337,6 +408,15 @@ impl Client {
         request: LaunchRequest,
         key: Option<IdempotencyKey>,
     ) -> Result<PendingLaunch> {
+        if request.target.as_deref().is_some_and(|id| !valid_id(id))
+            || (request.target.is_some()
+                && !matches!(
+                    request.mode,
+                    playtime_core::RunMode::LiveSmoke | playtime_core::RunMode::Experiment
+                ))
+        {
+            return Err(Error::InvalidResponse);
+        }
         let key = match key {
             Some(key) => key,
             None => {
@@ -641,6 +721,9 @@ async fn read_json<T: DeserializeOwned>(mut response: Response, limit: usize) ->
     serde_json::from_slice(&bytes).map_err(|_| Error::InvalidResponse)
 }
 fn validate_run(run: &RunView) -> Result<()> {
+    if run.target.as_ref().is_some_and(|t| !t.valid()) {
+        return Err(Error::InvalidResponse);
+    }
     if let Some(usage) = &run.usage {
         usage.validate().map_err(|_| Error::InvalidResponse)?;
     }
@@ -672,7 +755,9 @@ fn validate_launch(reply: &LaunchResponse, pending: Option<&PendingLaunch>) -> R
     if reply.run_id != reply.run.run_id
         || reply.accepted_at != reply.run.accepted_at
         || pending.is_some_and(|p| {
-            p.request.recipe_id != reply.run.recipe_id
+            (reply.run.target.is_some()
+                && p.request.target.as_deref() != reply.run.target.as_ref().map(|t| t.id.as_str()))
+                || p.request.recipe_id != reply.run.recipe_id
                 || p.request.mode != reply.run.mode
                 || p.request.preview_revision != reply.run.preview_revision
         })

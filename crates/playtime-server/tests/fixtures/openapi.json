@@ -1252,6 +1252,57 @@
         "pattern": "^[A-Za-z0-9_-]+$",
         "type": "string"
       },
+      "InferenceProvider": {
+        "enum": [
+          "ollama"
+        ],
+        "type": "string"
+      },
+      "InferenceTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/InferenceProvider"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "provider",
+          "endpoint"
+        ],
+        "type": "object"
+      },
+      "InferenceTargets": {
+        "additionalProperties": false,
+        "properties": {
+          "schema_version": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/InferenceTarget"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema_version",
+          "targets"
+        ],
+        "type": "object"
+      },
       "LaunchRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1263,6 +1314,12 @@
           },
           "recipe_id": {
             "$ref": "#/components/schemas/RecipeId"
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1996,6 +2053,16 @@
                 "run_id": {
                   "type": "string"
                 },
+                "target": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/InferenceTarget"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "updated_at": {
                   "format": "date-time",
                   "type": "string"
@@ -2147,6 +2214,16 @@
           "seeds": {
             "$ref": "#/components/schemas/SeedSummary"
           },
+          "target": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InferenceTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "warnings": {
             "items": {
               "type": "string"
@@ -2179,6 +2256,12 @@
         "properties": {
           "mode": {
             "$ref": "#/components/schemas/RunMode"
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3093,6 +3176,16 @@
           "run_id": {
             "type": "string"
           },
+          "target": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/InferenceTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updated_at": {
             "format": "date-time",
             "type": "string"
@@ -3677,7 +3770,20 @@
     "/api/v1/models": {
       "get": {
         "operationId": "model_inventory",
-        "parameters": [],
+        "parameters": [
+          {
+            "description": "Explicit configured inference target for metadata reads. Required when only named targets are configured.",
+            "in": "header",
+            "name": "X-Playtime-Target",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -3750,6 +3856,18 @@
       "post": {
         "operationId": "inspect_model",
         "parameters": [
+          {
+            "description": "Explicit configured inference target for metadata reads. Required when only named targets are configured.",
+            "in": "header",
+            "name": "X-Playtime-Target",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          },
           {
             "in": "header",
             "name": "X-Playtime-Service-ID",
@@ -4122,6 +4240,18 @@
       "post": {
         "operationId": "model_review",
         "parameters": [
+          {
+            "description": "Explicit configured inference target for metadata reads. Required when only named targets are configured.",
+            "in": "header",
+            "name": "X-Playtime-Target",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "type": "string"
+            }
+          },
           {
             "in": "header",
             "name": "X-Playtime-Service-ID",
@@ -6568,6 +6698,78 @@
               }
             },
             "description": "Immutable revision and keyed result committed atomically",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "X-Playtime-Service-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        }
+      }
+    },
+    "/api/v1/targets": {
+      "get": {
+        "operationId": "inference_targets",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InferenceTargets"
+                }
+              }
+            },
+            "description": "Successful response",
             "headers": {
               "Cache-Control": {
                 "schema": {

@@ -16,6 +16,7 @@ async fn selection_changes_invalidate_preview_and_duplicate_launch_intents() {
         .preview(
             RecipeId::new("fixture-example").unwrap(),
             PreviewRequest {
+                target: None,
                 mode: playtime_core::RunMode::Simulation,
             },
         )
@@ -76,6 +77,31 @@ fn late_run_responses_and_connection_loss_do_not_invent_outcomes() {
             .iter()
             .any(|c| matches!(c.action, Action::Cancel(_)))
     );
+}
+
+#[test]
+fn archived_model_replies_follow_run_selection_and_connection() {
+    let mut model = Model::default();
+    let qwen = RunId::new("qwen-run").unwrap();
+    model.select_run(qwen.clone());
+    let old = model.tag;
+    model.apply(Reply {
+        tag: old,
+        run: Some(qwen.clone()),
+        data: Data::RunModel(Ok(None)),
+    });
+    assert!(model.run_model.is_some());
+    model.select_run(RunId::new("different-run").unwrap());
+    assert!(model.run_model.is_none());
+    model.apply(Reply {
+        tag: old,
+        run: Some(qwen),
+        data: Data::RunModel(Err("old read".into())),
+    });
+    assert!(model.run_model.is_none());
+    model.run_model = Some(Ok(None));
+    model.connect(Default::default());
+    assert!(model.run_model.is_none());
 }
 #[test]
 fn late_history_merges_by_identity_and_final_text_replaces_chunks() {
@@ -183,4 +209,69 @@ fn cancellation_reply_loss_stays_unresolved_and_inspection_generations_are_indep
         data: Data::Source(20, source_page("selected source", 0)),
     });
     assert_eq!(model.source.as_ref().unwrap().text, "selected source");
+}
+
+#[tokio::test]
+async fn changing_target_invalidates_preview_and_metadata_and_freezes_launch_target() {
+    let fixture = Fixture::new(ServiceId::new("target-ui-fixture").unwrap());
+    let mut preview = fixture
+        .preview(
+            RecipeId::new("fixture-example").unwrap(),
+            PreviewRequest {
+                target: None,
+                mode: playtime_core::RunMode::Simulation,
+            },
+        )
+        .await
+        .unwrap();
+    preview.mode = playtime_core::RunMode::Experiment;
+    let target = |id: &str| InferenceTarget {
+        id: id.into(),
+        name: id.into(),
+        provider: InferenceProvider::Ollama,
+        endpoint: format!("http://{id}:11434/"),
+    };
+    let mut model = Model::default();
+    model.connection = ConnectionState::Connected;
+    model.modes = vec![preview.mode];
+    model.targets = vec![target("bird"), target("framework")];
+    model.select_target(Some("bird".into()));
+    model.choose_recipe(preview.recipe_id.clone(), preview.mode);
+    let old = model.tag;
+    preview.target = Some(target("bird"));
+    model.apply(Reply {
+        tag: old,
+        run: None,
+        data: Data::Preview(Box::new(prepare_preview(preview.clone()))),
+    });
+    assert!(model.can_launch());
+    model.select_target(Some("framework".into()));
+    assert!(!model.can_launch());
+    model.apply(Reply {
+        tag: old,
+        run: None,
+        data: Data::Preview(Box::new(prepare_preview(preview.clone()))),
+    });
+    assert!(model.preview.is_none());
+    assert!(model.models.inventory.is_none());
+    assert!(model.commands.iter().any(
+        |c| c.target.as_deref() == Some("framework") && matches!(c.action, Action::Preview(..))
+    ));
+    preview.target = Some(target("framework"));
+    model.apply(Reply {
+        tag: model.tag,
+        run: None,
+        data: Data::Preview(Box::new(prepare_preview(preview))),
+    });
+    model.commands.clear();
+    model.launch();
+    let Action::Launch(request) = &model.commands[0].action else {
+        panic!("expected launch");
+    };
+    assert_eq!(request.target.as_deref(), Some("framework"));
+    model.select_target(Some("bird".into()));
+    let Action::Launch(request) = &model.commands[0].action else {
+        panic!("retained launch changed");
+    };
+    assert_eq!(request.target.as_deref(), Some("framework"));
 }

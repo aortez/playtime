@@ -67,6 +67,7 @@ async fn walkthrough() -> std::result::Result<(), Box<dyn std::error::Error>> {
             coordinator.ledger().service_id().clone(),
             "fixture-launch".into(),
             AdmissionRequest {
+                target: None,
                 recipe_id: "lifecycle-fixture".into(),
                 mode: RunMode::Simulation,
                 preview_revision,

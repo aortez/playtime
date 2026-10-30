@@ -28,6 +28,7 @@ fn admission(fixture: &fixture::Fixture) -> Admission {
         run_id: fixture.descriptor.run_id.clone(),
         key: "test".into(),
         request: AdmissionRequest {
+            target: None,
             recipe_id: "test".into(),
             mode: RunMode::Simulation,
             preview_revision: "test".into(),
@@ -391,6 +392,7 @@ fn preparation_is_keyed_on_the_recipe_as_well_as_the_mode() {
     use super::archive::{Launch, launch};
     use playtime_runner::docker::{LIVE_RECIPE, RECIPE};
     let request = |recipe: &str, mode| AdmissionRequest {
+        target: None,
         recipe_id: recipe.into(),
         mode,
         preview_revision: "test".into(),

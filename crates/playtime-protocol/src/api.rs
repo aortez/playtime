@@ -1,5 +1,7 @@
 //! HTTP v1 contracts, independent of the runtime and archive implementation.
 
+pub mod targets;
+pub use targets::*;
 pub mod cursor;
 pub mod harnesses;
 pub use harnesses::*;
@@ -155,11 +157,15 @@ pub struct Recipe {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     #[schema(value_type = schema::RunMode)]
     pub mode: RunMode,
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct Preview {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<InferenceTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<HarnessView>,
     pub recipe_id: RecipeId,
@@ -196,6 +202,8 @@ pub struct Readiness {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     pub recipe_id: RecipeId,
     #[schema(value_type = schema::RunMode)]
     pub mode: RunMode,
@@ -289,6 +297,8 @@ pub enum Cleanup {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 pub struct RunView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<InferenceTarget>,
     /// Writer-confirmed accounting by explicit request purpose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_accounting: Option<crate::archive_queries::RequestAccounting>,

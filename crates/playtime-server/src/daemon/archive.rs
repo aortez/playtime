@@ -32,6 +32,8 @@ pub(super) struct Archive {
     pub authoring: Option<crate::catalog::Catalog>,
     pub docker_options: Option<(PathBuf, PathBuf)>,
     pub live_endpoint: Option<String>,
+    pub targets: std::collections::BTreeMap<String, (InferenceTarget, Option<Arc<Live>>)>,
+    selected_target: Option<InferenceTarget>,
     docker_transport: Arc<tokio::sync::Mutex<Option<playtime_docker::transport::Cli>>>,
     execution_gate: Arc<tokio::sync::Mutex<()>>,
     snapshots: Arc<Snapshots>,
@@ -138,6 +140,7 @@ mod model_readiness_tests {
             lock,
             settings: serde_json::json!({}),
             host: playtime_runner::docker::LiveHost {
+                target: None,
                 endpoint: fake.endpoint.clone(),
                 addresses: vec!["127.0.0.1".parse().unwrap()],
                 live_lock: "/synthetic/lock".into(),
@@ -301,6 +304,8 @@ impl Archive {
             authoring: None,
             docker_options: None,
             live_endpoint: None,
+            targets: Default::default(),
+            selected_target: None,
             docker_transport: Arc::new(tokio::sync::Mutex::new(None)),
             execution_gate: Arc::new(tokio::sync::Mutex::new(())),
             snapshots: Default::default(),
@@ -393,6 +398,7 @@ impl Archive {
         let addresses = resolve(&endpoint).await?;
         let live = Live {
             host: playtime_runner::docker::LiveHost {
+                target: self.selected_target.clone(),
                 endpoint: endpoint.as_str().into(),
                 addresses,
                 live_lock: directory.join("live-model.lock"),
@@ -417,6 +423,39 @@ impl Archive {
                 .map_err(|_| Error::Invalid("invalid catalog recipe"))?;
             self.recipes.insert(recipe.id.clone(), recipe);
         }
+        Ok(())
+    }
+    pub async fn execution_on(&self, mode: RunMode, target: Option<&str>) -> life::Result<Self> {
+        if let Some(id) = target {
+            if !matches!(mode, RunMode::LiveSmoke | RunMode::Experiment) {
+                return Err(Error::Invalid("target requires live execution"));
+            }
+            let (config, live) = self
+                .targets
+                .get(id)
+                .ok_or(Error::Invalid("unknown inference target"))?;
+            let mut selected = self.clone();
+            selected.live = live.clone();
+            selected.live_endpoint = Some(config.endpoint.clone());
+            selected.selected_target = Some(config.clone());
+            return selected.execution(mode).await;
+        }
+        if matches!(mode, RunMode::LiveSmoke | RunMode::Experiment) && !self.targets.is_empty() {
+            return Err(Error::Invalid("inference target required"));
+        }
+        self.execution(mode).await
+    }
+    pub async fn add_target(&mut self, mut target: InferenceTarget) -> life::Result<()> {
+        target.endpoint = playtime_ollama::Endpoint::parse(&target.endpoint)
+            .map_err(|_| Error::Invalid("invalid target endpoint"))?
+            .as_str()
+            .to_owned();
+        let mut selected = self.clone();
+        selected.selected_target = Some(target.clone());
+        selected.live = None;
+        super::tolerate_unavailable(selected.enable_live(&target.endpoint).await)?;
+        self.targets
+            .insert(target.id.clone(), (target, selected.live));
         Ok(())
     }
     pub async fn execution(&self, mode: RunMode) -> life::Result<Self> {
@@ -563,6 +602,7 @@ impl Archive {
         preview.prompt = profile.config.prompt.clone();
         preview.protocol = profile.config.protocol.clone();
         let model = profile.model.as_ref()?;
+        preview.target = model.host.target.clone();
         preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"],
             "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"],
             "settings":model.settings,"endpoint":model.host.endpoint,"addresses":model.host.addresses});
@@ -629,6 +669,7 @@ impl Archive {
         preview.prompt = profile.scenario.prompt.clone();
         preview.protocol = profile.scenario.protocol.clone();
         let model = profile.model.as_ref().unwrap();
+        preview.target = model.host.target.clone();
         preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"],
             "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"],
             "settings":model.settings,"endpoint":model.host.endpoint,"addresses":model.host.addresses});
@@ -670,6 +711,7 @@ impl Archive {
     }
     pub fn preview(&self) -> Preview {
         Preview {
+            target: None,
             harness: None,
             recipe_id: RecipeId::new("two-session").unwrap(),
             mode: RunMode::Simulation,
@@ -840,7 +882,9 @@ impl ArchivePort for Archive {
         let current = if request.mode == RunMode::Simulation {
             self
         } else {
-            resolved = self.execution(request.mode).await?;
+            resolved = self
+                .execution_on(request.mode, request.target.as_deref())
+                .await?;
             &resolved
         };
         current.validate_current_preview(request).await
@@ -850,7 +894,9 @@ impl ArchivePort for Archive {
         let current = if admission.request.mode == RunMode::Simulation {
             self
         } else {
-            resolved = self.execution(admission.request.mode).await?;
+            resolved = self
+                .execution_on(admission.request.mode, admission.request.target.as_deref())
+                .await?;
             &resolved
         };
         // Recheck the exact admission binding before creating the prepared writer.
@@ -1002,6 +1048,11 @@ impl Archive {
         &self,
         request: &AdmissionRequest,
     ) -> life::Result<Selection> {
+        if request.target.is_some()
+            && !matches!(request.mode, RunMode::LiveSmoke | RunMode::Experiment)
+        {
+            return Err(Error::Invalid("target requires live execution"));
+        }
         // Busy while another live run holds the lock; then the workshop and
         // the model must still be what was frozen.
         let live_ready = || async {

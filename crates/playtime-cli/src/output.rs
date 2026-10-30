@@ -145,6 +145,14 @@ fn run_summary(view: &Value) -> String {
             word(&view["accounting_coverage"]["availability"]["status"])
         ));
     }
+    if !view["target"].is_null() {
+        usage.push_str(&format!(
+            "\nTarget: {} ({}) · {}",
+            word(&view["target"]["name"]),
+            word(&view["target"]["id"]),
+            word(&view["target"]["endpoint"])
+        ));
+    }
     format!(
         "Run {}: {} | backend {} | mode {}\nRecipe {} @ {} | phase {} | outcome {}\nCleanup: {} | evidence: {} | checkpoint: {}\n{}\nCancellation: {}",
         word(&view["run_id"]),

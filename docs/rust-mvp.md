@@ -197,7 +197,7 @@ provenance. `workshop/docs/` contains the model-facing tool inventory and usage 
 | Archives and the run driver | `playtime-runner`, `playtime-storage` | [Storage](rust-storage.md), [archive driver](rust-archive-driver.md), [recovery contract](rust-recovery-contract.md) |
 | Recipes | `recipes/`, `playtime-runner`, `playtime-server` | [Recipes](rust-recipes.md) |
 | Workshop | `playtime-docker` | [Docker sandbox](rust-docker.md), [workspace capture](rust-workspace-capture.md) |
-| Model | `playtime-ollama` | [Live model](rust-live-model.md), [adapter contract](../crates/playtime-ollama/README.md) |
+| Model | `playtime-ollama` | [Live model](rust-live-model.md), [named targets](rust-inference-targets.md), [adapter contract](../crates/playtime-ollama/README.md) |
 | Worker | `playtime-worker`, `playtime-worker-control`, `xtask` | [Worker package](rust-worker-package.md), [worker lifecycle](rust-worker-lifecycle.md) |
 | Daemon and API | `playtime-server` | [Daemon](rust-daemon.md), [HTTP API](rust-http-api.md), [run-and-view](rust-docker-run-and-view.md) |
 | Clients | `playtime-cli`, `playtime-client`, `playtime-local`, `playtime-ui` | [CLI](rust-cli.md), [workbench](rust-ui.md) |

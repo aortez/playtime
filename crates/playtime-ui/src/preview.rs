@@ -137,6 +137,21 @@ pub fn prepare(value: Preview) -> PreviewView {
             .unwrap_or_else(|| "unavailable".into())
     ));
     let mut sections = vec![section("Run limits", limits)];
+    if let Some(target) = &value.target {
+        sections.insert(
+            0,
+            section(
+                "Inference target",
+                vec![
+                    format!("{} ({})", target.name, target.id),
+                    target.endpoint.clone(),
+                    "Provider: Ollama".into(),
+                    "GPU fit depends on the model and context; installed does not mean validated."
+                        .into(),
+                ],
+            ),
+        );
+    }
     if let Some(harness) = &value.harness {
         sections.insert(0, section("Harness", crate::harness::lines(harness)));
     }

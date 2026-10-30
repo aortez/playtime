@@ -11,6 +11,7 @@ async fn named_recipe_preview_launch_and_double_click_controls() {
         .preview(
             RecipeId::new("fixture-example").unwrap(),
             PreviewRequest {
+                target: None,
                 mode: RunMode::Simulation,
             },
         )
@@ -105,6 +106,7 @@ async fn recover_cancel_reconnect_and_inspect_through_named_controls() {
         endpoint: "http://127.0.0.1:1234".into(),
         key: IdempotencyKey::new("lost-ui-reply").unwrap(),
         request: LaunchRequest {
+            target: None,
             recipe_id: preview.recipe_id.clone(),
             mode: preview.mode,
             preview_revision: preview.preview_revision.clone(),
@@ -262,6 +264,7 @@ async fn an_accepted_launch_refreshes_the_run_list() {
         h.run();
         // The service's reply carries the launch command's tag.
         let Some(Command {
+            target: None,
             tag,
             action: Action::Launch(request),
         }) = h.state().model.commands.back().cloned()

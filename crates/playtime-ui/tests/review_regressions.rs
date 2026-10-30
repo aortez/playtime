@@ -80,6 +80,7 @@ async fn launch_resolution_survives_preview_changes_without_stealing_selection()
             endpoint: app.model.endpoint.clone(),
             key: IdempotencyKey::new("pending-refresh").unwrap(),
             request: LaunchRequest {
+                target: None,
                 recipe_id: preview.recipe_id.clone(),
                 mode: preview.mode,
                 preview_revision: preview.preview_revision.clone(),
@@ -401,6 +402,7 @@ async fn transient_attachment_failure(
         .preview(
             RecipeId::new("fixture-example").unwrap(),
             PreviewRequest {
+                target: None,
                 mode: RunMode::Simulation,
             },
         )
@@ -411,6 +413,7 @@ async fn transient_attachment_failure(
         .admit(
             IdempotencyKey::new("review-launch").unwrap(),
             LaunchRequest {
+                target: None,
                 recipe_id: preview.recipe_id,
                 mode: preview.mode,
                 preview_revision: preview.preview_revision,
@@ -535,6 +538,7 @@ fn unresolved_receipt(
         endpoint: app.model.endpoint.clone(),
         key: IdempotencyKey::new(key).unwrap(),
         request: LaunchRequest {
+            target: None,
             recipe_id: preview.recipe_id.clone(),
             mode: preview.mode,
             preview_revision: preview.preview_revision.clone(),

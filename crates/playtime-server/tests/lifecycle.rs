@@ -52,6 +52,7 @@ fn request() -> AdmissionRequest {
         .preview_revision()
     });
     AdmissionRequest {
+        target: None,
         recipe_id: "lifecycle-fixture".into(),
         mode: RunMode::Simulation,
         preview_revision: revision.clone(),

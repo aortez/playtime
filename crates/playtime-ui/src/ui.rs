@@ -273,11 +273,13 @@ impl Workbench {
                             .iter()
                             .find(|recipe| recipe.recipe_id == run.recipe_id)
                             .map_or(run.recipe_id.as_str(), |recipe| recipe.name.as_str());
-                        let response = ui.add(
-                            egui::Button::new(brief(recipe, 60))
-                                .selected(self.model.selected.as_ref() == Some(&run.run_id))
-                                .wrap_mode(egui::TextWrapMode::Truncate),
-                        );
+                        let response = ui
+                            .add(
+                                egui::Button::new(brief(recipe, 60))
+                                    .selected(self.model.selected.as_ref() == Some(&run.run_id))
+                                    .wrap_mode(egui::TextWrapMode::Truncate),
+                            )
+                            .on_hover_text(format!("Recipe: {recipe}"));
                         response.widget_info(|| {
                             egui::WidgetInfo::labeled(
                                 egui::WidgetType::SelectableLabel,
@@ -289,6 +291,12 @@ impl Workbench {
                             selected = Some(run.run_id.clone());
                         }
                         // Keep actionable state visible even when the recipe is ellipsized.
+                        if self.model.selected.as_ref() == Some(&run.run_id)
+                            && let Some(Ok(Some(model))) = &self.model.run_model
+                        {
+                            ui.add(egui::Label::new(RichText::new(&model.name).small()).truncate())
+                                .on_hover_text(format!("Archived model: {}", model.name));
+                        }
                         ui.add(egui::Label::new(run_state(run)).wrap());
                         ui.small(format!(
                             "{} UTC",
@@ -371,6 +379,7 @@ impl Workbench {
         }
     }
     fn launcher_contents(&mut self, ui: &mut egui::Ui) {
+        crate::targets::draw(ui, &mut self.model);
         ui.add_space(12.0);
         ui.heading(RichText::new("New experiment").size(26.0));
         ui.label("Choose a recipe and review its frozen inputs before launching.");
@@ -589,6 +598,9 @@ impl Workbench {
                 .map_or("Select a run", |r| r.as_str()),
         );
         if let Some(run) = &self.model.run {
+            if let Some(Ok(Some(model))) = &self.model.run_model {
+                ui.label(RichText::new(format!("Model: {}", model.name)).strong());
+            }
             // Progress first, then state and accounting.
             let lead = progress::lead(&run.value, &self.model.window.progress);
             if let Some((first, rest)) = lead.split_first() {
@@ -1064,6 +1076,18 @@ impl Workbench {
                             if ui.button("Next source record").clicked() { self.model.source_sequence += 1; self.model.inspect_action(Action::Source(row, self.model.source_sequence, 0)); }
                         }
                     } else if let Some(run) = &self.model.run {
+                        match &self.model.run_model {
+                            Some(Ok(Some(model))) => {
+                                ui.strong("Archived model");
+                                ui.label(&model.name);
+                                for line in &model.details { ui.label(line); }
+                                if let Some(endpoint) = &model.endpoint { ui.label(endpoint); }
+                                ui.label(format!("Digest: {}", model.digest));
+                                ui.separator();
+                            }
+                            Some(Err(error)) => { ui.label(format!("Archived model unavailable: {}", brief(error, 512))); }
+                            _ => (),
+                        }
                         if !run.harness.is_empty() {
                             ui.strong("Archived harness");
                             for line in &run.harness { ui.label(line); }

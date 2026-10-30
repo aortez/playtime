@@ -85,6 +85,14 @@ async fn reviewed_workbench_screens() {
     let mut results = egui_kittest::SnapshotResults::new();
     for (name, launcher, narrow, inspector, disconnected) in [
         ("launcher", true, false, Inspector::Details, false),
+        ("targets-preview", true, false, Inspector::Details, false),
+        (
+            "targets-preview-narrow",
+            true,
+            true,
+            Inspector::Details,
+            false,
+        ),
         ("compaction-editor", true, false, Inspector::Details, false),
         (
             "compaction-editor-narrow",
@@ -104,6 +112,14 @@ async fn reviewed_workbench_screens() {
         ),
         ("harness-preview", true, false, Inspector::Details, false),
         ("harness-archive", false, false, Inspector::Details, false),
+        ("archived-model", false, false, Inspector::Details, false),
+        (
+            "archived-model-narrow",
+            false,
+            true,
+            Inspector::Details,
+            false,
+        ),
         (
             "recipe-model-invalid",
             true,
@@ -379,6 +395,31 @@ async fn reviewed_workbench_screens() {
         if name.starts_with("session-") {
             session_scenes::prepare(&mut app, name.contains("interrupted"));
         }
+        if name.starts_with("targets-preview") {
+            let mut preview = preview_scene::live(app.model.preview.take().unwrap().value);
+            let target = |id: &str, name: &str| InferenceTarget {
+                id: id.into(),
+                name: name.into(),
+                provider: InferenceProvider::Ollama,
+                endpoint: format!("http://{id}.example:11434/"),
+            };
+            app.model.targets = vec![
+                target("bird", "Bird · RTX 4090"),
+                target("framework", "Framework · Radeon 8060S"),
+            ];
+            app.model.selected_target = Some("framework".into());
+            preview.target = Some(app.model.targets[1].clone());
+            preview.mode = playtime_core::RunMode::LiveSmoke;
+            app.model.mode = preview.mode;
+            app.model.modes = vec![preview.mode];
+            for recipe in &mut app.model.recipes {
+                recipe.modes = vec![preview.mode];
+            }
+            preview.model_identity["endpoint"] = app.model.targets[1].endpoint.clone().into();
+            preview.model_identity["addresses"] = serde_json::json!(["192.0.2.20"]);
+            app.model.preview = Some(playtime_ui::backend::prepare_preview(preview));
+            app.model.backend = "Synthetic target preview · no inference or tool execution".into();
+        }
         if name.starts_with("live-preview") {
             let preview = preview_scene::live(app.model.preview.take().unwrap().value);
             app.model.preview = Some(playtime_ui::backend::prepare_preview(preview));
@@ -405,6 +446,24 @@ async fn reviewed_workbench_screens() {
             });
             app.model.run = Some(prepare_run(value));
             app.model.source = None;
+        }
+        if name.starts_with("archived-model") {
+            let config = serde_json::json!({
+                "model": {
+                    "lock": {"name": "qwen3-coder-next:q4_K_M", "digest": "c".repeat(64), "ollama_version": "0.32.3",
+                        "definition": {"details": {"parameter_size": "79.7B", "quantization_level": "Q4_K_M"}}},
+                    "host": {"endpoint": "http://framework.example:11434/"},
+                    "settings": {"context_tokens": 65536, "thinking": false, "temperature": 1.0, "top_p": 0.95, "top_k": 40, "repeat_penalty": 1.0}
+                }
+            });
+            app.model.run_model = Some(playtime_ui::run_model::parse(
+                &serde_json::to_vec(&config).unwrap(),
+            ));
+            app.model.source = None;
+            app.model.backend = "Synthetic archived model · no inference or tool execution".into();
+            for recipe in &mut app.model.recipes {
+                recipe.name = "Curiosity on gpt-oss:20b on qwen3-coder-next:q4_K_M".into();
+            }
         }
         if name == "archive-waiting" {
             let mut view = app.model.run.take().unwrap().value;
@@ -451,6 +510,11 @@ async fn reviewed_workbench_screens() {
             .wgpu_setup(setup())
             .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
         h.run();
+        if name == "archived-model-narrow" {
+            use egui_kittest::kittest::Queryable;
+            h.get_by_label("Inspector").click();
+            h.run();
+        }
         if name.starts_with("harness-editor") {
             use egui_kittest::kittest::Queryable;
             h.get_by_label("Inherited harness settings (read only)")

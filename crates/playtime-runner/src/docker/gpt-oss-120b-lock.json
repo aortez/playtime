@@ -1,0 +1,62 @@
+{
+  "definition": {
+    "capabilities": [
+      "completion",
+      "tools",
+      "thinking"
+    ],
+    "details": {
+      "families": [
+        "gpt-oss"
+      ],
+      "family": "gpt-oss",
+      "format": "gguf",
+      "parameter_size": "116.8B",
+      "parent_model": "dhiltgen/gpt-oss:120b-llamacpp",
+      "quantization_level": "MXFP4"
+    },
+    "model_info": {
+      "general.architecture": "gpt-oss",
+      "general.file_type": 4,
+      "general.parameter_count": 116829156672,
+      "general.quantization_version": 2,
+      "gpt-oss.attention.head_count": 64,
+      "gpt-oss.attention.head_count_kv": 8,
+      "gpt-oss.attention.key_length": 64,
+      "gpt-oss.attention.layer_norm_rms_epsilon": 0.00001,
+      "gpt-oss.attention.sliding_window": 128,
+      "gpt-oss.attention.value_length": 64,
+      "gpt-oss.block_count": 36,
+      "gpt-oss.context_length": 131072,
+      "gpt-oss.embedding_length": 2880,
+      "gpt-oss.expert_count": 128,
+      "gpt-oss.expert_feed_forward_length": 2880,
+      "gpt-oss.expert_used_count": 4,
+      "gpt-oss.feed_forward_length": 2880,
+      "gpt-oss.rope.freq_base": 150000,
+      "gpt-oss.rope.scaling.factor": 32,
+      "gpt-oss.rope.scaling.original_context_length": 4096,
+      "gpt-oss.rope.scaling.type": "yarn",
+      "tokenizer.ggml.add_bos_token": false,
+      "tokenizer.ggml.add_eos_token": false,
+      "tokenizer.ggml.add_padding_token": false,
+      "tokenizer.ggml.bos_token_id": 199998,
+      "tokenizer.ggml.eos_token_id": 199999,
+      "tokenizer.ggml.eos_token_ids": null,
+      "tokenizer.ggml.merges": null,
+      "tokenizer.ggml.model": "gpt2",
+      "tokenizer.ggml.padding_token_id": 199999,
+      "tokenizer.ggml.pre": "gpt-4o",
+      "tokenizer.ggml.scores": null,
+      "tokenizer.ggml.token_type": null,
+      "tokenizer.ggml.tokens": null
+    },
+    "parameters": "temperature                    1",
+    "template": "<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: {{ currentDate }}\n{{- if and .IsThinkSet .Think (ne .ThinkLevel \"\") }}\n\nReasoning: {{ .ThinkLevel }}\n{{- else if or (not .IsThinkSet) (and .IsThinkSet .Think) }}\n\nReasoning: medium\n{{- end }}\n\n{{- $hasNonBuiltinTools := false }}\n{{- if .Tools -}}\n{{- $hasBrowserSearch := false }}\n{{- $hasBrowserOpen := false }}\n{{- $hasBrowserFind := false }}\n{{- $hasPython := false }}\n  {{- range .Tools }}\n    {{- if eq .Function.Name \"browser.search\" -}}{{- $hasBrowserSearch = true -}}\n    {{- else if eq .Function.Name \"browser.open\" -}}{{- $hasBrowserOpen = true -}}\n    {{- else if eq .Function.Name \"browser.find\" -}}{{- $hasBrowserFind = true -}}\n    {{- else if eq .Function.Name \"python\" -}}{{- $hasPython = true -}}\n    {{- else }}{{ $hasNonBuiltinTools = true -}}\n    {{- end }}\n  {{- end }}\n{{- if or $hasBrowserSearch $hasBrowserOpen $hasBrowserFind $hasPython }}\n\n# Tools\n{{- if or $hasBrowserSearch $hasBrowserOpen $hasBrowserFind }}\n\n## browser\n\n// Tool for browsing.\n// The `cursor` appears in brackets before each browsing display: `[{cursor}]`.\n// Cite information from the tool using the following format:\n// `【{cursor}†L{line_start}(-L{line_end})?】`, for example: `【6†L9-L11】` or `【8†L3】`.\n// Do not quote more than 10 words directly from the tool output.\n// sources=web (default: web)\nnamespace browser {\n{{- if $hasBrowserSearch }}\n\n// Searches for information related to `query` and displays `topn` results.\ntype search = (_: {\nquery: string,\ntopn?: number, // default: 10\nsource?: string,\n}) => any;\n{{- end }}\n{{- if $hasBrowserOpen }}\n\n// Opens the link `id` from the page indicated by `cursor` starting at line number `loc`, showing `num_lines` lines.\n// Valid link ids are displayed with the formatting: `【{id}†.*】`.\n// If `cursor` is not provided, the most recent page is implied.\n// If `id` is a string, it is treated as a fully qualified URL associated with `source`.\n// If `loc` is not provided, the viewport will be positioned at the beginning of the document or centered on the most relevant passage, if available.\n// Use this function without `id` to scroll to a new location of an opened page.\ntype open = (_: {\nid?: number | string, // default: -1\ncursor?: number, // default: -1\nloc?: number, // default: -1\nnum_lines?: number, // default: -1\nview_source?: boolean, // default: false\nsource?: string,\n}) => any;\n{{- end }}\n{{- if $hasBrowserFind }}\n\n// Finds exact matches of `pattern` in the current page, or the page given by `cursor`.\ntype find = (_: {\npattern: string,\ncursor?: number, // default: -1\n}) => any;\n{{- end }}\n\n} // namespace browser\n{{- end }}{{/* end if has browser tools */}}\n{{- if $hasPython }}\n\n## python\n\nUse this tool to execute Python code in your chain of thought. The code will not be shown to the user. This tool should be used for internal reasoning, but not for code that is intended to be visible to the user (e.g. when creating plots, tables, or files).\n\nWhen you send a message containing Python code to python, it will be executed in a stateful Jupyter notebook environment. python will respond with the output of the execution or time out after 120.0 seconds. The drive at '/mnt/data' can be used to save and persist user files. Internet access for this session is UNKNOWN. Depends on the cluster.\n{{- end }}{{/* end if hasPython */}}\n{{- end }}{{/* end if has any built-in tools */}}\n{{- end }}{{/* end if .Tools */}}\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.{{ if $hasNonBuiltinTools }}\nCalls to these tools must go to the commentary channel: 'functions'.\n{{- end -}}<|end|>{{/* end of system */ -}}\n{{- if or $hasNonBuiltinTools .System -}}\n<|start|>developer<|message|>{{- if $hasNonBuiltinTools }}# Tools\n\n## functions\n\nnamespace functions {\n{{- range .Tools }}\n{{- if not (or (eq .Function.Name \"browser.search\") (eq .Function.Name \"browser.open\") (eq .Function.Name \"browser.find\") (eq .Function.Name \"python\")) }}\n{{if .Function.Description }}\n// {{ .Function.Description }}\n{{- end }}\n{{- if and .Function.Parameters.Properties (gt (len .Function.Parameters.Properties) 0) }}\ntype {{ .Function.Name }} = (_: {\n{{- range $name, $prop := .Function.Parameters.Properties }}\n{{- if $prop.Description }}\n  // {{ $prop.Description }}\n{{- end }}\n  {{ $name }}: {{ $prop | toTypeScriptType }},\n{{- end }}\n}) => any;\n{{- else }}\ntype {{ .Function.Name }} = () => any;\n{{- end }}\n{{- end }}{{/* end if not browser tool */}}\n{{- end }}{{/* end of range .Tools */}}\n\n} // namespace functions\n{{- end }}{{/* end if hasNonBuiltinTools */}}\n{{- if .System}}\n\n# Instructions\n\n{{ .System }}\n{{- end -}}\n<|end|>\n{{- end -}}\n{{- /* Find the index of the last user message */ -}}\n{{- $lastUserIdx := -1 }}\n{{- $prefillingContent := false }}\n{{- $prefillingThinkingOnly := false }}\n{{- range $i, $msg := .Messages }}\n  {{- $last := eq (len (slice $.Messages $i)) 1 -}}\n  {{- if eq $msg.Role \"user\" }}\n    {{- $lastUserIdx = $i }}\n  {{- end -}}\n  {{- if and $last (eq $msg.Role \"assistant\") (gt (len $msg.Content) 0) }}\n    {{- $prefillingContent = true }}\n  {{- else if and $last (eq $msg.Role \"assistant\") (gt (len $msg.Thinking) 0) }}\n    {{- $prefillingThinkingOnly = true }}\n  {{- end }}\n{{- end -}}\n{{- /* Now render messages */ -}}\n{{- range $i, $msg := .Messages }}\n  {{- $last := eq (len (slice $.Messages $i)) 1 -}}\n  {{- if (ne $msg.Role \"system\") -}}\n    {{- if eq $msg.Role \"tool\" -}}\n      {{- if or (eq $msg.ToolName \"python\") (eq $msg.ToolName \"browser.search\") (eq $msg.ToolName \"browser.open\") (eq $msg.ToolName \"browser.find\") -}}\n        <|start|>{{ $msg.ToolName }} to=assistant<|message|>{{ $msg.Content }}<|end|>\n      {{- else -}}\n        <|start|>functions.{{ $msg.ToolName }} to=assistant<|message|>{{ $msg.Content }}<|end|>\n      {{- end -}}\n    {{- else if eq $msg.Role \"assistant\" -}}\n      {{- if and $msg.Thinking (gt $i $lastUserIdx) -}}{{- /* Show thinking only after last user message */ -}}\n      <|start|>assistant<|channel|>analysis<|message|>{{ $msg.Thinking }}{{- if not $prefillingThinkingOnly -}}<|end|>{{- end -}}\n      {{- end -}}\n      {{- if gt (len $msg.Content) 0 -}}\n        <|start|>assistant<|channel|>final<|message|>{{ $msg.Content }}{{- if not $prefillingContent -}}<|end|>{{- end -}}\n      {{- end -}}\n      {{- if gt (len $msg.ToolCalls) 0 -}}\n        {{- range $j, $toolCall := $msg.ToolCalls -}}\n          {{- $isBuiltin := or (eq $toolCall.Function.Name \"python\") (eq $toolCall.Function.Name \"browser.search\") (eq $toolCall.Function.Name \"browser.open\") (eq $toolCall.Function.Name \"browser.find\") -}}\n          <|start|>assistant<|channel|>{{ if $isBuiltin }}analysis{{ else }}commentary{{ end }} to={{ if not $isBuiltin}}functions.{{end}}{{ $toolCall.Function.Name }} <|constrain|>json<|message|>{{ $toolCall.Function.Arguments }}<|call|>\n        {{- end -}}\n      {{- end -}}\n    {{- else if eq $msg.Role \"user\" -}}\n      <|start|>{{ $msg.Role }}<|message|>{{ $msg.Content }}<|end|>\n    {{- end }}\n  {{- else }}\n  {{- end }}\n{{- end -}}\n{{- if not (or $prefillingContent $prefillingThinkingOnly) -}}\n<|start|>assistant\n{{- end -}}"
+  },
+  "definition_sha256": "acfeec8b10460604fd54148f537fc42a909d0947459c33347ebacb617be006f6",
+  "digest": "714d86958b6e870a9320e78126ac1ce3477727a1cd9bf7194b8ace0d84c62fd8",
+  "modelfile": "",
+  "name": "gpt-oss:120b",
+  "ollama_version": "0.32.3"
+}

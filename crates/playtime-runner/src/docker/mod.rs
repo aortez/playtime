@@ -20,7 +20,10 @@ mod recipe;
 mod registered_model;
 pub use definition::{CompactionDefinition, FrozenRecipe};
 pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
-pub use registered_model::{QWEN_MODEL_LOCK, reviewed_identity_capabilities};
+pub use registered_model::{
+    GPT_OSS_120B_MODEL_LOCK, QWEN_CODER_NEXT_MODEL_LOCK, QWEN_MODEL_LOCK,
+    reviewed_identity_capabilities,
+};
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
 pub const LIVE_PROFILE: &str = "docker_live_no_seed_self_v1";
@@ -51,6 +54,7 @@ pub fn digest() -> Result<Sha256Digest> {
         socket: "/".into(),
     };
     let host = LiveHost {
+        target: None,
         endpoint: String::new(),
         addresses: vec![],
         live_lock: PathBuf::new(),
@@ -71,8 +75,10 @@ pub fn digest() -> Result<Sha256Digest> {
         // merely because its ordinary recipe template is unchanged, nor run a
         // continuous profile without tool-call or summary recovery, the finish
         // choice, transcript summaries or tool-call summary retries.
-        serde_json::json!({"immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1}),
+        serde_json::json!({"inference_targets": 1, "immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1}),
         serde_json::from_slice(QWEN_MODEL_LOCK)?,
+        serde_json::from_slice(QWEN_CODER_NEXT_MODEL_LOCK)?,
+        serde_json::from_slice(GPT_OSS_120B_MODEL_LOCK)?,
         serde_json::to_value(CompactionDefinition::new(&Recipe::reference()?))?,
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))
@@ -83,6 +89,8 @@ pub fn digest() -> Result<Sha256Digest> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LiveHost {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<playtime_protocol::api::InferenceTarget>,
     pub endpoint: String,
     pub addresses: Vec<IpAddr>,
     /// Machine-wide flock that every checkout's live worker holds for its lifetime.
@@ -93,7 +101,10 @@ impl LiveHost {
         let mut addresses = self.addresses.clone();
         addresses.sort();
         addresses.dedup();
-        self.endpoint.starts_with("http://")
+        self.target
+            .as_ref()
+            .is_none_or(|t| t.valid() && t.endpoint == self.endpoint)
+            && self.endpoint.starts_with("http://")
             && (1..=16).contains(&self.addresses.len())
             && addresses.len() == self.addresses.len()
             && self.live_lock.is_absolute()
@@ -301,6 +312,7 @@ mod tests {
     }
     fn host() -> LiveHost {
         LiveHost {
+            target: None,
             endpoint: "http://model-host.local:11434".into(),
             addresses: vec!["192.0.2.10".parse().unwrap()],
             live_lock: "/run/user/1000/playtime/live-model.lock".into(),
@@ -360,6 +372,26 @@ mod tests {
         assert_eq!(live.mode, RunMode::LiveSmoke);
         assert!(live.scenario.models.is_empty());
         assert_eq!(live.scenario.parameters.limits.tool_parse_retries, 2);
+        // A named target is frozen with its exact transport endpoint.
+        let mut named = live.clone();
+        let model = named.model.as_mut().unwrap();
+        model.host.target = Some(playtime_protocol::api::InferenceTarget {
+            id: "framework".into(),
+            name: "Framework".into(),
+            provider: playtime_protocol::api::InferenceProvider::Ollama,
+            endpoint: model.host.endpoint.clone(),
+        });
+        named.validate().unwrap();
+        rejects(
+            &named,
+            &[
+                (
+                    "/model/host/target/endpoint",
+                    serde_json::json!("http://other.local:11434"),
+                ),
+                ("/model/host/target/id", serde_json::json!("../framework")),
+            ],
+        );
         // A scripted profile can't pass as live, or the reverse.
         let mut scripted =
             serde_json::to_value(Profile::freeze(selection(), daemon()).unwrap()).unwrap();
@@ -397,6 +429,7 @@ mod tests {
         );
         // Any host binding produces the same advertised digest input.
         let elsewhere = LiveHost {
+            target: None,
             endpoint: "http://other.local:11434".into(),
             addresses: vec![
                 "192.0.2.11".parse().unwrap(),

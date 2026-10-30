@@ -419,6 +419,7 @@ mod tests {
     }
     fn host() -> LiveHost {
         LiveHost {
+            target: None,
             endpoint: "http://model-host.local:11434".into(),
             addresses: vec!["192.0.2.10".parse().unwrap()],
             live_lock: "/run/user/1000/playtime/live-model.lock".into(),

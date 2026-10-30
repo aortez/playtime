@@ -35,6 +35,7 @@ fn live_model(endpoint: &str, root: &Path) -> Result<LiveModel> {
     let id = &registered.summary.identity;
     let address = playtime_ollama::Endpoint::parse(endpoint)?;
     let host = LiveHost {
+        target: None,
         endpoint: endpoint.into(),
         addresses: vec![
             address

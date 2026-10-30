@@ -259,6 +259,7 @@ fn run_native_definition(
         executable_sha256: "a".repeat(64),
     };
     let host = playtime_runner::docker::LiveHost {
+        target: None,
         endpoint: "http://model-host.local:11434".into(),
         addresses: vec!["192.0.2.10".parse().unwrap()],
         live_lock: root.join("live-model.lock"),

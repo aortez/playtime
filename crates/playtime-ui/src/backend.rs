@@ -171,6 +171,8 @@ fn safe(error: Error) -> String {
             .and_then(|reasons| reasons.iter().find_map(|reason| match reason.as_str()? {
                 "selected_model_unsupported" => Some("This saved model identity has no supported execution profile in this build."),
                 "selected_model_missing_or_changed" => Some("The selected model is missing or has changed. Restore its registered identity or choose a newly reviewed registration, then refresh the preview."),
+                "target_required" => Some("Choose an inference target, then refresh the preview."),
+                "target_unknown" => Some("This inference target is no longer configured. Choose a target and refresh the preview."),
                 "model_unavailable" => Some("The configured model endpoint is unavailable. Restore it, then refresh the preview."),
                 "workshop_unavailable" | "workshop_image_unavailable" => Some("The locked Docker workshop is unavailable. Restore it, then refresh the preview."),
                 "worker_profile_unavailable" => Some("The worker bundle does not support this execution profile. Build and select a current bundle."),
@@ -408,7 +410,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     // A download reports on the saved file, not the open run, so
                     // its result still arrives and stays after another run opens.
                     let run = match &command.action {
-                        Action::FinalFiles(run) | Action::Trace(run, ..) | Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
+                        Action::RunModel(run, _) | Action::FinalFiles(run) | Action::Trace(run, ..) | Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
                     };
                     let action = command.action.clone();
                     let result = perform(&session, &out, command, previews).await;
@@ -431,6 +433,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
 }
 fn action_error(action: &Action, error: String) -> Data {
     match action {
+        Action::RunModel(..) => Data::RunModel(Err(error)),
         Action::RegisterModel(_) => Data::ModelRegistrationProgress(Mutation::Rejected(error)),
         Action::RecoverModelRegistration(..) => {
             Data::ModelRegistrationProgress(Mutation::Unresolved(error))
@@ -469,7 +472,16 @@ pub fn prepare_run(value: RunView) -> RunViewData {
             lines
         })
         .unwrap_or_default();
-    let summary = progress::details(&value);
+    let mut summary = progress::details(&value);
+    if let Some(target) = &value.target {
+        summary.insert(
+            0,
+            format!(
+                "Target: {} ({}) · {}",
+                target.name, target.id, target.endpoint
+            ),
+        );
+    }
     let source = transcript::source_page(&serde_json::to_string_pretty(&value).unwrap(), 0);
     RunViewData {
         harness,
@@ -573,8 +585,17 @@ pub fn checkpoint_file_list(checkpoint: &Checkpoint) -> String {
 
 async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semaphore>) -> Result<()> {
     let tag = command.tag;
-    let client = &s.client;
+    let scoped = s.client.with_target(command.target.clone()).map_err(safe)?;
+    let client = &scoped;
     match command.action {
+        Action::Targets => {
+            out.send(
+                tag,
+                None,
+                Data::Targets(client.inference_targets().await.map_err(safe)?),
+            )
+            .await;
+        }
         Action::ModelInventory => {
             let value = client.model_inventory().await.map_err(safe)?;
             out.send(
@@ -835,6 +856,26 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 ),
             )
             .await
+        }
+        Action::RunModel(run, expected) => {
+            let _permit = previews.acquire_owned().await.map_err(|e| e.to_string())?;
+            let bytes = tokio::time::timeout(
+                Duration::from_secs(30),
+                crate::read_retry::read(
+                    observation_retry(),
+                    || archived_model_bytes(client, &run, &expected),
+                    |_| async {},
+                ),
+            )
+            .await
+            .map_err(|_| "Archived model read deadline")?
+            .map_err(safe)?;
+            out.send(
+                tag,
+                Some(run),
+                Data::RunModel(crate::run_model::parse(&bytes)),
+            )
+            .await;
         }
         Action::Runs(cursor) => {
             out.send(
@@ -1426,6 +1467,42 @@ async fn model_registration(
         }
     };
     out.send(tag, None, data).await;
+}
+
+async fn archived_model_bytes(
+    client: &Client,
+    run: &RunId,
+    expected: &playtime_protocol::archive::ContentRef,
+) -> playtime_client::Result<Vec<u8>> {
+    if expected.size_bytes > 4 << 20 {
+        return Err(Error::LimitExceeded);
+    }
+    let mut cursor = None;
+    for _ in 0..64 {
+        let page = client
+            .artifacts(
+                run,
+                &PageQuery {
+                    limit: Some(200),
+                    cursor,
+                },
+            )
+            .await?;
+        if let Some(artifact) = page.items.iter().find(|a| &a.content == expected) {
+            // Each retry starts with an empty buffer; partial downloads never
+            // become displayed identity. The shared client verifies the digest.
+            let mut bytes = Vec::new();
+            client
+                .download(run, artifact, &mut bytes, &CancellationToken::new())
+                .await?;
+            return Ok(bytes);
+        }
+        if page.next_cursor.is_none() {
+            break;
+        }
+        cursor = page.next_cursor;
+    }
+    Err(Error::ContentMismatch)
 }
 
 async fn content_bytes(

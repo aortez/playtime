@@ -134,6 +134,35 @@ pub struct Download {
 pub trait Application: Send + Sync + 'static {
     /// Stable identity and cached capabilities; no remote probes here.
     fn capabilities(&self) -> Capabilities;
+    async fn inference_targets(&self) -> Result<InferenceTargets> {
+        Err(ApiError::new("unsupported_capability"))
+    }
+    async fn model_inventory_on(&self, target: Option<String>) -> Result<ModelInventory> {
+        if target.is_some() {
+            return Err(ApiError::new("unsupported_capability"));
+        }
+        self.model_inventory().await
+    }
+    async fn inspect_model_on(
+        &self,
+        target: Option<String>,
+        request: ModelInspectRequest,
+    ) -> Result<ModelInspection> {
+        if target.is_some() {
+            return Err(ApiError::new("unsupported_capability"));
+        }
+        self.inspect_model(request).await
+    }
+    async fn model_review_on(
+        &self,
+        target: Option<String>,
+        request: ModelInspectRequest,
+    ) -> Result<ModelRegistrationReview> {
+        if target.is_some() {
+            return Err(ApiError::new("unsupported_capability"));
+        }
+        self.model_review(request).await
+    }
     async fn model_review(&self, _request: ModelInspectRequest) -> Result<ModelRegistrationReview> {
         Err(ApiError::new("unsupported_capability"))
     }

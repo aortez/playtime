@@ -50,6 +50,7 @@ fn profile(definition: FrozenRecipe) -> Profile {
             kernel: "synthetic".into(),
         },
         LiveHost {
+            target: None,
             endpoint: "http://127.0.0.1:11435".into(),
             addresses: vec!["127.0.0.1".parse().unwrap()],
             live_lock: "/synthetic/live-model.lock".into(),
@@ -84,6 +85,78 @@ fn selected_execution_projects_the_exact_lock_without_rewriting_base_provenance(
         serde_json::from_slice::<serde_json::Value>(MODEL_LOCK).unwrap()
     );
     assert_eq!(model.execution_model().unwrap().reasoning.len(), 3);
+}
+
+#[test]
+fn large_model_profiles_preserve_identity_and_refuse_inherited_unsupported_reasoning() {
+    for (bytes, repository_lock, allowed, rejected, ceiling) in [
+        (
+            QWEN_CODER_NEXT_MODEL_LOCK,
+            include_bytes!("../../../models/qwen3-coder-next.lock.json").as_slice(),
+            RecipeReasoning::Off,
+            RecipeReasoning::High,
+            262144,
+        ),
+        (
+            GPT_OSS_120B_MODEL_LOCK,
+            include_bytes!("../../../models/gpt-oss-120b.lock.json").as_slice(),
+            RecipeReasoning::High,
+            RecipeReasoning::On,
+            131072,
+        ),
+    ] {
+        assert_eq!(bytes, repository_lock);
+        let model = registered::from_lock(bytes);
+        let capabilities = model
+            .summary
+            .identity
+            .reviewed_capabilities
+            .as_ref()
+            .unwrap();
+        assert_eq!(capabilities.context_ceiling, Some(ceiling));
+        let mut recipe = definition().recipe;
+        recipe.model.thinking = "high".into();
+        let mut selected = FrozenRecipe::current(recipe).unwrap();
+        selected.select_registered_model(model.clone()).unwrap();
+        let mut settings = selected.model_settings().unwrap();
+        settings.reasoning = rejected;
+        let before = serde_json::to_vec(&selected).unwrap();
+        assert!(selected.apply_model_settings(&settings).is_err());
+        assert_eq!(serde_json::to_vec(&selected).unwrap(), before);
+        for reasoning in [RecipeReasoning::ModelDefault, allowed] {
+            settings.reasoning = reasoning;
+            selected.apply_model_settings(&settings).unwrap();
+            selected.executable().unwrap();
+            let frozen = profile(selected.clone());
+            frozen.validate().unwrap();
+            let execution = frozen.model.unwrap().execution_model().unwrap();
+            assert_eq!(execution.name, model.summary.identity.name);
+            assert_eq!(execution.digest, model.summary.identity.digest);
+            assert_eq!(execution.definition, model.definition);
+        }
+        for field in ["name", "digest", "backend_version", "definition_sha256"] {
+            let id = &model.summary.identity;
+            let mut identity = [
+                id.name.as_str(),
+                id.digest.as_str(),
+                id.backend_version.as_str(),
+                id.definition_sha256.as_str(),
+            ];
+            let index = ["name", "digest", "backend_version", "definition_sha256"]
+                .iter()
+                .position(|f| *f == field)
+                .unwrap();
+            identity[index] = "changed";
+            assert!(
+                reviewed_identity_capabilities(identity[0], identity[1], identity[2], identity[3])
+                    .is_none()
+            );
+        }
+        // A consistently edited retained claim still cannot authorize new bytes.
+        let registered = selected.model_registration.as_mut().unwrap();
+        registered.definition["template"] = json!("changed");
+        assert!(selected.executable().is_err());
+    }
 }
 #[test]
 fn coherent_stored_claims_cannot_approve_a_model_or_change_the_execution_projection() {
