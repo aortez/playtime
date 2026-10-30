@@ -246,6 +246,21 @@ the tokens charged, then cleanup. A session whose checkpoint the stop interrupte
 isn't counted, and a failed cleanup names its first error. States, outcomes,
 cleanup, evidence and accounting read as words with thousands separators, and
 unavailable values stay distinct from zero.
+
+A live run that has received no record for 30 seconds says so after its budget
+line, measured from the record's arrival at the workbench rather than by any
+clock in the archive, so a stalled worker and a stalled stream read the same
+and neither is blamed. Once earlier history has loaded, the header adds a
+context line: the latest work request's admitted estimate against the run's
+context capacity with the estimate's basis, then, for a compaction harness,
+the trigger and the compactions planned, applied, deferred and rejected. A
+further line counts model errors and failed tool results when there are any.
+While history loads these would be partial, so they stay absent. Each call's
+status line adds its duration by the records' controller clock, the server's
+prompt and generated counts and the generated tokens over the whole call once
+its response or error is recorded; a count the server did not report is left
+out, never shown as zero.
+
 The run header and list name the orchestration reason, so an operator release
 reads "released by operator". A run the daemon stopped monitoring shows its
 `playtime runs release` command, and Cancel is off once the worker has stopped.

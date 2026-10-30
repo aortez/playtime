@@ -8,7 +8,12 @@ use playtime_protocol::{
     events::KnownEvent,
     observations::{DecodedObservation, KnownObservation, ObservationPayload},
 };
-use std::collections::BTreeMap;
+use serde_json::Value;
+use std::{collections::BTreeMap, time::Instant};
+
+/// How long a live run goes without a new record before the header says so.
+/// Model calls and commands normally answer within this.
+const QUIET_NOTICE_SECONDS: u64 = 30;
 
 /// The limits progress is measured against, from the run's frozen parameters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,6 +51,40 @@ pub struct Progress {
     pub elapsed_ms: Option<u64>,
     /// What the run is doing, as of the latest record.
     pub activity: Option<String>,
+    /// The latest work request's context estimate, once earlier history has
+    /// loaded.
+    pub context: Option<ContextUsage>,
+    /// The compactions recorded so far, once earlier history has loaded. None
+    /// without a compaction harness or any compaction record.
+    pub compactions: Option<Compactions>,
+    /// Model errors recorded so far, once earlier history has loaded.
+    pub model_errors: u64,
+    /// Tool results recorded as failed, timed out or non-zero so far, once
+    /// earlier history has loaded.
+    pub failed_tools: u64,
+    /// When the latest live record reached the workbench.
+    pub received: Option<Instant>,
+}
+
+/// The input estimate the policy admitted for the latest work request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContextUsage {
+    pub tokens: u64,
+    /// The estimate's basis, as the policy recorded it.
+    pub basis: String,
+    /// The run's context capacity, when its frozen limits record one.
+    pub capacity: Option<u64>,
+}
+
+/// Compaction records counted so far, with the configured trigger.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Compactions {
+    pub trigger_percent: Option<u64>,
+    /// The highest ordinal planned, and the highest applied.
+    pub planned: u64,
+    pub applied: u64,
+    pub deferred: u64,
+    pub rejected: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,6 +119,33 @@ pub(crate) struct Update {
     /// elsewhere.
     request: Option<Option<bool>>,
     activity: Option<Activity>,
+    /// A work request's admitted context estimate and its basis.
+    context: Option<(u64, String)>,
+    /// The run's context capacity, from its frozen limits.
+    capacity: Option<u64>,
+    /// The configured compaction trigger.
+    trigger_percent: Option<u64>,
+    compaction: Option<CompactionRecord>,
+    model_error: bool,
+    failed_tool: bool,
+}
+#[derive(Debug)]
+enum CompactionRecord {
+    Planned(u64),
+    Applied(u64),
+    Deferred,
+    Rejected,
+}
+/// A recorded tool result that failed, timed out or exited non-zero.
+fn failed(result: &Value) -> bool {
+    result
+        .get("error")
+        .is_some_and(|error| !error.is_null() && *error != false)
+        || result.get("timed_out").and_then(Value::as_bool) == Some(true)
+        || result
+            .get("exit_code")
+            .and_then(Value::as_i64)
+            .is_some_and(|code| code != 0)
 }
 impl Update {
     pub(crate) fn execution(o: &playtime_protocol::execution::Observation) -> Self {
@@ -92,6 +158,10 @@ impl Update {
             elapsed_ms: Some(o.elapsed_ms),
             ..Default::default()
         };
+        let compacting = o
+            .request
+            .as_ref()
+            .is_some_and(|r| r.purpose == playtime_core::RequestPurpose::Compaction);
         update.activity = match o.observation_kind.as_str() {
             "controller_started" => {
                 update.limits = value.and_then(|v| {
@@ -103,25 +173,67 @@ impl Update {
                         tokens: l["generated_tokens"].as_u64()?,
                     })
                 });
+                update.capacity =
+                    value.and_then(|v| v["parameters"]["limits"]["context_tokens"].as_u64());
                 Some(Activity::Starting)
             }
-            "model_request" | "model_chunk" => Some(
-                if o.request
-                    .as_ref()
-                    .is_some_and(|r| r.purpose == playtime_core::RequestPurpose::Compaction)
-                {
+            "compaction_configured" => {
+                update.trigger_percent =
+                    value.and_then(|v| v["settings"]["trigger_percent"].as_u64());
+                None
+            }
+            "model_request" => {
+                if !compacting {
+                    update.context = value.and_then(|v| {
+                        Some((
+                            v["context_input_bound"].as_u64()?,
+                            v["context_basis"].as_str()?.to_owned(),
+                        ))
+                    });
+                }
+                Some(if compacting {
                     Activity::Compacting
                 } else {
                     Activity::Model
-                },
-            ),
-            "compaction_planned" => Some(Activity::Compacting),
+                })
+            }
+            "model_chunk" => Some(if compacting {
+                Activity::Compacting
+            } else {
+                Activity::Model
+            }),
+            "model_error" => {
+                update.model_error = true;
+                None
+            }
+            "compaction_planned" => {
+                update.compaction = value
+                    .and_then(|v| v["ordinal"].as_u64())
+                    .map(CompactionRecord::Planned);
+                Some(Activity::Compacting)
+            }
+            "compaction_applied" => {
+                update.compaction = value
+                    .and_then(|v| v["ordinal"].as_u64())
+                    .map(CompactionRecord::Applied);
+                Some(Activity::Working)
+            }
+            "compaction_deferred" => {
+                update.compaction = Some(CompactionRecord::Deferred);
+                Some(Activity::Working)
+            }
+            "compaction_rejected" => {
+                update.compaction = Some(CompactionRecord::Rejected);
+                None
+            }
             "tool_request" => value
                 .and_then(|v| v["name"].as_str())
                 .map(|s| Activity::Tool(excerpt(s, 60))),
-            "model_response" | "tool_result" | "compaction_applied" | "compaction_deferred" => {
+            "tool_result" => {
+                update.failed_tool = value.is_some_and(|v| failed(&v["result"]));
                 Some(Activity::Working)
             }
+            "model_response" => Some(Activity::Working),
             "controller_finished" => Some(Activity::Phase(RunPhase::Terminal)),
             _ => None,
         };
@@ -140,6 +252,7 @@ impl Update {
                 KnownObservation::ControllerStarted { parameters, .. } => {
                     update.started = true;
                     update.limits = Limits::from_parameters(parameters);
+                    update.capacity = parameters["limits"]["context_tokens"].as_u64();
                     Some(Activity::Starting)
                 }
                 KnownObservation::PhaseChanged { phase, .. } => {
@@ -152,18 +265,26 @@ impl Update {
                 }
                 KnownObservation::ModelRequest(request) => {
                     update.request = Some(Some(request.handoff));
+                    update.context =
+                        Some((request.context_input_bound, request.context_basis.clone()));
                     Some(Activity::Model)
                 }
                 KnownObservation::ModelChunk { .. } => Some(Activity::Model),
+                KnownObservation::ToolResult { result, .. } => {
+                    update.failed_tool = failed(result);
+                    Some(Activity::Working)
+                }
                 KnownObservation::ModelResponse { .. }
                 | KnownObservation::RequestNotDispatched { .. }
-                | KnownObservation::ToolNotDispatched { .. }
-                | KnownObservation::ToolResult { .. } => Some(Activity::Working),
+                | KnownObservation::ToolNotDispatched { .. } => Some(Activity::Working),
                 KnownObservation::ModelError {
                     recovery_allowed, ..
-                } => Some(Activity::ModelError {
-                    retrying: *recovery_allowed,
-                }),
+                } => {
+                    update.model_error = true;
+                    Some(Activity::ModelError {
+                        retrying: *recovery_allowed,
+                    })
+                }
                 KnownObservation::ToolRequest { name, .. }
                 | KnownObservation::ToolIntent { name, .. } => {
                     Some(Activity::Tool(excerpt(name, 60)))
@@ -274,14 +395,53 @@ pub(crate) struct Tracker {
     /// arrived live.
     latest: Option<(u64, u64, bool)>,
     activity: Option<(u64, Activity, bool)>,
+    /// The latest work request's sequence, context estimate and basis.
+    context: Option<(u64, u64, String)>,
+    capacity: Option<u64>,
+    compactions: Compactions,
+    /// A compaction harness or record has been indexed.
+    compacting: bool,
+    model_errors: u64,
+    failed_tools: u64,
+    received: Option<Instant>,
 }
 impl Tracker {
     /// A record without a history page arrived live.
     pub(crate) fn apply(&mut self, sequence: u64, update: Update, live: bool) {
+        if live {
+            self.received = Some(Instant::now());
+        }
         self.started |= update.started;
         if update.limits.is_some() {
             self.limits = update.limits;
         }
+        if update.capacity.is_some() {
+            self.capacity = update.capacity;
+        }
+        if update.trigger_percent.is_some() {
+            self.compactions.trigger_percent = update.trigger_percent;
+            self.compacting = true;
+        }
+        if let Some((tokens, basis)) = update.context
+            && self
+                .context
+                .as_ref()
+                .is_none_or(|(latest, ..)| sequence > *latest)
+        {
+            self.context = Some((sequence, tokens, basis));
+        }
+        if let Some(record) = update.compaction {
+            self.compacting = true;
+            let c = &mut self.compactions;
+            match record {
+                CompactionRecord::Planned(ordinal) => c.planned = c.planned.max(ordinal),
+                CompactionRecord::Applied(ordinal) => c.applied = c.applied.max(ordinal),
+                CompactionRecord::Deferred => c.deferred += 1,
+                CompactionRecord::Rejected => c.rejected += 1,
+            }
+        }
+        self.model_errors += u64::from(update.model_error);
+        self.failed_tools += u64::from(update.failed_tool);
         if let Some(ordinal) = update.ordinal {
             self.max_ordinal = self.max_ordinal.max(ordinal);
         }
@@ -358,6 +518,20 @@ impl Tracker {
                 .as_ref()
                 .filter(|(.., live)| complete || *live)
                 .map(|(sequence, activity, _)| self.describe(*sequence, activity)),
+            // Counts and the latest request are partial until history loads.
+            context: self
+                .context
+                .as_ref()
+                .filter(|_| complete)
+                .map(|(_, tokens, basis)| ContextUsage {
+                    tokens: *tokens,
+                    basis: basis.clone(),
+                    capacity: self.capacity,
+                }),
+            compactions: (complete && self.compacting).then_some(self.compactions),
+            model_errors: if complete { self.model_errors } else { 0 },
+            failed_tools: if complete { self.failed_tools } else { 0 },
+            received: self.received,
         }
     }
     fn describe(&self, sequence: u64, activity: &Activity) -> String {
@@ -397,10 +571,84 @@ impl Tracker {
     }
 }
 
-/// The header's first two lines. A live run leads with its session, turn and
-/// activity, then tokens and time against the frozen limits. An ended run leads
-/// with its outcome, the sessions it completed and tokens, then cleanup.
+/// The header's lead. A live run leads with its session, turn and activity,
+/// then tokens and time against the frozen limits, saying when no record has
+/// arrived for a while. An ended run leads with its outcome, the sessions it
+/// completed and tokens, then cleanup. Both end with the context and error
+/// summary lines once history has loaded.
 pub fn lead(run: &RunView, progress: &Progress) -> Vec<String> {
+    let mut lines = budget_lines(run, progress);
+    lines.extend(summary_lines(progress));
+    lines
+}
+
+/// The latest work request's context estimate against the run's capacity
+/// with the compactions so far, then the errors recorded. A line appears only
+/// when the index has something to report.
+fn summary_lines(progress: &Progress) -> Vec<String> {
+    let mut lines = vec![];
+    let mut context = vec![];
+    if let Some(usage) = &progress.context {
+        context.push(match usage.capacity {
+            Some(capacity) => format!(
+                "context: {} of {} tokens from {}",
+                thousands(usage.tokens),
+                thousands(capacity),
+                usage.basis.replace('_', " ")
+            ),
+            None => format!(
+                "context: {} tokens from {}",
+                thousands(usage.tokens),
+                usage.basis.replace('_', " ")
+            ),
+        });
+    }
+    if let Some(c) = &progress.compactions {
+        context.extend(
+            c.trigger_percent
+                .map(|percent| format!("compaction trigger {percent}%")),
+        );
+        context.push(
+            if c.planned == 0 && c.applied == 0 && c.deferred == 0 && c.rejected == 0 {
+                "no compactions".into()
+            } else {
+                let mut parts = vec![format!(
+                    "compactions: {} planned · {} applied",
+                    thousands(c.planned),
+                    thousands(c.applied)
+                )];
+                if c.deferred > 0 {
+                    parts.push(format!("{} deferred", thousands(c.deferred)));
+                }
+                if c.rejected > 0 {
+                    parts.push(format!("{} rejected", thousands(c.rejected)));
+                }
+                parts.join(" · ")
+            },
+        );
+    }
+    if !context.is_empty() {
+        lines.push(capitalized(&context.join(" · ")));
+    }
+    let mut errors = vec![];
+    if progress.model_errors > 0 {
+        errors.push(count(progress.model_errors, "model error", "model errors"));
+    }
+    if progress.failed_tools > 0 {
+        errors.push(count(
+            progress.failed_tools,
+            "failed tool result",
+            "failed tool results",
+        ));
+    }
+    if !errors.is_empty() {
+        lines.push(errors.join(" · "));
+    }
+    lines
+}
+
+/// The first two lines: progress or outcome, then budgets.
+fn budget_lines(run: &RunView, progress: &Progress) -> Vec<String> {
     let limits = progress.limits;
     let tokens = run.usage.as_ref().map_or_else(
         || "Tokens charged: unavailable".to_owned(),
@@ -462,6 +710,14 @@ pub fn lead(run: &RunView, progress: &Progress) -> Vec<String> {
     }
     let mut second = vec![tokens];
     second.extend(time);
+    // Measured from the record's arrival here, so a stalled worker and a
+    // stalled stream read the same; neither is blamed.
+    if let Some(received) = progress.received {
+        let quiet = received.elapsed().as_secs();
+        if quiet >= QUIET_NOTICE_SECONDS {
+            second.push(format!("no new records for {}", clock(quiet)));
+        }
+    }
     vec![capitalized(&first.join(" · ")), second.join(" · ")]
 }
 

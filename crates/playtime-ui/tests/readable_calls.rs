@@ -220,10 +220,11 @@ fn streaming_text_is_provisional_and_final_text_replaces_it_in_readable() {
     );
     t.apply(observation(3, "model_response", None, json!({"call":1,"response":{"done":false,"generated_tokens":null,"prompt_tokens":null,"message":{"role":"assistant","thinking":"recorded final thought","content":""}}})), None).unwrap();
     let w = t.window(View::Readable, 0, 64);
-    assert_eq!(w.rows[0].status, "Partial response recorded");
+    // The call's time is known; its null counts are left out, not shown as zero.
+    assert_eq!(w.rows[0].status, "Partial response recorded · 3 ms");
     assert_eq!(w.rows[0].sections.len(), 1);
     assert_eq!(w.rows[0].sections[0].text, "recorded final thought");
-    assert!(!w.rows[0].status.contains('0'));
+    assert!(!w.rows[0].status.contains("tokens"));
     assert!(
         t.raw(3, 0)
             .unwrap()

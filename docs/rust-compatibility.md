@@ -803,3 +803,18 @@ Before it, every request after such a response was rescaled whole at the
 calibrated rate, new tool output included, which is why the scripted
 continuous gate's compaction count fell from 15 to 5 once its summaries
 carried a measurement. The validator accepts the basis.
+
+## Run summary lines and call costs in the workbench (2026-10-29)
+
+The run header gains a context line (the latest work request's admitted
+estimate and basis against the run's context capacity, the compaction trigger
+and the compactions planned, applied, deferred and rejected), a line counting
+model errors and failed tool results, and, for a live run, a note when no
+record has reached the workbench for 30 seconds. Call cards add their duration,
+the server's prompt and generated counts and the generated tokens over the
+whole call. All of it is read from records the archive already holds, so
+archives and the HTTP schema are unchanged. The reviewed UI baselines that
+show a call card or a run header were regenerated for the new status and
+header lines, and the synthetic continuous scene now records a context
+capacity, a compaction configuration, context bounds and token counts, with
+its compaction records starting at sequence 7.
