@@ -153,6 +153,7 @@ impl<E: PreparedExecution> Worker<E> {
             wall_ms: bootstrap.wall_ms,
             latest_receipt: execution.prepared_receipt(),
             publication_pending: false,
+            failure: None,
         };
         Ok(Self {
             bootstrap,

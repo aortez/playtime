@@ -856,3 +856,36 @@ choices (`target_required`, `target_unknown`, `target_requires_live_execution`)
 now exits 5, a rejected operation, instead of 3; a retry can't clear it. Other
 execution outages still exit 3. The HTTP responses, the schema golden and the
 behavioral fixtures are unchanged.
+
+## Failed executions stop their worker (2026-10-31)
+
+A worker whose execution ended without a normal committed outcome kept serving
+status until systemd's `RuntimeMaxSec` (the wall allocation plus 180 seconds),
+holding the run and live-model locks, and its run waited as `reconciling` with no
+reason (#162). The worker's private status now has an optional `failure`: its
+own bounded account of why, set once before its publication settles. A
+cancellation or stop that ends cleanly is not a failure. The daemon stops such a
+worker once its publication settles, then records reason `execution_failed`. The
+run stays reserved until an operator releases it, as for `worker_unavailable`. A
+cancelled run keeps its own stop path.
+
+`RunView.orchestration` gains an optional `failure` with that text, and the HTTP
+schema golden adds it. `runs wait`, `run --wait` and `runs cancel --wait` exit 9
+for `execution_failed`, and the run summary and workbench details show a
+`Worker failure:` line. Older clients ignore the field and don't recognize the
+new reason, so they keep waiting on such a run.
+
+Once the daemon's own stop of a completed or failed worker is accepted, a refresh
+now only observes the unit. Before, a refresh while the unit was still stopping
+asked the worker for status, which it no longer answers, so a normal run that took
+more than one poll to stop could briefly read as `reconciling` with
+`control_uncertain` or `worker_unavailable`. That was the gap left after #93.
+
+The private worker protocol version stays 1: older workers omit the field, and a
+missing `failure` keeps the earlier behavior. An older daemon rejects a status
+that carries one and records `control_uncertain`, so with a newer worker a failed
+run still waits for `RuntimeMaxSec`, as before. The ledger version is unchanged
+too. Older daemons reject a saved status with `failure` or a record with the new
+reason, and they read every record at startup, so they refuse to start on a
+ledger holding such a run, even after its release. Archives, recipes and the
+behavioral goldens are unchanged.

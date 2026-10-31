@@ -254,6 +254,10 @@ pub enum OrchestrationState {
 pub struct Orchestration {
     pub state: OrchestrationState,
     pub reason: Option<String>,
+    /// The worker's own account of an execution that ended without a normal
+    /// outcome, when it gave one: printable text of at most 1 KiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

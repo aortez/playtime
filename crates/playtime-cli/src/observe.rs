@@ -20,7 +20,7 @@ pub fn awaiting_release(view: &RunView) -> bool {
     view.orchestration.state == OrchestrationState::Reconciling
         && matches!(
             view.orchestration.reason.as_deref(),
-            Some("worker_unavailable" | "coordinator_restarted")
+            Some("worker_unavailable" | "coordinator_restarted" | "execution_failed")
         )
 }
 /// What the operator has to do after an observer returns, if anything.
@@ -262,7 +262,11 @@ mod tests {
         assert!(next_step(&view).is_none());
         view.orchestration.reason = Some("control_uncertain".into());
         assert!(!awaiting_release(&view));
-        for reason in ["worker_unavailable", "coordinator_restarted"] {
+        for reason in [
+            "worker_unavailable",
+            "coordinator_restarted",
+            "execution_failed",
+        ] {
             view.orchestration.reason = Some(reason.into());
             assert!(awaiting_release(&view));
             assert_eq!(outcome_exit(&view, true), 9);

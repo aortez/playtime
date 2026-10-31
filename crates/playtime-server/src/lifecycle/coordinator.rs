@@ -281,6 +281,37 @@ impl Coordinator {
             .await
             .map(|(record, _)| record)
     }
+    /// A worker whose execution failed reports why and then only serves
+    /// receipts. Once it has no publication pending, stop it, so its run and
+    /// live-model locks are freed now instead of at its runtime limit. The run
+    /// stays reserved for operator release, with the failure as its reason.
+    pub async fn finish_failed(&self, run: RunId) -> Result<Admission> {
+        let expected = self.inner.ledger.get(&run).await?;
+        if expected.phase == Phase::Terminal || !supervision::reported_failure(&expected) {
+            return Ok(expected);
+        }
+        let stopped = self.inner.stop_supervisor(expected.clone()).await?;
+        if !stopped.supervisor.as_ref().is_some_and(|s| s.stopped) {
+            return Ok(stopped);
+        }
+        // A refresh may have saved the stop observation meanwhile, so check
+        // the current record rather than requiring an unchanged revision.
+        self.inner
+            .ledger
+            .update(&run, "execution_failed", move |record| {
+                if record.owner_generation == expected.owner_generation
+                    && record.prepared == expected.prepared
+                    && supervision::reported_failure(record)
+                    && record.supervisor.as_ref().is_some_and(|s| s.stopped)
+                    && record.phase != Phase::Terminal
+                {
+                    record.phase = Phase::Reconciling;
+                    record.reason = Some(Reason::ExecutionFailed);
+                }
+                Ok(())
+            })
+            .await
+    }
     pub async fn begin(&self, run: RunId) -> Result<Admission> {
         self.owned_launch(move |inner| async move {
             let before = inner.ledger.get(&run).await?;

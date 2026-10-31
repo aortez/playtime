@@ -34,7 +34,12 @@ impl Inner {
                     return Ok(record);
                 }
                 let record = inner.observe_supervisor(record).await?;
-                if record.supervisor.as_ref().is_some_and(|s| s.stopped) {
+                // A worker the daemon stopped on purpose has nothing more to
+                // report and stops answering once told to stop. Only its unit
+                // is watched, so a slow stop isn't taken for a loss.
+                if record.supervisor.as_ref().is_some_and(|s| s.stopped)
+                    || super::supervision::normal_stop(&record)
+                {
                     return Ok(record);
                 }
                 match inner.exchange(&record, Command::Status).await {
@@ -190,6 +195,17 @@ impl Inner {
                 }
                 WorkerState::Reconciling => true,
             };
+        // Only an execution that began can fail, and the worker reports why
+        // once, in bounded printable text it never changes or withdraws.
+        let failure_valid = status.failure.as_ref().is_none_or(|text| {
+            status.state == WorkerState::Reconciling
+                && status.work_started_boot_ms.is_some()
+                && worker::valid_failure(text)
+        }) && expected
+            .last_status
+            .as_ref()
+            .and_then(|old| old.failure.as_ref())
+            .is_none_or(|old| status.failure.as_ref() == Some(old));
         let clock_valid = expected
             .last_status
             .as_ref()
@@ -209,7 +225,7 @@ impl Inner {
                     && (new.sequence != old.sequence || new == old)
             })
         });
-        if !shape_valid || !clock_valid || !receipt_valid {
+        if !shape_valid || !failure_valid || !clock_valid || !receipt_valid {
             return self.uncertain(&expected, Reason::ControlUncertain).await;
         }
         let frontier = match self.archive.confirmed_read(prepared, prior, &status).await {
@@ -409,6 +425,7 @@ mod tests {
                     wall_ms: 1000,
                     latest_receipt: Some(receipt(1)),
                     publication_pending: false,
+                    failure: None,
                 });
                 Ok(())
             })
@@ -741,7 +758,11 @@ mod tests {
             let stopping = coordinator.finish_normal(run.clone()).await.unwrap();
             assert_eq!(stopping.phase, Phase::Running);
             assert!(stopping.stop_accepted.is_some());
+            // While the unit lingers, a refresh only watches it.
+            let lingering = coordinator.refresh(run.clone()).await.unwrap();
+            assert_eq!((lingering.phase, lingering.reason), (Phase::Running, None));
             // The next refresh sees the unit stopped. The run stays Running.
+            tokio::time::sleep(crate::lifecycle::flights::REFRESH_FLOOR).await;
             supervisor.stopped.store(true, Ordering::SeqCst);
             let observed = coordinator.refresh(run.clone()).await.unwrap();
             assert_eq!((observed.phase, observed.reason), (Phase::Running, None));
@@ -787,6 +808,153 @@ mod tests {
                 supervisor.stop_calls.load(Ordering::SeqCst),
                 usize::from(cancel)
             );
+        }
+    }
+    #[tokio::test]
+    async fn a_failure_report_is_accepted_only_whole_and_never_withdrawn() {
+        let (_root, c, _archive, mut record, endpoint) = setup().await;
+        let failed = |record: &Admission, state, failure: Option<&str>| {
+            let mut response = reply(record, &endpoint, receipt(2));
+            response.status.state = state;
+            response.status.failure = failure.map(str::to_owned);
+            response
+        };
+        // Only a reconciling worker can report a failure, in printable text.
+        for response in [
+            failed(&record, WorkerState::Running, Some("lost publication")),
+            failed(&record, WorkerState::Reconciling, Some("lost\npublication")),
+        ] {
+            record = c
+                .inner
+                .accept(record, endpoint.clone(), response)
+                .await
+                .unwrap();
+            assert_eq!(record.reason, Some(Reason::ControlUncertain));
+            assert_eq!(record.last_status.as_ref().unwrap().failure, None);
+        }
+        let response = failed(&record, WorkerState::Reconciling, Some("lost publication"));
+        record = c
+            .inner
+            .accept(record, endpoint.clone(), response)
+            .await
+            .unwrap();
+        assert_eq!((record.phase, record.reason), (Phase::Reconciling, None));
+        assert_eq!(
+            record.last_status.as_ref().unwrap().failure.as_deref(),
+            Some("lost publication")
+        );
+        // Once reported, the failure can't change or disappear.
+        for failure in [None, Some("another cause")] {
+            let response = failed(&record, WorkerState::Reconciling, failure);
+            record = c
+                .inner
+                .accept(record, endpoint.clone(), response)
+                .await
+                .unwrap();
+            assert_eq!(record.reason, Some(Reason::ControlUncertain));
+            assert_eq!(
+                record.last_status.as_ref().unwrap().failure.as_deref(),
+                Some("lost publication")
+            );
+        }
+    }
+    // #162: a worker whose execution failed has nothing left to publish, so it
+    // is stopped at once rather than holding its locks until its runtime limit.
+    #[tokio::test]
+    async fn a_worker_that_reports_a_failed_execution_is_stopped_and_stays_reserved() {
+        for (linger, cancelled) in [(false, false), (true, false), (false, true)] {
+            let (_root, old, archive, record, _) = setup().await;
+            let ledger = old.ledger().clone();
+            let supervisor = Arc::new(FinishSupervisor {
+                stopped: AtomicBool::new(false),
+                stop_calls: AtomicUsize::new(0),
+                ledger: ledger.clone(),
+                change_owner: false,
+                linger,
+            });
+            let coordinator = Coordinator::new(
+                ledger.clone(),
+                archive,
+                supervisor.clone(),
+                Arc::new(FixedClock),
+            );
+            let run = record.run_id.clone();
+            // As a verified status saves it, with its publication unsettled.
+            ledger
+                .update(&run, "test_failed", move |record| {
+                    record.phase = Phase::Reconciling;
+                    if cancelled {
+                        record.cancel_requested = Some(FixedClock.now());
+                    }
+                    let status = record.last_status.as_mut().unwrap();
+                    status.state = WorkerState::Reconciling;
+                    status.failure = Some("lost publication".into());
+                    status.publication_pending = true;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            let waiting = coordinator.finish_failed(run.clone()).await.unwrap();
+            assert_eq!((waiting.phase, waiting.reason), (Phase::Reconciling, None));
+            ledger
+                .update(&run, "test_settled", |record| {
+                    record.last_status.as_mut().unwrap().publication_pending = false;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            let stopping = coordinator.finish_failed(run.clone()).await.unwrap();
+            if cancelled {
+                // The cancellation stops its worker on its own path.
+                assert_eq!(stopping.reason, None);
+                assert_eq!(supervisor.stop_calls.load(Ordering::SeqCst), 0);
+                continue;
+            }
+            assert_eq!(supervisor.stop_calls.load(Ordering::SeqCst), 1);
+            let failed = if linger {
+                assert_eq!(
+                    (stopping.phase, stopping.reason),
+                    (Phase::Reconciling, None)
+                );
+                assert!(stopping.stop_accepted.is_some());
+                // While the unit lingers, a refresh only watches it.
+                let lingering = coordinator.refresh(run.clone()).await.unwrap();
+                assert_eq!(
+                    (lingering.phase, lingering.reason),
+                    (Phase::Reconciling, None)
+                );
+                // The stop the daemon asked for isn't reported as a loss.
+                tokio::time::sleep(crate::lifecycle::flights::REFRESH_FLOOR).await;
+                supervisor.stopped.store(true, Ordering::SeqCst);
+                let observed = coordinator.refresh(run.clone()).await.unwrap();
+                assert!(observed.supervisor.unwrap().stopped);
+                assert_eq!(observed.reason, None);
+                coordinator.finish_failed(run.clone()).await.unwrap()
+            } else {
+                stopping
+            };
+            assert_eq!(
+                (failed.phase, failed.reason),
+                (Phase::Reconciling, Some(Reason::ExecutionFailed))
+            );
+            assert_eq!(supervisor.stop_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                ledger.trace(&run).await.unwrap().last().unwrap(),
+                "execution_failed"
+            );
+            // Normal completion leaves it alone, and it keeps its reservation
+            // until an operator releases it.
+            let kept = coordinator.finish_normal(run.clone()).await.unwrap();
+            assert_eq!(kept.reason, Some(Reason::ExecutionFailed));
+            let next = ledger
+                .reserve(
+                    "next".into(),
+                    record.request.clone(),
+                    record.selection.clone(),
+                    FixedClock.now(),
+                )
+                .await;
+            assert!(next.is_err());
         }
     }
 }

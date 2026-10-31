@@ -1670,6 +1670,13 @@
       },
       "Orchestration": {
         "properties": {
+          "failure": {
+            "description": "The worker's own account of an execution that ended without a normal\noutcome, when it gave one: printable text of at most 1 KiB.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "reason": {
             "type": [
               "string",

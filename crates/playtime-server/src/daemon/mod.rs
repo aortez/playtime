@@ -330,13 +330,20 @@ impl Daemon {
                     record = coordinator.begin(run.clone()).await.map_err(lifecycle)?;
                 }
                 self.publish(record).await?;
+                // A worker that reported a failed execution is stopped now, not
+                // at its runtime limit.
+                coordinator
+                    .finish_failed(run.clone())
+                    .await
+                    .map_err(lifecycle)?;
                 let record = coordinator
                     .finish_normal(run.clone())
                     .await
                     .map_err(lifecycle)?;
                 let terminal = record.phase == Phase::Terminal;
                 // A worker stopped for normal completion stays monitored until
-                // finish_normal records Terminal or the loss.
+                // finish_normal records Terminal or the loss, and one stopped
+                // for a reported failure until finish_failed records that.
                 let lost = record.phase == Phase::Reconciling
                     && record.supervisor.as_ref().is_some_and(|s| s.stopped);
                 self.publish(record).await?;

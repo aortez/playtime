@@ -264,6 +264,8 @@ out, never shown as zero.
 The run header and list name the orchestration reason, so an operator release
 reads "released by operator". A run the daemon stopped monitoring shows its
 `playtime runs release` command, and Cancel is off once the worker has stopped.
+When the worker reported why its execution failed, the run details show that text
+as a `Worker failure:` line.
 Memory compares delivered/published sources; publication does not verify model
 claims. Files are saved versions, addressed only by opaque content IDs. Downloads
 require an explicit destination and use the shared verified, atomic download path.

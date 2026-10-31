@@ -172,7 +172,7 @@ fn run_summary(view: &Value) -> String {
             word(&view["target"]["endpoint"])
         ));
     }
-    format!(
+    let mut summary = format!(
         "Run {}: {} | backend {} | mode {}\nRecipe {} @ {} | phase {} | outcome {}\nCleanup: {} | evidence: {} | checkpoint: {}\n{}\nCancellation: {}",
         word(&view["run_id"]),
         if view["orchestration"]["reason"].is_null() {
@@ -199,7 +199,14 @@ fn run_summary(view: &Value) -> String {
         } else {
             word(&view["cancellation"])
         }
-    )
+    );
+    if !view["orchestration"]["failure"].is_null() {
+        summary.push_str(&format!(
+            "\nWorker failure: {}",
+            word(&view["orchestration"]["failure"])
+        ));
+    }
+    summary
 }
 fn launch_summary(data: &Value) -> String {
     format!(
@@ -442,6 +449,23 @@ mod tests {
             text(&value),
             "execution_unavailable: Execution is unavailable\n  - target_required"
         );
+    }
+    #[test]
+    fn a_failed_run_shows_the_workers_diagnostic() {
+        let run = json!({"run_id":"r","orchestration":{"state":"reconciling",
+            "reason":"execution_failed","failure":"retired failed publication 7..9\u{1b}[31m"}});
+        let summary = text(&envelope("run", run.clone()));
+        assert!(
+            summary.starts_with("Run r: reconciling (execution_failed) | "),
+            "{summary}"
+        );
+        assert!(
+            summary.ends_with("\nWorker failure: retired failed publication 7..9\\u{1b}[31m"),
+            "{summary}"
+        );
+        let mut normal = run;
+        normal["orchestration"]["failure"] = Value::Null;
+        assert!(!text(&envelope("run", normal)).contains("Worker failure"));
     }
     #[test]
     fn target_choices_are_rejections_and_outages_stay_transient() {

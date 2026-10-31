@@ -214,6 +214,7 @@ impl Run {
             orchestration: Orchestration {
                 state: OrchestrationState::Running,
                 reason: None,
+                failure: None,
             },
             controller_phase: None,
             outcome: None,

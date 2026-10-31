@@ -438,6 +438,7 @@ mod tests {
                         wall_ms: 1000,
                         latest_receipt: None,
                         publication_pending: false,
+                        failure: None,
                     },
                 };
                 if wrong_nonce {

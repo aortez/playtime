@@ -64,6 +64,10 @@ pub enum Reason {
     CancelRequested,
     ControlUncertain,
     OperatorReleased,
+    /// The worker reported that its execution ended without a normal outcome,
+    /// and its unit has stopped, usually at the daemon's request. The run waits
+    /// for operator release.
+    ExecutionFailed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

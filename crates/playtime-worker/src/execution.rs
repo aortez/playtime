@@ -1,7 +1,10 @@
 use crate::{Error, PrivateDirectory, Result, bundle::VerifiedBundle};
-use playtime_core::UtcTime;
+use playtime_core::{StopReason, UtcTime};
 use playtime_engine::simulation::Scenario;
-use playtime_protocol::worker::{Receipt, Status, WorkerKind, WorkerState};
+use playtime_protocol::{
+    events::CleanupOutcome,
+    worker::{self, Receipt, Status, WorkerKind, WorkerState},
+};
 use playtime_runner::{
     Cancellation, DriverClock, DriverOptions, LatestReceipt, PreparedExecution, PreparedSimulation,
 };
@@ -10,7 +13,7 @@ use playtime_worker_control::{Bootstrap, PreparedExecution as ControlExecution, 
 use std::{
     path::Path,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -21,7 +24,10 @@ pub struct Execution {
     latest: LatestReceipt,
     cancel: Cancellation,
     finished: Arc<AtomicBool>,
-    failed: Arc<AtomicBool>,
+    /// Set once when the execution ends without a normal outcome: why it
+    /// failed, or None for an interruption that was asked for and ended
+    /// cleanly.
+    ended: Arc<OnceLock<Option<String>>>,
     pending: Arc<AtomicBool>,
     wall_ms: u64,
     work_deadline: Arc<AtomicU64>,
@@ -123,7 +129,7 @@ impl Execution {
             latest,
             cancel: Cancellation::default(),
             finished: Arc::default(),
-            failed: Arc::default(),
+            ended: Arc::default(),
             pending: Arc::default(),
             wall_ms: bootstrap.wall_ms,
             work_deadline: Arc::default(),
@@ -162,9 +168,9 @@ impl ControlExecution for Execution {
             cancellation: self.cancel.clone(),
             ..DriverOptions::default()
         };
-        let (finished, failed, pending) = (
+        let (finished, ended, pending) = (
             self.finished.clone(),
-            self.failed.clone(),
+            self.ended.clone(),
             self.pending.clone(),
         );
         pending.store(true, Ordering::Release);
@@ -172,40 +178,50 @@ impl ControlExecution for Execution {
         // replies and retains a late publication until its operation settles.
         std::thread::spawn(move || {
             let result = owned.execute(&mut WorkClock::new(started_boot_ms), options);
-            let success = match result {
-                Ok(report) => {
+            let (outcome, settled) = match result {
+                Ok(mut report) => {
                     for diagnostic in &report.diagnostics {
                         eprintln!("worker execution: {diagnostic}");
                     }
-                    let mut terminal = report.terminal_committed
-                        && report.result.as_ref().is_some_and(|result| {
-                            !matches!(
-                                result.reason,
-                                playtime_core::StopReason::InfrastructureFailure
-                                    | playtime_core::StopReason::Interrupted
-                            ) && result.cleanup
-                                == playtime_protocol::events::CleanupOutcome::Complete
-                        });
-                    if let Some(publication) = report.pending_publication {
+                    let late = report.pending_publication.take().map(|publication| {
                         loop {
                             if let Some(result) = publication.poll() {
-                                // A late receipt preserves evidence, but does not
-                                // turn an interrupted driver into completed work.
-                                terminal &= result.is_ok();
-                                break;
+                                let late = result.map(drop).map_err(|error| error.to_string());
+                                eprintln!("worker execution: late publication {late:?}");
+                                break late;
                             }
                             std::thread::sleep(Duration::from_millis(5));
                         }
-                    }
-                    terminal
+                    });
+                    let result = report
+                        .result
+                        .as_ref()
+                        .map(|result| (&result.reason, &result.cleanup));
+                    let outcome =
+                        ending(result, report.terminal_committed, &report.diagnostics, late);
+                    (outcome, true)
                 }
                 Err(error) => {
                     eprintln!("worker execution failed: {error}");
-                    false
+                    // A write the driver began may still run on its own thread,
+                    // so publication never counts as settled.
+                    let text = format!("worker execution failed: {error}");
+                    (Ending::Failed(text), false)
                 }
             };
-            failed.store(!success, Ordering::Release);
-            pending.store(false, Ordering::Release);
+            // Set before publication settles, so a settled status carries it.
+            match outcome {
+                Ending::Normal => {}
+                Ending::Interrupted => {
+                    let _ = ended.set(None);
+                }
+                Ending::Failed(text) => {
+                    let _ = ended.set(Some(worker::failure_text(&text)));
+                }
+            }
+            if settled {
+                pending.store(false, Ordering::Release);
+            }
             finished.store(true, Ordering::Release);
         });
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -231,8 +247,9 @@ impl ControlExecution for Execution {
         // cannot accidentally pair completion with a pre-completion sample.
         status.publication_pending = self.pending.load(Ordering::Acquire);
         status.latest_receipt = self.prepared_receipt();
-        if self.failed.load(Ordering::Acquire) {
+        if let Some(failure) = self.ended.get() {
             status.state = WorkerState::Reconciling;
+            status.failure = failure.clone();
         } else if status.state == WorkerState::Reconciling
             && status.work_started_boot_ms.is_some()
             && status
@@ -245,6 +262,69 @@ impl ControlExecution for Execution {
     }
 }
 
+/// How an execution ended.
+#[derive(Debug, PartialEq)]
+enum Ending {
+    /// A committed outcome the daemon can confirm as normal completion.
+    Normal,
+    /// A cancellation or stop that was asked for and ended cleanly. It isn't
+    /// normal completion, but nothing failed.
+    Interrupted,
+    /// Anything else, and why: the driver's diagnostics come first.
+    Failed(String),
+}
+
+/// Classifies an execution from its outcome and cleanup, when the controller
+/// recorded them, whether the driver saw that outcome committed, the driver's
+/// diagnostics, and the result of a publication still pending when the driver
+/// returned, if there was one.
+fn ending(
+    result: Option<(&StopReason, &CleanupOutcome)>,
+    terminal_committed: bool,
+    diagnostics: &[String],
+    late: Option<std::result::Result<(), String>>,
+) -> Ending {
+    // A late receipt preserves evidence, but does not turn an interrupted
+    // driver into completed work.
+    let committed = terminal_committed && late.as_ref().is_none_or(|late| late.is_ok());
+    match result {
+        Some((StopReason::Interrupted, CleanupOutcome::Complete))
+            if committed && diagnostics.is_empty() =>
+        {
+            return Ending::Interrupted;
+        }
+        Some((reason, CleanupOutcome::Complete))
+            if committed
+                && !matches!(
+                    reason,
+                    StopReason::InfrastructureFailure | StopReason::Interrupted
+                ) =>
+        {
+            return Ending::Normal;
+        }
+        _ => {}
+    }
+    // The same snake_case name the archive records.
+    let name = |reason: &StopReason| {
+        serde_json::to_value(reason)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_else(|| format!("{reason:?}"))
+    };
+    let mut text = match result {
+        _ if !diagnostics.is_empty() => diagnostics.join("; "),
+        None => "the controller recorded no outcome".into(),
+        _ if !terminal_committed => "the outcome was not committed".into(),
+        Some((reason, CleanupOutcome::Complete)) => format!("stopped with {}", name(reason)),
+        Some((reason, _)) => format!("stopped with {} and incomplete cleanup", name(reason)),
+    };
+    match late {
+        Some(Ok(())) => text.push_str("; the late publication then committed"),
+        Some(Err(error)) => text.push_str(&format!("; the late publication then failed: {error}")),
+        None => {}
+    }
+    Ending::Failed(text)
+}
 struct WorkClock {
     first: std::cell::Cell<Option<u64>>,
 }
@@ -352,5 +432,69 @@ pub async fn serve(path: &Path) -> Result<()> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_committed_normal_outcome_is_normal_and_a_clean_interruption_is_no_failure() {
+        let complete = CleanupOutcome::Complete;
+        let done = Some((&StopReason::AgentFinished, &complete));
+        let interrupted = Some((&StopReason::Interrupted, &complete));
+        assert_eq!(ending(done, true, &[], None), Ending::Normal);
+        assert_eq!(ending(interrupted, true, &[], None), Ending::Interrupted);
+        let failed = |text: &str| Ending::Failed(text.into());
+        assert_eq!(
+            ending(done, false, &[], None),
+            failed("the outcome was not committed")
+        );
+        assert_eq!(
+            ending(None, false, &[], None),
+            failed("the controller recorded no outcome")
+        );
+        let infrastructure = Some((&StopReason::InfrastructureFailure, &complete));
+        assert_eq!(
+            ending(infrastructure, true, &[], None),
+            failed("stopped with infrastructure_failure")
+        );
+        let incomplete = CleanupOutcome::Unknown;
+        assert_eq!(
+            ending(
+                Some((&StopReason::Interrupted, &incomplete)),
+                true,
+                &[],
+                None
+            ),
+            failed("stopped with interrupted and incomplete cleanup")
+        );
+        // An interruption the driver reported trouble with is a failure.
+        let diagnostics = ["retired 3 queued events".to_owned()];
+        assert_eq!(
+            ending(interrupted, true, &diagnostics, None),
+            failed("retired 3 queued events")
+        );
+    }
+    #[test]
+    fn a_late_publication_says_how_it_settled_and_never_completes_the_run() {
+        let complete = CleanupOutcome::Complete;
+        let done = Some((&StopReason::AgentFinished, &complete));
+        let diagnostics = ["filesystem publication remains unresolved".to_owned()];
+        assert_eq!(
+            ending(done, false, &diagnostics, Some(Ok(()))),
+            Ending::Failed(
+                "filesystem publication remains unresolved; the late publication then committed"
+                    .into()
+            )
+        );
+        assert_eq!(
+            ending(done, false, &diagnostics, Some(Err("disk".into()))),
+            Ending::Failed(
+                "filesystem publication remains unresolved; the late publication then failed: disk"
+                    .into()
+            )
+        );
     }
 }

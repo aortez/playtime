@@ -729,6 +729,10 @@ pub fn details(run: &RunView) -> Vec<String> {
     first.push(mode_words(run.mode).into());
     first.push(evidence_words(&run.evidence));
     let mut lines = vec![first.join(" · ")];
+    // The worker's own account says why its execution ended short.
+    if let Some(failure) = &run.orchestration.failure {
+        lines.push(format!("Worker failure: {}", excerpt(failure, 400)));
+    }
     // The archive can record the outcome before the daemon sees the worker
     // stop, and a cancelled run can wait in reconciling. An ended run reports
     // its outcome in its lead.

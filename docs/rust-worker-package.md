@@ -133,8 +133,12 @@ The worker retains a pending-publication owner and polls until it settles.
 `publication_pending` conservatively remains true while its driver can publish,
 including late storage operations. The process remains available for receipt
 inspection after terminal publication, retaining its run lock until supervision
-ends the original invocation. This does not implement independent hard deadlines
-or claim that a returned report proves invocation termination.
+ends the original invocation. An execution that ends without a normal committed
+outcome reports `reconciling` with a bounded `failure` once its publication
+settles, unless it was a cleanly ended interruption that was asked for, and the
+daemon stops that invocation then; see
+[worker lifecycle](rust-worker-lifecycle.md). This does not implement independent
+hard deadlines or claim that a returned report proves invocation termination.
 
 ## Executable checks
 
@@ -144,7 +148,9 @@ materializes from archived inputs, then unlinks/replaces the launched pathname
 before Begin. It verifies two actual controller sessions, one `run_started`,
 returned receipt progression, duplicate Begin, control-client reattachment while
 waiting, cancellation/revocation before Begin, embedded build mismatch, copied
-archive inspection, object tampering, platform/capability and size rejection.
+archive inspection, object tampering, platform/capability and size rejection. A
+scenario that fails one record's publication checks that the worker reports its
+`failure` once publication settles and keeps serving the same status.
 The compiler/staged source directory has already been removed by the builder.
 
 Native tests cover ELF truncation/overflow, dynamic dependencies/interpreter,

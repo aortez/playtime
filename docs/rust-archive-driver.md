@@ -181,10 +181,14 @@ omits raw observations that cannot fit. Compact settlements, stop/checkpoint
 references, and the outcome may use finalization space. If required facts cannot
 fit, completion stays uncommitted; an in-memory result never substitutes for it.
 
-An I/O failure retires the storage owner and queued records to bounded diagnostics,
-feeds `PersistenceFailed`, and stops accepting model chunks/new experimental
-work. There is no same-writer retry. Snapshot/cleanup remain bounded best effort
-even when they cannot be archived. The first stop reason remains authoritative.
+Any failed storage or encoding operation, including a refusal before anything was
+written, retires the storage owner and queued records to bounded diagnostics,
+feeds `PersistenceFailed`, and stops accepting model chunks/new experimental work.
+There is no same-writer retry. Snapshot/cleanup remain bounded best effort even
+when they cannot be archived. The first stop reason remains authoritative. The
+packaged worker reports these diagnostics, or the stop reason when there are none,
+as its status `failure`, adding how a pending publication settled; see
+[worker lifecycle](rust-worker-lifecycle.md).
 
 `DriverOptions::publication_wait` bounds waiting for unresolved storage (default
 five real seconds). Expiry does not prove that I/O failed or cannot commit. The
