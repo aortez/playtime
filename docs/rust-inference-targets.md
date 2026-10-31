@@ -77,6 +77,12 @@ as `invalid_parameters`; without them, those routes answer as before. Discovery
 stays independent of workshop readiness. An offline target does not prevent
 inspecting another target or editing saved recipes.
 
+Previews and launches enable and check the shared Docker workshop one request at
+a time. Each then checks its own target's model outside that gate, so a slow or
+offline machine delays only requests for that machine. At startup the daemon
+resolves every target's address concurrently. A target whose address doesn't
+resolve then is resolved again on each later request for it.
+
 Registration acceptance retains its existing service/endpoint binding. The daemon
 finds the matching configured browser from that binding, and checks the exact
 identity again. A binding that no configured machine has, such as a review from a

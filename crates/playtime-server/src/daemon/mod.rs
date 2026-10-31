@@ -137,9 +137,7 @@ impl Daemon {
         if let Some(endpoint) = live {
             tolerate_unavailable(archive.enable_live(endpoint).await)?;
         }
-        for target in targets.targets {
-            archive.add_target(target).await?;
-        }
+        archive.add_targets(targets.targets).await?;
         let archive = Arc::new(archive);
         let models = live
             .map(crate::models::ModelBrowser::new)

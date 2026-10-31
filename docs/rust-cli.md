@@ -182,7 +182,7 @@ fail.
 | 2 | Invalid arguments or local configuration |
 | 3 | Unavailable connection/service, timeout, exhausted reconnect, unresolved mutation |
 | 4 | Authentication/authorization rejection |
-| 5 | Rejected operation, missing ID, stale preview, busy root, key/service conflict |
+| 5 | Rejected operation, missing ID, missing or unknown target, stale preview, busy root, key/service conflict |
 | 6 | Unsupported version/capability, invalid/corrupt evidence, integrity failure |
 | 7 | Receipt, cursor, download, or output I/O failure |
 | 8 | Observer deadline; run unchanged |
@@ -264,4 +264,7 @@ receipt. `launches retry` always uses the original retained target. See
 examples. Simulation and scripted Docker previews do not use inference targets.
 Without `--target`, a daemon with named targets refuses model metadata as
 `invalid_parameters` and live previews or launches as `execution_unavailable`;
-text output lists the error's reasons, such as `target_required`.
+text output lists the error's reasons, such as `target_required`. When every
+reason is a target choice (`target_required`, `target_unknown` or
+`target_requires_live_execution`) the command exits 5, because retrying can't
+clear it; other execution outages exit 3.

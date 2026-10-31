@@ -445,42 +445,55 @@ impl Archive {
         }
         self.execution(mode).await
     }
-    pub async fn add_target(&mut self, mut target: InferenceTarget) -> life::Result<()> {
-        target.endpoint = playtime_ollama::Endpoint::parse(&target.endpoint)
-            .map_err(|_| Error::Invalid("invalid target endpoint"))?
-            .as_str()
-            .to_owned();
-        let mut selected = self.clone();
-        selected.selected_target = Some(target.clone());
-        selected.live = None;
-        super::tolerate_unavailable(selected.enable_live(&target.endpoint).await)?;
-        self.targets
-            .insert(target.id.clone(), (target, selected.live));
+    /// Targets resolve concurrently, so an offline machine delays startup once.
+    pub async fn add_targets(&mut self, targets: Vec<InferenceTarget>) -> life::Result<()> {
+        let resolved = futures_util::future::try_join_all(targets.into_iter().map(|mut target| {
+            let mut selected = self.clone();
+            async move {
+                target.endpoint = playtime_ollama::Endpoint::parse(&target.endpoint)
+                    .map_err(|_| Error::Invalid("invalid target endpoint"))?
+                    .as_str()
+                    .to_owned();
+                selected.selected_target = Some(target.clone());
+                selected.live = None;
+                super::tolerate_unavailable(selected.enable_live(&target.endpoint).await)?;
+                Ok::<_, Error>((target, selected.live))
+            }
+        }))
+        .await?;
+        for (target, live) in resolved {
+            self.targets.insert(target.id.clone(), (target, live));
+        }
         Ok(())
     }
     pub async fn execution(&self, mode: RunMode) -> life::Result<Self> {
-        let _guard = self.execution_gate.lock().await;
         let mut ready = self.clone();
-        if ready.docker.is_none()
-            && let Some((executable, socket)) = &self.docker_options
         {
-            ready.enable_docker(executable, socket).await?;
+            // Every target shares the workshop, so one request at a time
+            // enables and checks it. Model checks run after the gate, so a
+            // slow or offline machine delays only requests for that machine.
+            let _guard = self.execution_gate.lock().await;
+            if ready.docker.is_none()
+                && let Some((executable, socket)) = &self.docker_options
+            {
+                ready.enable_docker(executable, socket).await?;
+            }
+            if let Some(engine) = &ready.docker_engine {
+                engine
+                    .readiness(
+                        playtime_runner::docker::IMAGE_LOCK,
+                        tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+                        playtime_docker::CancellationToken::new(),
+                    )
+                    .await
+                    .map_err(|_| Error::Invalid("locked Docker readiness changed"))?;
+            }
         }
         if mode != RunMode::ScriptedSmoke
             && ready.live.is_none()
             && let Some(endpoint) = &self.live_endpoint
         {
             ready.enable_live(endpoint).await?;
-        }
-        if let Some(engine) = &ready.docker_engine {
-            engine
-                .readiness(
-                    playtime_runner::docker::IMAGE_LOCK,
-                    tokio::time::Instant::now() + std::time::Duration::from_secs(10),
-                    playtime_docker::CancellationToken::new(),
-                )
-                .await
-                .map_err(|_| Error::Invalid("locked Docker readiness changed"))?;
         }
         if ready.docker.is_none() {
             return Err(Error::Invalid("execution unavailable"));

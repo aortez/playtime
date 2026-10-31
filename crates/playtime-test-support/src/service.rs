@@ -887,58 +887,85 @@ fn fresh_second_session(history: &[playtime_protocol::events::EventEnvelope]) ->
 /// for 1.5 seconds or more streamed one at least 300 ms earlier. Batches commit
 /// every 250 ms, so that chunk was readable before the response. Every request
 /// recorded timing, with no sign of contention.
+fn observations<'a>(
+    history: &'a [playtime_protocol::events::EventEnvelope],
+    kind: &'static str,
+) -> impl Iterator<Item = &'a playtime_protocol::events::EventEnvelope> {
+    history
+        .iter()
+        .filter(move |e| e.kind == "controller_observation" && e.data["observation_kind"] == kind)
+}
 fn live_streaming_and_timing(
     history: &[playtime_protocol::events::EventEnvelope],
     view: &RunView,
 ) -> Result<()> {
-    let observations = |kind: &'static str| {
-        history.iter().filter(move |e| {
-            e.kind == "controller_observation" && e.data["observation_kind"] == kind
-        })
-    };
-    let value = |e: &playtime_protocol::events::EventEnvelope| e.data["data"]["value"].clone();
-    let elapsed = |e: &playtime_protocol::events::EventEnvelope| e.data["elapsed_ms"].as_u64();
-    let (mut first_chunk, mut generated) = (BTreeMap::new(), BTreeMap::new());
-    for e in observations("model_chunk") {
-        let chunk = value(e);
-        if chunk["chunk"]["observation"] == "timing" {
-            generated.insert(
-                chunk["call"].as_u64(),
-                chunk["chunk"]["eval_duration"].as_u64(),
-            );
-        } else {
-            first_chunk
-                .entry(chunk["call"].as_u64())
-                .or_insert(elapsed(e));
-        }
-    }
-    let mut long = 0;
-    for e in observations("model_response") {
-        let call = value(e)["call"].as_u64();
-        let first = first_chunk
-            .get(&call)
-            .copied()
-            .flatten()
-            .ok_or("a live response had no streamed chunk")?;
-        if generated.get(&call).copied().flatten().unwrap_or(0) >= 1_500_000_000 {
-            long += 1;
-            if elapsed(e).unwrap_or(0) < first + 300 {
-                return Err("a long live response showed no partial output first".into());
-            }
-        }
-    }
-    println!("Live streaming: {long} responses generated for 1.5 seconds or more");
+    let (long, calls_only) = long_responses_streamed(history)?;
+    println!(
+        "Live streaming: {long} responses with text generated for 1.5 seconds or more; \
+         {calls_only} more held only tool calls"
+    );
     let contention = view
         .contention
         .as_ref()
         .ok_or("live run recorded no request timing")?;
-    if contention.timed_requests != observations("model_request").count() as u64 {
+    if contention.timed_requests != observations(history, "model_request").count() as u64 {
         return Err("a live request recorded no timing".into());
     }
     if contention.possible {
         return Err(format!("possible GPU contention during the live run: {contention:?}").into());
     }
     Ok(())
+}
+/// Every response streamed a chunk, and each one generated for 1.5 seconds or
+/// more showed text at least 300 ms before it ended. Returns how many long
+/// responses streamed text and how many held only tool calls.
+fn long_responses_streamed(
+    history: &[playtime_protocol::events::EventEnvelope],
+) -> Result<(usize, usize)> {
+    let value = |e: &playtime_protocol::events::EventEnvelope| e.data["data"]["value"].clone();
+    let elapsed = |e: &playtime_protocol::events::EventEnvelope| e.data["elapsed_ms"].as_u64();
+    let (mut first_chunk, mut first_text, mut generated) =
+        (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
+    for e in observations(history, "model_chunk") {
+        let chunk = value(e);
+        let call = chunk["call"].as_u64();
+        if chunk["chunk"]["observation"] == "timing" {
+            generated.insert(call, chunk["chunk"]["eval_duration"].as_u64());
+            continue;
+        }
+        first_chunk.entry(call).or_insert(elapsed(e));
+        let message = &chunk["chunk"]["message"];
+        if ["thinking", "content"]
+            .iter()
+            .any(|key| message[key].as_str().is_some_and(|t| !t.is_empty()))
+        {
+            first_text.entry(call).or_insert(elapsed(e));
+        }
+    }
+    let (mut long, mut calls_only) = (0, 0);
+    for e in observations(history, "model_response") {
+        let call = value(e)["call"].as_u64();
+        first_chunk
+            .get(&call)
+            .copied()
+            .flatten()
+            .ok_or("a live response had no streamed chunk")?;
+        if generated.get(&call).copied().flatten().unwrap_or(0) < 1_500_000_000 {
+            continue;
+        }
+        // Ollama sends a tool call whole once it parses, so a response with
+        // no thinking or content has nothing to show early.
+        let Some(first) = first_text.get(&call).copied() else {
+            calls_only += 1;
+            continue;
+        };
+        long += 1;
+        let first = first.ok_or("a live chunk recorded no elapsed time")?;
+        if elapsed(e).unwrap_or(0) < first + 300 {
+            return Err("a long live response showed no partial output first".into());
+        }
+    }
+    Ok((long, calls_only))
 }
 struct WorkerCleanup(PathBuf);
 impl Drop for WorkerCleanup {
@@ -1042,5 +1069,57 @@ mod tests {
         history[2] = history[3].clone();
         history[2].data["data"]["value"]["messages"][1]["content"] = json!("wrong memento");
         assert!(fresh_second_session(&history).is_err());
+    }
+
+    #[test]
+    fn long_responses_show_text_early_unless_they_hold_only_tool_calls() {
+        let event = |sequence, kind, elapsed: u64, value| {
+            serde_json::from_value(json!({
+                "schema_version": 1, "run_id": "streaming-test", "sequence": sequence,
+                "time": "2026-10-30T00:00:00Z", "kind": "controller_observation",
+                "data": {"session_id": "s1", "observation_kind": kind, "elapsed_ms": elapsed,
+                    "data": {"storage": "inline", "value": value}}
+            }))
+            .unwrap()
+        };
+        // One call: a chunk at `chunk_ms`, its response at 2000 ms and the
+        // server's generation time.
+        let call = |history: &mut Vec<_>, call: u64, message, chunk_ms, eval_ns: u64| {
+            let next = history.len() as u64 + 1;
+            history.push(event(
+                next,
+                "model_chunk",
+                chunk_ms,
+                json!({"call": call, "chunk": {"message": message, "done": false, "records": 3}}),
+            ));
+            history.push(event(
+                next + 1,
+                "model_response",
+                2000,
+                json!({"call": call}),
+            ));
+            history.push(event(
+                next + 2,
+                "model_chunk",
+                2000,
+                json!({"call": call, "chunk": {"observation": "timing", "eval_duration": eval_ns}}),
+            ));
+        };
+        let thinking = json!({"role": "assistant", "thinking": "Reading the notes"});
+        let tool_call = json!({"role": "assistant",
+            "tool_calls": [{"function": {"name": "shell", "arguments": {"command": "ls"}}}]});
+        let mut history = Vec::new();
+        call(&mut history, 1, thinking.clone(), 100, 1_600_000_000);
+        // Ollama sends a parsed tool call whole, just before the response.
+        call(&mut history, 2, tool_call, 1950, 1_520_000_000);
+        // A short response needn't show anything early.
+        call(&mut history, 3, thinking.clone(), 1990, 400_000_000);
+        assert_eq!(long_responses_streamed(&history).unwrap(), (1, 1));
+        let mut late = history.clone();
+        call(&mut late, 4, thinking.clone(), 1900, 1_600_000_000);
+        assert!(long_responses_streamed(&late).is_err());
+        let mut silent = history;
+        silent.push(event(99, "model_response", 2000, json!({"call": 5})));
+        assert!(long_responses_streamed(&silent).is_err());
     }
 }
