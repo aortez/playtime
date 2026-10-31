@@ -889,3 +889,33 @@ too. Older daemons reject a saved status with `failure` or a record with the new
 reason, and they read every record at startup, so they refuse to start on a
 ledger holding such a run, even after its release. Archives, recipes and the
 behavioral goldens are unchanged.
+
+## One-pass run projections (2026-10-31)
+
+The daemon's run view projection read the history through `ArchiveQueries` in
+pages of 200 records, and each page validated the complete committed prefix and
+its referenced content again. `run()`, `request_accounting()`, the projection's
+own page loop and `captures()` each walked the history that way, so a projection
+made about four passes per 200 records. In a release build, a projection's
+archive reads took 10.3 s for trial 8's archive (3,203 records, 14.5 MB of log)
+and 22 s for Framework run 6's (6,416 records, 17 MB). The daemon projects again
+at each saved confirmation, so the published view of a long run fell further
+behind as its log grew.
+
+`ArchiveReader::visit` hands every record to a visitor in one validating pass.
+It validates what a page does, but the visitor sees each record before the rest
+of the prefix has validated, so what it builds counts only if the visit returns
+Ok. `ArchiveQueries` reads through it, so `run()`, `request_accounting()`,
+`captures()` and `observation()` are one pass each, and the new `overview()`
+returns `run()` and, for an execution archive, `request_accounting()` and
+`captures()` from one pass that also serves the projection's own per-record
+work. The same reads now take 0.25 s and 0.27 s; in a debug build, trial 8's
+took 77.6 s and now take 2.1 s. The daemon's completion check reads its run in
+one pass too. Archive, event and HTTP schemas, the goldens, storage limits and
+verification rules are unchanged. On all 97 archives on the development machine
+(52 v1, 45 v2), the queries' results, every history page and the first five
+observations were byte-identical before and after. On an archive that fails
+validation, a visit can report the visitor's own error, from a record before the
+corrupt one, where a page would have reported the corruption; nothing is
+published either way. History pages over HTTP still validate their complete
+prefix each.

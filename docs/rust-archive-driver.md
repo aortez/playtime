@@ -87,6 +87,12 @@ versioned source links and explicit omissions; see the
 [continuous native contract](rust-continuous-native.md). No historical archive is
 rewritten and no v2 recovery/continuation is provided.
 
+`run()`, `request_accounting()`, `captures()` and `observation()` each read the
+history in one storage visit. `overview()` returns `run()` and, for an execution
+archive, `request_accounting()` and `captures()` from a single pass that also
+hands every history entry to the caller, whose result counts only if that pass
+succeeds.
+
 The new `workspace-execution-v2.json` golden records the complete scripted contract.
 The probe gate covers shared budgets and deadlines, preflight/post-dispatch
 cancellation, unknown usage, omitted output, forbidden maintenance tools, malformed

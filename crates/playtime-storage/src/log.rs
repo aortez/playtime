@@ -446,11 +446,14 @@ fn checkpoint_mismatch() -> StorageError {
 
 /// What one pass returns besides validation: a page of events after a
 /// sequence, and the state at a checkpoint position beneath the frontier.
-#[derive(Clone, Copy, Default)]
+/// A visitor instead receives every record once it has validated, and the
+/// pass collects no page.
+#[derive(Default)]
 pub(crate) struct ScanOptions<'a> {
     pub after: u64,
     pub limit: u32,
     pub checkpoint: Option<&'a ReadPrefix>,
+    pub visitor: Option<&'a mut dyn FnMut(StoredEvent) -> Result<()>>,
 }
 
 /// Validates the committed prefix at `frontier` in one pass. A checkpoint
@@ -471,6 +474,7 @@ pub(crate) fn scan(
         after,
         limit,
         checkpoint,
+        mut visitor,
     } = options;
     if checkpoint.is_some_and(|prefix| {
         prefix.bytes > frontier.committed_bytes || prefix.sequence > frontier.committed_sequence
@@ -553,7 +557,9 @@ pub(crate) fn scan(
                 checkpoint_state = Some(state.clone());
             }
         }
-        if !page_full && state.sequence > after && events.len() < limit as usize {
+        if let Some(visitor) = visitor.as_mut() {
+            visitor(StoredEvent::new(decoded.envelope().clone(), bytes))?;
+        } else if !page_full && state.sequence > after && events.len() < limit as usize {
             // Returning fewer than limit is allowed; every page still has a
             // strict byte bound. Validate the rest of the prefix before return.
             if page_bytes + bytes.len() as u64 <= limits.page_bytes {
