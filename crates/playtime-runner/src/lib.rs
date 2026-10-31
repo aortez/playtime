@@ -24,6 +24,6 @@ pub use prepare::{
     prepare_docker_with_inputs, prepare_recoverable_simulation_with_inputs, prepare_simulation,
     prepare_simulation_with_inputs,
 };
-pub use queries::ArchiveQueries;
+pub use queries::{ArchiveOverview, ArchiveQueries};
 pub use receipt::LatestReceipt;
 pub use writer::{CommitContext, NoWriterHooks, PendingPublication, ReceiptDelivery, WriterHooks};

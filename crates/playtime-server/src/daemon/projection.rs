@@ -182,15 +182,91 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
             configuration,
             harness,
         });
-    let run = queries.run().map_err(evidence)?;
-    // Only execution records carry final captures; skip their archive pass otherwise.
-    let execution = run.execution.is_some();
+    let mut metadata: BTreeMap<String, (String, Option<SessionId>, u64)> = BTreeMap::new();
+    let mut sequences = BTreeMap::new();
+    let mut capture_sequences = BTreeMap::new();
+    let mut updated_at = None;
+    // One pass over the history serves the whole view.
+    let overview = queries
+        .overview(|entry| {
+            let sequence = entry.envelope.sequence.get();
+            updated_at = Some(entry.envelope.time.clone());
+            match &entry.fact {
+                ArchiveFact::Canonical {
+                    event: KnownEvent::CheckpointPublished { checkpoint, .. },
+                } => {
+                    sequences.insert(checkpoint.session_id.clone(), sequence);
+                }
+                ArchiveFact::Canonical {
+                    event:
+                        KnownEvent::SessionStarted {
+                            session_id,
+                            delivery: Some(delivery),
+                            ..
+                        },
+                } => {
+                    metadata
+                        .entry(delivery.memento.content.path.to_string())
+                        .or_insert(("incoming_memory".into(), Some(session_id.clone()), sequence));
+                    if let Some(evidence) = &delivery.evidence {
+                        metadata.entry(evidence.text.path.to_string()).or_insert((
+                            "incoming_evidence".into(),
+                            Some(session_id.clone()),
+                            sequence,
+                        ));
+                        metadata
+                            .entry(evidence.provenance.path.to_string())
+                            .or_insert((
+                                "evidence_provenance".into(),
+                                Some(session_id.clone()),
+                                sequence,
+                            ));
+                    }
+                }
+                ArchiveFact::Execution { event, .. } => {
+                    use playtime_protocol::execution::Fact;
+                    match &event.fact {
+                        Fact::CapturePublished { capture } => {
+                            capture_sequences.insert(capture.index.path.clone(), sequence);
+                        }
+                        Fact::Observation(o) => {
+                            if let ObservationData::Artifact { content } = &o.data {
+                                metadata.insert(
+                                    content.path.to_string(),
+                                    ("controller_observation".into(), None, sequence),
+                                );
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+                ArchiveFact::Observation { observation, .. } => {
+                    if let ObservationData::Artifact { content } = &observation.data {
+                        metadata.insert(
+                            content.path.to_string(),
+                            (
+                                "controller_observation".into(),
+                                observation.session_id.clone(),
+                                sequence,
+                            ),
+                        );
+                    }
+                }
+                _ => (),
+            }
+            Ok(())
+        })
+        .map_err(evidence)?;
+    if let Some(updated_at) = updated_at {
+        view.updated_at = updated_at;
+    }
+    let run = overview.run;
     let f = frontier(&run.frontier);
     view.controller_phase = run.phase;
     view.usage = Some(run.usage);
     view.contention = run.contention;
+    view.request_accounting = overview.request_accounting;
     let allowances: Vec<_> = if let Some(execution) = &run.execution {
-        view.request_accounting = Some(queries.request_accounting().map_err(evidence)?);
         execution
             .unsettled_model_intents
             .iter()
@@ -247,80 +323,6 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
             .encode()
             .map_err(evidence)?,
     });
-    let mut metadata: BTreeMap<String, (String, Option<SessionId>, u64)> = BTreeMap::new();
-    let mut sequences = BTreeMap::new();
-    let mut capture_sequences = BTreeMap::new();
-    let mut after = 0;
-    loop {
-        let page = queries.history(after, 200, false).map_err(evidence)?;
-        for entry in page.entries {
-            let sequence = entry.envelope.sequence.get();
-            view.updated_at = entry.envelope.time.clone();
-            match entry.fact {
-                ArchiveFact::Canonical {
-                    event: KnownEvent::CheckpointPublished { checkpoint, .. },
-                } => {
-                    sequences.insert(checkpoint.session_id, sequence);
-                }
-                ArchiveFact::Canonical {
-                    event:
-                        KnownEvent::SessionStarted {
-                            session_id,
-                            delivery: Some(delivery),
-                            ..
-                        },
-                } => {
-                    metadata
-                        .entry(delivery.memento.content.path.to_string())
-                        .or_insert(("incoming_memory".into(), Some(session_id.clone()), sequence));
-                    if let Some(evidence) = delivery.evidence {
-                        metadata.entry(evidence.text.path.to_string()).or_insert((
-                            "incoming_evidence".into(),
-                            Some(session_id.clone()),
-                            sequence,
-                        ));
-                        metadata
-                            .entry(evidence.provenance.path.to_string())
-                            .or_insert(("evidence_provenance".into(), Some(session_id), sequence));
-                    }
-                }
-                ArchiveFact::Execution { event, .. } => {
-                    use playtime_protocol::execution::Fact;
-                    match event.fact {
-                        Fact::CapturePublished { capture } => {
-                            capture_sequences.insert(capture.index.path, sequence);
-                        }
-                        Fact::Observation(o) => {
-                            if let ObservationData::Artifact { content } = o.data {
-                                metadata.insert(
-                                    content.path.to_string(),
-                                    ("controller_observation".into(), None, sequence),
-                                );
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-                ArchiveFact::Observation { observation, .. } => {
-                    if let ObservationData::Artifact { content } = observation.data {
-                        metadata.insert(
-                            content.path.to_string(),
-                            (
-                                "controller_observation".into(),
-                                observation.session_id,
-                                sequence,
-                            ),
-                        );
-                    }
-                }
-                _ => (),
-            }
-        }
-        if !page.has_more {
-            break;
-        }
-        after = page.next_after_sequence;
-    }
     let mut checkpoints = Vec::new();
     let mut names = BTreeMap::new();
     for item in queries.checkpoints().map_err(evidence)? {
@@ -407,12 +409,7 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
             )),
         });
     }
-    let captures = if execution {
-        queries.captures().map_err(evidence)?
-    } else {
-        Vec::new()
-    };
-    for item in captures {
+    for item in overview.captures {
         let sequence = *capture_sequences
             .get(&item.capture.index.path)
             .ok_or_else(|| evidence("capture sequence unavailable"))?;

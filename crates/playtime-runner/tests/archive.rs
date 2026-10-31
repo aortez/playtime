@@ -29,6 +29,17 @@ fn real_controller_archive_survives_folder_only_copy_with_exact_transcript_and_i
     fs::remove_dir_all(temp.archive()).unwrap();
     let queries = ArchiveQueries::offline(&copied, StorageLimits::default()).unwrap();
     let run = queries.run().unwrap();
+    // A v1 archive's overview has the same run, and no accounting or captures.
+    let mut visited = 0;
+    let overview = queries
+        .overview(|_| {
+            visited += 1;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(overview.run, run);
+    assert!(overview.request_accounting.is_none() && overview.captures.is_empty());
+    assert_eq!(visited, run.frontier.committed_sequence);
     assert_eq!(run.usage.known_generated_tokens, 26);
     assert_eq!(run.first_stop, Some(StopReason::AgentFinished));
     assert!(!run.incomplete_evidence);

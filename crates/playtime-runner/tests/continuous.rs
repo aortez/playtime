@@ -439,6 +439,31 @@ fn native_profile_uses_v2_compaction_evidence_and_final_capture() {
     assert!(queries.checkpoints().unwrap().is_empty());
     assert_eq!(queries.captures().unwrap().len(), 1);
     let totals = queries.request_accounting().unwrap();
+    // One pass gives what the separate queries give, and its visitor sees
+    // every history entry once, in order.
+    let mut visited = Vec::new();
+    let overview = queries
+        .overview(|entry| {
+            visited.push(entry.clone());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(overview.run, queries.run().unwrap());
+    assert_eq!(overview.request_accounting.as_ref(), Some(&totals));
+    assert_eq!(overview.captures, queries.captures().unwrap());
+    let mut paged = Vec::new();
+    let mut after = 0;
+    loop {
+        let page = queries.history(after, 200, false).unwrap();
+        paged.extend(page.entries);
+        if !page.has_more {
+            break;
+        }
+        after = page.next_after_sequence;
+    }
+    assert_eq!(visited, paged);
+    let stopped = queries.overview(|_| Err(playtime_runner::Error::Invalid("stop".into())));
+    assert!(matches!(stopped, Err(playtime_runner::Error::Invalid(message)) if message == "stop"));
     assert_eq!(totals.by_purpose[&RequestPurpose::Work].admitted_calls, 49);
     assert!(totals.by_purpose[&RequestPurpose::Compaction].admitted_calls >= 2);
     let mut after = 0;

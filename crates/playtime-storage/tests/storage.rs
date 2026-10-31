@@ -11,8 +11,8 @@ use playtime_protocol::{
     },
 };
 use playtime_storage::{
-    ArchiveReader, ArchiveWriter, BatchClass, ErrorCode, StorageLimits, WriterLock, content_ref,
-    fixture, sha256,
+    ArchiveReader, ArchiveWriter, BatchClass, ErrorCode, StorageError, StorageLimits, WriterLock,
+    content_ref, fixture, sha256,
 };
 use serde_json::json;
 
@@ -155,6 +155,92 @@ fn fixed_frontier_pagination_does_not_advance_during_appends() {
             .committed_sequence,
         8
     );
+}
+
+#[test]
+fn a_visit_streams_every_record_once_and_still_validates_the_whole_prefix() {
+    #[derive(Debug, PartialEq)]
+    enum Stop {
+        Visitor,
+        Storage(ErrorCode),
+    }
+    impl From<StorageError> for Stop {
+        fn from(error: StorageError) -> Self {
+            Self::Storage(error.code)
+        }
+    }
+    let temp = Temp::new();
+    let reader = completed(&temp);
+    let snapshot = reader.offline_snapshot().unwrap();
+    let fixture = fixture::two_session().unwrap();
+    let mut visited = Vec::new();
+    reader
+        .visit(&snapshot, |event| {
+            visited.push(event);
+            Ok::<_, Stop>(())
+        })
+        .unwrap();
+    assert_eq!(
+        visited,
+        reader
+            .page(&snapshot, &snapshot.query(0, 1000))
+            .unwrap()
+            .events
+    );
+    assert_eq!(
+        visited
+            .into_iter()
+            .map(|event| event.bytes)
+            .collect::<Vec<_>>(),
+        fixture.events
+    );
+    // A visitor's own error ends the pass and comes back as is.
+    let mut seen = 0;
+    assert_eq!(
+        reader.visit(&snapshot, |_| {
+            seen += 1;
+            if seen == 3 {
+                Err(Stop::Visitor)
+            } else {
+                Ok(())
+            }
+        }),
+        Err(Stop::Visitor)
+    );
+    assert_eq!(seen, 3);
+    // Moving the last record's time by a second keeps every record valid and
+    // the log the same length, so only the final digest check rejects it,
+    // after the visitor has seen every record.
+    let path = temp.archive().join("events.jsonl");
+    let original = fs::read(&path).unwrap();
+    let mut bytes = original.clone();
+    let time = bytes.windows(9).position(|w| w == b"12:00:16Z").unwrap();
+    bytes[time + 7] = b'7';
+    fs::write(&path, bytes).unwrap();
+    let mut seen = 0;
+    assert_eq!(
+        reader.visit(&snapshot, |_| {
+            seen += 1;
+            Ok(())
+        }),
+        Err(Stop::Storage(ErrorCode::ArchiveCorrupt))
+    );
+    assert_eq!(seen, fixture.events.len());
+    // A record that no longer decodes fails before the visitor sees it.
+    let mut bytes = original;
+    let closing = bytes.len() - 2;
+    assert_eq!(bytes[closing], b'}');
+    bytes[closing] = b' ';
+    fs::write(&path, bytes).unwrap();
+    let mut seen = 0;
+    assert_eq!(
+        reader.visit(&snapshot, |_| {
+            seen += 1;
+            Ok(())
+        }),
+        Err(Stop::Storage(ErrorCode::ArchiveCorrupt))
+    );
+    assert_eq!(seen, fixture.events.len() - 1);
 }
 
 #[test]

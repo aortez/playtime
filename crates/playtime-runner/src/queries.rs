@@ -1,14 +1,14 @@
 use std::{collections::BTreeMap, num::NonZeroU64, path::Path};
 
-use playtime_core::SessionId;
+use playtime_core::{RequestId, SessionId};
 use playtime_protocol::{
     archive::{ContentRef, InputManifest},
     archive_queries::*,
-    bridge::{BridgeEvent, FileVersion, decode_checkpoint_index},
+    bridge::{BridgeEvent, EffectIntent, FileVersion, decode_checkpoint_index},
     events::{EventPayload, KnownEvent, decode_event},
     observations::{ObservationData, ObservationLocation},
 };
-use playtime_storage::{ArchiveReader, CommittedFrontier, Snapshot, StorageLimits};
+use playtime_storage::{ArchiveReader, CommittedFrontier, Snapshot, StorageLimits, StoredEvent};
 
 use crate::{Error, Result};
 mod execution;
@@ -19,6 +19,15 @@ mod execution;
 pub struct ArchiveQueries {
     reader: ArchiveReader,
     snapshot: Snapshot,
+}
+
+/// What a run view needs from the history, read in one pass.
+pub struct ArchiveOverview {
+    pub run: ArchiveRun,
+    /// For an execution archive only, as `run.execution` is.
+    pub request_accounting: Option<RequestAccounting>,
+    /// Final captures, which only an execution archive records.
+    pub captures: Vec<ArchiveCapture>,
 }
 
 impl ArchiveQueries {
@@ -65,177 +74,115 @@ impl ArchiveQueries {
         let page = self
             .reader
             .page(&self.snapshot, &self.snapshot.query(after, limit))?;
-        let mut entries = Vec::new();
-        for stored in page.events {
-            let decoded = decode_event(
-                std::str::from_utf8(&stored.bytes)
-                    .map_err(|error| Error::Invalid(error.to_string()))?,
-            )?;
-            let fact = match decoded.payload() {
-                EventPayload::Execution(record) => {
-                    let resolved =
-                        if let playtime_protocol::execution::Fact::Observation(observation) =
-                            &record.fact
-                        {
-                            match &observation.data {
-                                ObservationData::Inline { value } => Some(value.clone()),
-                                ObservationData::Artifact { content } if resolve_payloads => {
-                                    Some(observation.resolve(&self.content(content)?)?)
-                                }
-                                _ => None,
-                            }
-                        } else {
-                            None
-                        };
-                    ArchiveFact::Execution {
-                        event: *record.clone(),
-                        resolved,
-                    }
-                }
-                EventPayload::Known(event) => ArchiveFact::Canonical {
-                    event: *event.clone(),
-                },
-                EventPayload::Control(event) => ArchiveFact::Control {
-                    event: *event.clone(),
-                },
-                EventPayload::Observation(observation) => {
-                    let resolved = if resolve_payloads {
-                        match &observation.observation().data {
-                            ObservationData::Artifact { content } => {
-                                Some(observation.resolve(&self.content(content)?)?)
-                            }
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    };
-                    ArchiveFact::Observation {
-                        observation: observation.observation().clone(),
-                        record: resolved.as_ref().unwrap_or(observation).record().cloned(),
-                    }
-                }
-                EventPayload::Unknown { .. } => ArchiveFact::Unknown,
-            };
-            entries.push(ArchiveHistoryEntry {
-                envelope: stored.envelope,
-                jsonl: String::from_utf8(stored.bytes).expect("decoded UTF-8 event"),
-                record_sha256: stored.sha256,
-                fact,
-            });
-        }
         Ok(ArchiveHistoryPage {
-            entries,
+            entries: page
+                .events
+                .into_iter()
+                .map(|stored| self.entry(stored, resolve_payloads))
+                .collect::<Result<_>>()?,
             next_after_sequence: page.next_after_sequence,
             frontier: page.frontier,
             has_more: page.has_more,
         })
     }
 
-    pub fn run(&self) -> Result<ArchiveRun> {
-        let inspection = self.snapshot.inspection();
-        let mut run = ArchiveRun {
-            run_id: self.reader.descriptor().run_id.clone(),
-            mode: self.reader.descriptor().mode,
-            phase: None,
-            first_stop: None,
-            usage: inspection.usage.clone(),
-            unsettled_model_intents: Vec::new(),
-            outcome: None,
-            frontier: self.snapshot.frontier().clone(),
-            incomplete_evidence: inspection.incomplete_evidence,
-            uncommitted_event_bytes: inspection.uncommitted_event_bytes,
-            contention: None,
-            execution: (self.reader.manifest().schema_version == 2).then(ExecutionRun::default),
-        };
-        let mut unsettled = BTreeMap::new();
-        let mut execution_intents = BTreeMap::new();
-        let mut timings = Vec::new();
-        self.visit(|entry| {
-            match &entry.fact {
-                ArchiveFact::Execution { event, .. } => {
-                    use playtime_protocol::execution::Fact;
-                    match &event.fact {
-                        Fact::EffectIntent(intent) if intent.effect_kind == "model" => {
-                            execution_intents.insert(
-                                intent.request.as_ref().unwrap().request_id.clone(),
-                                intent.clone(),
-                            );
-                        }
-                        Fact::RequestSettled { request, .. }
-                        | Fact::RequestNotDispatched { request, .. } => {
-                            execution_intents.remove(&request.request_id);
-                        }
-                        Fact::CapturePublished { capture } => {
-                            run.execution.as_mut().unwrap().last_capture = Some(capture.clone())
-                        }
-                        Fact::RunFinished {
-                            reason, cleanup, ..
-                        } => {
-                            run.outcome = Some(ArchiveOutcome {
-                                reason: *reason,
-                                cleanup: cleanup.clone(),
-                                last_checkpoint: None,
-                            })
-                        }
-                        _ => {}
-                    }
-                }
-
-                // The live worker's own timing chunk follows each request's records.
-                ArchiveFact::Observation {
-                    record: Some(record),
-                    ..
-                } if record.kind == "model_chunk"
-                    && record.data["chunk"]["observation"] == "timing" =>
+    fn entry(&self, stored: StoredEvent, resolve_payloads: bool) -> Result<ArchiveHistoryEntry> {
+        let decoded = decode_event(
+            std::str::from_utf8(&stored.bytes)
+                .map_err(|error| Error::Invalid(error.to_string()))?,
+        )?;
+        let fact = match decoded.payload() {
+            EventPayload::Execution(record) => {
+                let resolved = if let playtime_protocol::execution::Fact::Observation(observation) =
+                    &record.fact
                 {
-                    timings.push(record.data["chunk"].clone());
+                    match &observation.data {
+                        ObservationData::Inline { value } => Some(value.clone()),
+                        ObservationData::Artifact { content } if resolve_payloads => {
+                            Some(observation.resolve(&self.content(content)?)?)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                ArchiveFact::Execution {
+                    event: *record.clone(),
+                    resolved,
                 }
-                ArchiveFact::Control {
-                    event: BridgeEvent::EffectIntent(intent),
-                } if intent.effect_kind == "model" => {
-                    unsettled.insert(intent.request_id.clone().unwrap(), intent.clone());
-                }
-                ArchiveFact::Control {
-                    event: BridgeEvent::RequestNotDispatched(fact),
-                } => {
-                    unsettled.remove(&fact.request_id);
-                }
-                ArchiveFact::Canonical {
-                    event: KnownEvent::RequestFinished { request_id, .. },
-                } => {
-                    unsettled.remove(request_id);
-                }
-                ArchiveFact::Canonical {
-                    event: KnownEvent::PhaseChanged { phase, .. },
-                } => run.phase = Some(*phase),
-                ArchiveFact::Control {
-                    event: BridgeEvent::StopDecided(stop),
-                } if run.first_stop.is_none() => run.first_stop = Some(stop.reason),
-                ArchiveFact::Canonical {
-                    event:
-                        KnownEvent::RunFinished {
-                            reason,
-                            cleanup,
-                            last_checkpoint,
-                            ..
-                        },
-                } => {
-                    run.outcome = Some(ArchiveOutcome {
-                        reason: *reason,
-                        cleanup: cleanup.clone(),
-                        last_checkpoint: last_checkpoint.clone(),
-                    })
-                }
-                _ => {}
             }
+            EventPayload::Known(event) => ArchiveFact::Canonical {
+                event: *event.clone(),
+            },
+            EventPayload::Control(event) => ArchiveFact::Control {
+                event: *event.clone(),
+            },
+            EventPayload::Observation(observation) => {
+                let resolved = if resolve_payloads {
+                    match &observation.observation().data {
+                        ObservationData::Artifact { content } => {
+                            Some(observation.resolve(&self.content(content)?)?)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                ArchiveFact::Observation {
+                    observation: observation.observation().clone(),
+                    record: resolved.as_ref().unwrap_or(observation).record().cloned(),
+                }
+            }
+            EventPayload::Unknown { .. } => ArchiveFact::Unknown,
+        };
+        Ok(ArchiveHistoryEntry {
+            envelope: stored.envelope,
+            jsonl: String::from_utf8(stored.bytes).expect("decoded UTF-8 event"),
+            record_sha256: stored.sha256,
+            fact,
+        })
+    }
+
+    pub fn run(&self) -> Result<ArchiveRun> {
+        let mut run = RunFold::new(self);
+        self.visit(|entry| {
+            run.add(entry);
             Ok(())
         })?;
-        run.unsettled_model_intents = unsettled.into_values().collect();
-        if let Some(execution) = &mut run.execution {
-            execution.unsettled_model_intents = execution_intents.into_values().collect();
-        }
-        run.contention = contention(&timings);
-        Ok(run)
+        Ok(run.finish())
+    }
+
+    /// `run`, and for an execution archive `request_accounting` and
+    /// `captures`, from one pass over the history that also hands every
+    /// entry to `visitor`, so a run view reads the history once. What the
+    /// visitor builds counts only if this returns Ok: the pass can still
+    /// fail after the visitor has seen every entry.
+    pub fn overview(
+        &self,
+        mut visitor: impl FnMut(&ArchiveHistoryEntry) -> Result<()>,
+    ) -> Result<ArchiveOverview> {
+        let mut run = RunFold::new(self);
+        let mut accounting = run
+            .run
+            .execution
+            .is_some()
+            .then(|| execution::AccountingFold::new(self));
+        let mut captures = Vec::new();
+        self.visit(|entry| {
+            run.add(entry);
+            if let Some(accounting) = &mut accounting {
+                accounting.add(self, entry)?;
+            }
+            captures.extend(self.capture(entry)?);
+            visitor(entry)
+        })?;
+        Ok(ArchiveOverview {
+            run: run.finish(),
+            request_accounting: accounting
+                .map(|accounting| accounting.finish(self))
+                .transpose()?,
+            captures,
+        })
     }
 
     pub fn checkpoints(&self) -> Result<Vec<ArchiveCheckpoint>> {
@@ -309,21 +256,137 @@ impl ArchiveQueries {
         Ok(resolution)
     }
 
+    /// Hands every history entry to `visitor` in one storage pass. What the
+    /// visitor builds counts only if this returns Ok.
     fn visit(&self, mut visitor: impl FnMut(&ArchiveHistoryEntry) -> Result<()>) -> Result<()> {
-        let mut after = 0;
-        loop {
-            let page = self.history(after, 200, false)?;
-            for entry in &page.entries {
-                visitor(entry)?;
-            }
-            if !page.has_more {
-                return Ok(());
-            }
-            if page.next_after_sequence <= after {
-                return Err(Error::Invalid("archive page made no progress".into()));
-            }
-            after = page.next_after_sequence;
+        self.reader.visit(&self.snapshot, |stored| {
+            visitor(&self.entry(stored, false)?)
+        })
+    }
+}
+
+/// `run`'s state while a pass goes through the history.
+struct RunFold {
+    run: ArchiveRun,
+    unsettled: BTreeMap<RequestId, EffectIntent>,
+    execution_intents: BTreeMap<RequestId, playtime_protocol::execution::EffectIntent>,
+    timings: Vec<serde_json::Value>,
+}
+
+impl RunFold {
+    fn new(queries: &ArchiveQueries) -> Self {
+        let inspection = queries.snapshot.inspection();
+        Self {
+            run: ArchiveRun {
+                run_id: queries.reader.descriptor().run_id.clone(),
+                mode: queries.reader.descriptor().mode,
+                phase: None,
+                first_stop: None,
+                usage: inspection.usage.clone(),
+                unsettled_model_intents: Vec::new(),
+                outcome: None,
+                frontier: queries.snapshot.frontier().clone(),
+                incomplete_evidence: inspection.incomplete_evidence,
+                uncommitted_event_bytes: inspection.uncommitted_event_bytes,
+                contention: None,
+                execution: (queries.reader.manifest().schema_version == 2)
+                    .then(ExecutionRun::default),
+            },
+            unsettled: BTreeMap::new(),
+            execution_intents: BTreeMap::new(),
+            timings: Vec::new(),
         }
+    }
+
+    fn add(&mut self, entry: &ArchiveHistoryEntry) {
+        let run = &mut self.run;
+        match &entry.fact {
+            ArchiveFact::Execution { event, .. } => {
+                use playtime_protocol::execution::Fact;
+                match &event.fact {
+                    Fact::EffectIntent(intent) if intent.effect_kind == "model" => {
+                        self.execution_intents.insert(
+                            intent.request.as_ref().unwrap().request_id.clone(),
+                            intent.clone(),
+                        );
+                    }
+                    Fact::RequestSettled { request, .. }
+                    | Fact::RequestNotDispatched { request, .. } => {
+                        self.execution_intents.remove(&request.request_id);
+                    }
+                    Fact::CapturePublished { capture } => {
+                        run.execution.as_mut().unwrap().last_capture = Some(capture.clone())
+                    }
+                    Fact::RunFinished {
+                        reason, cleanup, ..
+                    } => {
+                        run.outcome = Some(ArchiveOutcome {
+                            reason: *reason,
+                            cleanup: cleanup.clone(),
+                            last_checkpoint: None,
+                        })
+                    }
+                    _ => {}
+                }
+            }
+
+            // The live worker's own timing chunk follows each request's records.
+            ArchiveFact::Observation {
+                record: Some(record),
+                ..
+            } if record.kind == "model_chunk"
+                && record.data["chunk"]["observation"] == "timing" =>
+            {
+                self.timings.push(record.data["chunk"].clone());
+            }
+            ArchiveFact::Control {
+                event: BridgeEvent::EffectIntent(intent),
+            } if intent.effect_kind == "model" => {
+                self.unsettled
+                    .insert(intent.request_id.clone().unwrap(), intent.clone());
+            }
+            ArchiveFact::Control {
+                event: BridgeEvent::RequestNotDispatched(fact),
+            } => {
+                self.unsettled.remove(&fact.request_id);
+            }
+            ArchiveFact::Canonical {
+                event: KnownEvent::RequestFinished { request_id, .. },
+            } => {
+                self.unsettled.remove(request_id);
+            }
+            ArchiveFact::Canonical {
+                event: KnownEvent::PhaseChanged { phase, .. },
+            } => run.phase = Some(*phase),
+            ArchiveFact::Control {
+                event: BridgeEvent::StopDecided(stop),
+            } if run.first_stop.is_none() => run.first_stop = Some(stop.reason),
+            ArchiveFact::Canonical {
+                event:
+                    KnownEvent::RunFinished {
+                        reason,
+                        cleanup,
+                        last_checkpoint,
+                        ..
+                    },
+            } => {
+                run.outcome = Some(ArchiveOutcome {
+                    reason: *reason,
+                    cleanup: cleanup.clone(),
+                    last_checkpoint: last_checkpoint.clone(),
+                })
+            }
+            _ => {}
+        }
+    }
+
+    fn finish(mut self) -> ArchiveRun {
+        self.run.unsettled_model_intents = self.unsettled.into_values().collect();
+        if let Some(execution) = &mut self.run.execution {
+            execution.unsettled_model_intents = self.execution_intents.into_values().collect();
+        }
+        self.run.contention = contention(&self.timings);
+        self.run
     }
 }
 

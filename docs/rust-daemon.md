@@ -111,8 +111,9 @@ Publication order is explicit:
 4. The application constructs and swaps a verified projection from that saved
    boundary, then wakes shared observers. It reuses the snapshot the port's own
    verification produced for that boundary, for at most 16 runs; a changed
-   boundary or a restarted daemon verifies again. No handler publishes
-   candidate reads.
+   boundary or a restarted daemon verifies again. The projection reads the
+   history in one validating pass (`ArchiveQueries::overview`). No handler
+   publishes candidate reads.
 
 Ledger version 5 preserves admission/service identity and migrates versions 1–4.
 Version 5 adds the optional operator release; older binaries refuse it.

@@ -130,7 +130,7 @@ frontier fails; a cursor beyond it returns `cursor_ahead`. `next_after_sequence`
 and `has_more` support the next page, including an empty log. There is no
 retention, compaction, cursor expiry, filtering, or HTTP encoding in this crate.
 
-Every snapshot/page validates the complete selected prefix, including sequence
+Every snapshot/page/visit validates the complete selected prefix, including sequence
 continuity, exact hash, terminal accounting, and referenced content. A
 sub-snapshot, or a confirmed read that must extend an earlier position, checks
 that inner position during the same pass, at its exact byte count, by sequence
@@ -141,6 +141,10 @@ bytes and their individual SHA-256 digests are returned with parsed envelopes.
 This is a bounded linear scan, without a persistent index; later indexes must
 preserve these verification/authority rules. A page may return fewer records
 than its requested count to stay within its byte bound, without skipping one.
+`visit` hands every record of a snapshot to a caller's visitor in order, in one
+pass, instead of in pages. The visitor sees each record once that record has
+validated but before the rest of the prefix has, so what it builds is evidence
+only if the visit returns Ok; a visitor's own error ends the pass.
 
 `read_content` accepts only exact references from that snapshot's input manifest
 or known events. `uncommitted_objects` lists diagnostic names separately,

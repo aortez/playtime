@@ -379,7 +379,7 @@ impl ArchiveReader {
             ScanOptions {
                 after: query.after_sequence,
                 limit: query.limit,
-                checkpoint: None,
+                ..ScanOptions::default()
             },
         )?;
         let next_after_sequence = scanned
@@ -392,6 +392,49 @@ impl ArchiveReader {
             frontier: snapshot.frontier.clone(),
             has_more: next_after_sequence < snapshot.frontier.committed_sequence,
         })
+    }
+
+    /// Hands every record of the snapshot's committed prefix to `visitor` in
+    /// order, in one pass, instead of a page at a time. The pass validates the
+    /// complete prefix as a page does, but the visitor sees each record once
+    /// that record has validated, before the rest of the prefix has: what it
+    /// builds is evidence only if `visit` returns Ok. A visitor's error ends
+    /// the pass and is returned as is.
+    pub fn visit<E: From<StorageError>>(
+        &self,
+        snapshot: &Snapshot,
+        mut visitor: impl FnMut(StoredEvent) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
+        if snapshot.frontier.archive != self.identity {
+            return Err(StorageError::new(
+                ErrorCode::InvalidCursor,
+                "snapshot belongs to another archive",
+            )
+            .into());
+        }
+        self.validate_inputs()?;
+        let mut stopped = None;
+        let scanned = scan(
+            &self.directory,
+            &self.descriptor,
+            &self.manifest,
+            &snapshot.frontier,
+            &self.limits,
+            ScanOptions {
+                visitor: Some(&mut |event| {
+                    visitor(event).map_err(|error| {
+                        stopped = Some(error);
+                        // Never returned: the visitor's own error replaces it.
+                        StorageError::malformed("visitor stopped the pass")
+                    })
+                }),
+                ..ScanOptions::default()
+            },
+        );
+        match (scanned, stopped) {
+            (_, Some(error)) => Err(error),
+            (scanned, None) => scanned.map(drop).map_err(Into::into),
+        }
     }
 
     /// Only content referenced by this committed snapshot (or its frozen input
