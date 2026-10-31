@@ -61,5 +61,8 @@ pub fn scene(name: &str) -> Window {
         }
         t.apply(e, None).unwrap();
     }
-    t.window(View::Readable, 0, 64)
+    let mut window = t.window(View::Readable, 0, 64);
+    window.jumps = t.jumps(0, true);
+    window.calls.complete = true;
+    window
 }

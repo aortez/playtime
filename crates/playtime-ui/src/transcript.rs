@@ -3,7 +3,7 @@
 mod continuous;
 #[path = "trace_presentation.rs"]
 mod presentation;
-use crate::progress::{self, Progress, Tracker, Update};
+use crate::progress::{self, Mark, Progress, Tracker, Update};
 use playtime_protocol::{
     api::EventCursor,
     events::{CleanupOutcome, EventEnvelope, EventPayload, KnownEvent, MemoryRef, decode_event},
@@ -19,6 +19,9 @@ use std::{
 pub const PAYLOAD_BYTES: usize = 16 << 20;
 pub const INDEX_BYTES: usize = 32 << 20;
 pub const TEXT_BYTES: usize = 64 << 10;
+/// An inspector page: the inspector draws before the timeline, so its pages
+/// leave the timeline most of each frame's text budget.
+pub const PAGE_BYTES: usize = 24 << 10;
 pub const WINDOW_ROWS: usize = 64;
 
 #[derive(Clone, Debug, Default)]
@@ -67,6 +70,29 @@ pub struct Sessions {
     pub items: Vec<SessionLink>,
     pub complete: bool,
 }
+/// A compaction record, model error or failed tool result to jump to.
+#[derive(Clone, Debug)]
+pub struct Jump {
+    pub sequence: u64,
+    pub label: String,
+}
+/// A page of the jump list, latest first.
+#[derive(Clone, Debug, Default)]
+pub struct Jumps {
+    pub start: usize,
+    pub total: usize,
+    pub items: Vec<Jump>,
+    pub complete: bool,
+}
+/// The Call box's range.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Calls {
+    /// The highest model call number indexed.
+    pub latest: u64,
+    /// Whether earlier history has loaded, so that `latest` is the run's
+    /// latest recorded call.
+    pub complete: bool,
+}
 #[derive(Clone, Debug, Default)]
 pub struct Row {
     pub id: usize,
@@ -98,6 +124,8 @@ pub struct Window {
     /// The run's progress, for the header.
     pub progress: Progress,
     pub sessions: Sessions,
+    pub jumps: Jumps,
+    pub calls: Calls,
     /// Requested sequence and resolved row identity; never cache a row position.
     pub location: Option<(u64, usize)>,
 }
@@ -167,6 +195,9 @@ pub struct Transcript {
     cache: BTreeMap<u64, Cached>,
     lru: VecDeque<u64>,
     progress: Tracker,
+    /// Compaction records, model errors and failed tool results by sequence.
+    marks: BTreeMap<u64, Mark>,
+    max_call: u64,
     pub metrics: Metrics,
     pub boundary: bool,
 }
@@ -186,8 +217,22 @@ fn floor(text: &str, mut index: usize) -> usize {
     index
 }
 pub fn source_page(text: &str, offset: usize) -> SourcePage {
-    let start = floor(text, offset.min(text.len()));
-    let end = floor(text, start.saturating_add(TEXT_BYTES).min(text.len()));
+    page(text, offset, TEXT_BYTES)
+}
+/// A page of a record's source or an opened file, for the inspector.
+pub fn inspector_page(text: &str, offset: usize) -> SourcePage {
+    page(text, offset, PAGE_BYTES)
+}
+/// A page of `text` from `offset` to at most `bytes` past it. The start moves
+/// forward and the end back to a character boundary, so the page asked for
+/// `bytes` before another page's start ends at that start.
+pub(crate) fn page(text: &str, offset: usize, bytes: usize) -> SourcePage {
+    let offset = offset.min(text.len());
+    let mut start = offset;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let end = floor(text, offset.saturating_add(bytes).min(text.len())).max(start);
     SourcePage {
         text: text[start..end].into(),
         start,
@@ -629,7 +674,7 @@ impl Transcript {
             return Ok(false);
         }
         let mut p = project(&event)?;
-        let update = std::mem::take(&mut p.progress);
+        let mut update = std::mem::take(&mut p.progress);
         let existing = self.keys.get(&p.key).copied();
         if let Some((session, ordinal)) = &p.session
             && let Some(sequence) = self.session_keys.get(session)
@@ -744,6 +789,12 @@ impl Transcript {
         }
         if p.finished {
             self.ended = true;
+        }
+        if let Some(call) = p.display.call {
+            self.max_call = self.max_call.max(call);
+        }
+        if let Some(mark) = update.mark.take() {
+            self.marks.insert(seq, mark);
         }
         let group = &mut self.groups[id];
         group.display.merge(&p.display, seq);
@@ -1034,6 +1085,11 @@ impl Transcript {
             anchor: None,
             progress: Progress::default(),
             sessions: self.sessions(0, false),
+            jumps: self.jumps(0, false),
+            calls: Calls {
+                latest: self.max_call,
+                complete: false,
+            },
             location: None,
         }
     }
@@ -1052,6 +1108,75 @@ impl Transcript {
             complete,
         }
     }
+    /// A page of the jump list, latest first. Each entry names the controller
+    /// time and, when known, the model call.
+    pub fn jumps(&self, start: usize, complete: bool) -> Jumps {
+        let start = start.min(self.marks.len().saturating_sub(1)) / WINDOW_ROWS * WINDOW_ROWS;
+        Jumps {
+            start,
+            total: self.marks.len(),
+            items: self
+                .marks
+                .iter()
+                .rev()
+                .skip(start)
+                .take(WINDOW_ROWS)
+                .map(|(sequence, mark)| {
+                    let mut label = format!(
+                        "{} · {}",
+                        progress::clock(mark.elapsed_ms / 1000),
+                        mark.label
+                    );
+                    if let Some(call) = self.row_for(*sequence).and_then(|id| self.call(id)) {
+                        label.push_str(&format!(" · call {call}"));
+                    }
+                    Jump {
+                        sequence: *sequence,
+                        label,
+                    }
+                })
+                .collect(),
+            complete,
+        }
+    }
+    /// A row's model call, or for a tool block its call's.
+    fn call(&self, id: usize) -> Option<u64> {
+        let display = &self.groups[id].display;
+        display.call.or_else(|| {
+            self.families
+                .get(display.family.as_ref()?)?
+                .members
+                .iter()
+                .map(|member| &self.groups[*member].display)
+                .find(|display| !display.tool)?
+                .call
+        })
+    }
+    /// The first record of model call `call`, once a record naming it is
+    /// indexed.
+    pub fn call_sequence(&self, call: u64) -> Option<u64> {
+        self.groups
+            .iter()
+            .filter(|group| group.display.call == Some(call))
+            .map(|group| group.first)
+            .min()
+    }
+    /// The highest model call number indexed.
+    pub fn calls(&self) -> u64 {
+        self.max_call
+    }
+    /// Where **Go to call** goes, or why it can't. Earlier history loads
+    /// forward from the run's start, so until it has loaded, any call not yet
+    /// indexed may still be recorded.
+    pub fn find_call(&self, call: u64, complete: bool) -> Result<u64, String> {
+        self.call_sequence(call).ok_or_else(|| match self.max_call {
+            _ if !complete => {
+                format!("Call {call} isn't indexed yet; earlier history is still loading")
+            }
+            0 => "This run has no recorded model calls".into(),
+            latest => format!("Call {call} isn't recorded; the latest recorded call is {latest}"),
+        })
+    }
     pub fn sources(&self, id: usize) -> Vec<u64> {
         self.groups
             .get(id)
@@ -1060,7 +1185,7 @@ impl Transcript {
     }
     pub fn raw(&self, seq: u64, offset: usize) -> Option<SourcePage> {
         self.cache.get(&seq).map(|c| {
-            let mut page = source_page(&c.raw, offset);
+            let mut page = inspector_page(&c.raw, offset);
             if let Ok(decoded) = decode_event(&c.raw)
                 && let EventPayload::Observation(observation) = decoded.payload()
                 && let ObservationPayload::Referenced { content } = observation.payload()

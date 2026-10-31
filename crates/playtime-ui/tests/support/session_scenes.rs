@@ -74,6 +74,8 @@ pub fn prepare(app: &mut Workbench, interrupted: bool) {
     }
     app.model.window = transcript.window(View::Readable, 0, 64);
     app.model.window.sessions = transcript.sessions(0, true);
+    app.model.window.jumps = transcript.jumps(0, true);
+    app.model.window.calls.complete = true;
     app.model.run = None;
     app.model.history = "Synthetic session-boundary fixture · no commands executed".into();
     app.model.notice = if interrupted {

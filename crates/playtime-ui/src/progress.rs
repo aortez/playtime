@@ -128,6 +128,16 @@ pub(crate) struct Update {
     compaction: Option<CompactionRecord>,
     model_error: bool,
     failed_tool: bool,
+    /// What the jump list says about a compaction record, a model error or a
+    /// failed tool result.
+    pub(crate) mark: Option<Mark>,
+}
+/// A record the timeline's jump list names.
+#[derive(Clone, Debug)]
+pub(crate) struct Mark {
+    pub(crate) label: String,
+    /// Controller time at the record.
+    pub(crate) elapsed_ms: u64,
 }
 #[derive(Debug)]
 enum CompactionRecord {
@@ -136,18 +146,46 @@ enum CompactionRecord {
     Deferred,
     Rejected,
 }
-/// A recorded tool result that failed, timed out or exited non-zero.
-fn failed(result: &Value) -> bool {
-    result
+/// How a recorded tool result failed, timed out or exited non-zero, if it did.
+fn failure(name: &str, result: &Value) -> Option<String> {
+    if result
         .get("error")
         .is_some_and(|error| !error.is_null() && *error != false)
-        || result.get("timed_out").and_then(Value::as_bool) == Some(true)
-        || result
-            .get("exit_code")
-            .and_then(Value::as_i64)
-            .is_some_and(|code| code != 0)
+    {
+        return Some(format!("{name} failed"));
+    }
+    if result.get("timed_out").and_then(Value::as_bool) == Some(true) {
+        return Some(format!("{name} timed out"));
+    }
+    result
+        .get("exit_code")
+        .and_then(Value::as_i64)
+        .filter(|code| *code != 0)
+        .map(|code| format!("{name} exited with status {code}"))
+}
+/// A model error's label, with its recorded kind when there is one.
+fn model_error(kind: Option<&str>) -> String {
+    match kind {
+        Some(kind) => format!("Model error: {}", kind.replace('_', " ")),
+        None => "Model error".into(),
+    }
+}
+/// A compaction record's label, such as "Compaction 2 planned".
+fn compaction(value: Option<&Value>, step: &str) -> String {
+    match value.and_then(|v| v["ordinal"].as_u64()) {
+        Some(ordinal) => format!("Compaction {ordinal} {step}"),
+        None => format!("Compaction {step}"),
+    }
 }
 impl Update {
+    /// Marks this record for the jump list. Labels name a tool and an error
+    /// kind, so they stay short.
+    fn mark(&mut self, label: String, elapsed_ms: u64) {
+        self.mark = Some(Mark {
+            label: excerpt(&label, 120),
+            elapsed_ms,
+        });
+    }
     pub(crate) fn execution(o: &playtime_protocol::execution::Observation) -> Self {
         use playtime_protocol::observations::ObservationData;
         let value = match &o.data {
@@ -204,33 +242,48 @@ impl Update {
             }),
             "model_error" => {
                 update.model_error = true;
+                update.mark(
+                    model_error(value.and_then(|v| v["error"]["kind"].as_str())),
+                    o.elapsed_ms,
+                );
                 None
             }
             "compaction_planned" => {
                 update.compaction = value
                     .and_then(|v| v["ordinal"].as_u64())
                     .map(CompactionRecord::Planned);
+                update.mark(compaction(value, "planned"), o.elapsed_ms);
                 Some(Activity::Compacting)
             }
             "compaction_applied" => {
                 update.compaction = value
                     .and_then(|v| v["ordinal"].as_u64())
                     .map(CompactionRecord::Applied);
+                update.mark(compaction(value, "applied"), o.elapsed_ms);
                 Some(Activity::Working)
             }
             "compaction_deferred" => {
                 update.compaction = Some(CompactionRecord::Deferred);
+                update.mark(compaction(value, "deferred"), o.elapsed_ms);
                 Some(Activity::Working)
             }
+            // A compaction rejected before its plan records the previous
+            // ordinal, so the label leaves it out.
             "compaction_rejected" => {
                 update.compaction = Some(CompactionRecord::Rejected);
+                update.mark("Compaction rejected".into(), o.elapsed_ms);
                 None
             }
             "tool_request" => value
                 .and_then(|v| v["name"].as_str())
                 .map(|s| Activity::Tool(excerpt(s, 60))),
             "tool_result" => {
-                update.failed_tool = value.is_some_and(|v| failed(&v["result"]));
+                if let Some(label) = value.and_then(|v| {
+                    failure(v["name"].as_str().unwrap_or("unknown tool"), &v["result"])
+                }) {
+                    update.failed_tool = true;
+                    update.mark(label, o.elapsed_ms);
+                }
                 Some(Activity::Working)
             }
             "model_response" => Some(Activity::Working),
@@ -270,17 +323,23 @@ impl Update {
                     Some(Activity::Model)
                 }
                 KnownObservation::ModelChunk { .. } => Some(Activity::Model),
-                KnownObservation::ToolResult { result, .. } => {
-                    update.failed_tool = failed(result);
+                KnownObservation::ToolResult { name, result, .. } => {
+                    if let Some(label) = failure(name, result) {
+                        update.failed_tool = true;
+                        update.mark(label, o.elapsed_ms);
+                    }
                     Some(Activity::Working)
                 }
                 KnownObservation::ModelResponse { .. }
                 | KnownObservation::RequestNotDispatched { .. }
                 | KnownObservation::ToolNotDispatched { .. } => Some(Activity::Working),
                 KnownObservation::ModelError {
-                    recovery_allowed, ..
+                    error,
+                    recovery_allowed,
+                    ..
                 } => {
                     update.model_error = true;
+                    update.mark(model_error(Some(&error.kind)), o.elapsed_ms);
                     Some(Activity::ModelError {
                         retrying: *recovery_allowed,
                     })
@@ -341,9 +400,11 @@ impl Update {
             _ => Self::default(),
         }
     }
-    /// A model request adds an entry to the latest session's turn count.
+    /// A model request adds an entry to the latest session's turn count, and
+    /// a mark one to the jump list.
     pub(crate) fn tracked_bytes(&self) -> usize {
-        if self.request.is_some() { 64 } else { 0 }
+        (if self.request.is_some() { 64 } else { 0 })
+            + self.mark.as_ref().map_or(0, |mark| 96 + mark.label.len())
     }
 }
 
@@ -961,7 +1022,7 @@ pub(crate) fn count(value: u64, one: &str, many: &str) -> String {
     )
 }
 /// Seconds as m:ss, or h:mm:ss from an hour.
-fn clock(seconds: u64) -> String {
+pub(crate) fn clock(seconds: u64) -> String {
     let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
     if hours > 0 {
         format!("{hours}:{minutes:02}:{seconds:02}")
