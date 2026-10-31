@@ -152,6 +152,10 @@ pub enum Action {
     InspectModel(ModelInspectRequest),
     StopModelDiscovery,
     Sessions(usize),
+    /// A page of the jump list, counted from the latest entry.
+    Jumps(usize),
+    /// Finds the first record of a model call.
+    FindCall(u64),
     Locate(u64, View),
     CancelNavigation,
     Trace(RunId, u64, crate::transcript::TraceContent),
@@ -232,6 +236,8 @@ pub enum Data {
     Cancellation(Box<RunViewData>),
     CancellationUnresolved(String),
     Window(Window, String, u64),
+    /// A model call's first record, or why it isn't indexed.
+    CallFound(u64, Result<u64, String>),
     /// Bounded retained final workspace listing, with explicit completeness.
     FinalFiles(Vec<Artifact>, bool),
     /// The page and, by session, what each checkpoint saved.
@@ -289,6 +295,12 @@ pub struct Model {
     pub trace: BTreeMap<u64, TraceView>,
     /// Requested sequence and resolved row identity; never cache a row position.
     pub location: Option<(u64, usize)>,
+    /// The call number typed to go to.
+    pub call_text: String,
+    /// The call a find was sent for, until its reply.
+    finding_call: Option<u64>,
+    /// A found call's first record, for the timeline to go to.
+    pub jump: Option<u64>,
     trace_pending: std::collections::BTreeSet<u64>,
     pub history: String,
     pub archive_waiting: bool,
@@ -309,6 +321,8 @@ pub struct Model {
     pub file_page: usize,
     pub memory: Option<MemoryView>,
     pub content: Option<ContentView>,
+    /// An explicitly opened file or source, to scroll to once it arrives.
+    pub reveal_content: bool,
     pub inspector: Inspector,
     pub show_inspector: bool,
     pub show_runs: bool,
@@ -362,6 +376,9 @@ impl Default for Model {
             window: Window::default(),
             trace: BTreeMap::new(),
             location: None,
+            call_text: String::new(),
+            finding_call: None,
+            jump: None,
             trace_pending: Default::default(),
             history: String::new(),
             archive_waiting: false,
@@ -381,6 +398,7 @@ impl Default for Model {
             file_page: 0,
             memory: None,
             content: None,
+            reveal_content: false,
             inspector: Inspector::Details,
             show_inspector: true,
             show_runs: true,
@@ -518,6 +536,8 @@ impl Model {
         self.trace_pending.clear();
         self.trace.clear();
         self.location = None;
+        self.finding_call = None;
+        self.jump = None;
         self.tag.connection += 1;
         self.archive_waiting = false;
         self.tag.selection += 1;
@@ -619,6 +639,8 @@ impl Model {
         self.window = Window::default();
         self.trace.clear();
         self.location = None;
+        self.finding_call = None;
+        self.jump = None;
         self.trace_pending.clear();
         self.selected_row = None;
         self.expanded.clear();
@@ -631,6 +653,7 @@ impl Model {
         self.checkpoints_next = None;
         self.memory = None;
         self.content = None;
+        self.reveal_content = false;
         self.playing = false;
         self.cancellation = Mutation::Idle;
         self.following = true;
@@ -678,9 +701,31 @@ impl Model {
     }
     pub fn jump_live(&mut self) {
         self.location = None;
+        self.finding_call = None;
+        self.jump = None;
         self.command(Action::CancelNavigation);
         self.following = true;
         self.seen_live = self.live_count;
+    }
+    /// Asks for the first record of the call typed in `call_text`. The run's
+    /// stream answers, so without a connection it asks for a reconnect.
+    pub fn find_call(&mut self) {
+        match self.call_text.trim().parse::<u64>() {
+            Ok(call) if call > 0 => {
+                if self.connection == ConnectionState::Connected {
+                    self.finding_call = Some(call);
+                    self.command(Action::FindCall(call));
+                } else {
+                    self.notify("Reconnect to go to a call", self.selected.clone());
+                }
+            }
+            _ => self.notify("Enter a call number, such as 12", self.selected.clone()),
+        }
+    }
+    /// A session or jump-list pick replaces a call still being found.
+    pub fn cancel_find(&mut self) {
+        self.finding_call = None;
+        self.jump = None;
     }
     pub fn new_activity(&self) -> u64 {
         self.live_count.saturating_sub(self.seen_live)
@@ -1074,6 +1119,17 @@ impl Model {
                     self.seen_live = live;
                 }
             }
+            // Only the latest find goes anywhere; jumping to live drops it.
+            Data::CallFound(call, found) => {
+                if self.finding_call != Some(call) {
+                    return;
+                }
+                self.finding_call = None;
+                match found {
+                    Ok(sequence) => self.jump = Some(sequence),
+                    Err(error) => self.notify(error, reply.run),
+                }
+            }
             Data::Checkpoints(page, files) => {
                 if self.checkpoint.is_none()
                     && self.checkpoint_target.is_none()
@@ -1208,6 +1264,12 @@ impl Model {
         }
         text
     }
+    /// Closes the opened file or source.
+    pub fn close_content(&mut self) {
+        self.stop_animation();
+        self.content = None;
+        self.reveal_content = false;
+    }
     pub fn stop_animation(&mut self) {
         if self.playing {
             self.playing = false;
@@ -1303,6 +1365,7 @@ impl Model {
         ) {
             self.content = None;
         }
+        self.reveal_content = matches!(action, Action::Content(..) | Action::Retained(..));
         self.command(action);
     }
 }

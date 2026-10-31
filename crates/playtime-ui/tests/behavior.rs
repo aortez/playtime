@@ -171,6 +171,41 @@ fn text_pages_respect_utf8_and_diff_limits_are_explicit() {
 }
 
 #[test]
+fn inspector_pages_leave_no_gap_in_either_direction() {
+    // Two-byte characters around one ASCII byte, so that a page asked for
+    // 24 KiB before a later page starts inside a character.
+    let text = "é".repeat(15_000) + "a" + &"é".repeat(30_000);
+    let mut pages = vec![inspector_page(&text, 0)];
+    loop {
+        let last = pages.last().unwrap();
+        let end = last.start + last.text.len();
+        if end == text.len() {
+            break;
+        }
+        pages.push(inspector_page(&text, end));
+    }
+    assert!(pages.iter().all(|p| p.text.len() <= PAGE_BYTES));
+    assert_eq!(
+        pages.iter().map(|p| p.text.as_str()).collect::<String>(),
+        text
+    );
+    // Each previous page ends where the later one starts. The first page
+    // starts at 0, so it can only overlap the second.
+    let mut later = pages.pop().unwrap();
+    let mut read = later.text.clone();
+    while later.start > 0 {
+        let page = inspector_page(&text, later.start.saturating_sub(PAGE_BYTES));
+        let end = page.start + page.text.len();
+        assert!(page.text.len() <= PAGE_BYTES);
+        assert!(page.start < later.start && end >= later.start);
+        assert!(page.start == 0 || end == later.start);
+        read.insert_str(0, &page.text[..later.start - page.start]);
+        later = page;
+    }
+    assert_eq!(read, text);
+}
+
+#[test]
 fn cancellation_reply_loss_stays_unresolved_and_inspection_generations_are_independent() {
     let mut model = Model::default();
     model.connection = ConnectionState::Connected;

@@ -18,7 +18,7 @@ use playtime_core::RunPhase;
 use playtime_protocol::{api::*, events::EventEnvelope, v1::UsageSummary};
 use playtime_ui::{
     backend::prepare_run,
-    model::{ConnectionState, Inspector},
+    model::{ConnectionState, ContentView, Inspector},
     transcript::{Transcript, View},
     ui::Workbench,
 };
@@ -79,6 +79,42 @@ fn progress_screen(app: &mut Workbench, ended: bool) {
     app.model.window = transcript.window(View::Readable, 0, 64);
     app.model.window.progress = transcript.progress(true);
     app.model.window.sessions = transcript.sessions(0, true);
+    app.model.window.jumps = transcript.jumps(0, true);
+    app.model.window.calls.complete = true;
+}
+/// A long data file the model wrote, opened in the Files inspector.
+fn text_file(app: &mut Workbench) {
+    let mut text = "step,stage,elapsed_ms,status\n".to_owned();
+    for step in 1..=6000 {
+        text.push_str(&format!(
+            "{step},{},{},{}\n",
+            step / 250 + 1,
+            step * 37 % 1000,
+            if step % 400 == 0 { "retry" } else { "ok" }
+        ));
+    }
+    let checkpoint = app.model.checkpoint.as_ref().unwrap();
+    app.model.content = Some(ContentView {
+        artifact: Artifact {
+            artifact_id: ArtifactId::new("measurements").unwrap(),
+            name: "measurements.csv".into(),
+            kind: "file".into(),
+            content: playtime_protocol::archive::ContentRef {
+                path: playtime_core::ArchivePath::new("artifacts/measurements.csv").unwrap(),
+                sha256: playtime_core::Sha256Digest::new("b".repeat(64)).unwrap(),
+                size_bytes: text.len() as u64,
+            },
+            session_id: Some(checkpoint.checkpoint.session_id.clone()),
+            published_sequence: checkpoint.checkpoint.published_sequence,
+            frozen_input: false,
+        },
+        source: Some(playtime_ui::transcript::inspector_page(&text, 0)),
+        image: None,
+        notice: String::new(),
+        animated: false,
+    });
+    // As after Open file: the inspector scrolls to the file.
+    app.model.reveal_content = true;
 }
 #[tokio::test]
 async fn reviewed_workbench_screens() {
@@ -102,6 +138,7 @@ async fn reviewed_workbench_screens() {
             false,
         ),
         ("compaction-trace", false, false, Inspector::Details, false),
+        ("jump-list", false, false, Inspector::Details, false),
         ("harness-editor", true, false, Inspector::Details, false),
         (
             "harness-editor-narrow",
@@ -233,6 +270,7 @@ async fn reviewed_workbench_screens() {
         ),
         ("files-narrow", false, true, Inspector::Files, false),
         ("files-details-narrow", false, true, Inspector::Files, false),
+        ("file-text", false, false, Inspector::Files, false),
         ("archive-waiting", false, false, Inspector::Details, false),
         ("model-settings", true, false, Inspector::Details, false),
         (
@@ -318,19 +356,28 @@ async fn reviewed_workbench_screens() {
             draft.name = "Curiosity: continuous conversation".into();
             draft.prompt = "Explore a question raised by the seed files. Keep verified results and uncertainty clear; finish when the work is complete.".into();
         }
-        if name == "compaction-trace" {
-            // The timeline starts at the compaction; the header sums the
-            // whole scene.
+        if matches!(name, "compaction-trace" | "jump-list") {
+            // The compaction trace starts its timeline at the compaction; the
+            // header and lists sum the whole scene. The jump list shows the
+            // troubled scene's compactions and errors.
+            let (events, first) = if name == "jump-list" {
+                (continuous_scene::troubled_events(), 1)
+            } else {
+                (continuous_scene::events(), 7)
+            };
             let mut transcript = Transcript::default();
             let mut whole = Transcript::default();
-            for event in continuous_scene::events() {
-                if event.sequence.get() >= 7 {
+            for event in events {
+                if event.sequence.get() >= first {
                     transcript.apply(event.clone(), None).unwrap();
                 }
                 whole.apply(event, None).unwrap();
             }
             app.model.window = transcript.window(View::Readable, 0, 64);
             app.model.window.progress = whole.progress(true);
+            app.model.window.jumps = whole.jumps(0, true);
+            app.model.window.calls.latest = whole.calls();
+            app.model.window.calls.complete = true;
             app.model.recipes[0].name = "Continuous compaction example".into();
             app.model.history =
                 "Synthetic continuous execution evidence · no model or worker".into();
@@ -490,7 +537,9 @@ async fn reviewed_workbench_screens() {
             app.model.preferences.left_width = 180.0;
         }
         app.model.inspector = inspector;
-        if name != "image" {
+        if name == "file-text" {
+            text_file(&mut app);
+        } else if name != "image" {
             app.model.content = None;
         }
         if disconnected {
@@ -558,6 +607,11 @@ async fn reviewed_workbench_screens() {
                 h.get_by_label("Registered model").click();
                 h.run();
             }
+        }
+        if name == "jump-list" {
+            use egui_kittest::kittest::Queryable;
+            h.get_by_label("Jump to a compaction or error").click();
+            h.run();
         }
         if name.starts_with("files-") {
             use egui_kittest::kittest::Queryable;

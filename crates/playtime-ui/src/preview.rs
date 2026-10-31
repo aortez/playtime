@@ -13,13 +13,7 @@ use serde_json::Value;
 pub(crate) const SOURCE_BYTES: usize = 24 << 10;
 const EXCERPT_BYTES: usize = (4 << 10) - 4;
 pub(crate) fn source_page(text: &str, offset: usize) -> transcript::SourcePage {
-    let mut page = transcript::source_page(text, offset);
-    let mut end = SOURCE_BYTES.min(page.text.len());
-    while !page.text.is_char_boundary(end) {
-        end -= 1;
-    }
-    page.text.truncate(end);
-    page
+    transcript::page(text, offset, SOURCE_BYTES)
 }
 
 fn field(value: &Value, pointer: &str) -> String {
