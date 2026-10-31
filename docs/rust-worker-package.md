@@ -135,7 +135,8 @@ including late storage operations. The process remains available for receipt
 inspection after terminal publication, retaining its run lock until supervision
 ends the original invocation. An execution that ends without a normal committed
 outcome reports `reconciling` with a bounded `failure` once its publication
-settles, and the daemon stops that invocation then; see
+settles, unless it was a cleanly ended interruption that was asked for, and the
+daemon stops that invocation then; see
 [worker lifecycle](rust-worker-lifecycle.md). This does not implement independent
 hard deadlines or claim that a returned report proves invocation termination.
 

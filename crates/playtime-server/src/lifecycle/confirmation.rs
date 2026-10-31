@@ -34,7 +34,12 @@ impl Inner {
                     return Ok(record);
                 }
                 let record = inner.observe_supervisor(record).await?;
-                if record.supervisor.as_ref().is_some_and(|s| s.stopped) {
+                // A worker the daemon stopped on purpose has nothing more to
+                // report and stops answering once told to stop. Only its unit
+                // is watched, so a slow stop isn't taken for a loss.
+                if record.supervisor.as_ref().is_some_and(|s| s.stopped)
+                    || super::supervision::normal_stop(&record)
+                {
                     return Ok(record);
                 }
                 match inner.exchange(&record, Command::Status).await {
@@ -753,7 +758,11 @@ mod tests {
             let stopping = coordinator.finish_normal(run.clone()).await.unwrap();
             assert_eq!(stopping.phase, Phase::Running);
             assert!(stopping.stop_accepted.is_some());
+            // While the unit lingers, a refresh only watches it.
+            let lingering = coordinator.refresh(run.clone()).await.unwrap();
+            assert_eq!((lingering.phase, lingering.reason), (Phase::Running, None));
             // The next refresh sees the unit stopped. The run stays Running.
+            tokio::time::sleep(crate::lifecycle::flights::REFRESH_FLOOR).await;
             supervisor.stopped.store(true, Ordering::SeqCst);
             let observed = coordinator.refresh(run.clone()).await.unwrap();
             assert_eq!((observed.phase, observed.reason), (Phase::Running, None));
@@ -908,7 +917,14 @@ mod tests {
                     (Phase::Reconciling, None)
                 );
                 assert!(stopping.stop_accepted.is_some());
+                // While the unit lingers, a refresh only watches it.
+                let lingering = coordinator.refresh(run.clone()).await.unwrap();
+                assert_eq!(
+                    (lingering.phase, lingering.reason),
+                    (Phase::Reconciling, None)
+                );
                 // The stop the daemon asked for isn't reported as a loss.
+                tokio::time::sleep(crate::lifecycle::flights::REFRESH_FLOOR).await;
                 supervisor.stopped.store(true, Ordering::SeqCst);
                 let observed = coordinator.refresh(run.clone()).await.unwrap();
                 assert!(observed.supervisor.unwrap().stopped);

@@ -108,7 +108,10 @@ A completed refresh has a 250 ms minimum cooldown; failures back off exponential
 to at most five seconds. Calls during cooldown read the saved ledger without
 creating another task or timer. Dropping all observers leaves the operation owned
 by the coordinator. Registries retain at most 16 runs, with 64 status observers
-and 16 cancellation observers; excess observers receive busy.
+and 16 cancellation observers; excess observers receive busy. Once the daemon's
+own stop of a completed or failed worker is accepted, a refresh only observes the
+unit: the worker stops answering when told to stop, and a slow stop must not read
+as uncertain control or a lost worker.
 
 Status, Begin and Cancel each have a separate one-operation transport lane.
 Supervisor lookup, private bootstrap reads and the socket exchange share a
@@ -184,9 +187,15 @@ and `reconciling`; it separately carries an optional compact returned receipt,
 publication-pending flag, frozen wall allocation and original work-clock start.
 A worker whose execution ended without a normal committed outcome reports
 `reconciling` with `failure`: printable text of at most 1 KiB saying why, set
-once before its publication settles and never changed. The coordinator accepts it
-only from a worker that began work, and treats a malformed, changed or withdrawn
-failure as uncertain control. Older workers omit the field.
+once before its publication settles and never changed. It holds the driver's
+diagnostics, or the stop reason when there are none, and how a publication still
+pending when the driver returned then settled. A cancellation or stop that was
+asked for and ended cleanly reports `reconciling` without one. If the driver
+itself returns an error, a write it began may still be running, so publication
+stays pending and supervision ends the worker at its runtime limit, as before.
+The coordinator accepts a failure only from a worker that began work, and treats
+a malformed, changed or withdrawn one as uncertain control. Older workers omit
+the field.
 A prepared zero-prefix receipt cannot establish running. Bodies and event pages
 never travel on this control channel. The fake archive port verifies exact prefix
 bytes and refuses shorter or conflicting confirmations.

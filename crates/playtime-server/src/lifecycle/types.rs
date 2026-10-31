@@ -65,7 +65,8 @@ pub enum Reason {
     ControlUncertain,
     OperatorReleased,
     /// The worker reported that its execution ended without a normal outcome,
-    /// and the daemon stopped it. The run waits for operator release.
+    /// and its unit has stopped, usually at the daemon's request. The run waits
+    /// for operator release.
     ExecutionFailed,
 }
 
