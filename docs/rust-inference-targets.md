@@ -19,7 +19,9 @@ experiments may have separate histories: `./go.sh --no-build --history` lists
 service roots under the data directory and opens the selected root in its own
 workbench. `--history /absolute/root` also accepts roots elsewhere. Each keeps
 its original service identity, ledger and archives; no records are imported or
-merged. The selected history also receives any new launches from that window.
+merged. The selected history also receives any new launches from that window,
+and the current daemon may upgrade an older ledger in place, after which older
+builds refuse it. Open a copy to keep an evidence root unchanged.
 Use the printed history-specific stop command to stop its daemon between runs.
 
 Start with [`config/inference-targets.example.json`](../config/inference-targets.example.json).
@@ -70,13 +72,18 @@ worker-loss/recovery functionality.
 
 `GET /api/v1/targets` lists configuration without contacting the machines.
 `X-Playtime-Target` scopes inventory, inspection and registration review to one
-configured target. Discovery stays independent of workshop readiness. An offline
-target does not prevent inspecting another target or editing saved recipes.
+configured target. With named targets, a metadata request without it is refused
+as `invalid_parameters`; without them, those routes answer as before. Discovery
+stays independent of workshop readiness. An offline target does not prevent
+inspecting another target or editing saved recipes.
 
 Registration acceptance retains its existing service/endpoint binding. The daemon
 finds the matching configured browser from that binding, and checks the exact
-identity again. A registration describes the model, not ownership of a machine;
-the same exact identity can execute on either target where it is installed.
+identity again. A binding that no configured machine has, such as a review from a
+removed target, is refused as `model_metadata_changed` without contacting a host,
+so the client can review again. A registration describes the model, not ownership
+of a machine; the same exact identity can execute on either target where it is
+installed.
 
 Preview and launch bodies accept optional `target` IDs under the
 `inference_targets_v1` capability. The target descriptor, normalized endpoint and

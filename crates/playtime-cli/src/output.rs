@@ -214,6 +214,10 @@ fn text(value: &Value) -> String {
             if let Some(remaining) = data["details"]["remaining"].as_array() {
                 lines.extend(remaining.iter().map(|item| format!("  - {}", word(item))));
             }
+            // Reasons name what to change, such as a missing inference target.
+            if let Some(reasons) = data["details"]["reasons"].as_array() {
+                lines.extend(reasons.iter().map(|reason| format!("  - {}", word(reason))));
+            }
             lines.join("\n")
         }
         "notice" if data.get("backend").is_some() => format!(
@@ -408,5 +412,16 @@ mod tests {
         let bytes = bytes(Format::Jsonl, &value).unwrap();
         assert_eq!(bytes.iter().filter(|b| **b == b'\n').count(), 1);
         assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), value);
+    }
+    #[test]
+    fn error_text_names_the_reasons() {
+        let value = envelope(
+            "error",
+            json!({"code":"execution_unavailable","message":"Execution is unavailable","details":{"reasons":["target_required"]}}),
+        );
+        assert_eq!(
+            text(&value),
+            "execution_unavailable: Execution is unavailable\n  - target_required"
+        );
     }
 }

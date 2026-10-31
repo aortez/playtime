@@ -19,10 +19,11 @@ and the locked Ollama model. Building requires the pinned Rust toolchain, its
 musl target, and a C compiler/linker. The scripts also use Python 3 for build
 metadata and connection-file handling; they do not run the Python controller.
 
-The current model is `gpt-oss:20b`, with the default endpoint
-`http://oldman-bird.local:11434`. A clone does not contain the workshop image or
-model weights. Startup verifies the locked identities; it does not pull images,
-download models, or silently refresh locks. See the
+The current model is `gpt-oss:20b`. The example target configuration names Bird
+(`http://oldman-bird.local:11434`) and Framework (`http://framework.local:11434`);
+a launch uses the machine chosen for it. A clone does not contain the workshop
+image or model weights. Startup verifies the locked identities; it does not pull
+images, download models, or silently refresh locks. See the
 [Docker requirements](docs/rust-docker.md#supported-selection-and-readiness) and
 [live-model guide](docs/rust-live-model.md). To choose between multiple inference machines,
 configure [named targets](docs/rust-inference-targets.md).
@@ -49,11 +50,14 @@ or `PLAYTIME_OLLAMA` for the legacy single-endpoint workflow (not both).
 ```
 
 History selection searches up to six levels under `PLAYTIME_DATA`; you can also
-pass `--history /absolute/service-root`. It opens that original service root in
-a separate daemon/workbench, preserving its ledger and archive provenance.
-Histories are not merged. New launches from that workbench stay in the selected
-history; plain `./go.sh` continues to use the main root. `--no-build` reuses an
-already running daemon's configuration; run without it to apply target changes.
+pass `--history /absolute/service-root`. It runs the current daemon on that
+original service root in a separate unit and workbench. The root keeps its
+service identity and archives, and histories are not merged, but the root stays
+writable: the daemon may upgrade an older ledger in place, after which older
+builds refuse it, and new launches from that workbench are saved there. Open a
+copy to keep an evidence root unchanged. Plain `./go.sh` continues to use the
+main root. `--no-build` reuses an already running daemon's configuration; run
+without it to apply target changes.
 
 Closing the workbench leaves the daemon and experiment running. Do not restart
 the daemon during a run: automatic reattachment is not implemented. For manual

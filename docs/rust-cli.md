@@ -262,3 +262,6 @@ a model, Docker daemon, GPU, or desktop.
 receipt. `launches retry` always uses the original retained target. See
 [named inference targets](rust-inference-targets.md) for daemon configuration and
 examples. Simulation and scripted Docker previews do not use inference targets.
+Without `--target`, a daemon with named targets refuses model metadata as
+`invalid_parameters` and live previews or launches as `execution_unavailable`;
+text output lists the error's reasons, such as `target_required`.

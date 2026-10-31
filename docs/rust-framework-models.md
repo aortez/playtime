@@ -47,13 +47,15 @@ request before submission, never retries a mutation, and never launches inferenc
 
 ```sh
 cargo run --locked -p playtime-client --example select_model -- \
-  CONNECTION SOURCE_RECIPE MODEL SETTINGS_JSON NEW_EVIDENCE_DIR EXPECTED_DIGEST
+  CONNECTION SOURCE_RECIPE MODEL SETTINGS_JSON NEW_EVIDENCE_DIR EXPECTED_DIGEST [TARGET]
 ```
 
-It prints the saved execution recipe ID. Launch that ID through the ordinary Rust
-CLI with a retained idempotency key. A failed mutation keeps its pending receipt
-for lookup; do not rerun blindly with a new key. The examples do not add HTTP
-routes, ledger versions or CLI commands.
+A daemon started with [named targets](rust-inference-targets.md) needs the
+`TARGET` ID: the review and the final preview run on that machine. It prints the
+saved execution recipe ID. Launch that ID through the ordinary Rust CLI with a
+retained idempotency key and the same `--target`. A failed mutation keeps its
+pending receipt for lookup; do not rerun blindly with a new key. The examples do
+not add HTTP routes, ledger versions or CLI commands.
 
 Coder-Next has non-thinking execution; model-default omission and explicit Off
 are separate wire choices. High/Medium/Low and On are not converted to Off.

@@ -187,19 +187,21 @@ impl Daemon {
         }
         Ok(this)
     }
-    fn browser_on(&self, target: Option<&str>) -> Result<Arc<crate::models::ModelBrowser>> {
+    /// The metadata browser of an explicit target. Named targets refuse a
+    /// request without one; otherwise the untargeted routes answer (`None`).
+    fn browser_on(&self, target: Option<&str>) -> Result<Option<Arc<crate::models::ModelBrowser>>> {
         match target {
             Some(id) => self
                 .inner
                 .target_browsers
                 .get(id)
                 .cloned()
+                .map(Some)
                 .ok_or_else(|| ApiError::new("invalid_parameters")),
-            None => self
-                .inner
-                .models
-                .clone()
-                .ok_or_else(|| ApiError::new("backend_unavailable")),
+            None if !self.inner.target_browsers.is_empty() => {
+                Err(ApiError::new("invalid_parameters"))
+            }
+            None => Ok(None),
         }
     }
     pub fn coordinator(&self) -> &Coordinator {
@@ -474,23 +476,34 @@ impl Application for Daemon {
         })
     }
     async fn model_inventory_on(&self, target: Option<String>) -> Result<ModelInventory> {
-        self.browser_on(target.as_deref())?.inventory().await
+        match self.browser_on(target.as_deref())? {
+            Some(browser) => browser.inventory().await,
+            None => self.model_inventory().await,
+        }
     }
     async fn inspect_model_on(
         &self,
         target: Option<String>,
         request: ModelInspectRequest,
     ) -> Result<ModelInspection> {
-        self.browser_on(target.as_deref())?.inspect(request).await
+        match self.browser_on(target.as_deref())? {
+            Some(browser) => browser.inspect(request).await,
+            None => self.inspect_model(request).await,
+        }
     }
     async fn model_review_on(
         &self,
         target: Option<String>,
         request: ModelInspectRequest,
     ) -> Result<ModelRegistrationReview> {
-        self.browser_on(target.as_deref())?
-            .review(&self.capabilities().service_id, request)
-            .await
+        match self.browser_on(target.as_deref())? {
+            Some(browser) => {
+                browser
+                    .review(&self.capabilities().service_id, request)
+                    .await
+            }
+            None => self.model_review(request).await,
+        }
     }
     async fn model_review(&self, request: ModelInspectRequest) -> Result<ModelRegistrationReview> {
         self.inner.registrations.review(request).await
@@ -507,13 +520,13 @@ impl Application for Daemon {
         request: ModelRegistrationRequest,
     ) -> Result<ModelRegistrationResponse> {
         let service = self.capabilities().service_id;
-        let browser = self
+        let browsers = self
             .inner
             .target_browsers
             .values()
             .cloned()
-            .chain(self.inner.models.clone())
-            .find(|b| b.binding(&service) == request.endpoint_binding);
+            .chain(self.inner.models.clone());
+        let browser = registration_browser(browsers, &service, &request.endpoint_binding);
         self.inner
             .registrations
             .with_browser(browser)
@@ -994,6 +1007,23 @@ impl Application for Daemon {
 
 #[cfg(test)]
 mod tests;
+
+/// The configured machine a reviewed registration request is bound to. A
+/// binding that no configured machine has still goes to one of them, which
+/// refuses it as changed metadata before contacting its host, as a single
+/// endpoint always has. With no machine configured the backend is unavailable.
+fn registration_browser(
+    browsers: impl IntoIterator<Item = Arc<crate::models::ModelBrowser>>,
+    service: &ServiceId,
+    binding: &str,
+) -> Option<Arc<crate::models::ModelBrowser>> {
+    let browsers: Vec<_> = browsers.into_iter().collect();
+    browsers
+        .iter()
+        .find(|b| b.binding(service) == binding)
+        .or(browsers.first())
+        .cloned()
+}
 
 fn tolerate_unavailable(result: life::Result<()>) -> life::Result<()> {
     match result {

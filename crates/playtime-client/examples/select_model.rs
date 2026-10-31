@@ -18,8 +18,8 @@ fn retain(path: &Path, value: &impl serde::Serialize) -> Result<(), Box<dyn std:
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.len() != 6 {
-        return Err("usage: select_model CONNECTION SOURCE_RECIPE MODEL SETTINGS_JSON NEW_EVIDENCE_DIR EXPECTED_MODEL_DIGEST".into());
+    if !(6..=7).contains(&args.len()) {
+        return Err("usage: select_model CONNECTION SOURCE_RECIPE MODEL SETTINGS_JSON NEW_EVIDENCE_DIR EXPECTED_MODEL_DIGEST [TARGET]".into());
     }
     let settings: RecipeModelSettings = serde_json::from_slice(&std::fs::read(&args[3])?)?;
     if let Some(error) = settings.validation_error() {
@@ -28,7 +28,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let evidence = Path::new(&args[4]);
     use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new().mode(0o700).create(evidence)?;
-    let client = Client::from_connection(Path::new(&args[0])).await?;
+    // A daemon with named targets reviews and previews on the selected one.
+    let client = Client::from_connection(Path::new(&args[0]))
+        .await?
+        .with_target(args.get(6).cloned())?;
     let review = client
         .review_model(&ModelInspectRequest {
             name: args[2].clone(),

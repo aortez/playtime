@@ -857,6 +857,12 @@ impl Model {
                     .is_some_and(|id| !self.targets.iter().any(|t| &t.id == id))
                 {
                     self.select_target(None);
+                } else if self.models.open
+                    && self.selected_target.is_none()
+                    && !self.targets.is_empty()
+                {
+                    // Models opened before the list arrived asked without a target.
+                    self.refresh_models();
                 }
             }
             Data::Connected(caps, endpoint) => {

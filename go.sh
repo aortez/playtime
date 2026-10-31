@@ -95,9 +95,10 @@ if (( history )); then
     [[ -f $history_root/.playtime/service.sqlite3 ]] || die "not a retained service root: $history_root"
     root=$(cd "$history_root" && pwd -P)
     # A stable unit per root keeps the main workbench and each history separate.
+    # PLAYTIME_UNIT names the main daemon, so a history never takes it over.
     if [[ $root != "$(realpath -m "$data/root")" ]]; then
         root_hash=$(printf '%s' "$root" | sha256sum)
-        unit=${PLAYTIME_UNIT:-playtimed-history-${root_hash:0:16}}
+        unit=playtimed-history-${root_hash:0:16}
     fi
 fi
 
@@ -110,7 +111,7 @@ daemon_active() { systemctl --user is-active --quiet "$unit"; }
 
 if (( stop )); then
     if worker_active; then
-        die "an experiment is running; cancel it first, then stop the daemon"
+        die "an experiment is running on this machine; cancel it first, then stop the daemon"
     fi
     if daemon_active; then
         systemctl --user stop "$unit"
@@ -153,7 +154,7 @@ fi
 
 if (( build )); then
     if daemon_active && worker_active; then
-        die "an experiment is running under $unit, so the daemon can't be restarted with a new build; use --no-build to open the workbench on it"
+        die "an experiment is running on this machine, so $unit can't be restarted with a new build; use --no-build to open the workbench on it"
     fi
     if command -v rustup > /dev/null && ! rustup target list --installed 2> /dev/null | grep -q '^x86_64-unknown-linux-musl$'; then
         die "the worker bundle needs the musl target: rustup target add x86_64-unknown-linux-musl"
@@ -170,7 +171,7 @@ if (( build )); then
     if daemon_active; then
         # An experiment may have started while the build ran.
         if worker_active; then
-            die "an experiment started during the build, so $unit keeps its old build; run $0 again after it ends"
+            die "an experiment started on this machine during the build, so $unit keeps its old build; run $0 again after it ends"
         fi
         say "Restarting $unit with the new build."
         systemctl --user stop "$unit"
@@ -185,6 +186,12 @@ fi
 
 conn=$root/.playtime/connection.json
 if ! daemon_active; then
+    # A daemon under another unit may already serve this root. Its connection
+    # file is the only way to reach it, so leave the root alone.
+    lock=$root/.playtime/service.lock
+    if [[ -f $lock ]] && ! flock -n "$lock" true; then
+        die "another daemon already serves $root (it holds $lock); stop it first or use its own connection file"
+    fi
     systemctl --user reset-failed "$unit" 2> /dev/null || true
     rm -f "$conn"
     say "Starting $unit on $root"
@@ -209,7 +216,7 @@ say "Daemon $unit at $endpoint, root $root"
 say "Inference targets:"
 "${cli[@]}" targets || true
 if worker_active; then
-    say "An experiment is running. A new launch gets run_busy until it ends."
+    say "An experiment is running on this machine. Until it ends, live launches and launches on its root get run_busy."
 fi
 others=$(systemctl --user list-units 'playtimed-*' --state=active --no-legend 2> /dev/null \
     | awk '{ print $1 }' | grep -v "^$unit.service$" || true)

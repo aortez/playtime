@@ -275,3 +275,54 @@ async fn changing_target_invalidates_preview_and_metadata_and_freezes_launch_tar
     };
     assert_eq!(request.target.as_deref(), Some("framework"));
 }
+#[test]
+fn model_metadata_waits_for_an_explicit_target() {
+    let target = |id: &str| InferenceTarget {
+        id: id.into(),
+        name: id.into(),
+        provider: InferenceProvider::Ollama,
+        endpoint: format!("http://{id}:11434/"),
+    };
+    let inventory_on = |model: &Model, target: Option<&str>| {
+        model
+            .commands
+            .iter()
+            .any(|c| c.target.as_deref() == target && matches!(c.action, Action::ModelInventory))
+    };
+    let prompt = "Choose an inference target to read its installed models.";
+    let mut model = Model::default();
+    model.connection = ConnectionState::Connected;
+    model.models.enabled = true;
+    model.targets = vec![target("bird"), target("framework")];
+    model.browse_models();
+    assert!(!inventory_on(&model, None));
+    assert!(!model.models.pending);
+    assert_eq!(model.models.notice, prompt);
+    model.select_target(Some("framework".into()));
+    assert!(inventory_on(&model, Some("framework")));
+    assert!(model.models.pending);
+    // Models opened before the target list arrived asked without one; the list
+    // then turns the outstanding read into the same prompt.
+    let mut model = Model::default();
+    model.connection = ConnectionState::Connected;
+    model.models.enabled = true;
+    model.browse_models();
+    assert!(inventory_on(&model, None));
+    let asked = model.tag;
+    model.apply(Reply {
+        tag: asked,
+        run: None,
+        data: Data::Targets(InferenceTargets {
+            schema_version: 1,
+            targets: vec![target("bird")],
+        }),
+    });
+    assert_eq!(model.models.notice, prompt);
+    assert!(!model.models.pending);
+    model.apply(Reply {
+        tag: asked,
+        run: None,
+        data: Data::ModelError("HTTP 422: invalid_parameters".into()),
+    });
+    assert_eq!(model.models.notice, prompt);
+}

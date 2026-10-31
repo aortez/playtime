@@ -54,8 +54,9 @@ async fn target_scope_selects_metadata_without_fallback_or_inference() {
     assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
     assert!(bird.metadata.0.lock().unwrap().calls.is_empty());
     assert!(framework.metadata.0.lock().unwrap().calls.is_empty());
-    assert!(
-        client.model_inventory().await.is_err(),
+    assert_eq!(
+        client.model_inventory().await.unwrap_err().api_code(),
+        Some("invalid_parameters"),
         "no implicit first target"
     );
     let a = client.with_target(Some("bird".into())).unwrap();
@@ -100,6 +101,26 @@ async fn target_scope_selects_metadata_without_fallback_or_inference() {
     );
     server.stop().await.unwrap();
     bird.stop();
+}
+#[tokio::test]
+async fn untargeted_metadata_without_discovery_stays_unsupported() {
+    let app = Fixture::new(ServiceId::new("no-discovery-test").unwrap());
+    let token = Token::generate().unwrap();
+    let server = Server::new(Arc::new(app), token.clone())
+        .unwrap()
+        .listen("127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/v1/models", server.endpoint()))
+        .bearer_auth(token.expose())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+    let error: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(error["code"], "unsupported_capability");
+    server.stop().await.unwrap();
 }
 #[test]
 fn configuration_is_bounded_and_rejects_ambiguous_or_unsupported_targets() {

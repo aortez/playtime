@@ -704,6 +704,43 @@ fn authoring_startup_tolerates_only_execution_limitations() {
         "catalog_corrupt"
     );
 }
+#[tokio::test]
+async fn registrations_bound_to_no_configured_machine_are_refused_as_changed_metadata() {
+    use crate::{models::ModelBrowser, registrations::Registry};
+    use std::sync::Arc;
+    let root = Root::new();
+    let ledger = Ledger::open(&root.0).await.unwrap();
+    let service = ServiceId::new(ledger.service_id().as_str()).unwrap();
+    // Documentation addresses: a refusal never contacts either host.
+    let bird = Arc::new(ModelBrowser::new("http://192.0.2.1:11434").unwrap());
+    let framework = Arc::new(ModelBrowser::new("http://192.0.2.2:11434").unwrap());
+    let browsers = || [bird.clone(), framework.clone()];
+    let bound = super::registration_browser(browsers(), &service, &framework.binding(&service));
+    assert!(Arc::ptr_eq(&bound.unwrap(), &framework));
+    // A review from a machine that is no longer configured, or from another
+    // endpoint, is a definitive refusal; the client may review again.
+    let request = ModelRegistrationRequest {
+        endpoint_binding: "e".repeat(64),
+        identity: playtime_test_support::recipe_models::boolean_model()
+            .summary
+            .identity,
+    };
+    let registry = Registry::new(ledger, None);
+    let stale = super::registration_browser(browsers(), &service, &request.endpoint_binding);
+    let error = registry
+        .with_browser(stale)
+        .register(IdempotencyKey::new("stale").unwrap(), request.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "model_metadata_changed");
+    let none = super::registration_browser(Vec::new(), &service, &request.endpoint_binding);
+    let error = registry
+        .with_browser(none)
+        .register(IdempotencyKey::new("none").unwrap(), request)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "backend_unavailable");
+}
 #[test]
 fn remembered_snapshots_serve_their_exact_frontier_for_at_most_the_refreshed_runs() {
     let root = Root::new();

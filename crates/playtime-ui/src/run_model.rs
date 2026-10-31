@@ -47,6 +47,8 @@ pub fn parse(bytes: &[u8]) -> Result<Option<ArchivedModel>, String> {
     let reasoning = match model.pointer("/settings/thinking") {
         Some(serde_json::Value::Bool(false)) => "off".into(),
         Some(serde_json::Value::Bool(true)) => "on".into(),
+        // The runner archives the model's own default as an explicit null.
+        Some(serde_json::Value::Null) => "model default".into(),
         _ => field("/settings/thinking"),
     };
     let details = vec![
@@ -110,5 +112,23 @@ mod tests {
         );
         assert_eq!(parse(br#"{"scenario":{}}"#).unwrap(), None);
         assert!(parse(br#"{"model":{"lock":{"name":"gpt-oss:20b"}}}"#).is_err());
+        // An omitted choice is recorded as null; only a missing key is unrecorded.
+        let reasoning = |settings: serde_json::Value| {
+            let mut config = config.clone();
+            config["model"]["settings"] = settings;
+            let model = parse(&serde_json::to_vec(&config).unwrap())
+                .unwrap()
+                .unwrap();
+            model.details[2].clone()
+        };
+        assert_eq!(
+            reasoning(serde_json::json!({"thinking": null})),
+            "Reasoning: model default"
+        );
+        assert_eq!(
+            reasoning(serde_json::json!({"thinking": "high"})),
+            "Reasoning: high"
+        );
+        assert_eq!(reasoning(serde_json::json!({})), "Reasoning: not recorded");
     }
 }

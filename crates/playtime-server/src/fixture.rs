@@ -392,20 +392,20 @@ impl Fixture {
         }
         Ok(self)
     }
+    /// The metadata browser of an explicit target. Named targets refuse a
+    /// request without one; otherwise the untargeted routes answer (`None`).
     fn target_browser(
         &self,
         target: Option<&str>,
-    ) -> Result<std::sync::Arc<crate::models::ModelBrowser>> {
+    ) -> Result<Option<std::sync::Arc<crate::models::ModelBrowser>>> {
         match target {
             Some(id) => self
                 .targets
                 .get(id)
-                .map(|(_, b)| b.clone())
+                .map(|(_, b)| Some(b.clone()))
                 .ok_or_else(|| ApiError::new("invalid_parameters")),
-            None => self
-                .models
-                .clone()
-                .ok_or_else(|| ApiError::new("backend_unavailable")),
+            None if !self.targets.is_empty() => Err(ApiError::new("invalid_parameters")),
+            None => Ok(None),
         }
     }
     pub fn calls(&self) -> Vec<Call> {
@@ -534,28 +534,30 @@ impl Application for Fixture {
         })
     }
     async fn model_inventory_on(&self, target: Option<String>) -> Result<ModelInventory> {
-        self.target_browser(target.as_deref())?.inventory().await
+        match self.target_browser(target.as_deref())? {
+            Some(browser) => browser.inventory().await,
+            None => self.model_inventory().await,
+        }
     }
     async fn inspect_model_on(
         &self,
         target: Option<String>,
         request: ModelInspectRequest,
     ) -> Result<ModelInspection> {
-        self.target_browser(target.as_deref())?
-            .inspect(request)
-            .await
+        match self.target_browser(target.as_deref())? {
+            Some(browser) => browser.inspect(request).await,
+            None => self.inspect_model(request).await,
+        }
     }
     async fn model_review_on(
         &self,
         target: Option<String>,
         request: ModelInspectRequest,
     ) -> Result<ModelRegistrationReview> {
-        if target.is_none() {
-            return self.model_review(request).await;
+        match self.target_browser(target.as_deref())? {
+            Some(browser) => browser.review(&self.service, request).await,
+            None => self.model_review(request).await,
         }
-        self.target_browser(target.as_deref())?
-            .review(&self.service, request)
-            .await
     }
     async fn model_review(&self, request: ModelInspectRequest) -> Result<ModelRegistrationReview> {
         self.registrations
