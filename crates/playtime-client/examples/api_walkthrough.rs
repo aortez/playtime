@@ -27,6 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     let pending = client.prepare_launch(
         LaunchRequest {
+            target: None,
             recipe_id: preview.recipe_id,
             mode: preview.mode,
             preview_revision: preview.preview_revision,

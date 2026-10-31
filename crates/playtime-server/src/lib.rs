@@ -11,5 +11,6 @@ pub mod http;
 pub mod lifecycle;
 
 pub mod models;
+pub mod targets;
 
 pub mod registrations;

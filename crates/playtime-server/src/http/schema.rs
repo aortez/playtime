@@ -11,7 +11,7 @@ use utoipa::{OpenApi, PartialSchema, ToSchema};
 pub fn openapi() -> Value {
     #[derive(OpenApi)]
     #[openapi(info(title = "Playtime native HTTP API", version = "1"), components(schemas(
-        HarnessCatalog, RecipeHarnessView, ModelRegistrationReview, ModelRegistrations, RegisteredModel, ModelRegistrationRequest, ModelRegistrationResponse, ModelInventory, ModelInspection, ModelInspectRequest, Capabilities, Recipe, RecipeSettingsView, RecipeDefinition, SavedRecipe, RecipeSaveResponse, CloneRecipeRequest, ReviseRecipeRequest, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
+        InferenceTargets, InferenceTarget, HarnessCatalog, RecipeHarnessView, ModelRegistrationReview, ModelRegistrations, RegisteredModel, ModelRegistrationRequest, ModelRegistrationResponse, ModelInventory, ModelInspection, ModelInspectRequest, Capabilities, Recipe, RecipeSettingsView, RecipeDefinition, SavedRecipe, RecipeSaveResponse, CloneRecipeRequest, ReviseRecipeRequest, PreviewRequest, Preview, LaunchRequest, LaunchResponse, CancelRequest, CancelResponse, ReleaseRequest, ReleaseResponse,
         RunView, Page<Recipe>, Page<RunView>, Page<Checkpoint>, Page<Artifact>, EventPage, EventEnvelope,
         Checkpoint, Artifact, EventCursor, StreamEnd, ErrorResponse, UsageSummary, Connection
     )))]
@@ -105,6 +105,14 @@ pub fn openapi() -> Value {
             "model_registration_lookup",
             None,
             ModelRegistrationResponse::name().to_string(),
+            false,
+        ),
+        (
+            "get",
+            "/targets",
+            "inference_targets",
+            None,
+            InferenceTargets::name().to_string(),
             false,
         ),
         (
@@ -345,6 +353,9 @@ pub fn openapi() -> Value {
         }
         if name == "event_stream" {
             parameters.push(json!({"name":"Last-Event-ID","in":"header","required":false,"schema":{"type":"string","maxLength":2048},"description":"Must equal cursor when both are supplied. Only acknowledge after applying a record."}));
+        }
+        if matches!(name, "model_inventory" | "inspect_model" | "model_review") {
+            parameters.push(json!({"name":"X-Playtime-Target","in":"header","required":false,"schema":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_-]+$"},"description":"Explicit configured inference target for metadata reads. Required when only named targets are configured."}));
         }
         if method == "post" {
             parameters.push(json!({"name":"X-Playtime-Service-ID","in":"header","required":true,"schema":{"$ref":"#/components/schemas/ServiceId"}}));

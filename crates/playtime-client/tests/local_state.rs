@@ -40,6 +40,7 @@ fn pending() -> PendingLaunch {
         service_id: ServiceId::new("service-a").unwrap(),
         key: IdempotencyKey::new("shared").unwrap(),
         request: LaunchRequest {
+            target: None,
             recipe_id: RecipeId::new("recipe").unwrap(),
             mode: RunMode::Simulation,
             preview_revision: PreviewRevision::new("frozen-revision").unwrap(),

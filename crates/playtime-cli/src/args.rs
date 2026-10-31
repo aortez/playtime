@@ -50,6 +50,9 @@ id_parser!(revision, PreviewRevision);
     about = "Native Playtime service client (Rust development)"
 )]
 pub struct Cli {
+    /// Named inference target for model discovery and new live runs.
+    #[arg(long, global = true)]
+    pub target: Option<String>,
     #[arg(long, global = true, conflicts_with_all = ["endpoint", "token_file"])]
     pub connection_file: Option<PathBuf>,
     #[arg(long, global = true, requires = "token_file")]
@@ -69,6 +72,10 @@ pub struct Cli {
 }
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// List configured inference targets without contacting them.
+    Targets,
+    /// List installed models on the selected target.
+    Models,
     #[command(subcommand)]
     Service(Service),
     #[command(subcommand)]
@@ -252,6 +259,13 @@ pub fn duration(text: &str) -> Result<Duration, String> {
 }
 impl Cli {
     pub fn validate(&self) -> Result<(), &'static str> {
+        if self
+            .target
+            .as_deref()
+            .is_some_and(|id| !playtime_protocol::api::valid_id(id))
+        {
+            return Err("--target requires a configured target ID, not an endpoint or path");
+        }
         let streaming = match &self.command {
             Command::Run(v) => v.observe.follow,
             Command::Launches(Launches::Retry { observe, .. }) => observe.follow,

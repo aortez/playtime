@@ -141,6 +141,7 @@ pub struct WindowRequest {
 }
 #[derive(Clone, Debug)]
 pub enum Action {
+    Targets,
     ModelRegistrations,
     ModelRegistration(ModelRegistrationId),
     ModelRegistrationPage(Arc<RegisteredModel>, usize),
@@ -161,6 +162,7 @@ pub enum Action {
     RecoverRecipe(IdempotencyKey, bool),
     RecipeSaveReceipts,
     Runs(Option<String>),
+    RunModel(RunId, playtime_protocol::archive::ContentRef),
     Receipts(Option<IdempotencyKey>),
     Preview(RecipeId, RunMode),
     PreviewPage(Box<Preview>, usize),
@@ -183,6 +185,7 @@ pub enum Action {
 }
 #[derive(Clone, Debug)]
 pub struct Command {
+    pub target: Option<String>,
     pub tag: Tag,
     pub action: Action,
 }
@@ -193,6 +196,7 @@ pub struct TraceView {
     pub notice: String,
 }
 pub enum Data {
+    Targets(InferenceTargets),
     ModelRegistrations(ModelRegistrations),
     ModelRegistryError(String),
     ModelRegistration(crate::registrations::RegistrationView),
@@ -224,6 +228,7 @@ pub enum Data {
     LaunchRefused(String, bool),
     Accepted(Box<LaunchResponse>, LaunchReceipt),
     Run(Box<RunViewData>),
+    RunModel(Result<Option<crate::run_model::ArchivedModel>, String>),
     Cancellation(Box<RunViewData>),
     CancellationUnresolved(String),
     Window(Window, String, u64),
@@ -248,6 +253,8 @@ pub struct Reply {
 }
 
 pub struct Model {
+    pub targets: Vec<InferenceTarget>,
+    pub selected_target: Option<String>,
     pub models: crate::models::Browser,
     pub registrations: crate::registrations::Registrations,
     pub authoring: crate::authoring::Authoring,
@@ -275,6 +282,8 @@ pub struct Model {
     pub cancellation: Mutation,
     pub selected: Option<RunId>,
     pub run: Option<RunViewData>,
+    pub run_model: Option<Result<Option<crate::run_model::ArchivedModel>, String>>,
+    run_model_requested: bool,
     pub launcher: bool,
     pub window: Window,
     pub trace: BTreeMap<u64, TraceView>,
@@ -318,6 +327,8 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            targets: vec![],
+            selected_target: None,
             models: Default::default(),
             registrations: Default::default(),
             authoring: Default::default(),
@@ -345,6 +356,8 @@ impl Default for Model {
             cancellation: Mutation::Idle,
             selected: None,
             run: None,
+            run_model: None,
+            run_model_requested: false,
             launcher: true,
             window: Window::default(),
             trace: BTreeMap::new(),
@@ -459,11 +472,14 @@ impl Model {
             self.checkpoint_target = Some(session.clone());
         }
         self.commands.push_back(Command {
+            target: self.selected_target.clone(),
             tag: self.tag,
             action,
         });
     }
     pub fn connect(&mut self, options: Options) {
+        self.run_model = None;
+        self.run_model_requested = false;
         self.close_models();
         if self.registrations.busy() {
             self.registrations.mutation = Mutation::Unresolved(
@@ -538,6 +554,28 @@ impl Model {
         }
         self.command(Action::Preview(recipe, mode));
     }
+    pub fn select_target(&mut self, target: Option<String>) {
+        if target == self.selected_target {
+            return;
+        }
+        self.selected_target = target;
+        self.tag.preview += 1;
+        self.tag.models += 1;
+        self.preview = None;
+        self.previewing = false;
+        self.models.inventory = None;
+        self.models.inspection = None;
+        self.models.pending = false;
+        self.models.stale = true;
+        self.command(Action::StopModelDiscovery);
+        if self.models.open {
+            self.refresh_models();
+        }
+        if let Some(recipe) = self.recipe.clone() {
+            self.previewing = true;
+            self.command(Action::Preview(recipe, self.mode));
+        }
+    }
     pub fn can_launch(&self) -> bool {
         self.connection == ConnectionState::Connected
             && self.authoring.draft.is_none()
@@ -551,6 +589,8 @@ impl Model {
                 p.value.readiness.ready
                     && Some(&p.value.recipe_id) == self.recipe.as_ref()
                     && p.value.mode == self.mode
+                    && (!matches!(self.mode, RunMode::LiveSmoke | RunMode::Experiment)
+                        || p.value.target.as_ref().map(|t| &t.id) == self.selected_target.as_ref())
             })
     }
     pub fn launch(&mut self) {
@@ -559,6 +599,7 @@ impl Model {
         }
         let p = &self.preview.as_ref().unwrap().value;
         let request = LaunchRequest {
+            target: p.target.as_ref().map(|t| t.id.clone()),
             recipe_id: p.recipe_id.clone(),
             mode: p.mode,
             preview_revision: p.preview_revision.clone(),
@@ -573,6 +614,8 @@ impl Model {
         self.selected = Some(run.clone());
         self.launcher = false;
         self.run = None;
+        self.run_model = None;
+        self.run_model_requested = false;
         self.window = Window::default();
         self.trace.clear();
         self.location = None;
@@ -806,7 +849,29 @@ impl Model {
                 self.models.stale = true;
                 self.models.notice = format!("Metadata unavailable: {error}");
             }
+            Data::Targets(value) => {
+                self.targets = value.targets;
+                if self
+                    .selected_target
+                    .as_ref()
+                    .is_some_and(|id| !self.targets.iter().any(|t| &t.id == id))
+                {
+                    self.select_target(None);
+                } else if self.models.open
+                    && self.selected_target.is_none()
+                    && !self.targets.is_empty()
+                {
+                    // Models opened before the list arrived asked without a target.
+                    self.refresh_models();
+                }
+            }
             Data::Connected(caps, endpoint) => {
+                if caps.features.iter().any(|f| f == INFERENCE_TARGETS) {
+                    self.command(Action::Targets);
+                } else {
+                    self.targets.clear();
+                    self.selected_target = None;
+                }
                 if self
                     .service
                     .as_ref()
@@ -971,6 +1036,7 @@ impl Model {
             Data::Run(run) => {
                 self.apply_run(*run);
             }
+            Data::RunModel(model) => self.run_model = Some(model),
             Data::Cancellation(cancel) => {
                 self.cancellation = Mutation::Accepted;
                 self.notify(
@@ -1173,6 +1239,15 @@ impl Model {
             != self.run.as_ref().and_then(|r| r.value.checkpoint.as_ref())
         {
             self.command(Action::Checkpoints(run.value.run_id.clone(), None));
+        }
+        if !self.run_model_requested
+            && let Some(harness) = &run.value.harness
+        {
+            self.run_model_requested = true;
+            self.command(Action::RunModel(
+                run.value.run_id.clone(),
+                harness.configuration.clone(),
+            ));
         }
         self.run = Some(run);
         self.stale = self.connection != ConnectionState::Connected;

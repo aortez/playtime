@@ -180,9 +180,15 @@ impl Model {
             return;
         }
         self.tag.models += 1;
-        self.models.pending = true;
         self.models.stale = true;
         self.models.inspection = None;
+        // Named targets have no implicit machine, so ask for one first.
+        if !self.targets.is_empty() && self.selected_target.is_none() {
+            self.models.pending = false;
+            self.models.notice = "Choose an inference target to read its installed models.".into();
+            return;
+        }
+        self.models.pending = true;
         self.models.notice = "Reading installed model metadata…".into();
         self.command(Action::ModelInventory);
     }
@@ -219,6 +225,7 @@ pub fn draw(ui: &egui::Ui, model: &mut Model) {
         .min_width(max_size.x.min(600.0))
         .vscroll(true)
         .show(ui.ctx(), |ui| {
+            crate::targets::draw(ui, model);
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             if model.registrations.enabled {
                 crate::registrations::toolbar(ui,model);

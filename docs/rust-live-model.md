@@ -186,3 +186,10 @@ and writer. They cover identity checks before each session, archived chunks, an
 identity change that stops the run before another request, a cut stream that
 keeps partial output while usage stays unknown, and a slow stream whose first
 partial output is committed before the response.
+
+## Multiple inference machines
+
+Use [named inference targets](rust-inference-targets.md) to choose a machine per
+launch from one daemon. `--targets` supplies configuration; `playtime --target`
+and the workbench picker select it. The legacy endpoint flag above remains
+supported. Target selection preserves model identity and recipe settings.

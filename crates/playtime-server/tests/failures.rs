@@ -72,6 +72,7 @@ async fn handler_timeout_or_disconnection_does_not_cancel_admitted_operation() {
         .await
         .unwrap();
     let request = LaunchRequest {
+        target: None,
         recipe_id: RecipeId::new("fixture-example").unwrap(),
         mode: playtime_core::RunMode::Simulation,
         preview_revision: PreviewRevision::new("fixture-v1").unwrap(),

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "id": "bird",
+      "name": "Bird · RTX 4090",
+      "provider": "ollama",
+      "endpoint": "http://oldman-bird.local:11434"
+    },
+    {
+      "id": "framework",
+      "name": "Framework · Radeon 8060S",
+      "provider": "ollama",
+      "endpoint": "http://framework.local:11434"
+    }
+  ]
+}

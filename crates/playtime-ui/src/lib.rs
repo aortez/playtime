@@ -6,6 +6,8 @@ pub mod media;
 pub mod model;
 pub mod progress;
 mod read_retry;
+pub mod run_model;
+pub mod targets;
 pub mod transcript;
 pub mod ui;
 

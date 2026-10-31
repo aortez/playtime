@@ -4,7 +4,11 @@ use playtime_runner::docker::{QWEN_MODEL_LOCK, reviewed_identity_capabilities};
 use serde_json::Value;
 
 pub fn qwen() -> RegisteredModel {
-    let lock: Value = serde_json::from_slice(QWEN_MODEL_LOCK).unwrap();
+    from_lock(QWEN_MODEL_LOCK)
+}
+
+pub fn from_lock(bytes: &[u8]) -> RegisteredModel {
+    let lock: Value = serde_json::from_slice(bytes).unwrap();
     let text = |key: &str| lock[key].as_str().unwrap().to_owned();
     let capabilities = reviewed_identity_capabilities(
         &text("name"),

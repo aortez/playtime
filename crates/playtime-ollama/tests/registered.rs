@@ -241,3 +241,93 @@ async fn wrong_response_identity_and_cut_stream_keep_dispatch_uncertain() {
         assert!(rx.try_recv().is_some(), "original received evidence survives failure");
     }
 }
+
+#[tokio::test]
+async fn large_models_preserve_reasoning_wire_choices_and_reject_unsupported_ones() {
+    for (bytes, choices, rejected) in [
+        (
+            include_bytes!("../../../models/qwen3-coder-next.lock.json").as_slice(),
+            vec![None, Some(Thinking::Boolean(false))],
+            vec![
+                Some(Thinking::Boolean(true)),
+                Some(Thinking::Level("high".into())),
+            ],
+        ),
+        (
+            include_bytes!("../../../models/gpt-oss-120b.lock.json").as_slice(),
+            vec![
+                None,
+                Some(Thinking::Level("low".into())),
+                Some(Thinking::Level("medium".into())),
+                Some(Thinking::Level("high".into())),
+            ],
+            vec![
+                Some(Thinking::Boolean(false)),
+                Some(Thinking::Boolean(true)),
+            ],
+        ),
+    ] {
+        let lock: Value = serde_json::from_slice(bytes).unwrap();
+        let model = ExecutionModel {
+            name: lock["name"].as_str().unwrap().into(),
+            digest: lock["digest"].as_str().unwrap().into(),
+            backend_version: lock["ollama_version"].as_str().unwrap().into(),
+            definition_sha256: lock["definition_sha256"].as_str().unwrap().into(),
+            definition: lock["definition"].clone(),
+            reasoning: choices.clone(),
+        };
+        for choice in choices {
+            let fake = Fake::new(replies(vec![
+                json!({"version":model.backend_version}),
+                json!({"models":[{"name":model.name,"digest":model.digest}]}),
+                model.definition.clone(),
+                json!({"model":model.name,"message":{"role":"assistant","content":"ok"},"done":true,"eval_count":2}),
+            ]));
+            let seen = fake.seen.clone();
+            let mut adapter = Adapter::with_model(fake, model.clone(), Limits::default()).unwrap();
+            let (tx, _rx) = observations(&Limits::default()).unwrap();
+            let result = adapter
+                .chat(
+                    &request(),
+                    &EffectiveSettings {
+                        thinking: choice.clone(),
+                        ..Default::default()
+                    },
+                    deadline(),
+                    &CancellationToken::new(),
+                    &tx,
+                )
+                .await;
+            assert_eq!(result.outcome.unwrap().generated_tokens, Some(2));
+            let seen = seen.lock().unwrap();
+            let body: Value =
+                serde_json::from_slice(seen.last().unwrap().body.as_ref().unwrap()).unwrap();
+            assert_eq!(body["model"], model.name);
+            match choice {
+                Some(choice) => assert_eq!(body["think"], serde_json::to_value(choice).unwrap()),
+                None => assert!(body.get("think").is_none()),
+            }
+        }
+        for choice in rejected {
+            let fake = Fake::new([]);
+            let seen = fake.seen.clone();
+            let mut adapter = Adapter::with_model(fake, model.clone(), Limits::default()).unwrap();
+            let (tx, _rx) = observations(&Limits::default()).unwrap();
+            let result = adapter
+                .chat(
+                    &request(),
+                    &EffectiveSettings {
+                        thinking: choice,
+                        ..Default::default()
+                    },
+                    deadline(),
+                    &CancellationToken::new(),
+                    &tx,
+                )
+                .await;
+            assert_eq!(result.outcome.unwrap_err().kind, FailureKind::Request);
+            assert_eq!(result.dispatch, Dispatch::NotDispatched);
+            assert!(seen.lock().unwrap().is_empty());
+        }
+    }
+}

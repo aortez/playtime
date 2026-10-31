@@ -5,6 +5,8 @@ use playtime_protocol::api::*;
 use serde_json::{Value, json};
 
 pub const QWEN_MODEL_LOCK: &[u8] = include_bytes!("qwen3-1.7b-lock.json");
+pub const QWEN_CODER_NEXT_MODEL_LOCK: &[u8] = include_bytes!("qwen3-coder-next-lock.json");
+pub const GPT_OSS_120B_MODEL_LOCK: &[u8] = include_bytes!("gpt-oss-120b-lock.json");
 
 pub fn reviewed_identity_capabilities(
     name: &str,
@@ -12,7 +14,12 @@ pub fn reviewed_identity_capabilities(
     backend: &str,
     definition_sha256: &str,
 ) -> Option<RecipeModelCapabilities> {
-    for bytes in [MODEL_LOCK, QWEN_MODEL_LOCK] {
+    for bytes in [
+        MODEL_LOCK,
+        QWEN_MODEL_LOCK,
+        QWEN_CODER_NEXT_MODEL_LOCK,
+        GPT_OSS_120B_MODEL_LOCK,
+    ] {
         let lock: Value = serde_json::from_slice(bytes).ok()?;
         if lock["name"].as_str() != Some(name)
             || lock["digest"].as_str() != Some(digest)
@@ -24,12 +31,43 @@ pub fn reviewed_identity_capabilities(
         if bytes == MODEL_LOCK {
             return reviewed_model_capabilities(&lock).ok();
         }
+        let (provenance, reasoning, default_reasoning) = if bytes == QWEN_MODEL_LOCK {
+            (
+                "reviewed-qwen3-1.7b-ollama-0.32.3-v1; boolean thinking and tools checked on CPU; context ceiling from locked model_info",
+                vec![
+                    RecipeReasoning::ModelDefault,
+                    RecipeReasoning::On,
+                    RecipeReasoning::Off,
+                ],
+                None,
+            )
+        } else if bytes == QWEN_CODER_NEXT_MODEL_LOCK {
+            (
+                "reviewed-qwen3-coder-next-q4-k-m-ollama-0.32.3-v1; non-thinking tools checked on Framework; context ceiling from locked model_info",
+                vec![RecipeReasoning::ModelDefault, RecipeReasoning::Off],
+                Some(RecipeReasoning::Off),
+            )
+        } else {
+            (
+                "reviewed-gpt-oss-120b-ollama-0.32.3-v1; reasoning and tools checked on Framework; context ceiling from locked model_info",
+                vec![
+                    RecipeReasoning::ModelDefault,
+                    RecipeReasoning::Low,
+                    RecipeReasoning::Medium,
+                    RecipeReasoning::High,
+                ],
+                None,
+            )
+        };
+        let info = &lock["definition"]["model_info"];
+        let architecture = info["general.architecture"].as_str()?;
         return Some(RecipeModelCapabilities {
-            model_digest: digest.into(), backend_version: backend.into(),
-            provenance: "reviewed-qwen3-1.7b-ollama-0.32.3-v1; boolean thinking and tools checked on CPU; context ceiling from locked model_info".into(),
-            reasoning: vec![RecipeReasoning::ModelDefault, RecipeReasoning::On, RecipeReasoning::Off],
-            default_reasoning: None,
-            context_ceiling: lock.pointer("/definition/model_info/qwen3.context_length").and_then(Value::as_u64),
+            model_digest: digest.into(),
+            backend_version: backend.into(),
+            provenance: provenance.into(),
+            reasoning,
+            default_reasoning,
+            context_ceiling: info[format!("{architecture}.context_length")].as_u64(),
         });
     }
     None

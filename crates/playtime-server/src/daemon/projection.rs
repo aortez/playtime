@@ -88,6 +88,7 @@ pub(super) struct Evidence {
 }
 fn base(record: &Admission) -> RunView {
     RunView {
+        target: None,
         request_accounting: None,
         harness: None,
         run_id: record.run_id.clone(),
@@ -159,8 +160,20 @@ pub(super) fn unprepared(record: &Admission) -> RunView {
 pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Evidence> {
     let mut view = base(record);
     let configuration = queries.inputs().configuration.clone();
-    let value = serde_json::from_slice(&queries.content(&configuration).map_err(evidence)?)
+    let value: serde_json::Value =
+        serde_json::from_slice(&queries.content(&configuration).map_err(evidence)?)
+            .map_err(evidence)?;
+    view.target = value
+        .pointer("/model/host/target")
+        .filter(|v| !v.is_null())
+        .map(|v| serde_json::from_value(v.clone()))
+        .transpose()
         .map_err(evidence)?;
+    if view.target.as_ref().is_some_and(|t| !t.valid())
+        || view.target.as_ref().map(|t| &t.id) != record.request.target.as_ref()
+    {
+        return Err(ApiError::new("content_mismatch"));
+    }
     view.harness = HarnessView::from_configuration(&value)
         .map_err(evidence)?
         .map(|harness| ArchivedHarness {

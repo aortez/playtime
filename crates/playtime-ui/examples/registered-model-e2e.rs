@@ -292,6 +292,7 @@ async fn main() -> Result<()> {
 
     let pending = client.prepare_launch(
         LaunchRequest {
+            target: None,
             recipe_id: id.clone(),
             mode: RunMode::Experiment,
             preview_revision: preview.preview_revision.clone(),

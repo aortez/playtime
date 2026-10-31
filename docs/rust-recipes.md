@@ -309,8 +309,11 @@ revisions. Reads and edits require neither a live model nor a ready workshop.
 
 With `recipe_model_execution_v1`, selected registrations execute only when their
 complete identity and capability evidence match a compiled reviewed profile.
-The exact GPT-OSS lock and [Qwen3 1.7B development lock](local-ollama-development.md)
-are supported on Ollama 0.32.3. Qwen offers Model default / On / Off with unknown
+The exact GPT-OSS 20B lock and [Qwen3 1.7B development lock](local-ollama-development.md)
+are supported on Ollama 0.32.3, along with the reviewed
+[Coder-Next and GPT-OSS 120B identities](rust-framework-models.md). That guide
+also documents the native review and explicit recipe-selection examples.
+Qwen3 1.7B offers Model default / On / Off with unknown
 default and a 40,960-token context ceiling. High is not converted to On, and
 selecting Qwen does not shrink an inherited 65,536-token context automatically.
 Synthetic boolean records used by authoring tests never grant execution support.

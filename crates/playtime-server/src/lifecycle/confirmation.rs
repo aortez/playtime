@@ -359,6 +359,7 @@ mod tests {
             .reserve(
                 "fixture-key".into(),
                 AdmissionRequest {
+                    target: None,
                     recipe_id: "fixture".into(),
                     mode: RunMode::Simulation,
                     preview_revision: "fixture".into(),

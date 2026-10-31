@@ -549,6 +549,7 @@ fn live_profile() -> Result<playtime_runner::docker::Profile> {
         scripted.selection,
         scripted.daemon,
         playtime_runner::docker::LiveHost {
+            target: None,
             endpoint: "http://model-host.local:11434".into(),
             addresses: vec!["192.0.2.10".parse()?],
             live_lock: "/nonexistent/package-gate/live-model.lock".into(),

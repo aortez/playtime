@@ -101,10 +101,14 @@ impl Context {
         blocking(move || Ok(store.read(&key)?)).await
     }
     async fn launch(&self, args: &Launch) -> Result<i32, Failure> {
+        let target = matches!(args.mode, Mode::Experiment | Mode::LiveSmoke)
+            .then(|| self.client.target())
+            .flatten();
         if let Some(key) = &args.idempotency_key
             && let Some(saved) = self.existing(key).await?
         {
-            if saved.request.recipe_id != args.recipe_id
+            if saved.request.target.as_deref() != target
+                || saved.request.recipe_id != args.recipe_id
                 || saved.request.mode != args.mode.into()
                 || args
                     .preview_revision
@@ -137,6 +141,7 @@ impl Context {
         };
         let pending = self.client.prepare_launch(
             LaunchRequest {
+                target: target.map(str::to_owned),
                 recipe_id: args.recipe_id.clone(),
                 mode,
                 preview_revision,
@@ -287,7 +292,7 @@ pub async fn execute(
     }
     let selection = resolved.clone();
     let loaded = blocking(move || Ok(selection.load()?)).await?;
-    let client = loaded.connect().await?;
+    let client = loaded.connect().await?.with_target(args.target.clone())?;
     output
         .diagnostic(
             "notice",
@@ -304,6 +309,16 @@ pub async fn execute(
         cancel,
     };
     match &args.command {
+        Command::Targets => {
+            output
+                .emit("result", ctx.client.inference_targets().await?)
+                .await?
+        }
+        Command::Models => {
+            output
+                .emit("result", ctx.client.model_inventory().await?)
+                .await?
+        }
         Command::Service(Service::Status) => {
             output
                 .emit(

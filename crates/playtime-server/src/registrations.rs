@@ -258,6 +258,12 @@ impl Registry {
             accepts: Arc::new(Semaphore::new(1)),
         }
     }
+    pub(crate) fn with_browser(&self, browser: Option<Arc<ModelBrowser>>) -> Self {
+        Self {
+            browser,
+            ..self.clone()
+        }
+    }
     pub(crate) fn browser(&self) -> Option<Arc<ModelBrowser>> {
         self.browser.clone()
     }

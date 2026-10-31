@@ -6,6 +6,7 @@ use playtime_server::{application::Application, fixture::Fixture};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new(ServiceId::new("contract-fixture-service")?);
     let request = LaunchRequest {
+        target: None,
         recipe_id: RecipeId::new("fixture-example")?,
         mode: playtime_core::RunMode::Simulation,
         preview_revision: PreviewRevision::new("fixture-v1")?,

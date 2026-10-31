@@ -1,5 +1,10 @@
 # Rust compatibility and goldens
 
+2026-10-27: The UI displays model identity and settings from the verified archived
+configuration separately from inherited recipe titles. New `archived-model`
+wide/narrow screenshots cover the distinction. This adds a bounded background
+artifact read when selecting a run; wire schemas and archived inputs are unchanged.
+
 The owner retired the legacy compatibility matrix on 2026-10-18 (#16). The
 Python controller is frozen and is no longer a parity oracle. Rust doesn't read
 or repeat Python archives, and legacy and Python fixtures no longer constrain
@@ -16,6 +21,19 @@ files: `crates/playtime-engine/src/tools.json`, the engine's `canonical.json` an
 and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
+
+## Framework large-model identities (2026-10-27)
+
+The reviewed identity catalog adds Qwen3-Coder-Next Q4_K_M and GPT-OSS 120B
+on Ollama 0.32.3. Exact manifest and canonical definition locks are embedded in
+the worker. Coder-Next accepts model-default omission and explicit Off; GPT-OSS
+120B accepts model-default omission and Low/Medium/High. Unsupported inherited
+reasoning settings fail validation without modifying the selected recipe.
+Existing model locks, controller goldens and archive/API schemas are unchanged.
+Both new locks enter the Docker capability digest, so daemon and worker bundles
+must be rebuilt together. See [the exploration record](rust-framework-models.md)
+for native validation and the distinction between metadata context ceilings and
+tested memory allocations.
 
 ## Continuous native execution (#110 step B, 2026-10-26)
 
@@ -750,6 +768,18 @@ each page validates the complete committed prefix, so a projection's passes
 still grow with the log. Archive and event schemas, the storage limits and every
 verification rule are unchanged; a history page still validates its complete
 covering prefix.
+
+## Named inference targets (2026-10-27)
+
+`inference_targets_v1` adds a bounded target configuration catalog and read-only
+`/targets` route. Metadata calls accept an explicit target header. Optional target
+IDs in preview/launch requests and lifecycle admission records preserve historical
+serialization when absent. Target descriptors in previews, run views and frozen
+native hosts are also omitted for old/unselected records. The HTTP schema golden
+adds these fields, target schemas and route/header declarations; existing HTTP
+behavioral fixtures are unchanged. The native profile capability digest now
+requires daemon and worker bundle rebuilds. Model locks, recipes, prompts, limits,
+concurrency and historical archives are unchanged by target selection.
 
 ## Calibrated context estimates and deferred summaries (2026-10-28)
 

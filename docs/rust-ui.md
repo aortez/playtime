@@ -476,3 +476,31 @@ New reviewed synthetic screenshots:
 [trace](../crates/playtime-ui/tests/snapshots/compaction-trace.png).
 These are presentation fixtures; native evidence comes from the separate saved
 continuous API/workbench gate.
+
+## Inference targets
+
+With `inference_targets_v1`, the launcher and Models window show the configured
+inference target picker. Switching machines clears cached inventory and preview,
+invalidates outstanding replies through existing generations, and preserves recipe
+edits. Background commands capture their target at submission. Already retained
+launches and registration requests keep their original binding. Preview and run
+details show the frozen target; see [target configuration](rust-inference-targets.md).
+The target preview screenshots use synthetic metadata and the pinned renderer.
+
+## Archived model details
+
+Selecting a run loads its archived configuration through the existing verified
+artifact download path, bounded to 4 MiB. This background read uses the exact
+configuration reference in the run's confirmed harness projection. The timeline
+and selected sidebar row show the locked model name. The Details inspector adds
+model size, quantization, context, reasoning and sampling settings, Ollama version,
+host and digest. Missing settings remain explicitly unrecorded. Recipe titles are
+user-authored labels and may retain an earlier model's name; hovering shows the
+full title. Model details never come from those titles or today's model inventory.
+Selection and connection generations reject stale reads. Read failures remain
+visible in Details; reconnecting retries them.
+
+The `archived-model` wide/narrow snapshots use synthetic configuration. The ignored
+`native_archived_model_readback` test can inspect an existing run using
+`PLAYTIME_MODEL_CONNECTION`, `PLAYTIME_MODEL_RUN` and `PLAYTIME_MODEL_NAME`;
+it starts no worker or inference.

@@ -35,6 +35,7 @@ struct Inner {
     test_supervision: bool,
     catalog: crate::catalog::Catalog,
     models: Option<Arc<crate::models::ModelBrowser>>,
+    target_browsers: BTreeMap<String, Arc<crate::models::ModelBrowser>>,
     registrations: crate::registrations::Registry,
 }
 #[derive(Clone)]
@@ -73,7 +74,39 @@ impl Daemon {
         live: Option<&str>,
         recipes: Vec<playtime_runner::docker::Recipe>,
     ) -> life::Result<Self> {
-        if test_supervision && (docker.is_some() || live.is_some()) {
+        Self::open_with_targets(
+            root,
+            bundle,
+            supervisor,
+            test_supervision,
+            docker,
+            live,
+            recipes,
+            InferenceTargets {
+                schema_version: 1,
+                targets: vec![],
+            },
+        )
+        .await
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub async fn open_with_targets(
+        root: &Path,
+        bundle: &Path,
+        supervisor: Arc<dyn Supervisor>,
+        test_supervision: bool,
+        docker: Option<(&Path, &Path)>,
+        live: Option<&str>,
+        recipes: Vec<playtime_runner::docker::Recipe>,
+        targets: InferenceTargets,
+    ) -> life::Result<Self> {
+        crate::targets::validate(&targets).map_err(life::Error::Invalid)?;
+        if !targets.targets.is_empty() && (live.is_some() || docker.is_none()) {
+            return Err(life::Error::Invalid(
+                "named targets require Docker and replace --ollama-endpoint",
+            ));
+        }
+        if test_supervision && (docker.is_some() || live.is_some() || !targets.targets.is_empty()) {
             return Err(life::Error::Invalid(
                 "CPU test supervisor rejects real Docker effects",
             ));
@@ -104,12 +137,24 @@ impl Daemon {
         if let Some(endpoint) = live {
             tolerate_unavailable(archive.enable_live(endpoint).await)?;
         }
+        for target in targets.targets {
+            archive.add_target(target).await?;
+        }
         let archive = Arc::new(archive);
         let models = live
             .map(crate::models::ModelBrowser::new)
             .transpose()
             .map_err(|_| life::Error::Invalid("invalid discovery endpoint"))?
             .map(Arc::new);
+        let target_browsers = archive
+            .targets
+            .iter()
+            .map(|(id, (target, _))| {
+                crate::models::ModelBrowser::new(&target.endpoint)
+                    .map(|b| (id.clone(), Arc::new(b)))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()
+            .map_err(|_| life::Error::Invalid("invalid discovery endpoint"))?;
         let registrations = crate::registrations::Registry::new(ledger.clone(), models.clone());
         registrations.check().await.map_err(|error| {
             life::Error::Invalid(if error.code() == "model_registry_corrupt" {
@@ -128,6 +173,7 @@ impl Daemon {
                 reads: Arc::new(Semaphore::new(4)),
                 test_supervision,
                 models,
+                target_browsers,
                 registrations,
                 catalog,
             }),
@@ -140,6 +186,23 @@ impl Daemon {
                 .map_err(|_| life::Error::Uncertain)?;
         }
         Ok(this)
+    }
+    /// The metadata browser of an explicit target. Named targets refuse a
+    /// request without one; otherwise the untargeted routes answer (`None`).
+    fn browser_on(&self, target: Option<&str>) -> Result<Option<Arc<crate::models::ModelBrowser>>> {
+        match target {
+            Some(id) => self
+                .inner
+                .target_browsers
+                .get(id)
+                .cloned()
+                .map(Some)
+                .ok_or_else(|| ApiError::new("invalid_parameters")),
+            None if !self.inner.target_browsers.is_empty() => {
+                Err(ApiError::new("invalid_parameters"))
+            }
+            None => Ok(None),
+        }
     }
     pub fn coordinator(&self) -> &Coordinator {
         &self.inner.coordinator
@@ -352,7 +415,10 @@ fn lifecycle(error: life::Error) -> ApiError {
             ApiError::new("unsupported_capability")
         }
         error @ life::Error::Invalid(
-            "live model unavailable"
+            "inference target required"
+            | "unknown inference target"
+            | "target requires live execution"
+            | "live model unavailable"
             | "selected model unsupported"
             | "selected model identity changed"
             | "execution unavailable"
@@ -397,6 +463,48 @@ fn historical(
 }
 #[async_trait]
 impl Application for Daemon {
+    async fn inference_targets(&self) -> Result<InferenceTargets> {
+        Ok(InferenceTargets {
+            schema_version: 1,
+            targets: self
+                .inner
+                .archive
+                .targets
+                .values()
+                .map(|(t, _)| t.clone())
+                .collect(),
+        })
+    }
+    async fn model_inventory_on(&self, target: Option<String>) -> Result<ModelInventory> {
+        match self.browser_on(target.as_deref())? {
+            Some(browser) => browser.inventory().await,
+            None => self.model_inventory().await,
+        }
+    }
+    async fn inspect_model_on(
+        &self,
+        target: Option<String>,
+        request: ModelInspectRequest,
+    ) -> Result<ModelInspection> {
+        match self.browser_on(target.as_deref())? {
+            Some(browser) => browser.inspect(request).await,
+            None => self.inspect_model(request).await,
+        }
+    }
+    async fn model_review_on(
+        &self,
+        target: Option<String>,
+        request: ModelInspectRequest,
+    ) -> Result<ModelRegistrationReview> {
+        match self.browser_on(target.as_deref())? {
+            Some(browser) => {
+                browser
+                    .review(&self.capabilities().service_id, request)
+                    .await
+            }
+            None => self.model_review(request).await,
+        }
+    }
     async fn model_review(&self, request: ModelInspectRequest) -> Result<ModelRegistrationReview> {
         self.inner.registrations.review(request).await
     }
@@ -411,7 +519,19 @@ impl Application for Daemon {
         key: IdempotencyKey,
         request: ModelRegistrationRequest,
     ) -> Result<ModelRegistrationResponse> {
-        self.inner.registrations.register(key, request).await
+        let service = self.capabilities().service_id;
+        let browsers = self
+            .inner
+            .target_browsers
+            .values()
+            .cloned()
+            .chain(self.inner.models.clone());
+        let browser = registration_browser(browsers, &service, &request.endpoint_binding);
+        self.inner
+            .registrations
+            .with_browser(browser)
+            .register(key, request)
+            .await
     }
     async fn model_registration_lookup(
         &self,
@@ -445,7 +565,8 @@ impl Application for Daemon {
             service_id: ServiceId::new(self.inner.coordinator.ledger().service_id().as_str())
                 .unwrap(),
             service_build: env!("CARGO_PKG_VERSION").into(),
-            backend: if self.inner.archive.live.is_some() {
+            backend: if self.inner.archive.live.is_some() || !self.inner.archive.targets.is_empty()
+            {
                 projection::docker_and_live_backend()
             } else if self.inner.archive.docker.is_some() {
                 projection::docker_backend()
@@ -459,24 +580,22 @@ impl Application for Daemon {
                     .docker_options
                     .is_some()
                     .then_some(RunMode::ScriptedSmoke),
-                self.inner
-                    .archive
-                    .live_endpoint
-                    .is_some()
-                    .then_some(RunMode::LiveSmoke),
+                (self.inner.archive.live_endpoint.is_some()
+                    || !self.inner.archive.targets.is_empty())
+                .then_some(RunMode::LiveSmoke),
                 Some(RunMode::Experiment),
             ]
             .into_iter()
             .flatten()
             .collect(),
-            features: [self
-                .inner
-                .models
-                .as_ref()
-                .map(|_| MODEL_DISCOVERY.to_owned())]
+            features: [
+                (self.inner.models.is_some() || !self.inner.target_browsers.is_empty())
+                    .then(|| MODEL_DISCOVERY.to_owned()),
+            ]
             .into_iter()
             .flatten()
             .chain(vec![
+                INFERENCE_TARGETS.into(),
                 MODEL_REGISTRATION.into(),
                 RECIPE_AUTHORING.into(),
                 RECIPE_HARNESS_SELECTION.into(),
@@ -500,7 +619,8 @@ impl Application for Daemon {
             ])
             .collect(),
             unsupported_adapters: [
-                self.inner.archive.live.is_none().then(|| "ollama".into()),
+                (self.inner.archive.live.is_none() && self.inner.archive.targets.is_empty())
+                    .then(|| "ollama".into()),
                 self.inner.archive.docker.is_none().then(|| "docker".into()),
                 Some("restart_and_worker_loss_recovery".into()),
             ]
@@ -531,7 +651,10 @@ impl Application for Daemon {
                 },
             ));
         }
-        if self.inner.archive.live_endpoint.is_some() || self.inner.archive.live.is_some() {
+        if self.inner.archive.live_endpoint.is_some()
+            || self.inner.archive.live.is_some()
+            || !self.inner.archive.targets.is_empty()
+        {
             recipes.push((
                 playtime_runner::docker::LIVE_RECIPE.into(),
                 Recipe {
@@ -584,6 +707,11 @@ impl Application for Daemon {
         self.inner.catalog.head(&id).await
     }
     async fn preview(&self, recipe: RecipeId, request: PreviewRequest) -> Result<Preview> {
+        if request.target.is_some()
+            && !matches!(request.mode, RunMode::LiveSmoke | RunMode::Experiment)
+        {
+            return Err(ApiError::new("invalid_parameters"));
+        }
         if recipe.as_str() == "two-session" {
             return if request.mode == RunMode::Simulation {
                 Ok(self.inner.archive.preview())
@@ -604,7 +732,7 @@ impl Application for Daemon {
         let archive = self
             .inner
             .archive
-            .execution(request.mode)
+            .execution_on(request.mode, request.target.as_deref())
             .await
             .map_err(execution_unavailable)?;
         match request.mode {
@@ -632,6 +760,7 @@ impl Application for Daemon {
                     this.inner.coordinator.ledger().service_id().clone(),
                     key.to_string(),
                     life::AdmissionRequest {
+                        target: request.target,
                         recipe_id: request.recipe_id.to_string(),
                         mode: request.mode,
                         preview_revision: request.preview_revision.to_string(),
@@ -879,6 +1008,23 @@ impl Application for Daemon {
 #[cfg(test)]
 mod tests;
 
+/// The configured machine a reviewed registration request is bound to. A
+/// binding that no configured machine has still goes to one of them, which
+/// refuses it as changed metadata before contacting its host, as a single
+/// endpoint always has. With no machine configured the backend is unavailable.
+fn registration_browser(
+    browsers: impl IntoIterator<Item = Arc<crate::models::ModelBrowser>>,
+    service: &ServiceId,
+    binding: &str,
+) -> Option<Arc<crate::models::ModelBrowser>> {
+    let browsers: Vec<_> = browsers.into_iter().collect();
+    browsers
+        .iter()
+        .find(|b| b.binding(service) == binding)
+        .or(browsers.first())
+        .cloned()
+}
+
 fn tolerate_unavailable(result: life::Result<()>) -> life::Result<()> {
     match result {
         Err(life::Error::Invalid(
@@ -900,6 +1046,9 @@ fn execution_unavailable(error: life::Error) -> ApiError {
         life::Error::Invalid("unsupported recipe or mode") => {
             return ApiError::new("unsupported_capability");
         }
+        life::Error::Invalid("inference target required") => "target_required",
+        life::Error::Invalid("unknown inference target") => "target_unknown",
+        life::Error::Invalid("target requires live execution") => "target_requires_live_execution",
         life::Error::Invalid("live model unavailable") => "model_unavailable",
         life::Error::Invalid("selected model unsupported") => "selected_model_unsupported",
         life::Error::Invalid("selected model identity changed") => {

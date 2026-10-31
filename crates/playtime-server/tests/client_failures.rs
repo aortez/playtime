@@ -152,6 +152,7 @@ async fn reply(State(state): State<Arc<StateData>>, request: Request) -> Respons
                 .admit(
                     IdempotencyKey::new("wrong-run").unwrap(),
                     LaunchRequest {
+                        target: None,
                         recipe_id: RecipeId::new("fixture-example").unwrap(),
                         mode: playtime_core::RunMode::Simulation,
                         preview_revision: PreviewRevision::new("fixture-v1").unwrap(),
@@ -415,6 +416,7 @@ async fn ambiguous_mutations_never_retry_in_the_transport() {
     let pending = client
         .prepare_launch(
             LaunchRequest {
+                target: None,
                 recipe_id: RecipeId::new("example").unwrap(),
                 mode: playtime_core::RunMode::Simulation,
                 preview_revision: PreviewRevision::new("v1").unwrap(),
