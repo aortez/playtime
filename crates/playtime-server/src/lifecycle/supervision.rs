@@ -7,10 +7,21 @@ enum Evidence {
 }
 
 /// The daemon stops a worker without a cancel only in `finish_normal`, after
-/// confirming normal completion, and that records Terminal next. Any other
-/// stop means the worker is gone and the daemon stops monitoring it.
+/// confirming normal completion, or in `finish_failed`, after the worker
+/// reported a failed execution. Each records its outcome next. Any other stop
+/// means the worker is gone and the daemon stops monitoring it.
 pub(super) fn normal_stop(record: &Admission) -> bool {
     record.stop_accepted.is_some() && record.cancel_requested.is_none()
+}
+
+/// The worker reported that its execution ended without a normal outcome, and
+/// it has no publication pending. A cancellation stops its worker on its own.
+pub(super) fn reported_failure(record: &Admission) -> bool {
+    record.cancel_requested.is_none()
+        && record
+            .last_status
+            .as_ref()
+            .is_some_and(|s| s.failure.is_some() && !s.publication_pending)
 }
 
 impl Inner {

@@ -23,6 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+const TWO_SESSION: &[u8] = include_bytes!("../../playtime-engine/tests/fixtures/two-session.json");
 
 fn copy(source: &Path, target: &Path) -> Result<()> {
     create_private_dir(target)?;
@@ -60,6 +61,9 @@ impl Drop for Case {
 }
 impl Case {
     fn new(bundle: &Path, forge_build: bool) -> Result<Self> {
+        Self::with_scenario(bundle, forge_build, TWO_SESSION)
+    }
+    fn with_scenario(bundle: &Path, forge_build: bool, scenario: &[u8]) -> Result<Self> {
         let root = PathBuf::from(format!("/tmp/pt-w-{}", &random_id()?.as_str()[..12]));
         create_private_dir(&root)?;
         for dir in ["runs", ".playtime", "private", "executables"] {
@@ -87,7 +91,7 @@ impl Case {
         let prepared = VerifiedBundle::open(&original)?.prepare_recoverable(
             &archive,
             run_id.clone(),
-            include_bytes!("../../playtime-engine/tests/fixtures/two-session.json"),
+            scenario,
         )?;
         fs::remove_dir_all(original)?;
         // Materialize only from independently verifiable archived bytes.
@@ -285,6 +289,46 @@ async fn waiting_and_handoff(bundle: &Path) -> Result<()> {
     );
     Ok(())
 }
+/// A failed execution reports why, once and unchanged, and its worker keeps
+/// serving status until the daemon stops it (#162).
+async fn failed_execution(bundle: &Path) -> Result<()> {
+    let mut scenario: serde_json::Value = serde_json::from_slice(TWO_SESSION)?;
+    scenario["fail_record_sequence"] = 3.into();
+    let mut case = Case::with_scenario(bundle, false, &serde_json::to_vec(&scenario)?)?;
+    let client = case.start()?;
+    case.ready(&client).await?;
+    case.grant().authorize()?;
+    // Record 3 fails within Begin's wait for initial records, so Begin's own
+    // reply may already carry the failure.
+    let begun = client.request(Command::Begin).await?.status;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let failed = loop {
+        let status = client.request(Command::Status).await?.status;
+        if !status.publication_pending {
+            break status;
+        }
+        if Instant::now() > deadline {
+            return Err("controller completion deadline".into());
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(failed.state, WorkerState::Reconciling);
+    let failure = failed.failure.clone().ok_or("no failure reported")?;
+    assert!(worker::valid_failure(&failure), "{failure}");
+    assert!(
+        failure.contains("scripted observation publication failure"),
+        "{failure}"
+    );
+    if let Some(early) = &begun.failure {
+        assert_eq!(early, &failure);
+    }
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let later = client.request(Command::Status).await?.status;
+    assert_eq!((later.state, later.failure), (failed.state, failed.failure));
+    assert!(case.child.as_mut().unwrap().try_wait()?.is_none());
+    println!("PASS failed execution reports its cause and keeps serving: {failure}");
+    Ok(())
+}
 async fn cancelled_or_revoked(bundle: &Path, cancel: bool) -> Result<()> {
     let mut case = Case::new(bundle, false)?;
     let client = case.start()?;
@@ -462,11 +506,7 @@ fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
     let archive = case.root.join("older-archive");
     assert!(
         VerifiedBundle::open(&path)?
-            .prepare_recoverable(
-                &archive,
-                RunId::new("older")?,
-                include_bytes!("../../playtime-engine/tests/fixtures/two-session.json")
-            )
+            .prepare_recoverable(&archive, RunId::new("older")?, TWO_SESSION)
             .is_err()
     );
     assert!(!archive.exists());
@@ -488,11 +528,7 @@ fn older_bundle_cannot_opt_in(bundle: &Path) -> Result<()> {
     );
     assert!(!archive.exists());
     // The older capability set remains usable for ordinary simulation.
-    VerifiedBundle::open(&path)?.prepare(
-        &archive,
-        RunId::new("older")?,
-        include_bytes!("../../playtime-engine/tests/fixtures/two-session.json"),
-    )?;
+    VerifiedBundle::open(&path)?.prepare(&archive, RunId::new("older")?, TWO_SESSION)?;
     println!("PASS older simulation bundle cannot opt in to recovery or Docker");
     Ok(())
 }
@@ -739,6 +775,7 @@ async fn main() -> Result<()> {
     let bundle = Path::new(&args[1]);
     tamper(bundle)?;
     waiting_and_handoff(bundle).await?;
+    failed_execution(bundle).await?;
     cancelled_or_revoked(bundle, true).await?;
     cancelled_or_revoked(bundle, false).await?;
     forged_embedded_identity(bundle).await?;

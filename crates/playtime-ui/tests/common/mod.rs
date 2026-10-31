@@ -236,6 +236,7 @@ pub async fn long_recipe_runs() -> Workbench {
         run.orchestration = Orchestration {
             state,
             reason: reason.map(str::to_owned),
+            failure: None,
         };
         run
     })

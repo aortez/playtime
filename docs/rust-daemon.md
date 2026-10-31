@@ -163,6 +163,15 @@ final guarded transaction rechecks the original owner and confirmed boundary,
 then releases the active slot. Pending, uncertain and interrupted runs remain
 reserved until automatic recovery exists or the operator releases them.
 
+A worker that reports a failed execution (status `failure`, see
+[worker lifecycle](rust-worker-lifecycle.md)) has nothing left to publish once
+its publication settles, so the daemon stops its unit then rather than at
+`RuntimeMaxSec`, freeing the run and live-model locks. A cancelled run is
+excluded; its own stop path handles it. Once the unit is observed stopped, the
+run records Reconciling with reason `execution_failed` and stays reserved until
+an operator releases it. The run's `orchestration.failure` carries the worker's
+text, and still does after a release.
+
 `playtime runs release RUN_ID --reason TEXT` is that explicit operator path. The
 daemon refuses unless the run is not Terminal and, if a worker start was ever
 submitted, a fresh supervisor observation shows the original invocation stopped

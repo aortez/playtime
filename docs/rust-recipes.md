@@ -166,7 +166,9 @@ outside version control), showed:
 
 Cancellation requests the worker unit's stop. Even when the worker writes a final
 checkpoint, the daemon does not treat cancellation as normal confirmed completion;
-the run can remain `reconciling` (`worker_unavailable`). An operator can release
+the run can remain `reconciling` (`worker_unavailable`). A run whose worker
+reports a failed execution is stopped once its publication settles and waits as
+`reconciling` (`execution_failed`). An operator can release
 it after verified worker termination and resource cleanup; see
 [daemon completion and release](rust-daemon.md#results-and-safe-completion).
 

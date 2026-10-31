@@ -650,6 +650,7 @@ async fn released_and_stranded_runs_say_so_and_offer_no_cancel() {
     stranded.orchestration = Orchestration {
         state: OrchestrationState::Reconciling,
         reason: Some("worker_unavailable".into()),
+        failure: None,
     };
     let prepared = prepare_run(stranded.clone());
     assert!(
@@ -689,6 +690,7 @@ async fn released_and_stranded_runs_say_so_and_offer_no_cancel() {
     released.orchestration = Orchestration {
         state: OrchestrationState::Terminal,
         reason: Some("operator_released".into()),
+        failure: None,
     };
     let summary = prepare_run(released.clone()).summary;
     assert!(
@@ -702,12 +704,44 @@ async fn released_and_stranded_runs_say_so_and_offer_no_cancel() {
 }
 
 #[tokio::test]
+async fn a_failed_execution_names_its_cause_and_needs_release() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    let mut app = common::demo(false).await;
+    app.model.content = None;
+    let cause = "retired failed publication 1117..1126 (10 events, 54966 retained bytes); no retry";
+    let mut failed = app.model.run.as_ref().unwrap().value.clone();
+    failed.orchestration = Orchestration {
+        state: OrchestrationState::Reconciling,
+        reason: Some("execution_failed".into()),
+        failure: Some(cause.into()),
+    };
+    let prepared = prepare_run(failed.clone());
+    assert!(
+        prepared.summary[0].starts_with("Reconciling · execution failed · "),
+        "{}",
+        prepared.summary[0]
+    );
+    assert_eq!(prepared.summary[1], format!("Worker failure: {cause}"));
+    app.model.runs = vec![failed.clone()];
+    app.model.run = Some(prepared);
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut playtime_ui::ui::Workbench| app.draw(ui), app);
+    h.run();
+    let run = failed.run_id.as_str().to_owned();
+    h.get_by_label(&format!("Run {run} · Reconciling · needs release"));
+    h.get_by_label_contains(&format!("playtime runs release {run} --reason TEXT"));
+    h.get_by_label_contains(&format!("Worker failure: {cause}"));
+}
+
+#[tokio::test]
 async fn a_busy_refusal_names_the_run_holding_the_slot() {
     let mut app = common::demo(true).await;
     let mut holder = app.model.run.as_ref().unwrap().value.clone();
     holder.orchestration = Orchestration {
         state: OrchestrationState::Reconciling,
         reason: Some("worker_unavailable".into()),
+        failure: None,
     };
     app.model.runs = vec![holder.clone()];
     app.model.saved = Some(unresolved_receipt(&app, "refused-busy"));

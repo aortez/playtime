@@ -121,6 +121,8 @@ fn base(record: &Admission) -> RunView {
                     .unwrap()
                     .to_owned()
             }),
+            // Verified worker evidence; it stays after a release to say why.
+            failure: record.last_status.as_ref().and_then(|s| s.failure.clone()),
         },
         controller_phase: None,
         outcome: None,

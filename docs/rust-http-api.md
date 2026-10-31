@@ -203,7 +203,9 @@ The application adapter must implement these authority boundaries:
   Adapters without it return `unsupported_capability`.
 - `run` supplies status separately from evidence and obtains the frontier and
   both anchors as one read. Unknown usage remains `None` or a typed unknown
-  reservation; it is never synthesized as zero.
+  reservation; it is never synthesized as zero. `orchestration.failure` is the
+  worker's own bounded account of an execution that ended without a normal
+  outcome, taken from its verified status; it is absent when the worker gave none.
 - `history` checks both identity and the exact claimed historical prefix against
   trusted committed evidence. `follow=false` pins that prefix. `follow=true`
   validates the old prefix before advancing to newer writer-confirmed evidence.

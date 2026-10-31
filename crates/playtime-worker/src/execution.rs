@@ -1,16 +1,17 @@
 use crate::{Error, PrivateDirectory, Result, bundle::VerifiedBundle};
 use playtime_core::UtcTime;
 use playtime_engine::simulation::Scenario;
-use playtime_protocol::worker::{Receipt, Status, WorkerKind, WorkerState};
+use playtime_protocol::worker::{self, Receipt, Status, WorkerKind, WorkerState};
 use playtime_runner::{
     Cancellation, DriverClock, DriverOptions, LatestReceipt, PreparedExecution, PreparedSimulation,
+    RunReport,
 };
 use playtime_storage::{ArchiveReader, CommittedFrontier, StorageLimits, content_ref};
 use playtime_worker_control::{Bootstrap, PreparedExecution as ControlExecution, boot_ms};
 use std::{
     path::Path,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -21,7 +22,8 @@ pub struct Execution {
     latest: LatestReceipt,
     cancel: Cancellation,
     finished: Arc<AtomicBool>,
-    failed: Arc<AtomicBool>,
+    /// Why the execution ended without a normal committed outcome, once it has.
+    failure: Arc<OnceLock<String>>,
     pending: Arc<AtomicBool>,
     wall_ms: u64,
     work_deadline: Arc<AtomicU64>,
@@ -123,7 +125,7 @@ impl Execution {
             latest,
             cancel: Cancellation::default(),
             finished: Arc::default(),
-            failed: Arc::default(),
+            failure: Arc::default(),
             pending: Arc::default(),
             wall_ms: bootstrap.wall_ms,
             work_deadline: Arc::default(),
@@ -162,9 +164,9 @@ impl ControlExecution for Execution {
             cancellation: self.cancel.clone(),
             ..DriverOptions::default()
         };
-        let (finished, failed, pending) = (
+        let (finished, failure, pending) = (
             self.finished.clone(),
-            self.failed.clone(),
+            self.failure.clone(),
             self.pending.clone(),
         );
         pending.store(true, Ordering::Release);
@@ -172,39 +174,34 @@ impl ControlExecution for Execution {
         // replies and retains a late publication until its operation settles.
         std::thread::spawn(move || {
             let result = owned.execute(&mut WorkClock::new(started_boot_ms), options);
-            let success = match result {
-                Ok(report) => {
+            let failed = match result {
+                Ok(mut report) => {
                     for diagnostic in &report.diagnostics {
                         eprintln!("worker execution: {diagnostic}");
                     }
-                    let mut terminal = report.terminal_committed
-                        && report.result.as_ref().is_some_and(|result| {
-                            !matches!(
-                                result.reason,
-                                playtime_core::StopReason::InfrastructureFailure
-                                    | playtime_core::StopReason::Interrupted
-                            ) && result.cleanup
-                                == playtime_protocol::events::CleanupOutcome::Complete
-                        });
-                    if let Some(publication) = report.pending_publication {
+                    let mut published = true;
+                    if let Some(publication) = report.pending_publication.take() {
                         loop {
                             if let Some(result) = publication.poll() {
                                 // A late receipt preserves evidence, but does not
                                 // turn an interrupted driver into completed work.
-                                terminal &= result.is_ok();
+                                published = result.is_ok();
                                 break;
                             }
                             std::thread::sleep(Duration::from_millis(5));
                         }
                     }
-                    terminal
+                    shortfall(&report, published)
                 }
                 Err(error) => {
                     eprintln!("worker execution failed: {error}");
-                    false
+                    Some(format!("worker execution failed: {error}"))
                 }
             };
-            failed.store(!success, Ordering::Release);
+            // Set before publication settles, so a settled status carries it.
+            if let Some(text) = failed {
+                let _ = failure.set(worker::failure_text(&text));
+            }
             pending.store(false, Ordering::Release);
             finished.store(true, Ordering::Release);
         });
@@ -231,8 +228,9 @@ impl ControlExecution for Execution {
         // cannot accidentally pair completion with a pre-completion sample.
         status.publication_pending = self.pending.load(Ordering::Acquire);
         status.latest_receipt = self.prepared_receipt();
-        if self.failed.load(Ordering::Acquire) {
+        if let Some(failure) = self.failure.get() {
             status.state = WorkerState::Reconciling;
+            status.failure = Some(failure.clone());
         } else if status.state == WorkerState::Reconciling
             && status.work_started_boot_ms.is_some()
             && status
@@ -245,6 +243,44 @@ impl ControlExecution for Execution {
     }
 }
 
+/// Why a finished execution falls short of a normal committed outcome, or
+/// None when it doesn't. The driver's own diagnostics come first.
+fn shortfall(report: &RunReport, published: bool) -> Option<String> {
+    let reason = report.result.as_ref().map(|result| &result.reason);
+    let cleanup = report.result.as_ref().map(|result| &result.cleanup);
+    let normal = report.terminal_committed
+        && published
+        && !matches!(
+            reason,
+            None | Some(
+                playtime_core::StopReason::InfrastructureFailure
+                    | playtime_core::StopReason::Interrupted
+            )
+        )
+        && cleanup == Some(&playtime_protocol::events::CleanupOutcome::Complete);
+    if normal {
+        return None;
+    }
+    if !report.diagnostics.is_empty() {
+        return Some(report.diagnostics.join("; "));
+    }
+    // The same snake_case name the archive records.
+    let name = |reason: &playtime_core::StopReason| {
+        serde_json::to_value(reason)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_else(|| format!("{reason:?}"))
+    };
+    Some(match (reason, cleanup) {
+        _ if !published => "the late publication failed".into(),
+        (None, _) => "the controller recorded no outcome".into(),
+        _ if !report.terminal_committed => "the outcome was not committed".into(),
+        (Some(reason), Some(playtime_protocol::events::CleanupOutcome::Complete)) => {
+            format!("stopped with {}", name(reason))
+        }
+        (Some(reason), _) => format!("stopped with {} and incomplete cleanup", name(reason)),
+    })
+}
 struct WorkClock {
     first: std::cell::Cell<Option<u64>>,
 }

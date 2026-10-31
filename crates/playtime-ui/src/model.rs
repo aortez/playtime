@@ -1313,7 +1313,7 @@ pub fn awaiting_release(view: &RunView) -> bool {
     view.orchestration.state == OrchestrationState::Reconciling
         && matches!(
             view.orchestration.reason.as_deref(),
-            Some("worker_unavailable" | "coordinator_restarted")
+            Some("worker_unavailable" | "coordinator_restarted" | "execution_failed")
         )
 }
 

@@ -182,6 +182,11 @@ dropping a coordinator; owned operations retain exclusion until they settle.
 Status distinguishes `prepared`, `running`, `cancelled_before_begin`, `cancelling`
 and `reconciling`; it separately carries an optional compact returned receipt,
 publication-pending flag, frozen wall allocation and original work-clock start.
+A worker whose execution ended without a normal committed outcome reports
+`reconciling` with `failure`: printable text of at most 1 KiB saying why, set
+once before its publication settles and never changed. The coordinator accepts it
+only from a worker that began work, and treats a malformed, changed or withdrawn
+failure as uncertain control. Older workers omit the field.
 A prepared zero-prefix receipt cannot establish running. Bodies and event pages
 never travel on this control channel. The fake archive port verifies exact prefix
 bytes and refuses shorter or conflicting confirmations.
@@ -263,7 +268,10 @@ worker stops its own work, publishes, and keeps serving receipts until the
 coordinator stops it. Without the margin, systemd stopped the unit at that same
 moment, and the coordinator, which hadn't requested the stop, left the run
 `reconciling`. systemd's limit now stops only a worker that hasn't finished
-within the margin. Effective enforcement properties are checked on observation.
+within the margin. A worker that reports a failure has nothing left to publish
+once its publication settles, so the coordinator stops it then instead of at
+the limit, which frees its locks; the run stays reserved as `reconciling` with
+reason `execution_failed` until an operator releases it (#162). Effective enforcement properties are checked on observation.
 The worker notification API sends only READY, never timeout extensions. D-Bus
 operations have five-second bounds; timed-out filesystem work retains one of four
 supervisor I/O permits until it settles.
