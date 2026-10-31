@@ -848,3 +848,11 @@ show a call card or a run header were regenerated for the new status and
 header lines, and the synthetic continuous scene now records a context
 capacity, a compaction configuration, context bounds and token counts, with
 its compaction records starting at sequence 7.
+
+## Target refusals exit as rejections (2026-10-30)
+
+A CLI command refused with `execution_unavailable` whose reasons are all target
+choices (`target_required`, `target_unknown`, `target_requires_live_execution`)
+now exits 5, a rejected operation, instead of 3; a retry can't clear it. Other
+execution outages still exit 3. The HTTP responses, the schema golden and the
+behavioral fixtures are unchanged.

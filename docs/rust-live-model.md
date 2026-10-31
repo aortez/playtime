@@ -130,8 +130,11 @@ It then requires agent completion, two checkpoints, `result.txt` containing
 `persistence-ok`, a 32×32 PNG, non-empty mementos, a fresh second conversation
 that carries the delivered memento, a copied archive, and exact Docker cleanup.
 Every live response must follow streamed chunks, and any response that generated
-for 1.5 seconds or more must show its first chunk at least 300 ms earlier. Batches
-commit every 250 ms, so that chunk was readable while the request ran. Every
+for 1.5 seconds or more must show its first thinking or content at least 300 ms
+earlier. Batches commit every 250 ms, so that text was readable while the request
+ran. A long response holding only tool calls is counted but exempt: Ollama sends a
+parsed tool call whole, so there is nothing to show early. The smoke's 74-token
+tool call takes 1.52 s on the Framework and about 0.4 s on the RTX 4090. Every
 request must record timing, with no contention flagged.
 Finally it launches the same recipe from the workbench and records that run's
 outcome. Failed attempts are kept as records; the gate never loops. Set

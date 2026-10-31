@@ -35,6 +35,7 @@ impl From<Error> for Failure {
                 | "ownership_unresolved"
                 | "request_timeout"
                 | "too_many_observers" => 3,
+                "execution_unavailable" if target_choice(&response.details) => 5,
                 _ if matches!(status, 401 | 403) => 4,
                 _ if *status >= 500 => 3,
                 _ => 5,
@@ -70,6 +71,24 @@ impl From<Error> for Failure {
         }
         failure
     }
+}
+/// A missing, unknown or misapplied target is the caller's choice to correct,
+/// not an outage that a retry could clear.
+fn target_choice(details: &serde_json::Map<String, Value>) -> bool {
+    details
+        .get("reasons")
+        .and_then(Value::as_array)
+        .is_some_and(|reasons| {
+            !reasons.is_empty()
+                && reasons.iter().all(|reason| {
+                    matches!(
+                        reason.as_str(),
+                        Some(
+                            "target_required" | "target_unknown" | "target_requires_live_execution"
+                        )
+                    )
+                })
+        })
 }
 impl From<StateError> for Failure {
     fn from(e: StateError) -> Self {
@@ -423,5 +442,28 @@ mod tests {
             text(&value),
             "execution_unavailable: Execution is unavailable\n  - target_required"
         );
+    }
+    #[test]
+    fn target_choices_are_rejections_and_outages_stay_transient() {
+        let exit = |reasons: Value| {
+            let response = serde_json::from_value(json!({"code":"execution_unavailable",
+                "message":"Execution is unavailable","details":{"reasons":reasons}}))
+            .unwrap();
+            Failure::from(Error::Api {
+                status: 503,
+                response,
+            })
+            .exit
+        };
+        for reason in [
+            "target_required",
+            "target_unknown",
+            "target_requires_live_execution",
+        ] {
+            assert_eq!(exit(json!([reason])), 5, "{reason}");
+        }
+        assert_eq!(exit(json!(["model_unavailable"])), 3);
+        assert_eq!(exit(json!(["target_unknown", "workshop_unavailable"])), 3);
+        assert_eq!(exit(json!([])), 3);
     }
 }

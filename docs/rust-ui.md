@@ -497,8 +497,9 @@ model size, quantization, context, reasoning and sampling settings, Ollama versi
 host and digest. Missing settings remain explicitly unrecorded. Recipe titles are
 user-authored labels and may retain an earlier model's name; hovering shows the
 full title. Model details never come from those titles or today's model inventory.
-Selection and connection generations reject stale reads. Read failures remain
-visible in Details; reconnecting retries them.
+Selection and connection generations reject stale reads, and a newer read or a
+reconnect cancels the one in flight, which frees its preview permit. Read
+failures remain visible in Details; reconnecting retries them.
 
 The `archived-model` wide/narrow snapshots use synthetic configuration. The ignored
 `native_archived_model_readback` test can inspect an existing run using
