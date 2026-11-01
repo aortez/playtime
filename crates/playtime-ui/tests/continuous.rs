@@ -160,6 +160,25 @@ fn rejections_show_their_reason_and_detail() {
             ),
         ]
     );
+    // Either rejection stops the run, so both lead the jump list.
+    let mut t = Transcript::default();
+    for e in scene::rejected_events() {
+        t.apply(e, None).unwrap();
+    }
+    assert_eq!(
+        t.jumps(0, true)
+            .items
+            .into_iter()
+            .map(|jump| (jump.sequence, jump.label))
+            .collect::<Vec<_>>(),
+        [
+            (4, "0:04 · Compaction rejected".into()),
+            (
+                3,
+                "0:03 · Tool calls rejected: invalid completion · call 1".into()
+            ),
+        ]
+    );
 }
 
 /// The contract fixture's completed run, as the header tests use it.
@@ -688,4 +707,152 @@ fn readback_says_when_the_model_cannot_end_the_run() {
     assert!(!playtime_ui::harness::lines(&view).iter().any(|l| l == note));
     view.compaction.as_mut().unwrap().allow_finish_run = false;
     assert_eq!(playtime_ui::harness::lines(&view).last().unwrap(), note);
+}
+
+#[tokio::test]
+async fn read_in_full_pages_a_long_response_in_the_inspector() {
+    use playtime_ui::{
+        model::{Action, Data, Reply, Tag},
+        transcript::{PAGE_BYTES, TextRef, thousands},
+    };
+    let mut app = common::demo(false).await;
+    app.model.content = None;
+    let mut t = Transcript::default();
+    for e in scene::long_response_events() {
+        t.apply(e, None).unwrap();
+    }
+    app.model.window = t.window(View::Readable, 0, 64);
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    let total = scene::long_text().len();
+    h.get_by_label("Excerpt of 26.0 KiB");
+    h.get_by_label("Read Model response 2").click();
+    h.run();
+    let asked = |h: &Harness<'_, Workbench>| {
+        h.state()
+            .model
+            .commands
+            .iter()
+            .rev()
+            .find_map(|c| match c.action {
+                Action::Text(text, offset) => Some((text, offset)),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (text, offset) = asked(&h);
+    assert_eq!((text.bytes, offset), (total, 0));
+    h.get_by_label("Call 1 · Work · Model response");
+    h.get_by_label("Loading text…");
+    // The window task answers from the index, and only the latest page
+    // request's answer applies.
+    let answer = |h: &mut Harness<'_, Workbench>, tag: Tag, text: TextRef, offset| {
+        let model = &mut h.state_mut().model;
+        model.apply(Reply {
+            tag,
+            run: model.selected.clone(),
+            data: Data::Text(text, t.text(text, offset).unwrap()),
+        });
+        h.run();
+    };
+    let first = h.state().model.tag;
+    answer(&mut h, first, text, 0);
+    let end = t.text(text, 0).unwrap().text.len();
+    h.get_by_label(&format!(
+        "Showing bytes 1–{} of {}",
+        thousands(end as u64),
+        thousands(total as u64)
+    ));
+    h.get_by_label("Next text page").click();
+    h.run();
+    assert_eq!(asked(&h), (text, end));
+    answer(&mut h, first, text, 0);
+    let page = |h: &Harness<'_, Workbench>| {
+        h.state()
+            .model
+            .reading
+            .as_ref()
+            .and_then(|r| r.page.as_ref())
+            .map(|p| p.start)
+    };
+    assert_eq!(page(&h), Some(0));
+    let tag = h.state().model.tag;
+    answer(&mut h, tag, text, end);
+    h.get_by_label(&format!(
+        "Showing bytes {}–{} of {}",
+        thousands(end as u64 + 1),
+        thousands(total as u64),
+        thousands(total as u64)
+    ));
+    h.get_by_label("Previous text page").click();
+    h.run();
+    assert_eq!(asked(&h), (text, end.saturating_sub(PAGE_BYTES)));
+    h.get_by_label("Close text").click();
+    h.run();
+    assert!(h.state().model.reading.is_none());
+    assert!(h.query_by_label("Close text").is_none());
+}
+
+#[tokio::test]
+async fn the_inspector_keeps_to_its_share_of_each_frame_text() {
+    use playtime_ui::transcript::{INSPECTOR_TEXT_BYTES, inspector_page};
+    let mut app = common::demo(false).await;
+    // A source page and an open file's page would take 48 KiB of the frame's
+    // 64 KiB, before the timeline draws.
+    let text = scene::long_text();
+    app.model.window = Default::default();
+    app.model.selected_row = Some(0);
+    app.model.source = Some(inspector_page(&text, 0));
+    let content = app.model.content.as_mut().unwrap();
+    content.image = None;
+    content.source = Some(inspector_page(&text, 0));
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    assert!(h.state().metrics.text_bytes <= INSPECTOR_TEXT_BYTES);
+    h.get_by_label("Text viewport limit reached · inspect the next source page for continuation");
+}
+
+#[test]
+fn an_evicted_text_reloads_at_the_same_section() {
+    let mut t = Transcript::default();
+    let events = scene::long_response_events();
+    for e in events.clone() {
+        t.apply(e, None).unwrap();
+    }
+    let total = scene::long_text().len();
+    let text = t
+        .window(View::Readable, 0, 64)
+        .rows
+        .iter()
+        .flat_map(|r| r.texts.iter().flatten())
+        .copied()
+        .find(|text| text.bytes == total)
+        .unwrap();
+    let page = t.text(text, 0).unwrap();
+    // Later responses, each under the inline limit, push it out of the
+    // payload cache.
+    let filler = "x".repeat(200 << 10);
+    for call in 2..=60 {
+        t.apply(scene::response(call + 2, call, &filler), None)
+            .unwrap();
+    }
+    assert!(t.text(text, 0).is_none());
+    // A reload redelivers the record, which projects the same sections.
+    t.apply(events[2].clone(), None).unwrap();
+    let reloaded = t.text(text, 0).unwrap();
+    assert_eq!((reloaded.text, reloaded.total), (page.text, page.total));
+}
+
+#[test]
+fn proportional_text_draws_the_characters_models_write() {
+    let mut h = Harness::builder()
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), Workbench::default());
+    h.run();
+    assert!(h.ctx.fonts_mut(|fonts| {
+        fonts.has_glyphs(&egui::FontId::proportional(14.0), "\u{2011}\u{202f}→")
+    }));
 }

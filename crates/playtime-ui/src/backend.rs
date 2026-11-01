@@ -4,7 +4,7 @@ use crate::{
     media,
     model::*,
     progress,
-    transcript::{self, Transcript, View},
+    transcript::{self, TextRef, Transcript, View},
 };
 use playtime_client::{
     Client, Error, Observation, RetryPolicy,
@@ -386,7 +386,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     }
                     continue;
                 }
-                if matches!(command.action, Action::Window(..) | Action::Source(..) | Action::Sessions(..) | Action::Jumps(..) | Action::FindCall(..) | Action::Locate(..) | Action::CancelNavigation) {
+                if matches!(command.action, Action::Window(..) | Action::Source(..) | Action::Text(..) | Action::Sessions(..) | Action::Jumps(..) | Action::FindCall(..) | Action::Locate(..) | Action::CancelNavigation) {
                     if let Some((_, tx, _)) = &observer { tokio::select! { _ = stop.cancelled() => break, _ = tx.send(command) => () } }
                     continue;
                 }
@@ -491,11 +491,13 @@ pub fn prepare_run(value: RunView) -> RunViewData {
             ),
         );
     }
-    let source = transcript::source_page(&serde_json::to_string_pretty(&value).unwrap(), 0);
+    let json = serde_json::to_string_pretty(&value).unwrap();
+    let source = transcript::inspector_page(&json, 0);
     RunViewData {
         harness,
         value,
         summary,
+        json,
         source,
     }
 }
@@ -1092,9 +1094,12 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 notice.push_str(" · ");
                 notice.push_str(&detail);
             }
-            let incoming = transcript::excerpt(&incoming.unwrap_or_else(|e| e), 8192);
-            let outgoing = transcript::excerpt(&outgoing.unwrap_or_else(|e| e), 8192);
-            let evidence = transcript::excerpt(&evidence.unwrap_or_else(|e| e), 8192);
+            // The excerpts and a diff page fit the inspector's share of the
+            // frame's text; each source button pages the whole text.
+            let incoming = transcript::excerpt(&incoming.unwrap_or_else(|e| e), 4096);
+            let outgoing = transcript::excerpt(&outgoing.unwrap_or_else(|e| e), 4096);
+            let evidence = transcript::excerpt(&evidence.unwrap_or_else(|e| e), 4096);
+            let diff_page = transcript::inspector_page(&diff, 0);
             out.send(
                 tag,
                 Some(run),
@@ -1105,6 +1110,7 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                         outgoing,
                         evidence,
                         diff,
+                        diff_page,
                         notice,
                     },
                 ),
@@ -1789,7 +1795,12 @@ async fn observe(
                     Input::Reloaded(request, error) => {
                         reloading = false; dirty = true;
                         if let Some(error) = error { reload_failed = true; out.send(request.tag.unwrap_or(tag), Some(run.clone()), Data::Notice(error)).await; }
-                        else if let Some(tag) = request.tag && let Some(source) = index.raw(request.sequence, request.offset) { out.send(tag, Some(run.clone()), Data::Source(request.sequence, source)).await; }
+                        else if let Some(tag) = request.tag {
+                            match request.text {
+                                Some(text) => if let Some(page) = index.text(text, request.offset) { out.send(tag, Some(run.clone()), Data::Text(text, page)).await; },
+                                None => if let Some(source) = index.raw(request.sequence, request.offset) { out.send(tag, Some(run.clone()), Data::Source(request.sequence, source)).await; },
+                            }
+                        }
                     }
                     Input::Error(error) => return Err(error),
                     Input::End(end) => { out.send(tag, Some(run.clone()), Data::Notice(format!("Stream reconciled: {}; lifecycle and cleanup are shown separately", transcript::words(&end.status)))).await; }
@@ -1815,9 +1826,14 @@ async fn observe(
                         let sequence = sources.iter().copied().find(|seq| *seq >= requested).or_else(|| sources.last().copied());
                         if let Some(seq) = sequence {
                             if let Some(source) = index.raw(seq, offset) { out.send(command.tag, Some(run.clone()), Data::Source(seq, source)).await; }
-                            else { pending_source = Some(Reload { tag: Some(command.tag), sequence: seq, offset, cursor: index.cursor_for(seq).map(str::to_owned) }); }
+                            else { pending_source = Some(Reload { tag: Some(command.tag), sequence: seq, offset, cursor: index.cursor_for(seq).map(str::to_owned), text: None }); }
                             dirty = true;
                         }
+                    }
+                    Action::Text(text, offset) => {
+                        if let Some(page) = index.text(text, offset) { out.send(command.tag, Some(run.clone()), Data::Text(text, page)).await; }
+                        else { pending_source = Some(Reload { tag: Some(command.tag), sequence: text.sequence, offset, cursor: index.cursor_for(text.sequence).map(str::to_owned), text: Some(text) }); }
+                        dirty = true;
                     }
                     _ => (),
                     }
@@ -1841,7 +1857,7 @@ async fn observe(
                         location = None;
                     }
                     if !reloading && (!reload_failed || pending_source.is_some()) {
-                        let request = pending_source.take().or_else(|| window.rows.iter().flat_map(|row| index.sources(row.id)).find(|seq| !index.contains(*seq)).map(|sequence| Reload { tag: None, sequence, offset: 0, cursor: index.cursor_for(sequence).map(str::to_owned) }));
+                        let request = pending_source.take().or_else(|| window.rows.iter().flat_map(|row| index.sources(row.id)).find(|seq| !index.contains(*seq)).map(|sequence| Reload { tag: None, sequence, offset: 0, cursor: index.cursor_for(sequence).map(str::to_owned), text: None }));
                         if let Some(request) = request { reloading = true; jobs.spawn(reload(reads.clone(), tx.clone(), reload_budget.clone(), request)); }
                     }
                     window.progress = index.progress(history_done);
@@ -1918,6 +1934,8 @@ struct Reload {
     sequence: u64,
     offset: usize,
     cursor: Option<String>,
+    /// The section text the reload is for, instead of the record's source.
+    text: Option<TextRef>,
 }
 async fn reload(reads: Reads, tx: mpsc::Sender<Input>, budget: Arc<Inbox>, request: Reload) {
     let result = async {

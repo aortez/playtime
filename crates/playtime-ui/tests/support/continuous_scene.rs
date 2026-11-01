@@ -18,6 +18,54 @@ fn observation(
         json!({"kind":"observation","data":{"controller_sequence":seq,"elapsed_ms":seq*1000,"scope":{"kind":"run"},"observation_kind":kind,"identity":{"effect_id":call.map(|(id,_)|id),"request_id":call.map(|(id,_)|format!("r{id}")),"tool_request_sequence":tool},"request":request,"data":{"storage":"inline","value":value}}}),
     )
 }
+/// A work call's response, recorded at `seq`.
+pub fn response(seq: u64, call: u64, content: &str) -> EventEnvelope {
+    observation(
+        seq,
+        "model_response",
+        Some((call, "work")),
+        None,
+        json!({"call":call,"response":{"done":true,"message":{"content":content}}}),
+    )
+}
+/// The long response's text: 300 lines with the narrow no-break space,
+/// non-breaking hyphen and arrow that models write.
+pub fn long_text() -> String {
+    (1..=300)
+        .map(|n| {
+            format!(
+                "Zoom {n}: the side\u{202f}by\u{202f}side renders agree, and the box\u{2011}counting estimate → 1.{:03}.\n",
+                260 + n % 40
+            )
+        })
+        .collect()
+}
+/// One work call whose response runs past a row's excerpt and a page.
+pub fn long_response_events() -> Vec<EventEnvelope> {
+    vec![
+        observation(
+            1,
+            "controller_started",
+            None,
+            None,
+            json!({"parameters":{"limits":{"wall_seconds":300,"generated_tokens":16384,"context_tokens":32768}}}),
+        ),
+        observation(
+            2,
+            "model_request",
+            Some((1, "work")),
+            None,
+            json!({"purpose":"work","request_id":"r1","call":1,"context_input_bound":1150,"context_basis":"input_bytes","context_reserve":4096}),
+        ),
+        observation(
+            3,
+            "model_response",
+            Some((1, "work")),
+            None,
+            json!({"call":1,"response":{"done":true,"message":{"thinking":"List each zoom with its estimate.","content":long_text()}}}),
+        ),
+    ]
+}
 /// One work call with a command, then a compaction and a completion claim.
 /// Each record's controller time is its sequence in seconds, so the calls
 /// take one second each. The compaction records start at sequence 7.

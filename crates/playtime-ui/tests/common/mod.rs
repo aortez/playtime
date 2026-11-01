@@ -78,6 +78,10 @@ pub async fn demo(launcher: bool) -> Workbench {
             .into(),
         evidence: "Recorded source references remain separate from model-authored memory.".into(),
         diff: "- Goal: inspect the workshop\n+ Saved: inspected the image".into(),
+        diff_page: playtime_ui::transcript::inspector_page(
+            "- Goal: inspect the workshop\n+ Saved: inspected the image",
+            0,
+        ),
         notice: "Saved publication · exact source comparison".into(),
     });
     if let Some(checkpoint) = &mut app.model.checkpoint {

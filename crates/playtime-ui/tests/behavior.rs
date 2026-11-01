@@ -206,6 +206,87 @@ fn inspector_pages_leave_no_gap_in_either_direction() {
 }
 
 #[test]
+fn run_json_and_memory_diffs_page_and_a_refresh_keeps_the_page() {
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../playtime-server/tests/fixtures/http-contract.json"
+    ))
+    .unwrap();
+    let view: RunView = serde_json::from_value(contract["completed_run"].clone()).unwrap();
+    let mut model = Model::default();
+    model.select_run(view.run_id.clone());
+    let long = |fill: &str| {
+        let mut run = playtime_ui::backend::prepare_run(view.clone());
+        run.json = fill.repeat(60_000);
+        run.source = inspector_page(&run.json, 0);
+        run
+    };
+    model.apply(Reply {
+        tag: model.tag,
+        run: model.selected.clone(),
+        data: Data::Run(Box::new(long("a"))),
+    });
+    model.run_page(PAGE_BYTES);
+    let source = &model.run.as_ref().unwrap().source;
+    assert_eq!((source.start, source.text.len()), (PAGE_BYTES, PAGE_BYTES));
+    // A refresh keeps the page being read, with the refreshed text.
+    model.apply(Reply {
+        tag: model.tag,
+        run: model.selected.clone(),
+        data: Data::Run(Box::new(long("b"))),
+    });
+    let source = &model.run.as_ref().unwrap().source;
+    assert_eq!(source.start, PAGE_BYTES);
+    assert!(source.text.starts_with('b'));
+    // One that no longer reaches it starts over.
+    let short = playtime_ui::backend::prepare_run(view.clone());
+    model.apply(Reply {
+        tag: model.tag,
+        run: model.selected.clone(),
+        data: Data::Run(Box::new(short)),
+    });
+    assert_eq!(model.run.as_ref().unwrap().source.start, 0);
+    let diff = "+ saved line\n".repeat(4_000);
+    model.memory = Some(MemoryView {
+        incoming: String::new(),
+        outgoing: String::new(),
+        evidence: String::new(),
+        diff_page: inspector_page(&diff, 0),
+        diff: diff.clone(),
+        notice: String::new(),
+    });
+    let first = model.memory.as_ref().unwrap().diff_page.text.len();
+    model.diff_page(first);
+    let page = &model.memory.as_ref().unwrap().diff_page;
+    assert_eq!((page.start, page.total), (first, diff.len()));
+    assert_eq!(&diff[first..first + page.text.len()], page.text);
+}
+
+#[test]
+fn a_reconnect_closes_only_a_text_still_loading() {
+    let text = TextRef {
+        sequence: 3,
+        readable: true,
+        index: 1,
+        bytes: 30_000,
+    };
+    let mut model = Model::default();
+    model.select_run(RunId::new("reading-run").unwrap());
+    let read =
+        |model: &mut Model| model.read(0, "Call 1 · Work".into(), "Model response".into(), text);
+    read(&mut model);
+    model.connect(Default::default());
+    assert!(model.reading.is_none());
+    read(&mut model);
+    model.apply(Reply {
+        tag: model.tag,
+        run: model.selected.clone(),
+        data: Data::Text(text, inspector_page(&"a".repeat(30_000), 0)),
+    });
+    model.connect(Default::default());
+    assert!(model.reading.as_ref().is_some_and(|r| r.page.is_some()));
+}
+
+#[test]
 fn cancellation_reply_loss_stays_unresolved_and_inspection_generations_are_independent() {
     let mut model = Model::default();
     model.connection = ConnectionState::Connected;

@@ -3,7 +3,9 @@ use crate::{
     backend::Backend,
     model::*,
     progress,
-    transcript::{PAGE_BYTES, TEXT_BYTES, View, WINDOW_ROWS},
+    transcript::{
+        INSPECTOR_TEXT_BYTES, PAGE_BYTES, SourcePage, TEXT_BYTES, View, WINDOW_ROWS, thousands,
+    },
 };
 use egui::{Color32, RichText, Vec2};
 use playtime_client::config::Options;
@@ -17,6 +19,17 @@ pub struct FrameMetrics {
     pub laid_out_rows: usize,
     pub text_bytes: usize,
     pub texture_bytes: usize,
+    /// Where the pane being drawn stops laying out text, within the frame's
+    /// budget.
+    limit: Option<usize>,
+}
+impl FrameMetrics {
+    /// The text the pane being drawn may still lay out this frame.
+    fn remaining(&self) -> usize {
+        self.limit
+            .map_or(TEXT_BYTES, |limit| limit.min(TEXT_BYTES))
+            .saturating_sub(self.text_bytes)
+    }
 }
 #[derive(Default)]
 pub struct Workbench {
@@ -34,6 +47,7 @@ pub struct Workbench {
     view_anchor: Option<usize>,
     navigation: Option<(u64, f32)>,
     navigation_sent: bool,
+    fonts: bool,
 }
 /// The last timeline layout, so a row-height or view change can keep a row in
 /// place.
@@ -46,6 +60,7 @@ struct TimelineView {
     disclosure: Disclosure,
     total: usize,
     top: Option<(usize, usize, f32)>,
+    following: bool,
 }
 
 impl Workbench {
@@ -73,6 +88,10 @@ impl Workbench {
             self.model.preferences.right_width,
         );
         ui.ctx().set_theme(egui::Theme::Dark);
+        if !std::mem::replace(&mut self.fonts, true) {
+            ui.ctx().set_fonts(fonts());
+            ui.ctx().request_repaint();
+        }
         ui.style_mut().visuals.selection.bg_fill = Color32::from_rgb(31, 85, 79);
         ui.style_mut().visuals.selection.stroke.color = ACCENT;
         ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
@@ -127,13 +146,20 @@ impl Workbench {
                 .show_inside(ui, |ui| self.navigation(ui));
             self.model.preferences.left_width = response.response.rect.width();
         }
+        // Whichever draws first, the inspector keeps its share of the frame's
+        // text and the timeline the rest.
         if !narrow {
+            self.metrics.limit = Some(self.metrics.text_bytes + INSPECTOR_TEXT_BYTES);
             let response = egui::Panel::right("inspection")
                 .default_size(self.model.preferences.right_width)
                 .size_range(260.0..=520.0)
                 .resizable(true)
                 .show_inside(ui, |ui| self.inspector(ui));
+            self.metrics.limit = None;
             self.model.preferences.right_width = response.response.rect.width();
+        }
+        if narrow && self.model.show_inspector && !self.model.launcher {
+            self.metrics.limit = Some(TEXT_BYTES - INSPECTOR_TEXT_BYTES);
         }
         egui::CentralPanel::default().show_inside(ui, |ui| {
             if self.model.launcher {
@@ -143,6 +169,7 @@ impl Workbench {
             }
         });
         if narrow && self.model.show_inspector {
+            self.metrics.limit = Some(self.metrics.text_bytes + INSPECTOR_TEXT_BYTES);
             let mut open = true;
             egui::Window::new("Inspector drawer")
                 .open(&mut open)
@@ -153,6 +180,7 @@ impl Workbench {
                 .show(ui.ctx(), |ui| self.inspector(ui));
             self.model.show_inspector = open;
         }
+        self.metrics.limit = None;
         crate::models::draw(ui, &mut self.model);
         if self.model.enlarged {
             let mut open = true;
@@ -837,6 +865,7 @@ impl Workbench {
         let mut expansion = None;
         let mut checkpoint_selection = None;
         let mut memory_source = None;
+        let mut reading = None;
         let mut area = egui::ScrollArea::vertical()
             .id_salt(("timeline", self.model.selected.clone()))
             .stick_to_bottom(self.model.following);
@@ -936,6 +965,16 @@ impl Workbench {
         if let Some((index, within)) = anchor {
             area = area.vertical_scroll_offset((self.heights.top(index) + within).max(0.0));
         }
+        // egui keeps only a view already at the end there, so following again
+        // starts from the end.
+        if self.model.following
+            && self
+                .timeline
+                .as_ref()
+                .is_some_and(|last| last.run == self.model.selected && !last.following)
+        {
+            area = area.vertical_scroll_offset(self.heights.top(total));
+        }
         let mut top = None;
         let response = area.show_viewport(ui, |ui, viewport| {
             // Establish the whole content rectangle before placing a cold
@@ -959,9 +998,10 @@ impl Workbench {
                             let expanded = self.model.expanded.contains(&row.id);
                             let nested = row.nested;
                             let trace = self.model.trace.get(&row.first_sequence);
-                            let sections = if view == View::Readable {
-                                trace.map_or(row.sections.as_slice(), |v| v.sections.as_slice())
-                            } else { row.sections.as_slice() };
+                            let traced = trace.filter(|_| view == View::Readable).map(|v| v.sections.as_slice());
+                            let sections = traced.unwrap_or(row.sections.as_slice());
+                            // Only the row's own sections know where their full text lives.
+                            let texts = if traced.is_some() { &[][..] } else { row.texts.as_slice() };
                             egui::Frame::new().inner_margin(10).corner_radius(5)
                                 .outer_margin(egui::Margin { left: if nested { 22 } else { 0 }, ..Default::default() })
                                 .fill(if self.model.selected_row == Some(row.id) { Color32::from_rgb(31, 57, 57) } else { Color32::from_rgb(29, 34, 42) })
@@ -995,11 +1035,20 @@ impl Workbench {
                                     // also caps its displayed sections; exact continuation
                                     // remains available through the paged source inspector.
                                     let count = if expanded { 16 } else { 6 };
-                                    for section in sections.iter().take(count) {
+                                    for (i, section) in sections.iter().take(count).enumerate() {
                                         ui.strong(brief(&section.label, 120));
                                         let value = crate::transcript::excerpt(&section.text, limit);
                                         trace_text(ui, &section.label, &value, &mut self.metrics);
-                                        if value.len() < section.text.len() { ui.small("Excerpt · Show more or inspect source for continuation"); }
+                                        // The window's copy is shorter than the full text only when cut.
+                                        if let Some(full) = texts.get(i).copied().flatten()
+                                            && (section.text.len() > limit || full.bytes > section.text.len()) {
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.small(format!("Excerpt of {}", crate::preview::bytes(full.bytes as u64)));
+                                                let button = ui.small_button("Read in full");
+                                                button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Read {} {}", section.label, row.first_sequence)));
+                                                if button.clicked() { reading = Some((row.id, row.title.clone(), section.label.clone(), full)); }
+                                            });
+                                        } else if value.len() < section.text.len() { ui.small("Excerpt · Show more or inspect source for continuation"); }
                                     }
                                     if sections.len() > count { ui.small("More recorded sections · Show more or inspect source"); }
                                 }
@@ -1062,6 +1111,7 @@ impl Workbench {
             disclosure: self.model.preferences.disclosure,
             total,
             top,
+            following: self.model.following,
         });
         if ui.rect_contains_pointer(response.inner_rect)
             && ui.input(|i| i.smooth_scroll_delta.y != 0.0 || i.pointer.any_pressed())
@@ -1093,6 +1143,9 @@ impl Workbench {
         }
         if let Some((id, seq)) = selection {
             self.model.inspect(id, seq);
+        }
+        if let Some((id, title, label, text)) = reading {
+            self.model.read(id, title, label, text);
         }
         if let Some((session, inspector)) = checkpoint_selection {
             self.model.inspect_checkpoint(session, inspector);
@@ -1152,7 +1205,25 @@ impl Workbench {
             }
             match self.model.inspector {
                 Inspector::Details => {
-                    if let Some(source) = &self.model.source {
+                    if let Some(reading) = &self.model.reading {
+                        let mut close = false;
+                        let heading = ui.horizontal_wrapped(|ui| {
+                            ui.strong(format!("{} · {}", brief(&reading.title, 240), brief(&reading.label, 120)));
+                            close = ui.small_button("Close text").clicked();
+                        }).response;
+                        ui.small(crate::preview::bytes(reading.text.bytes as u64));
+                        if std::mem::take(&mut self.model.reveal_reading) { heading.scroll_to_me(Some(egui::Align::TOP)); }
+                        let mut page_offset = None;
+                        if let Some(page) = &reading.page {
+                            page_offset = pager(ui, page, "text");
+                            egui::Frame::new().inner_margin(8).corner_radius(4).fill(Color32::from_rgb(29, 34, 42)).show(ui, |ui| {
+                                ui.set_min_width(ui.available_width());
+                                trace_text(ui, &reading.label, &page.text, &mut self.metrics);
+                            });
+                        } else { ui.label("Loading text…"); }
+                        if let Some(offset) = page_offset { self.model.read_page(offset); }
+                        if close { self.model.close_reading(); }
+                    } else if let Some(source) = &self.model.source {
                         ui.label(format!("Recorded source · {} bytes", source.total)); text(ui, &source.text, &mut self.metrics);
                         let (start, end, total) = (source.start, source.start + source.text.len(), source.total);
                         let retained = source.retained.clone();
@@ -1182,7 +1253,9 @@ impl Workbench {
                             for line in &run.harness { ui.label(line); }
                             ui.separator();
                         }
+                        let run_offset = pager(ui, &run.source, "run JSON");
                         text(ui, &run.source.text, &mut self.metrics);
+                        if let Some(offset) = run_offset { self.model.run_page(offset); }
                     }
                     else { ui.label("Select an activity or run to inspect its recorded source."); }
                 }
@@ -1196,8 +1269,13 @@ impl Workbench {
                         ui.strong("Incoming · delivered to this session"); text(ui, &memory.incoming, &mut self.metrics);
                         ui.separator(); ui.strong("Outgoing · saved publication"); text(ui, &memory.outgoing, &mut self.metrics);
                         ui.label(brief(&memory.notice, 500));
-                        egui::CollapsingHeader::new("Memory diff").show(ui, |ui| text(ui, &memory.diff, &mut self.metrics));
+                        let mut diff_offset = None;
+                        egui::CollapsingHeader::new("Memory diff").show(ui, |ui| {
+                            diff_offset = pager(ui, &memory.diff_page, "diff");
+                            text(ui, &memory.diff_page.text, &mut self.metrics);
+                        });
                         egui::CollapsingHeader::new("Separate controller evidence").show(ui, |ui| text(ui, &memory.evidence, &mut self.metrics));
+                        if let Some(offset) = diff_offset { self.model.diff_page(offset); }
                     } else { ui.label("Choose a published checkpoint to compare exact delivered and saved memory."); }
                 }
                 Inspector::Files => {
@@ -1268,16 +1346,9 @@ impl Workbench {
                     if !content.notice.is_empty() { ui.label(brief(&content.notice, 500)); }
                     let mut page_offset = None;
                     if let Some(source) = &content.source {
-                        let end = source.start + source.text.len();
                         // Larger files page by 24 KiB, with the controls above
                         // the text, where each page opens.
-                        if source.text.len() < source.total {
-                            ui.small(format!("Showing bytes {}–{} of {}", crate::transcript::thousands(source.start as u64 + 1), crate::transcript::thousands(end as u64), crate::transcript::thousands(source.total as u64)));
-                            ui.horizontal(|ui| {
-                                if ui.add_enabled(source.start > 0, egui::Button::new("Previous file page")).clicked() { page_offset = Some(source.start.saturating_sub(PAGE_BYTES)); }
-                                if ui.add_enabled(end < source.total, egui::Button::new("Next file page")).clicked() { page_offset = Some(end); }
-                            });
-                        }
+                        page_offset = pager(ui, source, "file");
                         egui::Frame::new().inner_margin(8).corner_radius(4).fill(Color32::from_rgb(29, 34, 42)).show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             if source.total == 0 { ui.small("Empty file"); } else { text(ui, &source.text, &mut self.metrics); }
@@ -1389,8 +1460,7 @@ fn brief(text: &str, max: usize) -> &str {
     &text[..end]
 }
 fn trace_text(ui: &mut egui::Ui, label: &str, value: &str, metrics: &mut FrameMetrics) {
-    let remaining = TEXT_BYTES.saturating_sub(metrics.text_bytes);
-    let visible = brief(value, remaining);
+    let visible = brief(value, metrics.remaining());
     metrics.text_bytes += visible.len();
     let mut rich = RichText::new(visible).color(Color32::from_gray(220));
     if !matches!(
@@ -1401,6 +1471,8 @@ fn trace_text(ui: &mut egui::Ui, label: &str, value: &str, metrics: &mut FrameMe
             | "Submitted memento"
             | "Memory received"
             | "Published memento"
+            | "Applied summary"
+            | "Completion claim"
     ) {
         rich = rich.monospace();
     }
@@ -1413,13 +1485,60 @@ fn prose(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
     trace_text(ui, "Preview", value, metrics);
 }
 fn text(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
-    let remaining = TEXT_BYTES.saturating_sub(metrics.text_bytes);
-    let visible = brief(value, remaining);
+    let visible = brief(value, metrics.remaining());
     metrics.text_bytes += visible.len();
     ui.add(egui::Label::new(RichText::new(visible).monospace()).wrap());
     if visible.len() < value.len() {
         ui.small("Text viewport limit reached · inspect the next source page for continuation");
     }
+}
+/// A page's byte range and its Previous and Next buttons, when the text has
+/// more than one page. Returns the offset of the page asked for.
+fn pager(ui: &mut egui::Ui, page: &SourcePage, noun: &str) -> Option<usize> {
+    let end = page.start + page.text.len();
+    if page.text.len() >= page.total {
+        return None;
+    }
+    ui.small(format!(
+        "Showing bytes {}–{} of {}",
+        thousands(page.start as u64 + 1),
+        thousands(end as u64),
+        thousands(page.total as u64)
+    ));
+    let mut offset = None;
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(
+                page.start > 0,
+                egui::Button::new(format!("Previous {noun} page")),
+            )
+            .clicked()
+        {
+            offset = Some(page.start.saturating_sub(PAGE_BYTES));
+        }
+        if ui
+            .add_enabled(
+                end < page.total,
+                egui::Button::new(format!("Next {noun} page")),
+            )
+            .clicked()
+        {
+            offset = Some(end);
+        }
+    });
+    offset
+}
+/// egui's fonts, with Hack behind the proportional font for the characters it
+/// lacks, such as the non-breaking hyphen, narrow no-break space and arrows
+/// that models write.
+fn fonts() -> egui::FontDefinitions {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .push("Hack".into());
+    fonts
 }
 impl eframe::App for Workbench {
     fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
