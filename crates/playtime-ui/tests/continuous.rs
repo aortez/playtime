@@ -768,7 +768,8 @@ async fn read_in_full_pages_a_long_response_in_the_inspector() {
     h.get_by_label("Next text page").click();
     h.run();
     assert_eq!(asked(&h), (text, end));
-    answer(&mut h, first, text, 0);
+    // An answer for an earlier request leaves the page shown.
+    answer(&mut h, first, text, end);
     let page = |h: &Harness<'_, Workbench>| {
         h.state()
             .model
