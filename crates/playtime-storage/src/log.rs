@@ -448,7 +448,44 @@ pub(crate) struct Pass {
     pub records: Vec<Record>,
 }
 
+/// What a pass carries from record to record besides the records themselves:
+/// the log state, the running digest and the content already verified. A
+/// continuation needs it, reads don't, and it is most of a pass's memory.
+pub(crate) struct Carried {
+    state: LogState,
+    hash: Sha256,
+    verified: BTreeSet<ArchivePath>,
+}
+
 impl Pass {
+    /// The records, which reads check, apart from what a continuation needs.
+    pub(crate) fn split(self) -> (Vec<Record>, Carried) {
+        let Self {
+            state,
+            hash,
+            verified,
+            records,
+        } = self;
+        (
+            records,
+            Carried {
+                state,
+                hash,
+                verified,
+            },
+        )
+    }
+
+    /// The pass that `split` divided, to continue it.
+    pub(crate) fn rejoined(records: &[Record], carried: &Carried) -> Self {
+        Self {
+            state: carried.state.clone(),
+            hash: carried.hash.clone(),
+            verified: carried.verified.clone(),
+            records: records.to_vec(),
+        }
+    }
+
     fn prepared(
         descriptor: &ArchiveDescriptor,
         manifest: &InputManifest,
@@ -497,15 +534,16 @@ pub(crate) struct ScanOptions<'a> {
     pub visitor: Option<&'a mut dyn FnMut(StoredEvent) -> Result<()>>,
     /// Validates only the bytes after this pass, from its state: it never
     /// reads the earlier records again or verifies the content they reference.
-    pub resume: Option<&'a Pass>,
+    pub resume: Option<Pass>,
 }
 
-/// Validates the committed prefix at `frontier` in one pass. A checkpoint
-/// position beneath it is checked where the pass crosses its byte count:
-/// the sequence and running SHA-256 must match there exactly, so a position
-/// inside a record or with another history fails without a second pass. The
-/// pass still runs to the frontier first, so a prefix that fails its own
-/// validation reports corruption rather than a bad position.
+/// Validates the committed prefix at `frontier` in one pass, or only the bytes
+/// after an earlier pass it resumes. A checkpoint position beneath it is
+/// checked where the pass crosses its byte count: the sequence and running
+/// SHA-256 must match there exactly, so a position inside a record or with
+/// another history fails without a second pass. The pass still runs to the
+/// frontier first, so a prefix that fails its own validation reports
+/// corruption rather than a bad position.
 pub(crate) fn scan(
     directory: &Directory,
     descriptor: &ArchiveDescriptor,
@@ -527,7 +565,7 @@ pub(crate) fn scan(
             "checkpoint prefix exceeds the committed prefix",
         ));
     }
-    if resume.is_some_and(|pass| {
+    if resume.as_ref().is_some_and(|pass| {
         pass.bytes() > frontier.committed_bytes || pass.state.sequence > frontier.committed_sequence
     }) {
         return Err(StorageError::new(
@@ -550,9 +588,13 @@ pub(crate) fn scan(
         ));
     }
     let mut pass = match resume {
-        Some(pass) => pass.clone(),
+        Some(pass) => pass,
         None => Pass::prepared(descriptor, manifest, limits)?,
     };
+    // The frontier says how many records the pass ends with, within the event
+    // bound, so their list is allocated once at that size.
+    pass.records
+        .reserve_exact((frontier.committed_sequence - pass.state.sequence) as usize);
     let start = pass.bytes();
     file.seek(SeekFrom::Start(start))?;
     let mut reader = BufReader::new(file.take(frontier.committed_bytes - start));

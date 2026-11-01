@@ -93,11 +93,13 @@ impl playtime_storage::ConfirmationAuthority for Confirmed {
 
 /// Queries at the record boundaries of a finished archive's committed log
 /// whose sequence `keep` accepts, from the empty prefix on, sharing a reader.
+/// Each boundary's snapshot continues the previous one's pass, and equals a
+/// full pass to that boundary.
 pub fn boundaries(
     archive: &Path,
     keep: impl Fn(u64) -> bool,
 ) -> Vec<playtime_runner::ArchiveQueries> {
-    use playtime_storage::{ArchiveReader, ReadPrefix, StorageLimits};
+    use playtime_storage::{ArchiveReader, ReadPrefix, Snapshot, StorageLimits};
     let reader =
         std::sync::Arc::new(ArchiveReader::open(archive, StorageLimits::default()).unwrap());
     let last = reader.offline_snapshot().unwrap();
@@ -108,6 +110,7 @@ pub fn boundaries(
         ends.push(ends.last().unwrap() + line.len());
     }
     let last_sequence = ends.len() as u64 - 1;
+    let mut previous: Option<Snapshot> = None;
     ends.iter()
         .enumerate()
         .filter(|(sequence, _)| keep(*sequence as u64) || *sequence as u64 == last_sequence)
@@ -117,9 +120,17 @@ pub fn boundaries(
                 bytes: end as u64,
                 sha256: playtime_storage::sha256(&log[..end]),
             };
-            let snapshot = reader
-                .confirmed_snapshot(&Confirmed(reader.identity().clone(), prefix))
-                .unwrap();
+            let authority = Confirmed(reader.identity().clone(), prefix);
+            let full = reader.confirmed_snapshot(&authority).unwrap();
+            let snapshot = match &previous {
+                Some(previous) => reader
+                    .confirmed_snapshot_continuing(&authority, previous)
+                    .unwrap(),
+                None => full.clone(),
+            };
+            assert_eq!(snapshot.frontier(), full.frontier());
+            assert_eq!(snapshot.inspection(), full.inspection());
+            previous = Some(snapshot.clone());
             playtime_runner::ArchiveQueries::from_snapshot(reader.clone(), snapshot).unwrap()
         })
         .collect()

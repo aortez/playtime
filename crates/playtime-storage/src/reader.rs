@@ -1,7 +1,10 @@
 use std::{
     io::{BufReader, Read, Seek, SeekFrom},
     path::Path,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use playtime_core::Sha256Digest;
@@ -23,7 +26,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     CommittedFrontier, ErrorCode, Result, StorageError, StorageLimits,
     files::{Directory, WriterLock, digest_value, reference, sha256, utf8},
-    log::{LogState, Pass, ScanOptions, committed_error, decode_line, scan},
+    log::{Carried, LogState, Pass, Record, ScanOptions, committed_error, decode_line, scan},
     validate_limits,
 };
 
@@ -87,9 +90,16 @@ pub struct Inspection {
 pub struct Snapshot {
     frontier: EventFrontier,
     inspection: Inspection,
-    /// The pass that validated this prefix: a confirmation can continue it,
-    /// and a page checks the records it returns against it.
-    pass: Arc<Pass>,
+    /// Each record's end, digest and running prefix digest, as the pass that
+    /// validated this prefix saw them, 72 bytes a record: a page checks the
+    /// records it returns against them.
+    records: Arc<Vec<Record>>,
+    /// The rest of that pass, which a confirmation continues, until
+    /// `without_continuation` drops it.
+    carried: Option<Arc<Carried>>,
+    /// The reader whose pass this is. Only it continues the pass, with the
+    /// same directory and limits that validated the earlier bytes.
+    reader: u64,
 }
 impl std::fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -118,10 +128,10 @@ impl Snapshot {
         let (bytes, sha256) = match position.sequence.checked_sub(1) {
             None => (0, digest_value(Sha256::new().finalize().as_slice())),
             Some(index) => {
-                let record =
-                    self.pass.records.get(index as usize).ok_or_else(|| {
-                        StorageError::corrupt("snapshot pass is missing a record")
-                    })?;
+                let record = self
+                    .records
+                    .get(index as usize)
+                    .ok_or_else(|| StorageError::corrupt("snapshot pass is missing a record"))?;
                 (record.end, digest_value(&record.prefix_sha256))
             }
         };
@@ -135,6 +145,15 @@ impl Snapshot {
     }
     pub fn inspection(&self) -> &Inspection {
         &self.inspection
+    }
+    /// The same snapshot for reads only. It keeps what pages and position
+    /// checks use and drops what a confirmation would continue from, most
+    /// of its pass's memory, so it can't be continued.
+    pub fn without_continuation(&self) -> Self {
+        Self {
+            carried: None,
+            ..self.clone()
+        }
     }
     pub fn query(&self, after_sequence: u64, limit: u32) -> EventQuery {
         EventQuery {
@@ -160,7 +179,12 @@ pub struct ArchiveReader {
     identity: ArchiveIdentity,
     manifest: InputManifest,
     limits: StorageLimits,
+    /// Unique among this process's readers, so a snapshot names the reader
+    /// that validated it.
+    id: u64,
 }
+
+static READERS: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn prepared(
     directory: &Directory,
@@ -206,6 +230,7 @@ impl ArchiveReader {
             identity,
             manifest,
             limits,
+            id: READERS.fetch_add(1, Ordering::Relaxed),
         })
     }
     pub fn descriptor(&self) -> &ArchiveDescriptor {
@@ -302,10 +327,10 @@ impl ArchiveReader {
     }
 
     /// Read only, like `confirmed_snapshot`, for an authorized prefix that
-    /// extends `previous`, a snapshot of this archive. It continues the pass
-    /// that validated `previous` over the bytes after it, from that pass's
-    /// running digest and state, so it checks the new records as a full pass
-    /// would. It never reads the earlier records or the content they
+    /// extends `previous`, a snapshot this reader validated. It continues the
+    /// pass that validated `previous` over the bytes after it, from that
+    /// pass's running digest and state, so it checks the new records as a
+    /// full pass would. It never reads the earlier records or the content they
     /// reference again: a later change to them shows in a full pass, or in a
     /// page or content read that returns them. Neither position becomes a
     /// writer receipt.
@@ -320,8 +345,23 @@ impl ArchiveReader {
                 "previous snapshot belongs to another archive",
             ));
         }
+        // Another reader may read another copy or have other limits, so its
+        // pass says nothing about the earlier bytes this one would read.
+        if previous.reader != self.id {
+            return Err(StorageError::new(
+                ErrorCode::InvalidCursor,
+                "previous snapshot was validated by another reader",
+            ));
+        }
+        let carried = previous.carried.as_ref().ok_or_else(|| {
+            StorageError::new(
+                ErrorCode::InvalidCursor,
+                "previous snapshot keeps no pass to continue",
+            )
+        })?;
         let frontier = self.read_frontier(authority.authorize(&self.identity)?)?;
-        Ok(self.scanned(frontier, None, Some(&previous.pass))?.0)
+        let pass = Pass::rejoined(&previous.records, carried);
+        Ok(self.scanned(frontier, None, Some(pass))?.0)
     }
 
     fn read_frontier(&self, prefix: ReadPrefix) -> Result<EventFrontier> {
@@ -356,7 +396,7 @@ impl ArchiveReader {
         &self,
         frontier: EventFrontier,
         checkpoint: Option<ReadPrefix>,
-        resume: Option<&Pass>,
+        resume: Option<Pass>,
     ) -> Result<(Snapshot, Option<Snapshot>)> {
         if frontier.archive != self.identity {
             return Err(StorageError::new(
@@ -382,21 +422,31 @@ impl ArchiveReader {
                 // Bytes between the checkpoint and the frontier are committed
                 // but beyond that snapshot, as a pass ending there would see.
                 let uncommitted = scanned.suffix_bytes + (frontier.committed_bytes - prefix.bytes);
-                Some(Snapshot {
-                    frontier: self.read_frontier(prefix)?,
-                    inspection: self.inspection(&pass.state, uncommitted),
-                    pass: Arc::new(pass),
-                })
+                Some(self.snapshot(self.read_frontier(prefix)?, pass, uncommitted))
             }
             (None, None) => None,
             _ => return Err(StorageError::corrupt("checkpoint state missing")),
         };
-        let covering = Snapshot {
-            inspection: self.inspection(&scanned.pass.state, scanned.suffix_bytes),
-            frontier,
-            pass: Arc::new(scanned.pass),
-        };
+        let covering = self.snapshot(frontier, scanned.pass, scanned.suffix_bytes);
         Ok((covering, inner))
+    }
+
+    /// The snapshot at `frontier` that `pass` validated.
+    fn snapshot(
+        &self,
+        frontier: EventFrontier,
+        pass: Pass,
+        uncommitted_event_bytes: u64,
+    ) -> Snapshot {
+        let inspection = self.inspection(&pass.state, uncommitted_event_bytes);
+        let (records, carried) = pass.split();
+        Snapshot {
+            frontier,
+            inspection,
+            records: Arc::new(records),
+            carried: Some(Arc::new(carried)),
+            reader: self.id,
+        }
     }
 
     fn inspection(&self, state: &LogState, uncommitted_event_bytes: u64) -> Inspection {
@@ -439,7 +489,7 @@ impl ArchiveReader {
             ));
         }
         self.validate_identity()?;
-        let records = &snapshot.pass.records;
+        let records = &snapshot.records;
         let after = query.after_sequence as usize;
         let missing = || StorageError::corrupt("snapshot pass is missing a record");
         let page_records = records
@@ -497,10 +547,11 @@ impl ArchiveReader {
 
     /// Hands every record of the snapshot's committed prefix to `visitor` in
     /// order, in one pass, instead of a page at a time. The pass validates the
-    /// complete prefix as a page does, but the visitor sees each record once
-    /// that record has validated, before the rest of the prefix has: what it
-    /// builds is evidence only if `visit` returns Ok. A visitor's error ends
-    /// the pass and is returned as is.
+    /// complete prefix and the content it references, as a full confirmation
+    /// does, but the visitor sees each record once that record has validated,
+    /// before the rest of the prefix has: what it builds is evidence only if
+    /// `visit` returns Ok. A visitor's error ends the pass and is returned as
+    /// is.
     pub fn visit<E: From<StorageError>>(
         &self,
         snapshot: &Snapshot,

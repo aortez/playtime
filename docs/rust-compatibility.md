@@ -1004,12 +1004,14 @@ trial on the Framework, the daemon used 52% of a core on average and 93% by
 15 MB of log.
 
 A storage snapshot now keeps the pass that validated it, 72 bytes a record
-(7.2 MB at the 100,000-event limit), and `confirmed_snapshot_continuing`
-continues that pass over the new bytes: it checks the new records and their
-content as a full pass does, without reading the earlier ones.
-`Snapshot::check_position` checks a position against the kept record boundaries
-without reading. A page reads only the records it returns and fails with
-`archive_corrupt` when one's digest differs from the pass's; it no longer
+(7.2 MB at the 100,000-event limit) and its state, which
+`Snapshot::without_continuation` drops for a snapshot kept for reads.
+`confirmed_snapshot_continuing` continues that pass over the new bytes, through
+the reader that made it: it checks the new records as a full pass does, and the
+content they reference that no earlier record did, without reading the earlier
+ones. `Snapshot::check_position` checks a position against the kept record
+boundaries without reading. A page reads only the records it returns and fails
+with `archive_corrupt` when one's digest differs from the pass's; it no longer
 validates the rest of the prefix or the content that earlier records reference.
 A sub-snapshot checks its position in the covering snapshot and then validates
 the prefix up to it, so corruption past the position no longer fails it.

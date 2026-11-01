@@ -140,17 +140,19 @@ Every snapshot comes from a pass that validates its complete prefix, including
 sequence continuity, exact hash, terminal accounting, and the content its events
 reference beyond the frozen inputs. The snapshot keeps that pass: its state, and
 for each record the end offset, the record's SHA-256 and the running prefix
-digest through it, 72 bytes a record (7.2 MB at the default 100,000 events). A
-page reads only the records it returns and checks each against the digest its
-snapshot's pass recorded, so a changed record fails as `archive_corrupt`; it
-doesn't read the rest of the prefix or verify referenced content again. Raw
-event bytes and their individual SHA-256 digests are returned with parsed
-envelopes. A page may return fewer records than its requested count to stay
-within its byte bound, without skipping one. `visit` hands every record of a
-snapshot to a caller's visitor in order, in one full pass that validates the
-whole prefix again. The visitor sees each record once that record has validated
-but before the rest of the prefix has, so what it builds is evidence only if the
-visit returns Ok; a visitor's own error ends the pass.
+digest through it, 72 bytes a record (7.2 MB at the default 100,000 events).
+`Snapshot::without_continuation` keeps only those records, for a snapshot held
+for reads: pages and position checks use nothing else, but it can't be
+continued. A page reads only the records it returns and checks each against the
+digest its snapshot's pass recorded, so a changed record fails as
+`archive_corrupt`; it doesn't read the rest of the prefix or verify referenced
+content again. Raw event bytes and their individual SHA-256 digests are returned
+with parsed envelopes. A page may return fewer records than its requested count
+to stay within its byte bound, without skipping one. `visit` hands every record
+of a snapshot to a caller's visitor in order, in one full pass that validates
+the whole prefix again. The visitor sees each record once that record has
+validated but before the rest of the prefix has, so what it builds is evidence
+only if the visit returns Ok; a visitor's own error ends the pass.
 
 `Snapshot::check_position` checks that a position is an exact record boundary of
 the snapshot's prefix, by sequence, byte count and running digest, from its
@@ -160,13 +162,16 @@ pass. A confirmed read that must extend an earlier position checks it during its
 own full pass, at its exact byte count, by sequence and running digest. Either
 way a position inside a record or with another history is an invalid cursor.
 `confirmed_snapshot_continuing` instead continues an earlier snapshot's pass
-over only the bytes after it, from that pass's state and running digest. It
-checks the new records, and the content they reference, as a full pass would,
-and it equals a full pass when the earlier bytes are unchanged. It doesn't read
-the earlier records or their content again: a change to them after their pass
-shows only in a full pass, or in a page or `read_content` that returns them. A
-caller that continues passes decides how often to run a full one. There is no
-persistent index; a later one must keep these rules.
+over only the bytes after it, from that pass's state and running digest. Only
+the reader whose pass validated the snapshot continues it, so the earlier bytes
+were read from the same folder within the same limits. It checks the new
+records as a full pass would, and the content they reference that no earlier
+record did; it equals a full pass when the earlier bytes and content are
+unchanged. It doesn't read the earlier records or the content they referenced
+again, even when a new record references it too: a change to them after their
+pass shows only in a full pass, or in a page or `read_content` that returns
+them. A caller that continues passes decides how often to run a full one. There
+is no persistent index; a later one must keep these rules.
 
 `read_content` accepts only exact references from that snapshot's input manifest
 or known events. `uncommitted_objects` lists diagnostic names separately,

@@ -414,7 +414,7 @@ fn a_continued_confirmation_starts_at_or_before_its_receipt() {
         equal.inspection().uncommitted_event_bytes,
         tail.len() as u64
     );
-    // A receipt with another history fails as a full pass does.
+    // A receipt whose digest the log doesn't match fails as a full pass does.
     let mut forged = authority_for(&last, last.prefix.clone());
     forged.prefix.sha256 = first.prefix.sha256.clone();
     assert_eq!(
@@ -423,6 +423,77 @@ fn a_continued_confirmation_starts_at_or_before_its_receipt() {
             .unwrap_err()
             .code,
         ErrorCode::ArchiveCorrupt
+    );
+}
+
+#[test]
+fn a_continued_confirmation_keeps_the_rules_across_records_and_its_reader() {
+    let temp = Temp::new();
+    let (mut writer, fixture) = writer(&temp, StorageLimits::default());
+    all_events(&mut writer, &fixture);
+    let done = authority(writer.confirmed_frontier());
+    drop(writer);
+    let reader = common::reader(&temp);
+    let finished = reader.confirmed_snapshot(&done).unwrap();
+    // Only the reader whose pass validated a snapshot continues it.
+    assert_eq!(
+        common::reader(&temp)
+            .confirmed_snapshot_continuing(&done, &finished)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidCursor
+    );
+    // A copy kept for reads pages and checks positions as the snapshot does,
+    // but nothing continues it.
+    let reads = finished.without_continuation();
+    assert_eq!(
+        reader.page(&reads, &reads.query(3, 1000)).unwrap().events,
+        reader
+            .page(&finished, &finished.query(3, 1000))
+            .unwrap()
+            .events
+    );
+    reads.check_position(&done.prefix).unwrap();
+    assert_eq!(
+        reader
+            .confirmed_snapshot_continuing(&done, &reads)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidCursor
+    );
+    // An earlier record renumbered to follow the run's end decodes, so only
+    // state the earlier pass carried, that the run has ended, refuses it. A
+    // continued pass refuses it as a full pass does.
+    let path = temp.archive().join("events.jsonl");
+    let after = changed(fixture.events[1], |value| value["sequence"] = 17.into());
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(&after)
+        .unwrap();
+    let log = std::fs::read(&path).unwrap();
+    let longer = authority_for(
+        &done,
+        ReadPrefix {
+            sequence: 17,
+            bytes: log.len() as u64,
+            sha256: playtime_storage::sha256(&log),
+        },
+    );
+    let full = reader.confirmed_snapshot(&longer).unwrap_err();
+    assert_eq!(full.code, ErrorCode::ArchiveCorrupt);
+    assert!(
+        full.message.contains("after run_finished"),
+        "{}",
+        full.message
+    );
+    let continued = reader
+        .confirmed_snapshot_continuing(&longer, &finished)
+        .unwrap_err();
+    assert_eq!(
+        (continued.code, continued.message),
+        (full.code, full.message)
     );
 }
 
