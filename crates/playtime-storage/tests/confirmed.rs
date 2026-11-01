@@ -1,7 +1,10 @@
 mod common;
 use common::*;
 use playtime_protocol::storage::ArchiveIdentity;
-use playtime_storage::{BatchClass, ConfirmationAuthority, ErrorCode, ReadPrefix, StorageLimits};
+use playtime_storage::{
+    BatchClass, ConfirmationAuthority, ErrorCode, ReadPrefix, StorageLimits, fixture,
+};
+use std::io::Write;
 struct TestAuthority {
     identity: ArchiveIdentity,
     prefix: ReadPrefix,
@@ -197,4 +200,267 @@ fn one_pass_extension_checks_verify_the_previous_prefix_as_an_exact_boundary() {
             .code,
         ErrorCode::ArchiveCorrupt
     );
+}
+
+/// Appends each fixture record as its own batch, as a live run confirms, and
+/// returns every receipt from the empty prefix on.
+fn one_record_receipts(temp: &Temp) -> Vec<TestAuthority> {
+    let (mut writer, fixture) = writer(temp, StorageLimits::default());
+    artifacts(&mut writer, &fixture);
+    let mut receipts = vec![authority(writer.confirmed_frontier())];
+    for (index, line) in fixture.events.iter().enumerate() {
+        let class = if index + 1 == fixture.events.len() {
+            BatchClass::Finalization
+        } else {
+            BatchClass::Ordinary
+        };
+        writer.append(&[line], class).unwrap();
+        receipts.push(authority(writer.confirmed_frontier()));
+    }
+    receipts
+}
+
+/// Changes one byte of a file and returns what puts it back.
+fn tamper(path: std::path::PathBuf, at: impl FnOnce(&[u8]) -> usize) -> impl FnOnce() {
+    let original = std::fs::read(&path).unwrap();
+    let mut bytes = original.clone();
+    let index = at(&bytes);
+    bytes[index] ^= 1;
+    std::fs::write(&path, bytes).unwrap();
+    move || std::fs::write(&path, original).unwrap()
+}
+
+/// The last digit of a fixture record's unique time, which a flip keeps a
+/// valid record of the same length.
+fn time(second: &'static str) -> impl FnOnce(&[u8]) -> usize {
+    move |bytes| {
+        let text = format!("12:00:{second}Z");
+        bytes
+            .windows(text.len())
+            .position(|window| window == text.as_bytes())
+            .unwrap()
+            + text.len()
+            - 2
+    }
+}
+
+#[test]
+fn a_continued_confirmation_equals_a_full_pass_from_every_boundary() {
+    let temp = Temp::new();
+    let receipts = one_record_receipts(&temp);
+    let reader = reader(&temp);
+    let full: Vec<_> = receipts
+        .iter()
+        .map(|receipt| reader.confirmed_snapshot(receipt).unwrap())
+        .collect();
+    for (start, previous) in full.iter().enumerate() {
+        for (receipt, expected) in receipts.iter().zip(&full).skip(start) {
+            let continued = reader
+                .confirmed_snapshot_continuing(receipt, previous)
+                .unwrap();
+            assert_eq!(continued.frontier(), expected.frontier());
+            assert_eq!(continued.inspection(), expected.inspection());
+        }
+    }
+    // Continued one record at a time, every page still returns the exact
+    // committed records.
+    let fixture = fixture::two_session().unwrap();
+    let chained = receipts[1..]
+        .iter()
+        .fold(full[0].clone(), |previous, receipt| {
+            reader
+                .confirmed_snapshot_continuing(receipt, &previous)
+                .unwrap()
+        });
+    let last = full.last().unwrap();
+    for after in 0..=fixture.events.len() {
+        for limit in [1, 3, 1000] {
+            let page = reader
+                .page(&chained, &chained.query(after as u64, limit))
+                .unwrap();
+            let end = fixture.events.len().min(after + limit as usize);
+            assert_eq!(
+                page.events
+                    .iter()
+                    .map(|event| event.bytes.as_slice())
+                    .collect::<Vec<_>>(),
+                fixture.events[after..end]
+            );
+            let same = reader.page(last, &last.query(after as u64, limit)).unwrap();
+            assert_eq!(page.events, same.events);
+            assert_eq!(
+                (page.next_after_sequence, page.has_more),
+                (end as u64, end < fixture.events.len())
+            );
+        }
+    }
+}
+
+#[test]
+fn a_continued_confirmation_reads_only_new_bytes_and_reads_check_what_they_return() {
+    let temp = Temp::new();
+    let (mut writer, fixture) = writer(&temp, StorageLimits::default());
+    artifacts(&mut writer, &fixture);
+    writer
+        .append(&fixture.events[..8], BatchClass::Ordinary)
+        .unwrap();
+    let first = authority(writer.confirmed_frontier());
+    writer
+        .append(&fixture.events[8..], BatchClass::Finalization)
+        .unwrap();
+    let last = authority(writer.confirmed_frontier());
+    let reader = reader(&temp);
+    let old = reader.confirmed_snapshot(&first).unwrap();
+    let expected = reader.confirmed_snapshot(&last).unwrap();
+    let continued = || reader.confirmed_snapshot_continuing(&last, &old);
+    let file = |path: &str| temp.archive().join(path);
+
+    // Content that an earlier record references isn't verified again; a full
+    // pass and a read of that content still verify it.
+    let earlier = old.inspection().checkpoints[0].workspace.clone();
+    let restore = tamper(file(earlier.path.as_str()), |_| 0);
+    let snapshot = continued().unwrap();
+    assert_eq!(snapshot.frontier(), expected.frontier());
+    assert_eq!(snapshot.inspection(), expected.inspection());
+    assert_eq!(
+        reader.confirmed_snapshot(&last).unwrap_err().code,
+        ErrorCode::ContentMismatch
+    );
+    assert_eq!(
+        reader.read_content(&snapshot, &earlier).unwrap_err().code,
+        ErrorCode::ContentMismatch
+    );
+    restore();
+    // Content that a new record references is verified.
+    let newer = expected.inspection().checkpoints[1].workspace.clone();
+    let restore = tamper(file(newer.path.as_str()), |_| 0);
+    assert_eq!(continued().unwrap_err().code, ErrorCode::ContentMismatch);
+    restore();
+
+    // An earlier record isn't read again. A page that returns it, a
+    // sub-snapshot that ends after it and a full pass check it.
+    let restore = tamper(file("events.jsonl"), time("02"));
+    let snapshot = continued().unwrap();
+    assert_eq!(snapshot.frontier(), expected.frontier());
+    assert_eq!(
+        reader
+            .page(&snapshot, &snapshot.query(0, 1000))
+            .unwrap_err()
+            .code,
+        ErrorCode::ArchiveCorrupt
+    );
+    assert_eq!(
+        reader
+            .page(&snapshot, &snapshot.query(2, 1000))
+            .unwrap()
+            .events
+            .len(),
+        fixture.events.len() - 2
+    );
+    assert_eq!(
+        reader
+            .sub_snapshot(&snapshot, first.prefix.clone())
+            .unwrap_err()
+            .code,
+        ErrorCode::ArchiveCorrupt
+    );
+    assert_eq!(
+        reader.confirmed_snapshot(&last).unwrap_err().code,
+        ErrorCode::ArchiveCorrupt
+    );
+    restore();
+    // A new record is validated as a full pass validates it.
+    let restore = tamper(file("events.jsonl"), time("10"));
+    assert_eq!(continued().unwrap_err().code, ErrorCode::ArchiveCorrupt);
+    restore();
+    assert_eq!(continued().unwrap().frontier(), expected.frontier());
+}
+
+#[test]
+fn a_continued_confirmation_starts_at_or_before_its_receipt() {
+    let temp = Temp::new();
+    let (mut writer, fixture) = writer(&temp, StorageLimits::default());
+    artifacts(&mut writer, &fixture);
+    writer
+        .append(&fixture.events[..8], BatchClass::Ordinary)
+        .unwrap();
+    let first = authority(writer.confirmed_frontier());
+    writer
+        .append(&fixture.events[8..15], BatchClass::Ordinary)
+        .unwrap();
+    let last = authority(writer.confirmed_frontier());
+    drop(writer);
+    let reader = reader(&temp);
+    let newer = reader.confirmed_snapshot(&last).unwrap();
+    assert_eq!(
+        reader
+            .confirmed_snapshot_continuing(&first, &newer)
+            .unwrap_err()
+            .code,
+        ErrorCode::CursorAhead
+    );
+    // An equal receipt reads no record but sees bytes past the commit.
+    let tail = b"{\"partial";
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(temp.archive().join("events.jsonl"))
+        .unwrap()
+        .write_all(tail)
+        .unwrap();
+    let equal = reader.confirmed_snapshot_continuing(&last, &newer).unwrap();
+    assert_eq!(equal.frontier(), newer.frontier());
+    assert_eq!(newer.inspection().uncommitted_event_bytes, 0);
+    assert_eq!(
+        equal.inspection().uncommitted_event_bytes,
+        tail.len() as u64
+    );
+    // A receipt with another history fails as a full pass does.
+    let mut forged = authority_for(&last, last.prefix.clone());
+    forged.prefix.sha256 = first.prefix.sha256.clone();
+    assert_eq!(
+        reader
+            .confirmed_snapshot_continuing(&forged, &newer)
+            .unwrap_err()
+            .code,
+        ErrorCode::ArchiveCorrupt
+    );
+}
+
+fn authority_for(receipt: &TestAuthority, prefix: ReadPrefix) -> TestAuthority {
+    TestAuthority {
+        identity: receipt.identity.clone(),
+        prefix,
+    }
+}
+
+#[test]
+fn a_position_is_checked_against_the_records_its_pass_validated() {
+    let temp = Temp::new();
+    let receipts = one_record_receipts(&temp);
+    let reader = reader(&temp);
+    let covering = reader.confirmed_snapshot(receipts.last().unwrap()).unwrap();
+    for receipt in &receipts {
+        covering.check_position(&receipt.prefix).unwrap();
+    }
+    let middle = &receipts[8].prefix;
+    let mut inside = middle.clone();
+    inside.bytes -= 1;
+    let mut forged = middle.clone();
+    forged.sha256 = receipts[9].prefix.sha256.clone();
+    let mut wrong = middle.clone();
+    wrong.sequence += 1;
+    for position in [inside, forged, wrong] {
+        assert_eq!(
+            covering.check_position(&position).unwrap_err().code,
+            ErrorCode::InvalidCursor
+        );
+    }
+    let older = reader.confirmed_snapshot(&receipts[8]).unwrap();
+    assert_eq!(
+        older.check_position(&receipts[9].prefix).unwrap_err().code,
+        ErrorCode::CursorAhead
+    );
+    // It reads nothing, so a changed log doesn't change its answer.
+    std::fs::write(temp.archive().join("events.jsonl"), b"").unwrap();
+    covering.check_position(middle).unwrap();
 }
