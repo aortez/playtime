@@ -1030,4 +1030,66 @@ fn projections_go_on_from_the_fold_of_any_earlier_snapshot() {
     let (_, late) = project(last, None);
     let (own, _) = project(&written[1], None);
     same(&project(&written[1], Some(late)).0, &own);
+    // Going on from a fold reads only the newer records. With an earlier one
+    // changed in place, a whole read fails, but a projection from a later
+    // fold still matches the original.
+    let (_, fold) = project(&written[8], None);
+    let log = root.0.join("archive").join("events.jsonl");
+    let original = std::fs::read(&log).unwrap();
+    let mut changed = original.clone();
+    let second = changed
+        .windows(9)
+        .position(|window| window == b"12:00:02Z")
+        .unwrap();
+    changed[second + 7] ^= 1;
+    std::fs::write(&log, &changed).unwrap();
+    same(&project(last, Some(fold)).0, &whole);
+    assert!(projection::project(&record, &queries(last), None).is_err());
+    std::fs::write(&log, &original).unwrap();
+}
+#[test]
+fn a_run_completes_only_once_a_new_reader_hashes_its_inputs_again() {
+    use super::archive::completed;
+    let root = Root::new();
+    let (f, written) = batches(&root, &[8]);
+    let path = root.0.join("archive");
+    let reader = std::sync::Arc::new(ArchiveReader::open(&path, StorageLimits::default()).unwrap());
+    let mut record = admission(&f);
+    record.last_status = Some(playtime_protocol::worker::Status {
+        state: playtime_protocol::worker::WorkerState::Running,
+        work_started_boot_ms: Some(0),
+        wall_ms: 0,
+        latest_receipt: Some(receipt(written[2].frontier())),
+        publication_pending: false,
+        failure: None,
+    });
+    let opens = std::cell::Cell::new(0);
+    let open = || {
+        opens.set(opens.get() + 1);
+        ArchiveReader::open(&path, StorageLimits::default()).map_err(|_| Error::Uncertain)
+    };
+    // Before the run's end, nothing reads the history or opens the archive.
+    assert!(!completed(&record, reader.clone(), written[1].clone(), open).unwrap());
+    assert_eq!(opens.get(), 0);
+    // A pending publication reads the history but can't complete the run.
+    record.last_status.as_mut().unwrap().publication_pending = true;
+    assert!(!completed(&record, reader.clone(), written[2].clone(), open).unwrap());
+    assert_eq!(opens.get(), 0);
+    record.last_status.as_mut().unwrap().publication_pending = false;
+    assert!(completed(&record, reader.clone(), written[2].clone(), open).unwrap());
+    assert_eq!(opens.get(), 1);
+    // `reader` hashed the inputs when it opened. One changed since then still
+    // reads the history through it, but the new reader refuses the run.
+    let source = path.join("inputs/worker/source.fixture");
+    let original = std::fs::read(&source).unwrap();
+    let mut changed = original.clone();
+    changed[0] ^= 1;
+    std::fs::write(&source, &changed).unwrap();
+    playtime_runner::ArchiveQueries::from_snapshot(reader.clone(), written[2].clone())
+        .unwrap()
+        .run()
+        .unwrap();
+    assert!(completed(&record, reader.clone(), written[2].clone(), open).is_err());
+    assert_eq!(opens.get(), 2);
+    std::fs::write(&source, &original).unwrap();
 }

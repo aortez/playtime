@@ -159,6 +159,39 @@ impl Snapshots {
         Ok(frontier)
     }
 }
+/// Whether the run at `snapshot` completed normally, from its history read
+/// through `reader`. Only a committed run end gives a run its outcome, and
+/// storage records each one, so until then it reads nothing. Reading the
+/// history validates the whole prefix and its content again, but `reader`
+/// hashed the frozen inputs when it opened, up to `FULL_PASS` earlier, so a
+/// run completes only once `open` has hashed them again.
+pub(super) fn completed(
+    admission: &Admission,
+    reader: Arc<ArchiveReader>,
+    snapshot: Snapshot,
+    open: impl FnOnce() -> life::Result<ArchiveReader>,
+) -> life::Result<bool> {
+    if snapshot.inspection().terminal.is_none() {
+        return Ok(false);
+    }
+    let query = playtime_runner::ArchiveQueries::from_snapshot(reader, snapshot)
+        .map_err(|_| Error::Uncertain)?;
+    let run = query.run().map_err(|_| Error::Uncertain)?;
+    let completed = !admission
+        .last_status
+        .as_ref()
+        .is_none_or(|s| s.publication_pending)
+        && run.unsettled_model_intents.is_empty()
+        && run.outcome.is_some_and(|outcome| {
+            outcome.reason != StopReason::Interrupted
+                && outcome.reason != StopReason::InfrastructureFailure
+                && outcome.cleanup == playtime_protocol::events::CleanupOutcome::Complete
+        });
+    if completed {
+        open().map_err(|_| Error::Uncertain)?;
+    }
+    Ok(completed)
+}
 /// Whether `snapshot` ends exactly at `receipt`.
 fn at(snapshot: &Snapshot, receipt: &Receipt) -> bool {
     let frontier = snapshot.frontier();
@@ -937,8 +970,11 @@ impl Archive {
         status: &Status,
     ) -> life::Result<EventFrontier> {
         let receipt = status.latest_receipt.as_ref().ok_or(Error::Uncertain)?;
-        // A running or cancelling execution still appends. Once it ends, every
-        // confirmation validates the whole prefix.
+        // A running or cancelling worker may still append. One in another
+        // state hasn't begun or ended without a normal outcome, so each of its
+        // confirmations validates the whole prefix. After a normal end the
+        // worker still reports running or cancelling, and the completion check
+        // validates the whole history before the run completes.
         let appending = matches!(status.state, WorkerState::Running | WorkerState::Cancelling);
         self.snapshots.confirm(
             prepared,
@@ -1055,25 +1091,8 @@ impl ArchivePort for Archive {
             let Some((reader, snapshot)) = archive.saved_snapshot(&admission)? else {
                 return Ok(false);
             };
-            // Only a committed run end gives the run an outcome, and storage
-            // records each one, so until then reading the history can't
-            // complete the run.
-            if snapshot.inspection().terminal.is_none() {
-                return Ok(false);
-            }
-            let query = playtime_runner::ArchiveQueries::from_snapshot(reader, snapshot)
-                .map_err(|_| Error::Uncertain)?;
-            let run = query.run().map_err(|_| Error::Uncertain)?;
-            Ok(!admission
-                .last_status
-                .as_ref()
-                .is_none_or(|s| s.publication_pending)
-                && run.unsettled_model_intents.is_empty()
-                && run.outcome.is_some_and(|outcome| {
-                    outcome.reason != StopReason::Interrupted
-                        && outcome.reason != StopReason::InfrastructureFailure
-                        && outcome.cleanup == playtime_protocol::events::CleanupOutcome::Complete
-                }))
+            let prepared = admission.prepared.as_ref().ok_or(Error::Uncertain)?;
+            completed(&admission, reader, snapshot, || archive.reader(prepared))
         })
         .await
         .map_err(|_| Error::Uncertain)?

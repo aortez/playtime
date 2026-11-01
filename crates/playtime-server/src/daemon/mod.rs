@@ -244,8 +244,11 @@ impl Daemon {
         let projected = if record.confirmed_read.is_none() {
             Ok(None)
         } else {
-            let fold = self.inner.folds.take(&record.run_id);
+            let inner = self.inner.clone();
             self.blocking(move || {
+                // Taken once the read starts: a projection refused for want of
+                // a read permit leaves the fold for the next one.
+                let fold = inner.folds.take(&saved.run_id);
                 archive
                     .saved_snapshot(&saved)
                     .map_err(projection::evidence)?

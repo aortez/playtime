@@ -526,7 +526,10 @@ pub(super) fn project(
         .collect();
     Ok((
         Evidence {
-            snapshot: queries.snapshot().clone(),
+            // Published evidence serves reads for as long as the daemon runs,
+            // so it keeps only what reads use, not what a confirmation would
+            // continue from.
+            snapshot: queries.snapshot().without_continuation(),
             view,
             checkpoints,
             artifacts,

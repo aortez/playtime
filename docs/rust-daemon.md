@@ -112,8 +112,12 @@ Publication order is explicit:
    it opened for that launch. A new reader and one pass over the whole prefix,
    which checks the previous prefix as a boundary within it, verify the first
    confirmation, any whose previous prefix isn't the port's latest, every
-   confirmation once the execution has ended, and one at least every 60
-   seconds, so a change to earlier bytes shows within a minute.
+   confirmation from a worker in another state, and one at least every 60
+   seconds, so a change to earlier bytes shows within a minute. A worker
+   reports another state before its execution begins or after it ends without
+   a normal outcome; after a normal end it still reports running or
+   cancelling, and the completion check below validates the whole history
+   again.
 3. A guarded FULL-synchronous ledger transaction saves worker status and the
    separate `confirmed_read` boundary/provenance, checking ownership generation
    and admission revision again.
@@ -125,9 +129,14 @@ Publication order is explicit:
    this boundary's history, reading only the newer records in pages that check
    their digests; otherwise, as after a restart, it reads the whole history in
    one validating pass (`ArchiveQueries::overview_from`). Each active run keeps
-   its latest fold, for at most 16 runs, until it is terminal. The completion
-   check reads the history only once storage has a committed run end. No
-   handler publishes candidate reads.
+   its latest fold, for at most 16 runs, until it is terminal. Published
+   evidence keeps its snapshot for reads only: 72 bytes a record for every
+   published run, while the state a confirmation continues stays with the
+   latest verification of at most 16 runs. The completion check reads the
+   history only once storage has a committed run end. That read validates the
+   whole prefix and its content again, and before the run completes a new
+   reader hashes the frozen inputs again too. No handler publishes candidate
+   reads.
 
 Ledger version 5 preserves admission/service identity and migrates versions 1–4.
 Version 5 adds the optional operator release; older binaries refuse it.

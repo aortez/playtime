@@ -1020,20 +1020,26 @@ The daemon keeps, for at most 16 runs, the reader that verified a run's latest
 confirmation and the snapshot it verified. While the worker runs or cancels, a
 confirmation that extends that snapshot continues its pass. A new reader and a
 full pass verify the first confirmation, one that doesn't extend the latest,
-each one after the execution has ended, and at least one every 60 seconds. So
-changed bytes that an earlier confirmation verified fail a confirmation within
-60 seconds or once the execution ends, rather than at the next refresh, and a
-page or content read that returns them fails at once. The frozen inputs are
-hashed when the daemon opens a reader, for a full pass or a run it hasn't kept,
-rather than at each refresh and history read. The projection keeps its fold of
-the history for each run until the run is terminal and, when the fold's prefix
-is a record boundary of the new snapshot, reads only the records after it;
-otherwise, as after a restart or for a historical frontier, it reads the whole
-history. The completion check reads the history only once storage holds a
-committed run end. History and downloads use the run's kept reader when it has
-one. A followed cursor is checked against the published snapshot without a pass,
-and a download verifies its content's bytes without a log pass, so a corrupt log
-no longer fails a download with `archive_corrupt`.
+each one from a worker that hasn't begun or that ended without a normal outcome,
+and at least one every 60 seconds. After a normal end the worker still reports
+running or cancelling, so instead the completion check reads the whole history
+again and a new reader hashes the frozen inputs again before the run completes.
+So changed bytes that an earlier confirmation verified fail a confirmation
+within 60 seconds, or keep the run from completing, rather than failing at the
+next refresh, and a page or content read that returns them fails at once. Apart
+from that check, the frozen inputs are hashed when the daemon opens a reader for
+a full pass or a run it hasn't kept, rather than at each refresh and history
+read. The projection keeps its fold of the history for each run until the run is
+terminal and, when the fold's prefix is a record boundary of the new snapshot,
+reads only the records after it; otherwise, as after a restart or for a
+historical frontier, it reads the whole history. The completion check reads the
+history only once storage holds a committed run end. History and downloads use
+the run's kept reader when it has one. A followed cursor is checked against the
+published snapshot without a pass, and a download verifies its content's bytes
+without a log pass, so a corrupt log no longer fails a download with
+`archive_corrupt`. Published evidence keeps its snapshot for reads only,
+72 bytes a record for each published run; the state a continuation needs, about
+three times as much, stays only with the latest verification of at most 16 runs.
 
 Measured in release builds on that trial's archive (5,685 records, 15.2 MB),
 refreshing at every fifth record as the log grew: verification took 56.5 s of
@@ -1042,5 +1048,6 @@ CPU as full passes and 0.28 s continued, one unchanged receipt at the end took
 0.39 s continued, with the same views, checkpoints and artifacts at all 1,137
 steps. On the 99 archives in the trial roots, continued snapshots equal full
 passes at about a hundred points each, and continued projections equal whole
-ones at about twenty. Archive bytes, the HTTP schema and the goldens are
-unchanged.
+ones at about twenty. Their snapshots for reads hold 5.0 MB in all, against
+0.9 MB of inspections before and 17.6 MB with the state a continuation needs.
+Archive bytes, the HTTP schema and the goldens are unchanged.
