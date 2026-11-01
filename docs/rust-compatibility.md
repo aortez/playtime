@@ -961,3 +961,18 @@ cutting would save no more than its ellipsis adds. The reviewed
 `compaction-trace`, `trace-long` and `trace-long-narrow` baselines changed for the
 prose font and the Read in full button, and `read-mode` is new. Archives, the
 HTTP schema and the behavioral goldens are unchanged.
+
+## Archive readers hash frozen inputs once (2026-11-01)
+
+`ArchiveReader` hashed every frozen input at open and again before every
+snapshot, page and visit. Since worker bundles became inputs, that is about
+50 MB per pass. A reader now hashes them once, at open. Each later pass re-reads
+`archive.json` and the input manifest and requires their exact bytes, so a
+changed descriptor or manifest fails every pass with `content_mismatch`. Before,
+a descriptor that no longer decoded failed with its decode error instead, such
+as `malformed_data`. Every pass still verifies the event-log prefix and the
+content its events reference beyond the frozen inputs. An input changed after
+open is caught by `read_content` and by the next open, not by the open reader's
+passes. The daemon opens a reader for each refresh and history read, so it still
+verifies the inputs on each of them, once instead of two or three times. Archive
+bytes, the HTTP schema and the goldens are unchanged.
