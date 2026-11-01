@@ -71,7 +71,9 @@ The existing rules hold. Nothing retries after a possible dispatch, and only a
 tool-parse failure lets the controller ask again. An incomplete stream or a
 transport, HTTP, timeout or byte-limit failure stops the run with its own reason.
 Usage stays unknown unless the terminal record reports it, and the full request
-cap is charged then.
+cap is charged then. A failure's message keeps at most 4,096 bytes; a longer one
+keeps its start and its end with a note of the bytes left out, so a tool-parse
+error keeps Ollama's reason, which follows the raw call.
 
 After each request the worker records one timing chunk: the latency it observed
 and Ollama's load, prompt, generation and total durations. The run view and

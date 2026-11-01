@@ -43,14 +43,34 @@ pub struct Failure {
     pub kind: FailureKind,
     pub detail: String,
 }
+/// The most of a failure's detail that it keeps, in bytes.
+const DETAIL_BYTES: usize = 4096;
 impl Failure {
+    /// A longer detail keeps its start and its end, with a note of the bytes
+    /// left out between them. Ollama ends a tool-parse error with its reason,
+    /// after the raw call.
     pub fn new(kind: FailureKind, detail: impl Into<String>) -> Self {
-        let mut detail = detail.into();
-        let mut end = detail.len().min(4096);
-        while !detail.is_char_boundary(end) {
-            end -= 1;
+        let detail = detail.into();
+        if detail.len() <= DETAIL_BYTES {
+            return Self { kind, detail };
         }
-        detail.truncate(end);
+        let note = |omitted: usize| format!(" [… {omitted} bytes omitted …] ");
+        // No count needs more digits than the whole length.
+        let keep = DETAIL_BYTES - note(detail.len()).len();
+        let mut head = keep / 2;
+        while !detail.is_char_boundary(head) {
+            head -= 1;
+        }
+        let mut tail = detail.len() - (keep - keep / 2);
+        while !detail.is_char_boundary(tail) {
+            tail += 1;
+        }
+        let detail = format!(
+            "{}{}{}",
+            &detail[..head],
+            note(tail - head),
+            &detail[tail..]
+        );
         Self { kind, detail }
     }
 }

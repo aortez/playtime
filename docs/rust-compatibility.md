@@ -979,3 +979,14 @@ passes, and a snapshot's `executable_bytes_verified` now reports the check at
 open. The daemon opens a reader for each refresh and history read, so it still
 verifies the inputs on each of them, once instead of two or three times. Archive
 bytes, the HTTP schema and the goldens are unchanged.
+
+## Long Ollama failures keep their end (2026-11-01)
+
+The Ollama adapter kept the first 4,096 bytes of a failure's message, which a
+model error archives as is. Ollama's tool-parse error puts the raw call first
+and its reason (`err=...`) last, so a call with long arguments lost the reason:
+two of nine parse failures in a 60-minute gpt-oss:120b trial on the Framework. A
+longer message now keeps about 2 KiB from each end, with
+` [… N bytes omitted …] ` between them, still at most 4,096 bytes. Shorter
+messages are unchanged. Only an archive with a failure message over 4 KiB
+differs; the HTTP schema and the goldens are unchanged.

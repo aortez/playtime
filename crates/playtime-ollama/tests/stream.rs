@@ -175,6 +175,54 @@ fn malformed_protocol_is_distinct_from_legacy_backend_parse_error() {
     }
 }
 #[test]
+fn a_long_parse_error_keeps_its_reason() {
+    let reason = "err=invalid character ']' after object key:value pair";
+    let error = format!(
+        r#"error parsing tool call: raw='{{"path":"gallery.py","content":"{}"}}]}}', {reason}"#,
+        "A".repeat(20_000)
+    );
+    let body = serde_json::to_vec(&json!({ "error": error })).unwrap();
+    let (_, result, _) = decode(&body, Limits::default());
+    let failure = result.unwrap_err();
+    assert_eq!(failure.kind, FailureKind::BackendToolParse);
+    assert!(failure.detail.len() <= 4096);
+    assert!(
+        failure
+            .detail
+            .starts_with(r#"error parsing tool call: raw='{"path":"gallery.py""#)
+    );
+    assert!(failure.detail.ends_with(&format!(r#""}}]}}', {reason}"#)));
+    let (head, rest) = failure.detail.split_once(" [… ").unwrap();
+    let (omitted, tail) = rest.split_once(" bytes omitted …] ").unwrap();
+    assert_eq!(
+        head.len() + omitted.parse::<usize>().unwrap() + tail.len(),
+        error.len()
+    );
+    assert_eq!(
+        (&error[..head.len()], &error[error.len() - tail.len()..]),
+        (head, tail)
+    );
+}
+#[test]
+fn a_failure_detail_is_cut_on_character_boundaries() {
+    let fits = "é".repeat(2048);
+    assert_eq!(Failure::new(FailureKind::Http, fits.clone()).detail, fits);
+    for lead in 0..4 {
+        for count in [1025, 1100, 2250] {
+            let detail = format!("{}{}", "x".repeat(lead), "😀".repeat(count));
+            let kept = Failure::new(FailureKind::Http, detail.clone()).detail;
+            assert!((4060..=4096).contains(&kept.len()), "{lead} {count}");
+            let (head, rest) = kept.split_once(" [… ").unwrap();
+            let (omitted, tail) = rest.split_once(" bytes omitted …] ").unwrap();
+            assert!(detail.starts_with(head) && detail.ends_with(tail));
+            assert_eq!(
+                head.len() + omitted.parse::<usize>().unwrap() + tail.len(),
+                detail.len()
+            );
+        }
+    }
+}
+#[test]
 fn incomplete_and_limit_edges_preserve_bounded_partial_evidence() {
     let prefix = b"{\"message\":{\"content\":\"partial\"},\"done\":false}\n";
     let (d, result, records) = decode(prefix, Limits::default());
