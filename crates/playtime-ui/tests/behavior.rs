@@ -262,28 +262,70 @@ fn run_json_and_memory_diffs_page_and_a_refresh_keeps_the_page() {
 }
 
 #[test]
-fn a_reconnect_closes_only_a_text_still_loading() {
+fn a_text_still_loading_closes_when_its_reply_cant_arrive() {
     let text = TextRef {
         sequence: 3,
         readable: true,
         index: 1,
         bytes: 30_000,
     };
+    let run = RunId::new("reading-run").unwrap();
     let mut model = Model::default();
-    model.select_run(RunId::new("reading-run").unwrap());
-    let read =
-        |model: &mut Model| model.read(0, "Call 1 · Work".into(), "Model response".into(), text);
+    model.connection = ConnectionState::Connected;
+    model.select_run(run.clone());
+    let read = |model: &mut Model| {
+        model.connection = ConnectionState::Connected;
+        model.read(0, "Call 1 · Work".into(), "Model response".into(), text);
+        assert!(model.reading.as_ref().is_some_and(|r| r.page.is_none()));
+    };
+    let answer = |model: &mut Model, page: Result<SourcePage, String>| {
+        model.apply(Reply {
+            tag: model.tag,
+            run: model.selected.clone(),
+            data: Data::Text(text, page),
+        });
+    };
+    let open_file = |model: &mut Model| {
+        model.inspect_action(Action::Content(
+            run.clone(),
+            ArtifactId::new("notes").unwrap(),
+            0,
+        ));
+    };
+    // A reconnect, a later inspection, a failed read and stopping observation
+    // each lose the reply.
     read(&mut model);
     model.connect(Default::default());
     assert!(model.reading.is_none());
     read(&mut model);
-    model.apply(Reply {
-        tag: model.tag,
-        run: model.selected.clone(),
-        data: Data::Text(text, inspector_page(&"a".repeat(30_000), 0)),
-    });
+    open_file(&mut model);
+    assert!(model.reading.is_none());
+    read(&mut model);
+    answer(
+        &mut model,
+        Err("Requested source is not in confirmed history".into()),
+    );
+    assert!(model.reading.is_none());
+    assert_eq!(model.notice, "Requested source is not in confirmed history");
+    read(&mut model);
+    model.new_experiment();
+    assert!(model.reading.is_none());
+    // A page already shown stays through each of them.
+    model.select_run(run.clone());
+    read(&mut model);
+    answer(&mut model, Ok(inspector_page(&"a".repeat(30_000), 0)));
+    model.read_page(PAGE_BYTES);
+    answer(&mut model, Err("history unavailable".into()));
+    assert_eq!(model.notice, "history unavailable");
+    open_file(&mut model);
     model.connect(Default::default());
-    assert!(model.reading.as_ref().is_some_and(|r| r.page.is_some()));
+    let page = model.reading.as_ref().and_then(|r| r.page.as_ref());
+    assert_eq!(page.map(|p| p.start), Some(0));
+    // Without a connection, Read in full asks for one.
+    model.close_reading();
+    model.read(0, "Call 1 · Work".into(), "Model response".into(), text);
+    assert!(model.reading.is_none());
+    assert_eq!(model.notice, "Reconnect to read the full text");
 }
 
 #[test]

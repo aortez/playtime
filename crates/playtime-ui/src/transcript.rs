@@ -22,8 +22,8 @@ pub const TEXT_BYTES: usize = 64 << 10;
 /// The inspector's share of each frame's text budget: one page and its
 /// headings. The timeline keeps the rest, whichever draws first.
 pub const INSPECTOR_TEXT_BYTES: usize = 40 << 10;
-/// An inspector page: the inspector draws before the timeline, so its pages
-/// leave the timeline most of each frame's text budget.
+/// An inspector page: one page and its headings fit the inspector's share of
+/// each frame's text.
 pub const PAGE_BYTES: usize = 24 << 10;
 pub const WINDOW_ROWS: usize = 64;
 

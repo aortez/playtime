@@ -948,7 +948,10 @@ Details and the memory diff page by 24 KiB too; the Memory tab's delivered,
 saved and evidence excerpts shrink from 8 KiB to 4 KiB, and their source buttons
 still page each whole text. The inspector keeps at most 40 KiB of each frame's
 64 KiB text budget, whichever pane draws first, so the timeline keeps 24 KiB.
-The jump list adds rejected tool calls. Jump to live now returns the reader to
+An open file beside other inspector text shows what is left of that share, and
+its byte range and steps follow the part shown. A text still loading closes, with
+the reason when its read failed, once its reply can no longer arrive. The jump
+list adds rejected tool calls. Jump to live now returns the reader to
 the latest activity; before, it only resumed following, which egui applies only
 to a view already at the end, so a reader mid-history stayed there. Hack backs
 the proportional font, so the non-breaking hyphen, narrow no-break space and

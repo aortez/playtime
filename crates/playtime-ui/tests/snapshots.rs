@@ -637,7 +637,7 @@ async fn reviewed_workbench_screens() {
             model.apply(playtime_ui::model::Reply {
                 tag: model.tag,
                 run: model.selected.clone(),
-                data: playtime_ui::model::Data::Text(text, index.text(text, 0).unwrap()),
+                data: playtime_ui::model::Data::Text(text, Ok(index.text(text, 0).unwrap())),
             });
             h.input_mut()
                 .events

@@ -1794,10 +1794,18 @@ async fn observe(
                     Input::HistoryDone => { history_done = true; dirty = true; }
                     Input::Reloaded(request, error) => {
                         reloading = false; dirty = true;
-                        if let Some(error) = error { reload_failed = true; out.send(request.tag.unwrap_or(tag), Some(run.clone()), Data::Notice(error)).await; }
+                        // A text request gets its page or the reason it couldn't be read.
+                        if let Some(error) = error {
+                            reload_failed = true;
+                            let data = match request.text { Some(text) => Data::Text(text, Err(error)), None => Data::Notice(error) };
+                            out.send(request.tag.unwrap_or(tag), Some(run.clone()), data).await;
+                        }
                         else if let Some(tag) = request.tag {
                             match request.text {
-                                Some(text) => if let Some(page) = index.text(text, request.offset) { out.send(tag, Some(run.clone()), Data::Text(text, page)).await; },
+                                Some(text) => {
+                                    let page = index.text(text, request.offset).ok_or_else(|| "The text isn't in the transcript cache after reloading its history".to_owned());
+                                    out.send(tag, Some(run.clone()), Data::Text(text, page)).await;
+                                }
                                 None => if let Some(source) = index.raw(request.sequence, request.offset) { out.send(tag, Some(run.clone()), Data::Source(request.sequence, source)).await; },
                             }
                         }
@@ -1831,7 +1839,7 @@ async fn observe(
                         }
                     }
                     Action::Text(text, offset) => {
-                        if let Some(page) = index.text(text, offset) { out.send(command.tag, Some(run.clone()), Data::Text(text, page)).await; }
+                        if let Some(page) = index.text(text, offset) { out.send(command.tag, Some(run.clone()), Data::Text(text, Ok(page))).await; }
                         else { pending_source = Some(Reload { tag: Some(command.tag), sequence: text.sequence, offset, cursor: index.cursor_for(text.sequence).map(str::to_owned), text: Some(text) }); }
                         dirty = true;
                     }

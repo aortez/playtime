@@ -136,14 +136,17 @@ inspector there once the content arrives. Text reads as plain text in a framed
 block, so an HTML file shows its markup. A file over 24 KiB pages, with its byte
 range and **Previous file page**/**Next file page** above the text, where each
 page opens. Pages break at character boundaries, and paging back never skips a
-byte. Record source pages, the run's JSON under Details, read-mode text and the
-memory diff page by 24 KiB too, each with its byte range and its own Previous
-and Next buttons. The inspector and the timeline share each frame's 64 KiB text
-budget: the inspector keeps at most 40 KiB of it and the timeline the rest,
-whichever draws first (the narrow layout's drawer draws after the timeline). A
-source page with an open file's page therefore cuts the file short, not the
-timeline. Opening, source pagination and verified downloads retain their original
-artifact selection and stale-reply checks.
+byte. Record source also pages by 24 KiB, with **Previous source page** and
+**Next source page** below the text. The run's JSON under Details, read-mode text
+and the memory diff page by 24 KiB too, each with its byte range and its own
+Previous and Next buttons above the text. The inspector and the timeline share
+each frame's 64 KiB text budget: the inspector keeps at most 40 KiB of it and the
+timeline the rest, whichever draws first (the narrow layout's drawer draws after
+the timeline). An open file draws below the tab's own text, so beside a source
+page it shows only what is left of the inspector's share; its byte range and
+buttons then follow the part shown, so paging skips no byte. Opening, source
+pagination and verified downloads retain their original artifact selection and
+stale-reply checks.
 
 Before archive anchors exist, the timeline says **Waiting for archive publication**.
 Observation reads that receive `evidence_not_ready` retry the same run/cursor within
@@ -201,21 +204,24 @@ separate output/error fields, file operations with their requested/read content,
 and submitted mementos with the requested finish flag. Short content is visible;
 long sections start with a 512-byte excerpt. **Show more** expands a block to at
 most 16 prepared sections, each bounded to 4 KiB. **Inspect source** pages exact
-records and retained payloads for continuation. A cut section names its whole
-size and offers **Read in full**, which opens that section's text in the Details
-inspector, a page at a time, until **Close text** or another inspection. The
-text comes from the transcript index; a record evicted from the payload cache is
-read again from history first. Streamed text merged from several records has no
-single source, so it offers only source inspection until its final response.
-Model responses, thinking, summaries, completion claims and mementos read as
-prose; commands, output and data stay monospace. The proportional font falls
-back to the bundled Hack font for characters it lacks, such as the non-breaking
-hyphen, narrow no-break space and arrows that models write. Empty sections
-disappear; missing fields, incomplete inference, not-dispatched actions and
-upstream truncation stay explicit. A request with no result says it is awaiting
-a recorded result while live, or has no recorded result after the run ends. A
-write result does not claim checkpoint publication, and a submitted memento does
-not verify model claims.
+records and retained payloads for continuation. A cut section names its whole size
+and offers **Read in full**, which opens that section's text in the Details
+inspector, a page at a time, until **Close text**, **Inspect source** or another
+run. The text comes from the transcript index; a record evicted from the payload
+cache is read again from history first. A text still loading closes once its reply
+can no longer arrive: after a later inspection, a reconnect or opening the
+launcher, or when the read fails, which gives its reason. A page already shown
+stays. Without a connection, Read in full asks for a reconnect. Session-trace
+sections, and streamed text merged from several records until its final response,
+have no single source, so they offer only source inspection. Model responses,
+thinking, summaries, completion claims and mementos read as prose; commands,
+output and data stay monospace. The proportional font falls back to the bundled
+Hack font for characters it lacks, such as the non-breaking hyphen, narrow
+no-break space and arrows that models write. Empty sections disappear; missing
+fields, incomplete inference, not-dispatched actions and upstream truncation stay
+explicit. A request with no result says it is awaiting a recorded result while
+live, or has no recorded result after the run ends. A write result does not claim
+checkpoint publication, and a submitted memento does not verify model claims.
 
 Compact and Readable leave out the archive records that repeat observations
 (`run_started`, `phase_changed`, `effect_intent`, `request_finished`,

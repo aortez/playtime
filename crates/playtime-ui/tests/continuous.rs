@@ -753,7 +753,7 @@ async fn read_in_full_pages_a_long_response_in_the_inspector() {
         model.apply(Reply {
             tag,
             run: model.selected.clone(),
-            data: Data::Text(text, t.text(text, offset).unwrap()),
+            data: Data::Text(text, Ok(t.text(text, offset).unwrap())),
         });
         h.run();
     };
@@ -798,7 +798,10 @@ async fn read_in_full_pages_a_long_response_in_the_inspector() {
 
 #[tokio::test]
 async fn the_inspector_keeps_to_its_share_of_each_frame_text() {
-    use playtime_ui::transcript::{INSPECTOR_TEXT_BYTES, inspector_page};
+    use playtime_ui::{
+        model::Action,
+        transcript::{INSPECTOR_TEXT_BYTES, inspector_page, thousands},
+    };
     let mut app = common::demo(false).await;
     // A source page and an open file's page would take 48 KiB of the frame's
     // 64 KiB, before the timeline draws.
@@ -815,10 +818,35 @@ async fn the_inspector_keeps_to_its_share_of_each_frame_text() {
     h.run();
     assert!(h.state().metrics.text_bytes <= INSPECTOR_TEXT_BYTES);
     h.get_by_label("Text viewport limit reached · inspect the next source page for continuation");
+    // The file shows what the source page leaves of the share, and its range
+    // and Next button follow that part, so paging skips no byte.
+    let mut shown = INSPECTOR_TEXT_BYTES - h.state().model.source.as_ref().unwrap().text.len();
+    while !text.is_char_boundary(shown) {
+        shown -= 1;
+    }
+    h.get_by_label(&format!(
+        "Showing bytes 1–{} of {}",
+        thousands(shown as u64),
+        thousands(text.len() as u64)
+    ));
+    // The pager sits below the source page, out of view.
+    h.get_by_label("Next file page").click_accesskit();
+    h.run();
+    let asked = h
+        .state()
+        .model
+        .commands
+        .iter()
+        .rev()
+        .find_map(|c| match c.action {
+            Action::Content(_, _, offset) => Some(offset),
+            _ => None,
+        });
+    assert_eq!(asked, Some(shown));
 }
 
 #[test]
-fn an_evicted_text_reloads_at_the_same_section() {
+fn an_evicted_record_gives_the_same_text_once_applied_again() {
     let mut t = Transcript::default();
     let events = scene::long_response_events();
     for e in events.clone() {

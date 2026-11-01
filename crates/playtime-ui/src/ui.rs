@@ -1215,7 +1215,7 @@ impl Workbench {
                         if std::mem::take(&mut self.model.reveal_reading) { heading.scroll_to_me(Some(egui::Align::TOP)); }
                         let mut page_offset = None;
                         if let Some(page) = &reading.page {
-                            page_offset = pager(ui, page, "text");
+                            page_offset = pager(ui, page, "text", self.metrics.remaining());
                             egui::Frame::new().inner_margin(8).corner_radius(4).fill(Color32::from_rgb(29, 34, 42)).show(ui, |ui| {
                                 ui.set_min_width(ui.available_width());
                                 trace_text(ui, &reading.label, &page.text, &mut self.metrics);
@@ -1253,7 +1253,7 @@ impl Workbench {
                             for line in &run.harness { ui.label(line); }
                             ui.separator();
                         }
-                        let run_offset = pager(ui, &run.source, "run JSON");
+                        let run_offset = pager(ui, &run.source, "run JSON", self.metrics.remaining());
                         text(ui, &run.source.text, &mut self.metrics);
                         if let Some(offset) = run_offset { self.model.run_page(offset); }
                     }
@@ -1271,7 +1271,7 @@ impl Workbench {
                         ui.label(brief(&memory.notice, 500));
                         let mut diff_offset = None;
                         egui::CollapsingHeader::new("Memory diff").show(ui, |ui| {
-                            diff_offset = pager(ui, &memory.diff_page, "diff");
+                            diff_offset = pager(ui, &memory.diff_page, "diff", self.metrics.remaining());
                             text(ui, &memory.diff_page.text, &mut self.metrics);
                         });
                         egui::CollapsingHeader::new("Separate controller evidence").show(ui, |ui| text(ui, &memory.evidence, &mut self.metrics));
@@ -1347,8 +1347,9 @@ impl Workbench {
                     let mut page_offset = None;
                     if let Some(source) = &content.source {
                         // Larger files page by 24 KiB, with the controls above
-                        // the text, where each page opens.
-                        page_offset = pager(ui, source, "file");
+                        // the text, where each page opens. Beside other text,
+                        // the steps follow the part shown.
+                        page_offset = pager(ui, source, "file", self.metrics.remaining());
                         egui::Frame::new().inner_margin(8).corner_radius(4).fill(Color32::from_rgb(29, 34, 42)).show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             if source.total == 0 { ui.small("Empty file"); } else { text(ui, &source.text, &mut self.metrics); }
@@ -1492,11 +1493,14 @@ fn text(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
         ui.small("Text viewport limit reached · inspect the next source page for continuation");
     }
 }
-/// A page's byte range and its Previous and Next buttons, when the text has
-/// more than one page. Returns the offset of the page asked for.
-fn pager(ui: &mut egui::Ui, page: &SourcePage, noun: &str) -> Option<usize> {
-    let end = page.start + page.text.len();
-    if page.text.len() >= page.total {
+/// A page's byte range and its Previous and Next buttons, when the text shown
+/// isn't the whole text. The range and both steps follow the part of the page
+/// that `room`, the frame's text left for it, shows, so paging skips no byte.
+/// Returns the offset of the page asked for.
+fn pager(ui: &mut egui::Ui, page: &SourcePage, noun: &str, room: usize) -> Option<usize> {
+    let shown = brief(&page.text, room).len();
+    let end = page.start + shown;
+    if shown == 0 || (page.start == 0 && shown >= page.total) {
         return None;
     }
     ui.small(format!(
@@ -1514,7 +1518,7 @@ fn pager(ui: &mut egui::Ui, page: &SourcePage, noun: &str) -> Option<usize> {
             )
             .clicked()
         {
-            offset = Some(page.start.saturating_sub(PAGE_BYTES));
+            offset = Some(page.start.saturating_sub(PAGE_BYTES.min(room)));
         }
         if ui
             .add_enabled(
