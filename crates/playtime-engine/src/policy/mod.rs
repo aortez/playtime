@@ -373,27 +373,25 @@ const REASON_BYTES: usize = 512;
 /// The retry notice for a response the server couldn't parse, naming the
 /// server's reason: the text after the last `, err=` of a message in Ollama's
 /// form, which puts its reason after the raw call, or else the whole message,
-/// its start within `REASON_BYTES`. Memento adds its budget sentence.
+/// its start within `REASON_BYTES`. The worker keeps the end of a message it
+/// cuts, so Ollama's reason survives unless the reason itself is longer than
+/// that end. Memento adds its budget sentence.
 pub(crate) fn parse_retry_notice(error: &ModelFailure) -> String {
+    // Only a parse failure is retried with a notice. Another kind, which the
+    // policies never pass here, leaves the sentence as it was.
     let message = match error {
-        ModelFailure::Parse(message)
-        | ModelFailure::SummaryTools(message)
-        | ModelFailure::Connection(message)
-        | ModelFailure::Incomplete(message)
-        | ModelFailure::MissingUsage(message)
-        | ModelFailure::ByteLimit(message)
-        | ModelFailure::Timeout(message)
-        | ModelFailure::Infrastructure(message) => message,
+        ModelFailure::Parse(message) => message.as_str(),
+        _ => "",
     };
     let reason = message
         .rsplit_once(", err=")
-        .map_or(message.as_str(), |(_, reason)| reason)
+        .map_or(message, |(_, reason)| reason)
         .trim();
     let mut end = reason.len().min(REASON_BYTES);
     while !reason.is_char_boundary(end) {
         end -= 1;
     }
-    let named = match (&reason[..end], end < reason.len()) {
+    let named = match (reason[..end].trim_end(), end < reason.len()) {
         ("", _) => String::new(),
         (kept, true) => format!(": {kept}…"),
         (kept, false) => format!(": {kept}"),
@@ -450,7 +448,16 @@ mod tests {
         assert_eq!(notice("  "), named(""));
         let long = "é".repeat(300);
         assert_eq!(notice(&long), named(&format!(": {}…", "é".repeat(256))));
+        // The cut steps back to a character boundary, 510 here.
+        let wide = "€".repeat(200);
+        assert_eq!(notice(&wide), named(&format!(": {}…", "€".repeat(170))));
+        let spaced = format!("{} {}", "a".repeat(511), "b".repeat(100));
+        assert_eq!(notice(&spaced), named(&format!(": {}…", "a".repeat(511))));
         let exact = "x".repeat(512);
         assert_eq!(notice(&exact), named(&format!(": {exact}")));
+        assert_eq!(
+            parse_retry_notice(&ModelFailure::SummaryTools("tools in a summary".into())),
+            named("")
+        );
     }
 }

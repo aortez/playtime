@@ -1437,8 +1437,9 @@ fn a_retried_exchange_fits_its_tool_results_like_any_other() {
 /// Steers the context to just below the compaction trigger with tool-free
 /// responses, then fails a parse, so that the retry notice crosses the
 /// trigger: compaction is planned while the notice waits for its exchange.
-/// Each failure charges a full call and each request logs the whole
-/// conversation, so both budgets are raised.
+/// The engine's own measure of a reply and of a notice is taken at the start,
+/// so the steering follows the notice texts. Each failure charges a full call
+/// and each request logs the whole conversation, so both budgets are raised.
 fn compaction_with_pending_notice() -> Run {
     let mut config = config();
     config.parameters.limits.generated_tokens = 100_000.try_into().unwrap();
@@ -1446,22 +1447,33 @@ fn compaction_with_pending_notice() -> Run {
     let mut run = Run::new(config);
     // The trigger as the engine rounds it, at the default 75%.
     let trigger = (16384u64 * 75).div_ceil(100);
-    for n in 0..400 {
-        let request = run.request().clone();
+    let projected = |run: &Run| {
+        let request = run.request();
         assert_eq!(request.purpose, RequestPurpose::Work);
-        // Tokens left below the trigger. On the uncalibrated basis a reply
-        // adds about 250 tokens plus its filler (its continue notice included)
-        // and a retry notice about 240, so a notice crosses from 250 or less,
-        // and a reply is sized to leave about 115.
-        let left = trigger.saturating_sub(request.context_input_bound + request.maximum_tokens);
-        if left <= 250 {
+        request.context_input_bound + request.maximum_tokens
+    };
+    let reply = |n: usize, filler: u64| json!({"role":"assistant","content":format!("Exchange {n}: {}", "x".repeat(filler as usize))});
+    // What a reply with the longest filler adds, its continue notice included,
+    // and what a retry notice adds.
+    let before = projected(&run);
+    run.response(reply(0, 150));
+    let full_reply = projected(&run) - before;
+    let before = projected(&run);
+    run.complete(parse_failure());
+    let notice = projected(&run) - before;
+    let overhead = full_reply - 150;
+    for n in 1..400 {
+        // Tokens left below the trigger. A margin covers the digits of `n`.
+        let left = trigger.saturating_sub(projected(&run));
+        if left <= notice + 4 || left < overhead + 4 {
             run.complete(parse_failure());
             if run.request().purpose == RequestPurpose::Compaction {
                 return run;
             }
         } else {
-            let filler = "x".repeat(left.saturating_sub(365).min(150) as usize);
-            run.response(json!({"role":"assistant","content":format!("Exchange {n}: {filler}")}));
+            // Stop about half a notice short of the trigger.
+            let filler = (left - overhead).saturating_sub(notice / 2).min(150);
+            run.response(reply(n, filler));
             if run.request().purpose == RequestPurpose::Compaction {
                 run.response(json!({"role":"assistant","content":format!("Summary {n}.")}));
             }
