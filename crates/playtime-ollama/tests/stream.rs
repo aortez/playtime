@@ -185,40 +185,50 @@ fn a_long_parse_error_keeps_its_reason() {
     let (_, result, _) = decode(&body, Limits::default());
     let failure = result.unwrap_err();
     assert_eq!(failure.kind, FailureKind::BackendToolParse);
-    assert!(failure.detail.len() <= 4096);
+    assert!(failure.detail.len() <= 4000);
     assert!(
         failure
             .detail
             .starts_with(r#"error parsing tool call: raw='{"path":"gallery.py""#)
     );
     assert!(failure.detail.ends_with(&format!(r#""}}]}}', {reason}"#)));
-    let (head, rest) = failure.detail.split_once(" [… ").unwrap();
-    let (omitted, tail) = rest.split_once(" bytes omitted …] ").unwrap();
-    assert_eq!(
-        head.len() + omitted.parse::<usize>().unwrap() + tail.len(),
-        error.len()
-    );
+    let (head, omitted, tail) = cut(&failure.detail);
+    assert_eq!(head.len() + omitted + tail.len(), error.len());
     assert_eq!(
         (&error[..head.len()], &error[error.len() - tail.len()..]),
         (head, tail)
     );
 }
+/// A cut detail's head, omitted byte count and tail.
+fn cut(detail: &str) -> (&str, usize, &str) {
+    let (head, rest) = detail.split_once(" [… ").unwrap();
+    let (omitted, tail) = rest.split_once(" bytes omitted …] ").unwrap();
+    (head, omitted.parse().unwrap(), tail)
+}
 #[test]
-fn a_failure_detail_is_cut_on_character_boundaries() {
-    let fits = "é".repeat(2048);
-    assert_eq!(Failure::new(FailureKind::Http, fits.clone()).detail, fits);
+fn a_failure_detail_is_cut_evenly_on_character_boundaries() {
+    for whole in ["x".repeat(4000), "é".repeat(2000)] {
+        assert_eq!(Failure::new(FailureKind::Http, whole.clone()).detail, whole);
+    }
+    let one_over = Failure::new(FailureKind::Http, "x".repeat(4001)).detail;
+    let (head, omitted, tail) = cut(&one_over);
+    assert_eq!((head.len(), omitted, tail.len()), (1985, 31, 1985));
     for lead in 0..4 {
-        for count in [1025, 1100, 2250] {
-            let detail = format!("{}{}", "x".repeat(lead), "😀".repeat(count));
-            let kept = Failure::new(FailureKind::Http, detail.clone()).detail;
-            assert!((4060..=4096).contains(&kept.len()), "{lead} {count}");
-            let (head, rest) = kept.split_once(" [… ").unwrap();
-            let (omitted, tail) = rest.split_once(" bytes omitted …] ").unwrap();
-            assert!(detail.starts_with(head) && detail.ends_with(tail));
-            assert_eq!(
-                head.len() + omitted.parse::<usize>().unwrap() + tail.len(),
-                detail.len()
-            );
+        for trail in 0..4 {
+            for count in [1001, 1100, 2250] {
+                let detail = format!(
+                    "{}{}{}",
+                    "x".repeat(lead),
+                    "😀".repeat(count),
+                    "y".repeat(trail)
+                );
+                let kept = Failure::new(FailureKind::Http, detail.clone()).detail;
+                assert!(kept.len() <= 4000, "{lead} {trail} {count}");
+                let (head, omitted, tail) = cut(&kept);
+                assert!(head.len().min(tail.len()) >= 1980, "{lead} {trail} {count}");
+                assert!(detail.starts_with(head) && detail.ends_with(tail));
+                assert_eq!(head.len() + omitted + tail.len(), detail.len());
+            }
         }
     }
 }

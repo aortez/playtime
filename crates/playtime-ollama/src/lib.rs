@@ -43,12 +43,13 @@ pub struct Failure {
     pub kind: FailureKind,
     pub detail: String,
 }
-/// The most of a failure's detail that it keeps, in bytes.
-const DETAIL_BYTES: usize = 4096;
+/// The most of a failure's detail that it keeps, in bytes, within the 4,092
+/// bytes a workbench timeline section shows.
+const DETAIL_BYTES: usize = 4000;
 impl Failure {
-    /// A longer detail keeps its start and its end, with a note of the bytes
-    /// left out between them. Ollama ends a tool-parse error with its reason,
-    /// after the raw call.
+    /// A detail over 4,000 bytes keeps its start and its end, with a note of
+    /// the bytes left out between them. Ollama ends a tool-parse error with
+    /// its reason, after the raw call.
     pub fn new(kind: FailureKind, detail: impl Into<String>) -> Self {
         let detail = detail.into();
         if detail.len() <= DETAIL_BYTES {

@@ -986,7 +986,9 @@ The Ollama adapter kept the first 4,096 bytes of a failure's message, which a
 model error archives as is. Ollama's tool-parse error puts the raw call first
 and its reason (`err=...`) last, so a call with long arguments lost the reason:
 two of nine parse failures in a 60-minute gpt-oss:120b trial on the Framework. A
-longer message now keeps about 2 KiB from each end, with
-` [… N bytes omitted …] ` between them, still at most 4,096 bytes. Shorter
-messages are unchanged. Only an archive with a failure message over 4 KiB
-differs; the HTTP schema and the goldens are unchanged.
+message over 4,000 bytes now keeps about 2 KB from each end, with
+`[… N bytes omitted …]` between them, at most 4,000 bytes in all: a workbench
+timeline section shows up to 4,092 bytes, so a 4,096-byte cut lost the reason's
+last bytes there too. Messages of 4,001 to 4,096 bytes, which were kept whole,
+are now cut. Only an archive with a failure message over 4,000 bytes differs;
+the HTTP schema and the goldens are unchanged.
