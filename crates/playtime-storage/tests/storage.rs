@@ -892,6 +892,59 @@ fn tampered_inputs_and_checkpoint_content_are_rejected_by_digest() {
 }
 
 #[test]
+fn an_open_reader_hashes_inputs_once_and_checks_its_identity_every_pass() {
+    let temp = Temp::new();
+    let reader = completed(&temp);
+    let snapshot = reader.offline_snapshot().unwrap();
+    let passes = |reader: &ArchiveReader| {
+        [
+            reader.offline_snapshot().err(),
+            reader.page(&snapshot, &snapshot.query(0, 10)).err(),
+            reader.visit(&snapshot, |_| Ok::<_, StorageError>(())).err(),
+        ]
+        .map(|error| error.map(|error| error.code))
+    };
+    let tamper = |path: &str| {
+        let path = temp.archive().join(path);
+        let bytes = fs::read(&path).unwrap();
+        let mut changed = bytes.clone();
+        changed[0] ^= 1;
+        fs::write(&path, changed).unwrap();
+        move || fs::write(&path, bytes).unwrap()
+    };
+    // A changed input isn't hashed again by the open reader's passes. Reading
+    // it, or opening the archive again, still verifies it.
+    let restore = tamper("inputs/prompt.txt");
+    assert_eq!(passes(&reader), [None, None, None]);
+    let input = reader
+        .manifest()
+        .references()
+        .find(|input| input.path.as_str() == "inputs/prompt.txt")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        reader.read_content(&snapshot, &input).unwrap_err().code,
+        ErrorCode::ContentMismatch
+    );
+    assert_eq!(
+        ArchiveReader::open(temp.archive(), StorageLimits::default())
+            .err()
+            .unwrap()
+            .code,
+        ErrorCode::ContentMismatch
+    );
+    restore();
+    // Every pass still checks the descriptor and manifest bytes.
+    let mismatch = Some(ErrorCode::ContentMismatch);
+    for path in ["archive.json", "inputs/manifest.json"] {
+        let restore = tamper(path);
+        assert_eq!(passes(&reader), [mismatch; 3], "{path}");
+        restore();
+    }
+    assert_eq!(passes(&reader), [None, None, None]);
+}
+
+#[test]
 fn symlinks_hardlinks_special_files_and_parent_traversal_are_rejected() {
     for kind in ["symlink", "hardlink", "fifo", "directory", "ancestor"] {
         let temp = Temp::new();

@@ -175,14 +175,20 @@ impl ArchiveReader {
         &self.manifest
     }
 
-    fn validate_inputs(&self) -> Result<()> {
-        let (_, identity, _) = prepared(&self.directory, &self.limits)?;
-        if identity != self.identity {
+    /// Checks before each pass that `archive.json` and the input manifest are
+    /// still the bytes verified at open. The frozen inputs were hashed once,
+    /// at open: no writer changes them after preparation, the next open
+    /// verifies them again, and `read_content` verifies any it returns.
+    fn validate_identity(&self) -> Result<()> {
+        let bytes = self.directory.read("archive.json", METADATA_BYTES)?;
+        if reference("archive.json", &bytes) != self.identity.descriptor {
             return Err(StorageError::new(
                 ErrorCode::ContentMismatch,
                 "archive identity changed after open",
             ));
         }
+        self.directory
+            .verify(&self.identity.input_manifest, self.limits.manifest_bytes)?;
         Ok(())
     }
 
@@ -298,7 +304,7 @@ impl ArchiveReader {
                 "frontier has wrong run/manifest/archive identity",
             ));
         }
-        self.validate_inputs()?;
+        self.validate_identity()?;
         let scanned = scan(
             &self.directory,
             &self.descriptor,
@@ -369,7 +375,7 @@ impl ArchiveReader {
                 "snapshot frontier must stay fixed; limit must be 1..=1000",
             ));
         }
-        self.validate_inputs()?;
+        self.validate_identity()?;
         let scanned = scan(
             &self.directory,
             &self.descriptor,
@@ -412,7 +418,7 @@ impl ArchiveReader {
             )
             .into());
         }
-        self.validate_inputs()?;
+        self.validate_identity()?;
         let mut stopped = None;
         let scanned = scan(
             &self.directory,
