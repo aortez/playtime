@@ -122,9 +122,11 @@ re-reads `archive.json` and the manifest and requires the bytes verified at
 open. It doesn't hash the frozen inputs again: no writer changes them after
 preparation, the next open verifies them, and `read_content` verifies any input
 it returns. Worker executable bytes are verified independently of the viewer
-build. `WorkerAvailability.execution_checked` remains false: storage does not
-test the archived ABI, platform requirements, executability, installed
-dependencies, or rebuildability. Recorded platform requirements remain visible.
+build, and a snapshot's `WorkerAvailability.executable_bytes_verified` reports
+that check at open. `WorkerAvailability.execution_checked` remains false:
+storage does not test the archived ABI, platform requirements, executability,
+installed dependencies, or rebuildability. Recorded platform requirements remain
+visible.
 
 `live_snapshot(receipt)` or `offline_snapshot()` returns a fixed `Snapshot`.
 An `EventQuery` carries its archive/run/manifest identity, exclusive
