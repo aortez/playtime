@@ -19,8 +19,11 @@ use std::{
 pub const PAYLOAD_BYTES: usize = 16 << 20;
 pub const INDEX_BYTES: usize = 32 << 20;
 pub const TEXT_BYTES: usize = 64 << 10;
-/// An inspector page: the inspector draws before the timeline, so its pages
-/// leave the timeline most of each frame's text budget.
+/// The inspector's share of each frame's text budget: one page and its
+/// headings. The timeline keeps the rest, whichever draws first.
+pub const INSPECTOR_TEXT_BYTES: usize = 40 << 10;
+/// An inspector page: one page and its headings fit the inspector's share of
+/// each frame's text.
 pub const PAGE_BYTES: usize = 24 << 10;
 pub const WINDOW_ROWS: usize = 64;
 
@@ -39,6 +42,16 @@ pub struct Metrics {
 pub struct Section {
     pub label: String,
     pub text: String,
+}
+/// Where a window section's full text lives: one section of one indexed
+/// record, as the window's view presents it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TextRef {
+    pub sequence: u64,
+    pub readable: bool,
+    pub index: usize,
+    /// The full text's length in bytes.
+    pub bytes: usize,
 }
 /// Which records the timeline lists. Compact and Readable share `Readable`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -102,6 +115,9 @@ pub struct Row {
     pub status: String,
     pub sources: String,
     pub sections: Vec<Section>,
+    /// Each section's full text, when one record holds it. Streamed text
+    /// merged from several records has none until its final response.
+    pub texts: Vec<Option<TextRef>>,
     pub needs_loading: bool,
     /// A one-line marker in place of an archive record's card.
     pub marker: bool,
@@ -972,6 +988,7 @@ impl Transcript {
                     _ => None,
                 };
                 let mut sections: Vec<Section> = vec![];
+                let mut texts = vec![];
                 let mut missing = false;
                 for seq in &g.sources {
                     let Some(cached) = self.cache.get(seq) else {
@@ -983,7 +1000,7 @@ impl Transcript {
                     } else {
                         &cached.parts
                     };
-                    for section in parts {
+                    for (index, section) in parts.iter().enumerate() {
                         let model_text = matches!(
                             section.label.as_str(),
                             "Model response" | "Recorded thinking"
@@ -995,13 +1012,21 @@ impl Transcript {
                         if budget < 32 {
                             break;
                         }
-                        let text = excerpt(&section.text, budget.min(4096).saturating_sub(8));
+                        // A cut never saves less than its ellipsis adds, so a
+                        // cut copy is always shorter than the full text.
+                        let cap = budget.min(4096).saturating_sub(8);
+                        let text = if section.text.len() <= cap + 4 {
+                            section.text.clone()
+                        } else {
+                            excerpt(&section.text, cap)
+                        };
                         budget = budget.saturating_sub(text.len() + section.label.len());
                         if model_text
                             && g.final_sequence.is_none()
-                            && let Some(old) =
-                                sections.iter_mut().find(|s| s.label == section.label)
+                            && let Some(at) = sections.iter().position(|s| s.label == section.label)
                         {
+                            texts[at] = None;
+                            let old = &mut sections[at];
                             let remaining = 4096usize.saturating_sub(old.text.len());
                             if remaining > 8 {
                                 old.text.push_str(&excerpt(&text, remaining - 8));
@@ -1013,6 +1038,12 @@ impl Transcript {
                                 label: section.label.clone(),
                                 text,
                             });
+                            texts.push(Some(TextRef {
+                                sequence: *seq,
+                                readable: view == View::Readable,
+                                index,
+                                bytes: section.text.len(),
+                            }));
                         }
                     }
                 }
@@ -1056,6 +1087,7 @@ impl Transcript {
                         g.sources.last().unwrap()
                     ),
                     sections,
+                    texts,
                     needs_loading: missing,
                     marker: marker.is_some(),
                     checkpoint: marker.and_then(|(_, checkpoint)| checkpoint.clone()),
@@ -1202,6 +1234,18 @@ impl Transcript {
             }
             page
         })
+    }
+    /// A page of one section's full text, while its record is cached.
+    pub fn text(&self, text: TextRef, offset: usize) -> Option<SourcePage> {
+        let cached = self.cache.get(&text.sequence)?;
+        let parts = if text.readable {
+            &cached.readable
+        } else {
+            &cached.parts
+        };
+        parts
+            .get(text.index)
+            .map(|section| inspector_page(&section.text, offset))
     }
     pub fn cursor_for(&self, seq: u64) -> Option<&str> {
         self.records

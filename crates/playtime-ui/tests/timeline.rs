@@ -462,3 +462,33 @@ fn following_reaches_new_blocks_and_pausing_keeps_earlier_content() {
     h.get_by_label("Inspect source 30");
     assert!(h.query_by_label("Inspect source 40").is_none());
 }
+
+#[test]
+fn jump_to_live_returns_a_paused_reader_to_the_end() {
+    let mut app = Workbench::default();
+    app.model.launcher = false;
+    app.model.following = false;
+    app.model.window = Window {
+        total: 40,
+        rows: rows(0..40, false),
+        ..Default::default()
+    };
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run_steps(30);
+    h.get_by_label("Inspect source 1");
+    assert!(h.query_by_label("Inspect source 40").is_none());
+    h.get_by_label("Jump to live (0)").click();
+    h.run_steps(30);
+    assert!(h.state().model.following);
+    h.get_by_label("Inspect source 40");
+    // It stays at the end as the run goes on.
+    h.state_mut().model.window = Window {
+        total: 50,
+        rows: rows(0..50, false),
+        ..Default::default()
+    };
+    h.run_steps(30);
+    h.get_by_label("Inspect source 50");
+}

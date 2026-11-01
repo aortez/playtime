@@ -1,5 +1,5 @@
 //! Pure presentation state and explicit user intents. No execution authority.
-use crate::transcript::{SourcePage, View, Window};
+use crate::transcript::{SourcePage, TextRef, View, Window, inspector_page};
 use playtime_client::{config::Options, state::LaunchReceipt};
 use playtime_core::{RunId, RunMode, SessionId};
 use playtime_protocol::api::*;
@@ -90,6 +90,8 @@ pub struct RunViewData {
     pub harness: Vec<String>,
     pub value: RunView,
     pub summary: Vec<String>,
+    /// The run view as JSON, which `source` pages.
+    pub json: String,
     pub source: SourcePage,
 }
 #[derive(Clone, Debug)]
@@ -97,8 +99,20 @@ pub struct MemoryView {
     pub incoming: String,
     pub outgoing: String,
     pub evidence: String,
+    /// The whole diff, which `diff_page` pages.
     pub diff: String,
+    pub diff_page: SourcePage,
     pub notice: String,
+}
+/// A section's full text, read a page at a time in the inspector.
+#[derive(Clone, Debug)]
+pub struct Reading {
+    /// The activity the text belongs to.
+    pub title: String,
+    pub label: String,
+    pub text: TextRef,
+    /// The page shown, once it arrives.
+    pub page: Option<SourcePage>,
 }
 #[derive(Clone, Debug)]
 pub struct ContentView {
@@ -177,6 +191,8 @@ pub enum Action {
     StopObservation,
     Window(WindowRequest),
     Source(usize, u64, usize),
+    /// A page of a section's full text.
+    Text(TextRef, usize),
     FinalFiles(RunId),
     Checkpoints(RunId, Option<String>),
     Checkpoint(RunId, SessionId),
@@ -247,6 +263,8 @@ pub enum Data {
     GifFrame(Arc<crate::media::Pixels>, tokio::sync::oneshot::Sender<()>),
     GifStopped(String),
     Source(u64, SourcePage),
+    /// A page of a section's full text, or why it couldn't be read.
+    Text(TextRef, Result<SourcePage, String>),
     ArchiveWaiting(bool),
     Notice(String),
     Connection(ConnectionState),
@@ -311,6 +329,10 @@ pub struct Model {
     pub expanded: std::collections::BTreeSet<usize>,
     pub source: Option<SourcePage>,
     pub source_sequence: u64,
+    /// A section's full text, open in place of the source.
+    pub reading: Option<Reading>,
+    /// A reading page arrived, to scroll to its start.
+    pub reveal_reading: bool,
     pub final_files: Option<(Vec<Artifact>, bool)>,
     pub checkpoints: Vec<Checkpoint>,
     pub checkpoints_next: Option<String>,
@@ -389,6 +411,8 @@ impl Default for Model {
             expanded: Default::default(),
             source: None,
             source_sequence: 0,
+            reading: None,
+            reveal_reading: false,
             final_files: None,
             checkpoints: vec![],
             checkpoints_next: None,
@@ -538,6 +562,8 @@ impl Model {
         self.location = None;
         self.finding_call = None;
         self.jump = None;
+        // The new connection drops the reply to a text still loading.
+        self.drop_loading_reading();
         self.tag.connection += 1;
         self.archive_waiting = false;
         self.tag.selection += 1;
@@ -645,6 +671,7 @@ impl Model {
         self.selected_row = None;
         self.expanded.clear();
         self.source = None;
+        self.close_reading();
         self.final_files = None;
         self.checkpoints.clear();
         self.checkpoint_files.clear();
@@ -686,6 +713,8 @@ impl Model {
         self.clear_run_notice();
         self.launcher = true;
         self.command(Action::StopObservation);
+        // Stopping observation drops the reply to a text still loading.
+        self.drop_loading_reading();
         self.stop_animation();
     }
     pub fn inspect(&mut self, id: usize, sequence: u64) {
@@ -695,9 +724,62 @@ impl Model {
         self.selected_row = Some(id);
         self.source_sequence = sequence;
         self.source = None;
+        self.close_reading();
         self.inspector = Inspector::Details;
         self.show_inspector = true;
         self.command(Action::Source(id, sequence, 0));
+    }
+    /// Opens a section's full text in the inspector, in place of the source.
+    /// The run's window task answers, so without a connection it asks for a
+    /// reconnect.
+    pub fn read(&mut self, id: usize, title: String, label: String, text: TextRef) {
+        if !matches!(
+            self.connection,
+            ConnectionState::Connected | ConnectionState::Reconnecting
+        ) {
+            self.notify("Reconnect to read the full text", self.selected.clone());
+            return;
+        }
+        self.selected_row = Some(id);
+        self.source = None;
+        self.reading = Some(Reading {
+            title,
+            label,
+            text,
+            page: None,
+        });
+        self.inspector = Inspector::Details;
+        self.show_inspector = true;
+        self.inspect_action(Action::Text(text, 0));
+    }
+    /// Asks for the open text's page at `offset`. The page shown stays until
+    /// the new one arrives.
+    pub fn read_page(&mut self, offset: usize) {
+        if let Some(text) = self.reading.as_ref().map(|reading| reading.text) {
+            self.inspect_action(Action::Text(text, offset));
+        }
+    }
+    pub fn close_reading(&mut self) {
+        self.reading = None;
+        self.reveal_reading = false;
+    }
+    /// Closes a text still loading, whose reply can no longer arrive.
+    fn drop_loading_reading(&mut self) {
+        if self.reading.as_ref().is_some_and(|r| r.page.is_none()) {
+            self.close_reading();
+        }
+    }
+    /// Shows the run view's JSON from `offset`.
+    pub fn run_page(&mut self, offset: usize) {
+        if let Some(run) = &mut self.run {
+            run.source = inspector_page(&run.json, offset);
+        }
+    }
+    /// Shows the memory diff from `offset`.
+    pub fn diff_page(&mut self, offset: usize) {
+        if let Some(memory) = &mut self.memory {
+            memory.diff_page = inspector_page(&memory.diff, offset);
+        }
     }
     pub fn jump_live(&mut self) {
         self.location = None;
@@ -776,6 +858,7 @@ impl Model {
                 | Data::Checkpoint(..)
                 | Data::Content(_)
                 | Data::Source(..)
+                | Data::Text(..)
                 | Data::GifFrame(..)
                 | Data::GifStopped(_)
         ) && reply.tag.inspection != self.tag.inspection
@@ -1219,6 +1302,22 @@ impl Model {
                 self.source_sequence = sequence;
                 self.source = Some(source);
             }
+            Data::Text(text, Ok(page)) => {
+                if let Some(reading) = &mut self.reading
+                    && reading.text == text
+                {
+                    reading.page = Some(page);
+                    self.reveal_reading = true;
+                }
+            }
+            // A page already shown stays, and a text still loading closes,
+            // with the reason either way.
+            Data::Text(text, Err(error)) => {
+                if self.reading.as_ref().is_some_and(|r| r.text == text) {
+                    self.drop_loading_reading();
+                    self.notify(error, reply.run);
+                }
+            }
             Data::ArchiveWaiting(waiting) => self.archive_waiting = waiting,
             Data::Notice(message) => {
                 self.notify(message, reply.run);
@@ -1276,7 +1375,7 @@ impl Model {
             self.command(Action::StopGif);
         }
     }
-    fn apply_run(&mut self, run: RunViewData) {
+    fn apply_run(&mut self, mut run: RunViewData) {
         if let Some(current) = &self.run {
             let old = &current.value;
             let next = &run.value;
@@ -1310,6 +1409,13 @@ impl Model {
                 run.value.run_id.clone(),
                 harness.configuration.clone(),
             ));
+        }
+        // A refresh keeps the page of the run's JSON being read.
+        if let Some(start) = self.run.as_ref().map(|r| r.source.start)
+            && start > 0
+            && start < run.json.len()
+        {
+            run.source = inspector_page(&run.json, start);
         }
         self.run = Some(run);
         self.stale = self.connection != ConnectionState::Connected;
@@ -1355,6 +1461,11 @@ impl Model {
         self.stop_animation();
         self.tag.inspection += 1;
         self.following = false;
+        // Only the latest inspection's reply applies, so a text still loading
+        // for an earlier one would never arrive.
+        if !matches!(action, Action::Text(..)) {
+            self.drop_loading_reading();
+        }
         if matches!(action, Action::Checkpoint(..)) {
             self.checkpoint = None;
             self.memory = None;

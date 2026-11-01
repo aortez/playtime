@@ -156,6 +156,27 @@ async fn desktop_client_launch_observe_inspect_and_reopen_uses_only_public_http(
         m.notice == "This run has no recorded model calls"
     })
     .await;
+    // So does reading a section's full text.
+    let (id, title, label, text) = model
+        .window
+        .rows
+        .iter()
+        .find_map(|row| {
+            row.sections
+                .iter()
+                .zip(&row.texts)
+                .find_map(|(section, text)| {
+                    text.map(|text| (row.id, row.title.clone(), section.label.clone(), text))
+                })
+        })
+        .unwrap();
+    model.read(id, title, label, text);
+    until(&mut model, &mut backend, |m| {
+        m.reading.as_ref().is_some_and(|r| r.page.is_some())
+    })
+    .await;
+    let page = model.reading.as_ref().unwrap().page.as_ref().unwrap();
+    assert_eq!((page.start, page.total), (0, text.bytes));
     let destination = root.join("saved-image.png");
     model.command(Action::Download(
         run.clone(),

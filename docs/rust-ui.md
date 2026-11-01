@@ -136,8 +136,15 @@ inspector there once the content arrives. Text reads as plain text in a framed
 block, so an HTML file shows its markup. A file over 24 KiB pages, with its byte
 range and **Previous file page**/**Next file page** above the text, where each
 page opens. Pages break at character boundaries, and paging back never skips a
-byte. Record source pages are 24 KiB too: the inspector draws before the
-timeline and shares each frame's 64 KiB text budget with it. Opening, source
+byte. Record source also pages by 24 KiB, with **Previous source page** and
+**Next source page** below the text. The run's JSON under Details, read-mode text
+and the memory diff page by 24 KiB too, each with its byte range and its own
+Previous and Next buttons above the text. The inspector and the timeline share
+each frame's 64 KiB text budget: the inspector keeps at most 40 KiB of it and the
+timeline the rest, whichever draws first (the narrow layout's drawer draws after
+the timeline). An open file draws below the tab's own text, so beside a source
+page it shows only what is left of the inspector's share; its byte range and
+buttons then follow the part shown, so paging skips no byte. Opening, source
 pagination and verified downloads retain their original artifact selection and
 stale-reply checks.
 
@@ -197,7 +204,20 @@ separate output/error fields, file operations with their requested/read content,
 and submitted mementos with the requested finish flag. Short content is visible;
 long sections start with a 512-byte excerpt. **Show more** expands a block to at
 most 16 prepared sections, each bounded to 4 KiB. **Inspect source** pages exact
-records and retained payloads for continuation. Empty sections disappear; missing
+records and retained payloads for continuation. A cut section names its whole size
+and offers **Read in full**, which opens that section's text in the Details
+inspector, a page at a time, until **Close text**, **Inspect source** or another
+run. The text comes from the transcript index; a record evicted from the payload
+cache is read again from history first. A text still loading closes once its reply
+can no longer arrive: after a later inspection, a reconnect or opening the
+launcher, or when the read fails, which gives its reason. A page already shown
+stays. Without a connection, Read in full asks for a reconnect. Session-trace
+sections, and streamed text merged from several records until its final response,
+have no single source, so they offer only source inspection. Model responses,
+thinking, summaries, completion claims and mementos read as prose; commands,
+output and data stay monospace. The proportional font falls back to the bundled
+Hack font for characters it lacks, such as the non-breaking hyphen, narrow
+no-break space and arrows that models write. Empty sections disappear; missing
 fields, incomplete inference, not-dispatched actions and upstream truncation stay
 explicit. A request with no result says it is awaiting a recorded result while
 live, or has no recorded result after the run ends. A write result does not claim
@@ -226,13 +246,14 @@ start, so until it has loaded the box shows no range and a call not yet indexed
 says so; after that, a call that isn't recorded names the latest recorded call.
 Without a connection it asks for a reconnect rather than waiting. A session or
 jump-list pick replaces a call still being found. The jump list lists
-compactions planned, applied, deferred or rejected, model errors and failed,
-timed-out or nonzero-exit tool results, latest first, so the last one leads. Each
-entry reads as controller time, event and call, such as `0:08 · exec exited with
-status 1 · call 2`. It pages by 64 with Later/Earlier controls and says when
-earlier history is still loading. Jump to live cancels pending navigation and
-resumes following. Reconnect restores a paused position by its archived event
-sequence, independent of rebuilt row IDs.
+compactions planned, applied, deferred or rejected, model errors, rejected tool
+calls and failed, timed-out or nonzero-exit tool results, latest first, so the
+last one leads. Each entry reads as controller time, event and call, such as
+`0:08 · exec exited with status 1 · call 2`. It pages by 64 with Later/Earlier
+controls and says when earlier history is still loading. Jump to live cancels
+pending navigation, returns the reader to the latest activity and resumes
+following. Reconnect restores a paused position by its archived event sequence,
+independent of rebuilt row IDs.
 
 At each session start, **Memory received** shows the exact recorded delivery,
 including an explicitly available empty memento, no memento supplied, or unavailable
@@ -287,8 +308,11 @@ reads "released by operator". A run the daemon stopped monitoring shows its
 When the worker reported why its execution failed, the run details show that text
 as a `Worker failure:` line.
 Memory compares delivered/published sources; publication does not verify model
-claims. Files are saved versions, addressed only by opaque content IDs. Downloads
-require an explicit destination and use the shared verified, atomic download path.
+claims. It shows 4 KiB excerpts of the delivered memory, the saved publication
+and the controller evidence, whose source buttons page each whole text, and the
+memory diff pages by 24 KiB. Files are saved versions, addressed only by opaque
+content IDs. Downloads require an explicit destination and use the shared
+verified, atomic download path.
 
 At 1440×900 the three panes resize independently. At 900×600 the inspector becomes
 a drawer and the run list can collapse. Escape closes enlargement/drawer; it never
@@ -349,8 +373,8 @@ are explicitly unavailable where the current API does not project them.
 | --- | --- |
 | Event inbox | 64 records and 4 MiB serialized bytes, backpressured |
 | Transcript payload / index | 16 MiB / 32 MiB, conservative index accounting |
-| Prepared timeline window / laid-out text per frame | 64 rows / 64 KiB |
-| Inspector source and file pages | 24 KiB per page |
+| Prepared timeline window / laid-out text per frame | 64 rows / 64 KiB, at most 40 KiB of it the inspector's |
+| Inspector pages: source, file, read-mode text, run JSON, memory diff | 24 KiB per page |
 | Prepared jump list | 64 entries per page; entries included in 32 MiB transcript bound |
 | Prepared session chooser | 64 entries per page; session index included in 32 MiB transcript bound |
 | Inline boundary previews | 64 current-window entries; ≤512 KiB; 2 reads concurrently |
@@ -430,9 +454,10 @@ The separate `ui-snapshots` CI job pins Ubuntu 26.04 image digest
 Mesa `26.0.8-1ubuntu0.3`, LLVM `1:21.1.8-6ubuntu1`, and Vulkan loader
 `1.4.341.0-1`. The selector requires the CPU Vulkan adapter with exact driver info
 `Mesa 26.0.8-1ubuntu0.3 (LLVM 21.1.8)`; missing packages/renderer fail explicitly.
-Fonts come from the locked egui default-font package. Viewport, scale 1, fake clock,
-and paused first animation frame are fixed. No display server or inference GPU is
-required; ordinary interaction tests do not create a renderer.
+Fonts come from the locked egui default-font package, with Hack behind the
+proportional font. Viewport, scale 1, fake clock, and paused first animation
+frame are fixed. No display server or inference GPU is required; ordinary
+interaction tests do not create a renderer.
 
 ```sh
 VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json cargo test --locked -p playtime-ui --features ui-snapshots --test snapshots
@@ -458,7 +483,9 @@ focused synthetic trace views, without the run-header fixture. The
 [jump list](../crates/playtime-ui/tests/snapshots/jump-list.png) opens over a
 synthetic continuous run with a model error, a failed command and compactions;
 the [file text](../crates/playtime-ui/tests/snapshots/file-text.png) view shows the
-first page of a synthetic CSV file.
+first page of a synthetic CSV file, and
+[read mode](../crates/playtime-ui/tests/snapshots/read-mode.png) the first page of a
+synthetic long response.
 
 The #124 projection was also inspected against retained native live archive
 `20261023T054921Z-728c128b`: five calls, their associated commands/end-session

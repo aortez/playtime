@@ -139,6 +139,7 @@ async fn reviewed_workbench_screens() {
         ),
         ("compaction-trace", false, false, Inspector::Details, false),
         ("jump-list", false, false, Inspector::Details, false),
+        ("read-mode", false, false, Inspector::Details, false),
         ("harness-editor", true, false, Inspector::Details, false),
         (
             "harness-editor-narrow",
@@ -356,14 +357,15 @@ async fn reviewed_workbench_screens() {
             draft.name = "Curiosity: continuous conversation".into();
             draft.prompt = "Explore a question raised by the seed files. Keep verified results and uncertainty clear; finish when the work is complete.".into();
         }
-        if matches!(name, "compaction-trace" | "jump-list") {
+        if matches!(name, "compaction-trace" | "jump-list" | "read-mode") {
             // The compaction trace starts its timeline at the compaction; the
             // header and lists sum the whole scene. The jump list shows the
-            // troubled scene's compactions and errors.
-            let (events, first) = if name == "jump-list" {
-                (continuous_scene::troubled_events(), 1)
-            } else {
-                (continuous_scene::events(), 7)
+            // troubled scene's compactions and errors, and read mode a long
+            // response.
+            let (events, first) = match name {
+                "jump-list" => (continuous_scene::troubled_events(), 1),
+                "read-mode" => (continuous_scene::long_response_events(), 1),
+                _ => (continuous_scene::events(), 7),
             };
             let mut transcript = Transcript::default();
             let mut whole = Transcript::default();
@@ -611,6 +613,35 @@ async fn reviewed_workbench_screens() {
         if name == "jump-list" {
             use egui_kittest::kittest::Queryable;
             h.get_by_label("Jump to a compaction or error").click();
+            h.run();
+        }
+        if name == "read-mode" {
+            use egui_kittest::kittest::Queryable;
+            h.get_by_label("Read Model response 2").click();
+            h.run();
+            let text = h
+                .state()
+                .model
+                .commands
+                .iter()
+                .find_map(|c| match c.action {
+                    playtime_ui::model::Action::Text(text, 0) => Some(text),
+                    _ => None,
+                })
+                .unwrap();
+            let mut index = Transcript::default();
+            for event in continuous_scene::long_response_events() {
+                index.apply(event, None).unwrap();
+            }
+            let model = &mut h.state_mut().model;
+            model.apply(playtime_ui::model::Reply {
+                tag: model.tag,
+                run: model.selected.clone(),
+                data: playtime_ui::model::Data::Text(text, Ok(index.text(text, 0).unwrap())),
+            });
+            h.input_mut()
+                .events
+                .push(egui::Event::PointerMoved(egui::pos2(670.0, 750.0)));
             h.run();
         }
         if name.starts_with("files-") {

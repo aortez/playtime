@@ -274,6 +274,18 @@ impl Update {
                 update.mark("Compaction rejected".into(), o.elapsed_ms);
                 None
             }
+            "tool_batch_rejected" => {
+                update.mark(
+                    match value.and_then(|v| v["reason"].as_str()) {
+                        Some(reason) => {
+                            format!("Tool calls rejected: {}", reason.replace('_', " "))
+                        }
+                        None => "Tool calls rejected".into(),
+                    },
+                    o.elapsed_ms,
+                );
+                None
+            }
             "tool_request" => value
                 .and_then(|v| v["name"].as_str())
                 .map(|s| Activity::Tool(excerpt(s, 60))),

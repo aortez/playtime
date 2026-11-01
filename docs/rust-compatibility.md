@@ -938,3 +938,26 @@ previous page could stop a few bytes short. The reviewed UI baselines whose
 timeline gains the row or its call box were regenerated, `image` also for the
 file heading, and `jump-list` and `file-text` are new. Archives, the HTTP schema
 and the behavioral goldens are unchanged.
+
+## Read mode and inspector text shares (2026-11-01)
+
+A cut timeline section names its whole size and offers **Read in full**, which
+pages that section's text in the Details inspector by 24 KiB from the transcript
+index, reading an evicted record from history first. The run's JSON under
+Details and the memory diff page by 24 KiB too; the Memory tab's delivered,
+saved and evidence excerpts shrink from 8 KiB to 4 KiB, and their source buttons
+still page each whole text. The inspector keeps at most 40 KiB of each frame's
+64 KiB text budget, whichever pane draws first, so the timeline keeps 24 KiB.
+An open file beside other inspector text shows what is left of that share, and
+its byte range and steps follow the part shown. A text still loading closes, with
+the reason when its read failed, once its reply can no longer arrive. The jump
+list adds rejected tool calls. Jump to live now returns the reader to
+the latest activity; before, it only resumed following, which egui applies only
+to a view already at the end, so a reader mid-history stayed there. Hack backs
+the proportional font, so the non-breaking hyphen, narrow no-break space and
+arrows that gpt-oss writes no longer draw as boxes. Applied summaries and
+completion claims read as prose. A window section's copy is no longer cut when
+cutting would save no more than its ellipsis adds. The reviewed
+`compaction-trace`, `trace-long` and `trace-long-narrow` baselines changed for the
+prose font and the Read in full button, and `read-mode` is new. Archives, the
+HTTP schema and the behavioral goldens are unchanged.

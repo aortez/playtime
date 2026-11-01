@@ -374,6 +374,7 @@ fn checkpoint_controls_select_the_exact_session_and_ignore_stale_inspection() {
         outgoing: "old".into(),
         evidence: String::new(),
         diff: String::new(),
+        diff_page: playtime_ui::transcript::inspector_page("", 0),
         notice: String::new(),
     };
     let run = h.state().model.selected.clone();
