@@ -175,6 +175,64 @@ fn malformed_protocol_is_distinct_from_legacy_backend_parse_error() {
     }
 }
 #[test]
+fn a_long_parse_error_keeps_its_reason() {
+    let reason = "err=invalid character ']' after object key:value pair";
+    let error = format!(
+        r#"error parsing tool call: raw='{{"path":"gallery.py","content":"{}"}}]}}', {reason}"#,
+        "A".repeat(20_000)
+    );
+    let body = serde_json::to_vec(&json!({ "error": error })).unwrap();
+    let (_, result, _) = decode(&body, Limits::default());
+    let failure = result.unwrap_err();
+    assert_eq!(failure.kind, FailureKind::BackendToolParse);
+    assert!(failure.detail.len() <= 4000);
+    assert!(
+        failure
+            .detail
+            .starts_with(r#"error parsing tool call: raw='{"path":"gallery.py""#)
+    );
+    assert!(failure.detail.ends_with(&format!(r#""}}]}}', {reason}"#)));
+    let (head, omitted, tail) = cut(&failure.detail);
+    assert_eq!(head.len() + omitted + tail.len(), error.len());
+    assert_eq!(
+        (&error[..head.len()], &error[error.len() - tail.len()..]),
+        (head, tail)
+    );
+}
+/// A cut detail's head, omitted byte count and tail.
+fn cut(detail: &str) -> (&str, usize, &str) {
+    let (head, rest) = detail.split_once(" [… ").unwrap();
+    let (omitted, tail) = rest.split_once(" bytes omitted …] ").unwrap();
+    (head, omitted.parse().unwrap(), tail)
+}
+#[test]
+fn a_failure_detail_is_cut_evenly_on_character_boundaries() {
+    for whole in ["x".repeat(4000), "é".repeat(2000)] {
+        assert_eq!(Failure::new(FailureKind::Http, whole.clone()).detail, whole);
+    }
+    let one_over = Failure::new(FailureKind::Http, "x".repeat(4001)).detail;
+    let (head, omitted, tail) = cut(&one_over);
+    assert_eq!((head.len(), omitted, tail.len()), (1985, 31, 1985));
+    for lead in 0..4 {
+        for trail in 0..4 {
+            for count in [1001, 1100, 2250] {
+                let detail = format!(
+                    "{}{}{}",
+                    "x".repeat(lead),
+                    "😀".repeat(count),
+                    "y".repeat(trail)
+                );
+                let kept = Failure::new(FailureKind::Http, detail.clone()).detail;
+                assert!(kept.len() <= 4000, "{lead} {trail} {count}");
+                let (head, omitted, tail) = cut(&kept);
+                assert!(head.len().min(tail.len()) >= 1980, "{lead} {trail} {count}");
+                assert!(detail.starts_with(head) && detail.ends_with(tail));
+                assert_eq!(head.len() + omitted + tail.len(), detail.len());
+            }
+        }
+    }
+}
+#[test]
 fn incomplete_and_limit_edges_preserve_bounded_partial_evidence() {
     let prefix = b"{\"message\":{\"content\":\"partial\"},\"done\":false}\n";
     let (d, result, records) = decode(prefix, Limits::default());
