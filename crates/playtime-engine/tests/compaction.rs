@@ -1330,13 +1330,15 @@ fn invalid_tool_batches_return_errors_without_running_any_call() {
 }
 
 fn notice() -> Value {
-    json!({"role":"user","content":"The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments."})
+    json!({"role":"user","content":"The server rejected your last response because a tool call could not be parsed: invalid character ']' after object key:value pair. None of that response's tools ran. Try again with valid JSON object arguments."})
 }
 fn continue_notice() -> Value {
     json!({"role":"user","content":"Your last response did not call a tool, so the run continues. Continue independently, or call finish_run alone if the task is finished; ordinary prose does not finish the run."})
 }
 fn parse_failure() -> Outcome {
-    Outcome::ModelError(ModelFailure::Parse("error parsing tool call".into()))
+    Outcome::ModelError(ModelFailure::Parse(
+        "error parsing tool call: raw='{\"command\":\"echo ok\"]', err=invalid character ']' after object key:value pair".into(),
+    ))
 }
 
 #[test]
@@ -1432,22 +1434,37 @@ fn a_retried_exchange_fits_its_tool_results_like_any_other() {
     assert_eq!(results(true), results(false));
 }
 
-/// Alternates parse failures and short responses until compaction is planned
-/// while a retry notice waits for its exchange.
+/// Steers the context to just below the compaction trigger with tool-free
+/// responses, then fails a parse, so that the retry notice crosses the
+/// trigger: compaction is planned while the notice waits for its exchange.
+/// Each failure charges a full call and each request logs the whole
+/// conversation, so both budgets are raised.
 fn compaction_with_pending_notice() -> Run {
     let mut config = config();
     config.parameters.limits.generated_tokens = 100_000.try_into().unwrap();
+    config.parameters.limits.log_bytes = (8 << 20).try_into().unwrap();
     let mut run = Run::new(config);
-    for n in 0..200 {
-        run.complete(parse_failure());
-        if run.request().purpose == RequestPurpose::Compaction {
-            return run;
-        }
-        run.response(
-            json!({"role":"assistant","content":format!("Exchange {n}: {}", "x".repeat(150))}),
-        );
-        if run.request().purpose == RequestPurpose::Compaction {
-            run.response(json!({"role":"assistant","content":format!("Summary {n}.")}));
+    // The trigger as the engine rounds it, at the default 75%.
+    let trigger = (16384u64 * 75).div_ceil(100);
+    for n in 0..400 {
+        let request = run.request().clone();
+        assert_eq!(request.purpose, RequestPurpose::Work);
+        // Tokens left below the trigger. On the uncalibrated basis a reply
+        // adds about 250 tokens plus its filler (its continue notice included)
+        // and a retry notice about 240, so a notice crosses from 250 or less,
+        // and a reply is sized to leave about 115.
+        let left = trigger.saturating_sub(request.context_input_bound + request.maximum_tokens);
+        if left <= 250 {
+            run.complete(parse_failure());
+            if run.request().purpose == RequestPurpose::Compaction {
+                return run;
+            }
+        } else {
+            let filler = "x".repeat(left.saturating_sub(365).min(150) as usize);
+            run.response(json!({"role":"assistant","content":format!("Exchange {n}: {filler}")}));
+            if run.request().purpose == RequestPurpose::Compaction {
+                run.response(json!({"role":"assistant","content":format!("Summary {n}.")}));
+            }
         }
     }
     panic!("no compaction while a notice was pending");

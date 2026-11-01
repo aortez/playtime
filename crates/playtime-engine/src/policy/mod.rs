@@ -295,10 +295,10 @@ impl Policy {
             }),
         }
     }
-    pub fn retry(&mut self, view: View<'_>) {
+    pub fn retry(&mut self, view: View<'_>, error: &ModelFailure) {
         match self {
-            Self::Memento(policy) => policy.retry(view.memento()),
-            Self::Compaction(policy) => policy.retry(),
+            Self::Memento(policy) => policy.retry(view.memento(), error),
+            Self::Compaction(policy) => policy.retry(error),
             #[cfg(feature = "test-harness")]
             Self::Probe(_) => unreachable!("test policy never retries"),
         }
@@ -364,5 +364,93 @@ impl Policy {
             Self::Probe(policy) => policy.stopped(),
             Self::Compaction(policy) => policy.stopped(),
         }
+    }
+}
+
+/// The bytes of the server's reason that a parse retry notice keeps.
+const REASON_BYTES: usize = 512;
+
+/// The retry notice for a response the server couldn't parse, naming the
+/// server's reason: the text after the last `, err=` of a message in Ollama's
+/// form, which puts its reason after the raw call, or else the whole message,
+/// its start within `REASON_BYTES`. Memento adds its budget sentence.
+pub(crate) fn parse_retry_notice(error: &ModelFailure) -> String {
+    let message = match error {
+        ModelFailure::Parse(message)
+        | ModelFailure::SummaryTools(message)
+        | ModelFailure::Connection(message)
+        | ModelFailure::Incomplete(message)
+        | ModelFailure::MissingUsage(message)
+        | ModelFailure::ByteLimit(message)
+        | ModelFailure::Timeout(message)
+        | ModelFailure::Infrastructure(message) => message,
+    };
+    let reason = message
+        .rsplit_once(", err=")
+        .map_or(message.as_str(), |(_, reason)| reason)
+        .trim();
+    let mut end = reason.len().min(REASON_BYTES);
+    while !reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    let named = match (&reason[..end], end < reason.len()) {
+        ("", _) => String::new(),
+        (kept, true) => format!(": {kept}…"),
+        (kept, false) => format!(": {kept}"),
+    };
+    format!(
+        "The server rejected your last response because a tool call could not be parsed{named}. None of that response's tools ran. Try again with valid JSON object arguments."
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn notice(message: &str) -> String {
+        parse_retry_notice(&ModelFailure::Parse(message.into()))
+    }
+    fn named(reason: &str) -> String {
+        format!(
+            "The server rejected your last response because a tool call could not be parsed{reason}. None of that response's tools ran. Try again with valid JSON object arguments."
+        )
+    }
+
+    #[test]
+    fn the_notice_names_the_reason_that_follows_the_raw_call() {
+        // Ollama's form, as a Framework run recorded it.
+        assert_eq!(
+            notice(
+                "error parsing tool call: raw='{\"command\":\"echo ok\"]', err=invalid character ']' after object key:value pair"
+            ),
+            named(": invalid character ']' after object key:value pair")
+        );
+        // The raw call may contain the separator itself.
+        assert_eq!(
+            notice(
+                "error parsing tool call: raw='print(\", err=1\")', err=unexpected end of JSON input"
+            ),
+            named(": unexpected end of JSON input")
+        );
+        // A long message keeps its end, with a note of the bytes left out.
+        assert_eq!(
+            notice(
+                "error parsing tool call: raw='{\"content\":\"ab [… 5000 bytes omitted …] yz\"]', err=invalid character '\\'' in string escape code "
+            ),
+            named(": invalid character '\\'' in string escape code")
+        );
+    }
+
+    #[test]
+    fn another_message_is_the_reason_itself_within_the_bound() {
+        assert_eq!(
+            notice("invalid assistant message"),
+            named(": invalid assistant message")
+        );
+        assert_eq!(notice("  "), named(""));
+        let long = "é".repeat(300);
+        assert_eq!(notice(&long), named(&format!(": {}…", "é".repeat(256))));
+        let exact = "x".repeat(512);
+        assert_eq!(notice(&exact), named(&format!(": {exact}")));
     }
 }

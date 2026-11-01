@@ -9,7 +9,10 @@ use crate::{
     evidence::{self, CommandObservation, Evidence},
 };
 
-use super::{Inference, MementoView as View, Proposal, Recovery, memento_contract as contract};
+use super::{
+    Inference, MementoView as View, Proposal, Recovery, memento_contract as contract,
+    parse_retry_notice,
+};
 
 #[derive(Default)]
 enum Stage {
@@ -158,9 +161,9 @@ impl Memento {
         Recovery::Stop(reason)
     }
 
-    pub fn retry(&mut self, view: View<'_>) {
+    pub fn retry(&mut self, view: View<'_>, error: &ModelFailure) {
         self.messages.push(message("user", format!(
-            "The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments. The failed request's full generation allowance was charged to the budget; its actual usage is unknown. Budget: {}", canonical(&budget(view)))));
+            "{} The failed request's full generation allowance was charged to the budget; its actual usage is unknown. Budget: {}", parse_retry_notice(error), canonical(&budget(view)))));
     }
 
     pub fn fit_result(

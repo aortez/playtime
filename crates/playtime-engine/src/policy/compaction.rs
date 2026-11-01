@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use playtime_core::{RequestId, RequestPurpose, StopReason};
 use serde_json::{Value, json};
 
-use super::{Inference, Proposal, View};
+use super::{Inference, Proposal, View, parse_retry_notice};
 use crate::{
     ModelFailure, ModelResponse, ToolRequest,
     compaction::{CompactionConfig, CompactionSettings, summary_transcript},
@@ -25,9 +25,6 @@ const PROMPT_SPEEDUP: u64 = 10;
 /// be deferred for lack of wall time.
 const PACE_MINIMUM_MS: u64 = 10_000;
 
-/// Memento's parse retry notice, without its budget sentence: continuous
-/// requests carry no budget.
-const PARSE_RETRY_NOTICE: &str = "The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments.";
 /// Follows a response that called no tool. Otherwise the next request would end
 /// with the model's own message and leave it nothing to answer.
 const CONTINUE_NOTICE: &str = "Your last response did not call a tool, so the run continues. Continue independently, or call finish_run alone if the task is finished; ordinary prose does not finish the run.";
@@ -456,14 +453,17 @@ impl Compaction {
         };
         recoverable && view.facts.parse_streak <= crate::compaction::TOOL_PARSE_RETRIES
     }
-    pub fn retry(&mut self) {
+    /// The parse retry notice is memento's without its budget sentence:
+    /// continuous requests carry no budget.
+    pub fn retry(&mut self, error: &ModelFailure) {
         if let Stage::Summary { .. } = self.stage {
             // The compaction is planned again, so its checks see the failed
             // attempt's charge, and keeps its ordinal. The work notice would
             // describe a response the next exchange never had.
             self.ordinal -= 1;
         } else {
-            self.notices.push(message("user", PARSE_RETRY_NOTICE));
+            self.notices
+                .push(message("user", parse_retry_notice(error)));
         }
     }
     pub fn after_response(&mut self, view: View<'_>) {

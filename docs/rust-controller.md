@@ -310,32 +310,34 @@ Parser recovery consumes an ordinary work turn or one of two handoff attempts.
 More than `tool_parse_retries` consecutive parse errors stop the run. The error
 ceiling, `tool_parse_error_limit` (default `tool_parse_retries + 1`), counts per
 session: reaching it ends that session through the normal handoff, recorded as
-`early_handoff` with reason `tool_parse_error_limit`, and the next session counts
-from zero. Before 2026-10-18 this ceiling covered the whole run and stopped it.
-Continuous compaction has no sessions and no recipe parse limits. It retries a
-failed work request with memento's notice, minus its budget sentence, and that
-notice opens the next exchange. More than `TOOL_PARSE_RETRIES` (5) consecutive
-failures stop the run with `tool_parse_retry_limit`; admission enforces that
-bound independently of the policy. A summary request the server can't parse
-counts toward the same streak, and so does a summary answered with tool calls
-although the request offered none (`model_error` kind `summary_tools`): the
-response settles with its known usage first, the attempt leaves the measured
-context unchanged, as a parse failure does, and the streak resets only when a
-summary is accepted. Neither gets a notice: the policy plans the same compaction
-again, so every check sees the failed attempt's charge, and the new plan keeps
-the compaction's ordinal. Exceeding the streak with tool-call summaries stops
-with `compaction_failed`. With no total ceiling, each failure's charge bounds
-the total through the run budget. Until 2026-10-26 (UTC), the first failure
-stopped a continuous run, and until 2026-10-27 so did the first tool-call
-summary.
-Neither ceiling resets the allocation or the charge for a failed request. Partial tools
-are observations only. A fresh session retains workspace/memento and optionally
-bounded evidence, but no prior messages, measured context, processes, or `/tmp`.
-Tool arguments and memento UTF-8 sizes are checked before dispatch.
-Dispatch-intent records precede effects; `request_not_dispatched` and
-`tool_not_dispatched` explicitly cancel those intents. Evidence excludes execs
-that never crossed the dispatch boundary. Final-record persistence failures are
-retained in result diagnostics even after a primary stop decision.
+`early_handoff` with reason `tool_parse_error_limit`, and the next session
+counts from zero. Before 2026-10-18 this ceiling covered the whole run and
+stopped it. Continuous compaction has no sessions and no recipe parse limits. It
+retries a failed work request with memento's notice, minus its budget sentence,
+and that notice opens the next exchange. Both notices name the server's reason:
+the text after the last `, err=` of Ollama's message, which follows the raw
+call, or else the whole message, within 512 bytes. More than
+`TOOL_PARSE_RETRIES` (5) consecutive failures stop the run with
+`tool_parse_retry_limit`; admission enforces that bound independently of the
+policy. A summary request the server can't parse counts toward the same streak,
+and so does a summary answered with tool calls although the request offered none
+(`model_error` kind `summary_tools`): the response settles with its known usage
+first, the attempt leaves the measured context unchanged, as a parse failure
+does, and the streak resets only when a summary is accepted. Neither gets a
+notice: the policy plans the same compaction again, so every check sees the
+failed attempt's charge, and the new plan keeps the compaction's ordinal.
+Exceeding the streak with tool-call summaries stops with `compaction_failed`.
+With no total ceiling, each failure's charge bounds the total through the run
+budget. Until 2026-10-26 (UTC), the first failure stopped a continuous run, and
+until 2026-10-27 so did the first tool-call summary. Neither ceiling resets the
+allocation or the charge for a failed request. Partial tools are observations
+only. A fresh session retains workspace/memento and optionally bounded evidence,
+but no prior messages, measured context, processes, or `/tmp`. Tool arguments
+and memento UTF-8 sizes are checked before dispatch. Dispatch-intent records
+precede effects; `request_not_dispatched` and `tool_not_dispatched` explicitly
+cancel those intents. Evidence excludes execs that never crossed the dispatch
+boundary. Final-record persistence failures are retained in result diagnostics
+even after a primary stop decision.
 
 ## Script format and limits
 

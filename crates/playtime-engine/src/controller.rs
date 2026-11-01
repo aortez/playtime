@@ -1220,10 +1220,13 @@ impl<I: IdSource> Controller<I> {
         );
         match decision {
             Recovery::Retry { end_session } => {
-                self.policy.retry(View {
-                    config: &self.config,
-                    facts: self.facts(),
-                });
+                self.policy.retry(
+                    View {
+                        config: &self.config,
+                        facts: self.facts(),
+                    },
+                    &error,
+                );
                 if end_session {
                     self.emit(
                         "early_handoff",
