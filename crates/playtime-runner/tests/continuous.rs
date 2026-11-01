@@ -464,6 +464,9 @@ fn native_profile_uses_v2_compaction_evidence_and_final_capture() {
     assert_eq!(visited, paged);
     let stopped = queries.overview(|_| Err(playtime_runner::Error::Invalid("stop".into())));
     assert!(matches!(stopped, Err(playtime_runner::Error::Invalid(message)) if message == "stop"));
+    continued_overviews_equal_whole_ones(&boundaries(&temp.archive(), |sequence| {
+        sequence % 37 == 0
+    }));
     assert_eq!(totals.by_purpose[&RequestPurpose::Work].admitted_calls, 49);
     assert!(totals.by_purpose[&RequestPurpose::Compaction].admitted_calls >= 2);
     let mut after = 0;

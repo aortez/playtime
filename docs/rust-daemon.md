@@ -79,8 +79,10 @@ pub trait ConfirmationAuthority {
 }
 ArchiveReader::confirmed_snapshot(&dyn ConfirmationAuthority) -> Result<Snapshot>
 ArchiveReader::confirmed_snapshot_extending(&dyn ConfirmationAuthority, ReadPrefix) -> Result<Snapshot>
+ArchiveReader::confirmed_snapshot_continuing(&dyn ConfirmationAuthority, &Snapshot) -> Result<Snapshot>
 ArchiveReader::sub_snapshot(&Snapshot, ReadPrefix) -> Result<Snapshot>
-ArchiveQueries::from_snapshot(ArchiveReader, Snapshot) -> Result<ArchiveQueries>
+Snapshot::check_position(&ReadPrefix) -> Result<()>
+ArchiveQueries::from_snapshot(impl Into<Arc<ArchiveReader>>, Snapshot) -> Result<ArchiveQueries>
 ```
 
 `ReadPrefix` contains sequence, exact byte count and SHA-256. It is position data,
@@ -95,25 +97,37 @@ Storage verifies inputs, exact JSONL prefix, sequence/byte count/digest, known
 records and referenced/transitive content. It does not read the current marker
 for these operations. Its deterministic v1 marker identity describes the selected
 prefix, without manufacturing a commit receipt. Historical positions must be
-beneath a trusted covering snapshot, and one pass verifies both prefixes: the
-covering prefix completely, and the position as an exact record boundary within
-it, by sequence and running digest.
+exact record boundaries of a trusted covering snapshot, by sequence and running
+digest, as the pass that validated it recorded them; a historical snapshot then
+validates the prefix up to its position. `docs/rust-storage.md` says what a
+continued pass and a page check.
 
 Publication order is explicit:
 
 1. The coordinator authenticates Status and rejects regression/conflict.
-2. The archive port validates the actual bytes of the reply's prefix and, in the
-   same pass, that it exactly extends the previous confirmed prefix, outside a
-   ledger transaction.
+2. The archive port validates the actual bytes of the reply's prefix and that
+   they exactly extend the previous confirmed prefix, outside a ledger
+   transaction. While the worker runs or cancels, it continues the pass that
+   verified the previous confirmation over the new bytes only, with the reader
+   it opened for that launch. A new reader and one pass over the whole prefix,
+   which checks the previous prefix as a boundary within it, verify the first
+   confirmation, any whose previous prefix isn't the port's latest, every
+   confirmation once the execution has ended, and one at least every 60
+   seconds, so a change to earlier bytes shows within a minute.
 3. A guarded FULL-synchronous ledger transaction saves worker status and the
    separate `confirmed_read` boundary/provenance, checking ownership generation
    and admission revision again.
 4. The application constructs and swaps a verified projection from that saved
-   boundary, then wakes shared observers. It reuses the snapshot the port's own
-   verification produced for that boundary, for at most 16 runs; a changed
-   boundary or a restarted daemon verifies again. The projection reads the
-   history in one validating pass (`ArchiveQueries::overview`). No handler
-   publishes candidate reads.
+   boundary, then wakes shared observers. It reuses the reader and snapshot the
+   port's own verification produced for that boundary, for at most 16 runs; a
+   changed boundary or a restarted daemon verifies again. The projection goes
+   on from the fold of the run's previous one when that fold read a prefix of
+   this boundary's history, reading only the newer records in pages that check
+   their digests; otherwise, as after a restart, it reads the whole history in
+   one validating pass (`ArchiveQueries::overview_from`). Each active run keeps
+   its latest fold, for at most 16 runs, until it is terminal. The completion
+   check reads the history only once storage has a committed run end. No
+   handler publishes candidate reads.
 
 Ledger version 5 preserves admission/service identity and migrates versions 1–4.
 Version 5 adds the optional operator release; older binaries refuse it.
@@ -131,6 +145,12 @@ uses its independent control lane and publishes control metadata without waiting
 for archive hashing/download capacity. Archive read jobs have four retained
 permits, including after a caller times out. Public history and downloads verify
 their pinned bytes; RunView and paired anchors come from one published snapshot.
+They read through the reader of the run's latest verification when the port has
+one. Following history checks its cursor's position in the published snapshot
+without reading the archive, and pages check each record they return against the
+digest its validating pass recorded. A download checks that the published
+snapshot references the content and verifies the content's bytes; it doesn't
+validate the event log again.
 
 ## Results and safe completion
 

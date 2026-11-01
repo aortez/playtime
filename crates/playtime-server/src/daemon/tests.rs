@@ -3,7 +3,10 @@
 use super::projection;
 use crate::lifecycle::*;
 use playtime_core::{RunMode, UtcTime};
-use playtime_protocol::{api::*, worker::ControlId};
+use playtime_protocol::{
+    api::*,
+    worker::{ControlId, Receipt},
+};
 use playtime_storage::{ArchiveReader, ArchiveWriter, BatchClass, StorageLimits, fixture};
 use serde_json::json;
 struct Root(std::path::PathBuf);
@@ -81,7 +84,9 @@ fn view(root: &Root, writer: &ArchiveWriter, f: &fixture::Fixture) -> projection
         writer.confirmed_frontier(),
     )
     .unwrap();
-    projection::project(&admission(f), &queries).unwrap()
+    projection::project(&admission(f), &queries, None)
+        .unwrap()
+        .0
 }
 #[test]
 fn pending_allowances_nondispatch_and_unknown_settlements_are_separate_at_each_frontier() {
@@ -741,9 +746,41 @@ async fn registrations_bound_to_no_configured_machine_are_refused_as_changed_met
         .unwrap_err();
     assert_eq!(error.code(), "backend_unavailable");
 }
-#[test]
-fn remembered_snapshots_serve_their_exact_frontier_for_at_most_the_refreshed_runs() {
-    let root = Root::new();
+/// A prepared launch of `run` that no worker serves.
+fn launch(run: &playtime_core::RunId, invocation: u8) -> PreparedLaunch {
+    let id = |n: u8| ControlId::new(format!("{n:032x}")).unwrap();
+    PreparedLaunch {
+        binding: playtime_protocol::worker::Binding {
+            service_id: id(1),
+            run_id: run.clone(),
+            manifest_sha256: playtime_storage::sha256(b"manifest"),
+            executable_sha256: playtime_storage::sha256(b"worker"),
+            grant_id: id(2),
+            worker_id: id(3),
+            invocation_id: id(invocation),
+            boot_id: id(4),
+            unit: "synthetic.service".into(),
+            kind: playtime_protocol::worker::WorkerKind::ControllerSimulation,
+        },
+        executable: "/must-not-be-opened/worker".into(),
+        argv: vec![],
+        bootstrap: "/must-not-be-opened/bootstrap".into(),
+        private_dir: "/must-not-be-opened".into(),
+        socket: "/must-not-be-opened/control.sock".into(),
+        startup_deadline_boot_ms: 1,
+    }
+}
+fn receipt(frontier: &playtime_protocol::storage::EventFrontier) -> Receipt {
+    Receipt {
+        sequence: frontier.committed_sequence,
+        bytes: frontier.committed_bytes,
+        sha256: frontier.prefix_sha256.clone(),
+    }
+}
+/// The fixture archive under `root`, written in batches that end after each
+/// of `cuts` records and at the last, with the snapshot at each batch's end
+/// from the empty prefix on, as a reader sees it once all are written.
+fn batches(root: &Root, cuts: &[usize]) -> (fixture::Fixture, Vec<playtime_storage::Snapshot>) {
     let f = fixture::two_session().unwrap();
     let mut writer = ArchiveWriter::create(
         root.0.join("archive"),
@@ -758,44 +795,239 @@ fn remembered_snapshots_serve_their_exact_frontier_for_at_most_the_refreshed_run
             .publish_artifact(&artifact.reference, &artifact.bytes)
             .unwrap();
     }
-    writer.append(&f.events[..1], BatchClass::Ordinary).unwrap();
-    let first_receipt = writer.confirmed_frontier().clone();
-    writer
-        .append(&f.events[1..], BatchClass::Finalization)
-        .unwrap();
+    let mut receipts = vec![writer.confirmed_frontier().clone()];
+    let mut start = 0;
+    for &end in cuts.iter().chain([&f.events.len()]) {
+        let class = if end == f.events.len() {
+            BatchClass::Finalization
+        } else {
+            BatchClass::Ordinary
+        };
+        writer.append(&f.events[start..end], class).unwrap();
+        receipts.push(writer.confirmed_frontier().clone());
+        start = end;
+    }
     let reader = ArchiveReader::open(root.0.join("archive"), StorageLimits::default()).unwrap();
-    let first = reader.live_snapshot(&first_receipt).unwrap();
-    let last = reader.live_snapshot(writer.confirmed_frontier()).unwrap();
+    let snapshots = receipts
+        .iter()
+        .map(|receipt| reader.live_snapshot(receipt).unwrap())
+        .collect();
+    (f, snapshots)
+}
+#[test]
+fn remembered_snapshots_serve_their_exact_frontier_for_at_most_the_refreshed_runs() {
+    let root = Root::new();
+    let (f, written) = batches(&root, &[1]);
+    let (first, last) = (&written[1], &written[2]);
+    let open =
+        || Ok(ArchiveReader::open(root.0.join("archive"), StorageLimits::default()).unwrap());
     let run = &f.descriptor.run_id;
+    let prepared = launch(run, 5);
+    let now = std::time::Instant::now();
     let snapshots = super::archive::Snapshots::default();
-    assert!(snapshots.remembered(run, first.frontier()).is_none());
-    snapshots.remember(run, &first);
-    let hit = snapshots.remembered(run, first.frontier()).unwrap();
-    assert_eq!(hit.frontier(), first.frontier());
-    assert_eq!(hit.inspection(), first.inspection());
-    // Only the run's last verified frontier is served, and only to that run.
-    assert!(snapshots.remembered(run, last.frontier()).is_none());
-    snapshots.remember(run, &last);
-    assert!(snapshots.remembered(run, first.frontier()).is_none());
+    assert!(snapshots.remembered(&prepared, first.frontier()).is_none());
+    snapshots
+        .confirm(
+            &prepared,
+            open,
+            None,
+            &receipt(first.frontier()),
+            false,
+            now,
+        )
+        .unwrap();
+    let hit = snapshots.remembered(&prepared, first.frontier()).unwrap();
+    assert_eq!(hit.snapshot.frontier(), first.frontier());
+    assert_eq!(hit.snapshot.inspection(), first.inspection());
+    // Only the run's last verified frontier is served, and only to the launch
+    // it was verified for.
+    assert!(
+        snapshots
+            .remembered(&launch(run, 6), first.frontier())
+            .is_none()
+    );
+    assert!(snapshots.remembered(&prepared, last.frontier()).is_none());
+    snapshots
+        .confirm(
+            &prepared,
+            open,
+            Some(&receipt(first.frontier())),
+            &receipt(last.frontier()),
+            true,
+            now,
+        )
+        .unwrap();
+    assert!(snapshots.remembered(&prepared, first.frontier()).is_none());
     assert_eq!(
         snapshots
-            .remembered(run, last.frontier())
+            .remembered(&prepared, last.frontier())
             .unwrap()
+            .snapshot
             .frontier(),
         last.frontier()
     );
     let others: Vec<_> = (0..crate::lifecycle::RUNS)
-        .map(|n| playtime_core::RunId::new(format!("other-{n}")).unwrap())
+        .map(|n| launch(&playtime_core::RunId::new(format!("other-{n}")).unwrap(), 5))
         .collect();
     assert!(snapshots.remembered(&others[0], last.frontier()).is_none());
     // At most the runs the daemon refreshes at once keep a snapshot, so one
     // of these seventeen loses its own and the rest keep theirs.
     for other in &others {
-        snapshots.remember(other, &last);
+        snapshots
+            .confirm(other, open, None, &receipt(last.frontier()), false, now)
+            .unwrap();
     }
-    let kept = std::iter::once(run)
+    let kept = std::iter::once(&prepared)
         .chain(&others)
-        .filter(|run| snapshots.remembered(run, last.frontier()).is_some())
+        .filter(|launch| snapshots.remembered(launch, last.frontier()).is_some())
         .count();
     assert_eq!(kept, crate::lifecycle::RUNS);
+}
+#[test]
+fn confirmations_continue_the_latest_verification_only_while_the_worker_appends() {
+    use super::archive::FULL_PASS;
+    use std::time::Duration;
+    let root = Root::new();
+    let (f, written) = batches(&root, &[4, 8]);
+    let receipts: Vec<_> = written.iter().map(|s| receipt(s.frontier())).collect();
+    let opened = std::cell::Cell::new(0);
+    let open = || {
+        opened.set(opened.get() + 1);
+        Ok(ArchiveReader::open(root.0.join("archive"), StorageLimits::default()).unwrap())
+    };
+    let prepared = launch(&f.descriptor.run_id, 5);
+    let snapshots = super::archive::Snapshots::default();
+    let start = std::time::Instant::now();
+    let confirm = |previous: usize, receipt: &Receipt, appending: bool, seconds: u64| {
+        snapshots.confirm(
+            &prepared,
+            open,
+            Some(&receipts[previous]),
+            receipt,
+            appending,
+            start + Duration::from_secs(seconds),
+        )
+    };
+    let matches = |index: usize| {
+        let verified = snapshots
+            .remembered(&prepared, written[index].frontier())
+            .unwrap();
+        assert_eq!(verified.snapshot.inspection(), written[index].inspection());
+    };
+    // A prepared worker's empty prefix opens a reader and passes in full.
+    snapshots
+        .confirm(&prepared, open, None, &receipts[0], false, start)
+        .unwrap();
+    assert_eq!(opened.get(), 1);
+    // While the worker appends, a confirmation, equal or longer, continues
+    // the latest one without opening the archive again.
+    confirm(0, &receipts[1], true, 1).unwrap();
+    confirm(1, &receipts[1], true, 2).unwrap();
+    matches(1);
+    assert_eq!(opened.get(), 1);
+    // A continued pass checks what it reads: a receipt whose digest isn't the
+    // prefix's is refused, and the latest verification stays.
+    let forged = Receipt {
+        sha256: playtime_storage::sha256(b"forged"),
+        ..receipts[2].clone()
+    };
+    assert!(confirm(1, &forged, true, 3).is_err());
+    // It never reads the earlier records: a change to one shows at the next
+    // full pass, FULL_PASS after the last, which opens the archive again.
+    let log = root.0.join("archive").join("events.jsonl");
+    let original = std::fs::read(&log).unwrap();
+    let mut changed = original.clone();
+    let time = changed
+        .windows(4)
+        .position(|window| window == b"12:0")
+        .unwrap();
+    changed[time + 3] ^= 1;
+    std::fs::write(&log, &changed).unwrap();
+    confirm(1, &receipts[2], true, 4).unwrap();
+    assert_eq!(opened.get(), 1);
+    assert!(confirm(2, &receipts[2], true, FULL_PASS.as_secs()).is_err());
+    assert_eq!(opened.get(), 2);
+    std::fs::write(&log, &original).unwrap();
+    confirm(2, &receipts[2], true, FULL_PASS.as_secs() + 1).unwrap();
+    assert_eq!(opened.get(), 3);
+    confirm(2, &receipts[3], true, FULL_PASS.as_secs() + 2).unwrap();
+    matches(3);
+    assert_eq!(opened.get(), 3);
+    // Once the worker no longer appends, every confirmation passes in full.
+    confirm(3, &receipts[3], false, FULL_PASS.as_secs() + 3).unwrap();
+    confirm(3, &receipts[3], false, FULL_PASS.as_secs() + 4).unwrap();
+    assert_eq!(opened.get(), 5);
+    // A receipt that doesn't extend the previous one is refused before any
+    // read, and one whose previous isn't the latest verification passes in
+    // full, checking that previous as a boundary.
+    assert!(confirm(3, &receipts[2], true, FULL_PASS.as_secs() + 5).is_err());
+    assert_eq!(opened.get(), 5);
+    confirm(2, &receipts[3], true, FULL_PASS.as_secs() + 6).unwrap();
+    assert_eq!(opened.get(), 6);
+    let wrong = Receipt {
+        sha256: playtime_storage::sha256(b"wrong"),
+        ..receipts[1].clone()
+    };
+    assert!(
+        snapshots
+            .confirm(&prepared, open, Some(&wrong), &receipts[3], true, start)
+            .is_err()
+    );
+    assert_eq!(opened.get(), 7);
+    // Another launch of the run never continues this one's verification.
+    let other = launch(&f.descriptor.run_id, 6);
+    snapshots
+        .confirm(
+            &other,
+            open,
+            Some(&receipts[3]),
+            &receipts[3],
+            true,
+            start + FULL_PASS / 2,
+        )
+        .unwrap();
+    assert_eq!(opened.get(), 8);
+    assert!(
+        snapshots
+            .remembered(&prepared, written[3].frontier())
+            .is_none()
+    );
+}
+#[test]
+fn projections_go_on_from_the_fold_of_any_earlier_snapshot() {
+    let root = Root::new();
+    let events = fixture::two_session().unwrap().events.len();
+    let (f, written) = batches(&root, &(1..events).collect::<Vec<_>>());
+    let reader = std::sync::Arc::new(
+        ArchiveReader::open(root.0.join("archive"), StorageLimits::default()).unwrap(),
+    );
+    let queries = |snapshot: &playtime_storage::Snapshot| {
+        playtime_runner::ArchiveQueries::from_snapshot(reader.clone(), snapshot.clone()).unwrap()
+    };
+    let record = admission(&f);
+    let project = |snapshot, fold| projection::project(&record, &queries(snapshot), fold).unwrap();
+    let same = |a: &projection::Evidence, b: &projection::Evidence| {
+        assert_eq!(a.view, b.view);
+        assert_eq!(a.checkpoints, b.checkpoints);
+        assert_eq!(a.artifacts, b.artifacts);
+        assert_eq!(a.snapshot.frontier(), b.snapshot.frontier());
+    };
+    let last = written.last().unwrap();
+    let (whole, _) = project(last, None);
+    // The views reach checkpoints, final evidence and the run's end.
+    assert_eq!(whole.checkpoints.len(), 2);
+    assert!(whole.view.outcome.is_some());
+    let mut chained = None;
+    for earlier in &written {
+        let (own, fold) = project(earlier, None);
+        same(&project(last, Some(fold)).0, &whole);
+        let (evidence, fold) = project(earlier, chained);
+        same(&evidence, &own);
+        chained = Some(fold);
+    }
+    // A fold of a later snapshot isn't of an earlier one's history, so that
+    // projection reads its whole history instead.
+    let (_, late) = project(last, None);
+    let (own, _) = project(&written[1], None);
+    same(&project(&written[1], Some(late)).0, &own);
 }

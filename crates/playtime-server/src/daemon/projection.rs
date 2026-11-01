@@ -2,18 +2,18 @@ use crate::{
     application::{ApiError, Result},
     lifecycle::{Admission, Phase, StopDelivery},
 };
-use playtime_core::{RunId, SessionId};
+use playtime_core::{ArchivePath, RunId, SessionId, UtcTime};
 use playtime_protocol::{
     api::*,
     archive::ContentRef,
-    archive_queries::ArchiveFact,
+    archive_queries::{ArchiveFact, ArchiveHistoryEntry},
     bridge::FileContent,
     events::{CleanupOutcome, KnownEvent, MemoryRef},
     observations::ObservationData,
     storage::EventFrontier,
 };
-use playtime_runner::ArchiveQueries;
-use std::collections::BTreeMap;
+use playtime_runner::{ArchiveQueries, OverviewFold};
+use std::collections::{BTreeMap, HashMap};
 
 pub(super) fn backend() -> BackendIdentity {
     BackendIdentity { kind: BackendKind::Controller, description: "Durable controller simulation with a frozen detached worker; scripted model/workshop effects".into() }
@@ -85,6 +85,110 @@ pub(super) struct Evidence {
     pub view: RunView,
     pub checkpoints: Vec<Checkpoint>,
     pub artifacts: Vec<Artifact>,
+}
+/// What projections read from a run's history, kept so that the next
+/// projection of a later snapshot reads only the newer records.
+#[derive(Clone, Default)]
+pub(super) struct Fold {
+    overview: Option<OverviewFold>,
+    metadata: BTreeMap<String, (String, Option<SessionId>, u64)>,
+    sequences: BTreeMap<SessionId, u64>,
+    capture_sequences: BTreeMap<ArchivePath, u64>,
+    updated_at: Option<UtcTime>,
+}
+impl Fold {
+    fn add(&mut self, entry: &ArchiveHistoryEntry) {
+        let sequence = entry.envelope.sequence.get();
+        self.updated_at = Some(entry.envelope.time.clone());
+        match &entry.fact {
+            ArchiveFact::Canonical {
+                event: KnownEvent::CheckpointPublished { checkpoint, .. },
+            } => {
+                self.sequences
+                    .insert(checkpoint.session_id.clone(), sequence);
+            }
+            ArchiveFact::Canonical {
+                event:
+                    KnownEvent::SessionStarted {
+                        session_id,
+                        delivery: Some(delivery),
+                        ..
+                    },
+            } => {
+                self.metadata
+                    .entry(delivery.memento.content.path.to_string())
+                    .or_insert(("incoming_memory".into(), Some(session_id.clone()), sequence));
+                if let Some(evidence) = &delivery.evidence {
+                    self.metadata
+                        .entry(evidence.text.path.to_string())
+                        .or_insert((
+                            "incoming_evidence".into(),
+                            Some(session_id.clone()),
+                            sequence,
+                        ));
+                    self.metadata
+                        .entry(evidence.provenance.path.to_string())
+                        .or_insert((
+                            "evidence_provenance".into(),
+                            Some(session_id.clone()),
+                            sequence,
+                        ));
+                }
+            }
+            ArchiveFact::Execution { event, .. } => {
+                use playtime_protocol::execution::Fact;
+                match &event.fact {
+                    Fact::CapturePublished { capture } => {
+                        self.capture_sequences
+                            .insert(capture.index.path.clone(), sequence);
+                    }
+                    Fact::Observation(o) => {
+                        if let ObservationData::Artifact { content } = &o.data {
+                            self.metadata.insert(
+                                content.path.to_string(),
+                                ("controller_observation".into(), None, sequence),
+                            );
+                        }
+                    }
+                    _ => (),
+                }
+            }
+            ArchiveFact::Observation { observation, .. } => {
+                if let ObservationData::Artifact { content } = &observation.data {
+                    self.metadata.insert(
+                        content.path.to_string(),
+                        (
+                            "controller_observation".into(),
+                            observation.session_id.clone(),
+                            sequence,
+                        ),
+                    );
+                }
+            }
+            _ => (),
+        }
+    }
+}
+/// Each refreshed run's latest fold, for at most the runs the daemon
+/// refreshes at once.
+#[derive(Default)]
+pub(super) struct Folds(std::sync::Mutex<HashMap<RunId, Fold>>);
+impl Folds {
+    /// Takes the run's fold, so a projection at the same time reads the
+    /// whole history instead.
+    pub(super) fn take(&self, run: &RunId) -> Option<Fold> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(run)
+    }
+    pub(super) fn keep(&self, run: &RunId, fold: Fold) {
+        let mut folds = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !folds.contains_key(run) && folds.len() >= crate::lifecycle::RUNS {
+            let stale = folds.keys().next().cloned();
+            if let Some(stale) = stale {
+                folds.remove(&stale);
+            }
+        }
+        folds.insert(run.clone(), fold);
+    }
 }
 fn base(record: &Admission) -> RunView {
     RunView {
@@ -159,7 +263,15 @@ fn base(record: &Admission) -> RunView {
 pub(super) fn unprepared(record: &Admission) -> RunView {
     base(record)
 }
-pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Evidence> {
+/// The run view at `queries`' snapshot, and the fold at it for the next
+/// projection. Given the fold an earlier projection returned for a prefix of
+/// this snapshot's history, it reads only the records after that prefix;
+/// otherwise the whole history.
+pub(super) fn project(
+    record: &Admission,
+    queries: &ArchiveQueries,
+    fold: Option<Fold>,
+) -> Result<(Evidence, Fold)> {
     let mut view = base(record);
     let configuration = queries.inputs().configuration.clone();
     let value: serde_json::Value =
@@ -182,84 +294,27 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
             configuration,
             harness,
         });
-    let mut metadata: BTreeMap<String, (String, Option<SessionId>, u64)> = BTreeMap::new();
-    let mut sequences = BTreeMap::new();
-    let mut capture_sequences = BTreeMap::new();
-    let mut updated_at = None;
-    // One pass over the history serves the whole view.
-    let overview = queries
-        .overview(|entry| {
-            let sequence = entry.envelope.sequence.get();
-            updated_at = Some(entry.envelope.time.clone());
-            match &entry.fact {
-                ArchiveFact::Canonical {
-                    event: KnownEvent::CheckpointPublished { checkpoint, .. },
-                } => {
-                    sequences.insert(checkpoint.session_id.clone(), sequence);
-                }
-                ArchiveFact::Canonical {
-                    event:
-                        KnownEvent::SessionStarted {
-                            session_id,
-                            delivery: Some(delivery),
-                            ..
-                        },
-                } => {
-                    metadata
-                        .entry(delivery.memento.content.path.to_string())
-                        .or_insert(("incoming_memory".into(), Some(session_id.clone()), sequence));
-                    if let Some(evidence) = &delivery.evidence {
-                        metadata.entry(evidence.text.path.to_string()).or_insert((
-                            "incoming_evidence".into(),
-                            Some(session_id.clone()),
-                            sequence,
-                        ));
-                        metadata
-                            .entry(evidence.provenance.path.to_string())
-                            .or_insert((
-                                "evidence_provenance".into(),
-                                Some(session_id.clone()),
-                                sequence,
-                            ));
-                    }
-                }
-                ArchiveFact::Execution { event, .. } => {
-                    use playtime_protocol::execution::Fact;
-                    match &event.fact {
-                        Fact::CapturePublished { capture } => {
-                            capture_sequences.insert(capture.index.path.clone(), sequence);
-                        }
-                        Fact::Observation(o) => {
-                            if let ObservationData::Artifact { content } = &o.data {
-                                metadata.insert(
-                                    content.path.to_string(),
-                                    ("controller_observation".into(), None, sequence),
-                                );
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-                ArchiveFact::Observation { observation, .. } => {
-                    if let ObservationData::Artifact { content } = &observation.data {
-                        metadata.insert(
-                            content.path.to_string(),
-                            (
-                                "controller_observation".into(),
-                                observation.session_id.clone(),
-                                sequence,
-                            ),
-                        );
-                    }
-                }
-                _ => (),
-            }
+    let mut fold = fold
+        .filter(|fold| {
+            fold.overview
+                .as_ref()
+                .is_some_and(|overview| queries.continues(overview))
+        })
+        .unwrap_or_default();
+    // One pass over the history serves the whole view, or one over the
+    // records after the prefix the fold has read.
+    let (overview, next) = queries
+        .overview_from(fold.overview.take(), |entry| {
+            fold.add(entry);
             Ok(())
         })
         .map_err(evidence)?;
-    if let Some(updated_at) = updated_at {
-        view.updated_at = updated_at;
+    fold.overview = Some(next);
+    if let Some(updated_at) = &fold.updated_at {
+        view.updated_at = updated_at.clone();
     }
+    let mut metadata = fold.metadata.clone();
+    let (sequences, capture_sequences) = (&fold.sequences, &fold.capture_sequences);
     let run = overview.run;
     let f = frontier(&run.frontier);
     view.controller_phase = run.phase;
@@ -469,10 +524,13 @@ pub(super) fn project(record: &Admission, queries: &ArchiveQueries) -> Result<Ev
             }
         })
         .collect();
-    Ok(Evidence {
-        snapshot: queries.snapshot().clone(),
-        view,
-        checkpoints,
-        artifacts,
-    })
+    Ok((
+        Evidence {
+            snapshot: queries.snapshot().clone(),
+            view,
+            checkpoints,
+            artifacts,
+        },
+        fold,
+    ))
 }
