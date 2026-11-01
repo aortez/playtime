@@ -3,7 +3,7 @@ use crate::{
     backend::Backend,
     model::*,
     progress,
-    transcript::{TEXT_BYTES, View, WINDOW_ROWS},
+    transcript::{PAGE_BYTES, TEXT_BYTES, View, WINDOW_ROWS},
 };
 use egui::{Color32, RichText, Vec2};
 use playtime_client::config::Options;
@@ -676,49 +676,138 @@ impl Workbench {
             .and_then(|(id, _, _)| self.model.window.rows.iter().find(|r| r.id == id))
             .or_else(|| self.model.window.rows.first())
             .and_then(|r| r.session.clone());
-        let mut jump_session = None;
-        if self.model.window.sessions.total > 0 {
+        // A session, a jump-list entry or a found call to go to.
+        let mut jump = None;
+        let continuous = self
+            .model
+            .run
+            .as_ref()
+            .and_then(|r| r.value.harness.as_ref())
+            .is_some_and(|h| h.harness.compaction.is_some());
+        let window = &self.model.window;
+        if window.sessions.total > 0 || window.calls.latest > 0 || window.jumps.total > 0 {
             ui.horizontal_wrapped(|ui| {
                 let sessions = &self.model.window.sessions;
-                egui::ComboBox::from_id_salt("session-chooser")
-                    .selected_text(current_session.as_ref().map_or_else(
-                        || "Choose session".into(),
-                        |s| format!("Session {}", s.ordinal),
-                    ))
-                    .height(240.0)
-                    .show_ui(ui, |ui| {
-                        for session in &sessions.items {
-                            if ui
-                                .selectable_label(
-                                    current_session
-                                        .as_ref()
-                                        .is_some_and(|s| s.session == session.session),
-                                    format!("Session {} · {}", session.ordinal, session.session),
-                                )
-                                .clicked()
-                            {
-                                jump_session = Some(session.sequence);
-                            }
-                        }
-                    });
                 let mut page = None;
-                if sessions.start > 0 && ui.small_button("Earlier sessions").clicked() {
-                    page = Some(sessions.start.saturating_sub(WINDOW_ROWS));
+                if sessions.total > 0 {
+                    egui::ComboBox::from_id_salt("session-chooser")
+                        .selected_text(current_session.as_ref().map_or_else(
+                            || "Choose session".into(),
+                            |s| format!("Session {}", s.ordinal),
+                        ))
+                        .height(240.0)
+                        .show_ui(ui, |ui| {
+                            for session in &sessions.items {
+                                if ui
+                                    .selectable_label(
+                                        current_session
+                                            .as_ref()
+                                            .is_some_and(|s| s.session == session.session),
+                                        format!(
+                                            "Session {} · {}",
+                                            session.ordinal, session.session
+                                        ),
+                                    )
+                                    .clicked()
+                                {
+                                    jump = Some(session.sequence);
+                                }
+                            }
+                        });
+                    if sessions.start > 0 && ui.small_button("Earlier sessions").clicked() {
+                        page = Some(sessions.start.saturating_sub(WINDOW_ROWS));
+                    }
+                    if sessions.start + sessions.items.len() < sessions.total
+                        && ui.small_button("More sessions").clicked()
+                    {
+                        page = Some(sessions.start + WINDOW_ROWS);
+                    }
+                    ui.small(if sessions.complete {
+                        "Recorded sessions"
+                    } else {
+                        "Session list incomplete · loading history"
+                    });
                 }
-                if sessions.start + sessions.items.len() < sessions.total
-                    && ui.small_button("More sessions").clicked()
-                {
-                    page = Some(sessions.start + WINDOW_ROWS);
+                let calls = self.model.window.calls;
+                // A separator goes between each part shown.
+                let mut shown = sessions.total > 0;
+                if calls.latest > 0 {
+                    if shown {
+                        ui.separator();
+                    }
+                    shown = true;
+                    let label = ui.label("Call");
+                    // Until earlier history has loaded, the latest call indexed
+                    // isn't the run's latest, so the range waits.
+                    let hint = if calls.complete {
+                        format!("1–{}", calls.latest)
+                    } else {
+                        "number".into()
+                    };
+                    let field = ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.model.call_text)
+                                .desired_width(72.0)
+                                .hint_text(hint),
+                        )
+                        .labelled_by(label.id);
+                    let entered =
+                        field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if ui.button("Go to call").clicked() || entered {
+                        self.model.find_call();
+                    }
                 }
-                ui.small(if sessions.complete {
-                    "Recorded sessions"
-                } else {
-                    "Session list incomplete · loading history"
-                });
+                // Latest first, so the last compaction or error leads.
+                let jumps = &self.model.window.jumps;
+                let mut jump_page = None;
+                if jumps.total > 0 {
+                    if shown {
+                        ui.separator();
+                    }
+                    let title = if continuous {
+                        "Jump to a compaction or error"
+                    } else {
+                        "Jump to an error"
+                    };
+                    egui::ComboBox::from_id_salt("jump-list")
+                        .selected_text(title)
+                        .height(240.0)
+                        .show_ui(ui, |ui| {
+                            for item in &jumps.items {
+                                if ui.selectable_label(false, &item.label).clicked() {
+                                    jump = Some(item.sequence);
+                                }
+                            }
+                        })
+                        .response
+                        .widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, title)
+                        });
+                    if jumps.start > 0 && ui.small_button("Later entries").clicked() {
+                        jump_page = Some(jumps.start.saturating_sub(WINDOW_ROWS));
+                    }
+                    if jumps.start + jumps.items.len() < jumps.total
+                        && ui.small_button("Earlier entries").clicked()
+                    {
+                        jump_page = Some(jumps.start + WINDOW_ROWS);
+                    }
+                    if !jumps.complete {
+                        ui.small("List incomplete · loading history");
+                    }
+                }
                 if let Some(start) = page {
                     self.model.command(Action::Sessions(start));
                 }
+                if let Some(start) = jump_page {
+                    self.model.command(Action::Jumps(start));
+                }
             });
+        }
+        // A pick in this frame replaces a call still being found.
+        if jump.is_some() {
+            self.model.cancel_find();
+        } else {
+            jump = self.model.jump.take();
         }
         if self.model.archive_waiting {
             ui.label("Waiting for archive publication…");
@@ -813,7 +902,7 @@ impl Workbench {
         {
             anchor = Some((self.model.window.start + index, within));
         }
-        if let Some(sequence) = jump_session {
+        if let Some(sequence) = jump {
             self.model.location = None;
             self.model.following = false;
             self.navigation = Some((sequence, 0.0));
@@ -1065,13 +1154,13 @@ impl Workbench {
                 Inspector::Details => {
                     if let Some(source) = &self.model.source {
                         ui.label(format!("Recorded source · {} bytes", source.total)); text(ui, &source.text, &mut self.metrics);
-                        let (start, total) = (source.start, source.total);
+                        let (start, end, total) = (source.start, source.start + source.text.len(), source.total);
                         let retained = source.retained.clone();
                         if let Some(reference) = retained && ui.button("Load verified retained payload").clicked() && let Some(run) = self.model.selected.clone() { self.model.inspect_action(Action::Retained(run, reference)); }
                         if let Some(row) = self.model.selected_row {
                             ui.horizontal(|ui| {
-                                if ui.add_enabled(start > 0, egui::Button::new("Previous source page")).clicked() { self.model.inspect_action(Action::Source(row, self.model.source_sequence, start.saturating_sub(TEXT_BYTES))); }
-                                if ui.add_enabled(start + TEXT_BYTES < total, egui::Button::new("Next source page")).clicked() { self.model.inspect_action(Action::Source(row, self.model.source_sequence, start + TEXT_BYTES)); }
+                                if ui.add_enabled(start > 0, egui::Button::new("Previous source page")).clicked() { self.model.inspect_action(Action::Source(row, self.model.source_sequence, start.saturating_sub(PAGE_BYTES))); }
+                                if ui.add_enabled(end < total, egui::Button::new("Next source page")).clicked() { self.model.inspect_action(Action::Source(row, self.model.source_sequence, end)); }
                             });
                             if ui.button("Next source record").clicked() { self.model.source_sequence += 1; self.model.inspect_action(Action::Source(row, self.model.source_sequence, 0)); }
                         }
@@ -1160,17 +1249,38 @@ impl Workbench {
                     if let Some(id) = open && let Some(run) = self.model.selected.clone() { self.model.inspect_action(Action::Content(run, id, 0)); }
                 }
             }
+            if let Some(content) = &self.model.content {
+                ui.separator();
+                // The opened file's name and size lead, and an explicit open
+                // scrolls to them once its content arrives.
+                let mut close = false;
+                let heading = ui.horizontal_wrapped(|ui| {
+                    ui.strong(brief(&content.artifact.name, 240));
+                    close = ui.small_button("Close file").clicked();
+                }).response;
+                ui.small(crate::preview::bytes(content.artifact.content.size_bytes));
+                if std::mem::take(&mut self.model.reveal_content) { heading.scroll_to_me(Some(egui::Align::TOP)); }
+                if close { self.model.close_content(); }
+            }
             if self.model.content.is_some() {
-                ui.separator(); self.image(ui, false);
+                self.image(ui, false);
                 if let Some(content) = &self.model.content {
-                    ui.label(brief(&content.notice, 500));
+                    if !content.notice.is_empty() { ui.label(brief(&content.notice, 500)); }
                     let mut page_offset = None;
                     if let Some(source) = &content.source {
-                        ui.label(format!("Source bytes {}–{} of {}", source.start, source.start + source.text.len(), source.total));
-                        text(ui, &source.text, &mut self.metrics);
-                        ui.horizontal(|ui| {
-                            if ui.add_enabled(source.start > 0, egui::Button::new("Previous file page")).clicked() { page_offset = Some(source.start.saturating_sub(TEXT_BYTES)); }
-                            if ui.add_enabled(source.start + source.text.len() < source.total, egui::Button::new("Next file page")).clicked() { page_offset = Some(source.start + source.text.len()); }
+                        let end = source.start + source.text.len();
+                        // Larger files page by 24 KiB, with the controls above
+                        // the text, where each page opens.
+                        if source.text.len() < source.total {
+                            ui.small(format!("Showing bytes {}–{} of {}", crate::transcript::thousands(source.start as u64 + 1), crate::transcript::thousands(end as u64), crate::transcript::thousands(source.total as u64)));
+                            ui.horizontal(|ui| {
+                                if ui.add_enabled(source.start > 0, egui::Button::new("Previous file page")).clicked() { page_offset = Some(source.start.saturating_sub(PAGE_BYTES)); }
+                                if ui.add_enabled(end < source.total, egui::Button::new("Next file page")).clicked() { page_offset = Some(end); }
+                            });
+                        }
+                        egui::Frame::new().inner_margin(8).corner_radius(4).fill(Color32::from_rgb(29, 34, 42)).show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            if source.total == 0 { ui.small("Empty file"); } else { text(ui, &source.text, &mut self.metrics); }
                         });
                     }
                     let artifact = content.artifact.artifact_id.clone();

@@ -144,6 +144,18 @@ async fn desktop_client_launch_observe_inspect_and_reopen_uses_only_public_http(
         m.notice.starts_with("Stream reconciled")
     })
     .await;
+    // Finding a call goes through the same window task. This fixture's run
+    // records none.
+    until(&mut model, &mut backend, |m| {
+        m.history.contains("Earlier history loaded")
+    })
+    .await;
+    model.call_text = "1".into();
+    model.find_call();
+    until(&mut model, &mut backend, |m| {
+        m.notice == "This run has no recorded model calls"
+    })
+    .await;
     let destination = root.join("saved-image.png");
     model.command(Action::Download(
         run.clone(),

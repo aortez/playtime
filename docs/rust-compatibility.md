@@ -919,3 +919,22 @@ validation, a visit can report the visitor's own error, from a record before the
 corrupt one, where a page would have reported the corruption; nothing is
 published either way. History pages over HTTP still validate their complete
 prefix each.
+
+## Workbench navigation and file text (2026-10-31)
+
+The timeline's session row becomes a navigation row: the session chooser, a
+**Call** box with **Go to call**, and a jump list of compactions, model errors
+and failed tool results, latest first. The jump list and the call lookup read
+the transcript index, which charges its entries to the existing 32 MiB bound,
+so they make no new API requests. An opened file leads with its name, size and
+**Close file**, and its text pages by 24 KiB in a framed block, with the page
+controls above it. Record source pages shrink from 64 KiB to 24 KiB, because the
+inspector draws before the timeline and a 64 KiB page used the whole frame's
+text budget, so a long source or file left the timeline cut short. Paging back
+through source, file or preview pages no longer skips bytes: a previous page
+ends where the shown page starts, and the first page can at most repeat a few.
+Before, when the offset one page back fell inside a multi-byte character, the
+previous page could stop a few bytes short. The reviewed UI baselines whose
+timeline gains the row or its call box were regenerated, `image` also for the
+file heading, and `jump-list` and `file-text` are new. Archives, the HTTP schema
+and the behavioral goldens are unchanged.

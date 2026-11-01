@@ -64,6 +64,7 @@ pub async fn demo(launcher: bool) -> Workbench {
         }
     }
     app.model.window = transcript.window(View::Readable, 0, 64);
+    app.model.window.calls.complete = true;
     app.model.history = "Reviewed #42 model/tool excerpt · synthetic rendering fixture".into();
     app.model.notice =
         "Saved versions are evidence of publication, not verification of model claims.".into();

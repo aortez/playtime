@@ -386,7 +386,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     }
                     continue;
                 }
-                if matches!(command.action, Action::Window(..) | Action::Source(..) | Action::Sessions(..) | Action::Locate(..) | Action::CancelNavigation) {
+                if matches!(command.action, Action::Window(..) | Action::Source(..) | Action::Sessions(..) | Action::Jumps(..) | Action::FindCall(..) | Action::Locate(..) | Action::CancelNavigation) {
                     if let Some((_, tx, _)) = &observer { tokio::select! { _ = stop.cancelled() => break, _ = tx.send(command) => () } }
                     continue;
                 }
@@ -1178,7 +1178,7 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                             Err(e) => view.notice = e,
                         }
                     } else if let Ok(text) = String::from_utf8(bytes) {
-                        view.source = Some(transcript::source_page(&text, offset));
+                        view.source = Some(transcript::inspector_page(&text, offset));
                     } else {
                         view.notice =
                             "Binary or unsupported content; verified download is available".into();
@@ -1198,7 +1198,7 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
                 Some(run),
                 Data::Content(ContentView {
                     artifact,
-                    source: Some(transcript::source_page(&text, 0)),
+                    source: Some(transcript::inspector_page(&text, 0)),
                     image: None,
                     notice: "Verified retained source".into(),
                     animated: false,
@@ -1771,6 +1771,7 @@ async fn observe(
         let mut dirty = true;
         let mut history_done = false;
         let mut session_page = 0;
+        let mut jump_page = 0;
         let mut location = None;
         let mut live = 0;
         let mut redraw = interval(Duration::from_millis(50));
@@ -1799,6 +1800,11 @@ async fn observe(
                     Action::CancelNavigation => { location = None; range.anchor = None; }
                     Action::Locate(sequence, view) => { location = Some((sequence, view)); range.anchor = None; dirty = true; reload_failed = false; }
                     Action::Sessions(start) => { session_page = start; dirty = true; }
+                    Action::Jumps(start) => { jump_page = start; dirty = true; }
+                    Action::FindCall(call) => {
+                        let found = index.find_call(call, history_done);
+                        out.send(command.tag, Some(run.clone()), Data::CallFound(call, found)).await;
+                    }
                     Action::Window(request) => {
                         // A later request in the same view keeps a row still to locate.
                         let anchor = request.anchor.or(range.anchor.filter(|_| range.view == request.view));
@@ -1840,6 +1846,8 @@ async fn observe(
                     }
                     window.progress = index.progress(history_done);
                     window.sessions = index.sessions(session_page, history_done);
+                    window.jumps = index.jumps(jump_page, history_done);
+                    window.calls.complete = history_done;
                     let status = format!("{} records indexed · {}", index.metrics.records, if history_done { "Earlier history loaded" } else { "Loading earlier history independently of live activity" });
                     out.send(tag, Some(run.clone()), Data::Window(window, status, live)).await; dirty = false;
                 }

@@ -130,8 +130,16 @@ not infer the start of model execution.
 
 The Files inspector offers **Open image** or **Open file**, with readable size and
 file kind. Each available file's **Details** contains the full name, exact byte size,
-recorded kind, digest and opaque artifact ID. Opening, source pagination and verified
-downloads retain their original artifact selection and stale-reply checks.
+recorded kind, digest and opaque artifact ID. An opened file leads with its name,
+readable size and **Close file**; opening it, or one of its pages, scrolls the
+inspector there once the content arrives. Text reads as plain text in a framed
+block, so an HTML file shows its markup. A file over 24 KiB pages, with its byte
+range and **Previous file page**/**Next file page** above the text, where each
+page opens. Pages break at character boundaries, and paging back never skips a
+byte. Record source pages are 24 KiB too: the inspector draws before the
+timeline and shares each frame's 64 KiB text budget with it. Opening, source
+pagination and verified downloads retain their original artifact selection and
+stale-reply checks.
 
 Before archive anchors exist, the timeline says **Waiting for archive publication**.
 Observation reads that receive `evidence_not_ready` retry the same run/cursor within
@@ -207,12 +215,24 @@ are laid out. Expansion, resize, late history and disclosure changes preserve th
 reader's activity. Follow controls scrolling only; pausing it prevents later
 records from moving the reader to the end.
 
-The session chooser jumps to recorded session boundaries and pauses following.
-It shows at most 64 entries in a scrollable popup, with Earlier/More controls for
-longer runs. The list says when earlier history is incomplete; configured session
-limits never create entries. The current session follows the visible activity.
-Jump to live cancels pending navigation and resumes following. Reconnect restores
-a paused position by its archived event sequence, independent of rebuilt row IDs.
+A navigation row above the timeline holds the session chooser, a **Call** box and
+a jump list; each jump pauses following. The session chooser jumps to recorded
+session boundaries. It shows at most 64 entries in a scrollable popup, with
+Earlier/More controls for longer runs. The list says when earlier history is
+incomplete; configured session limits never create entries. The current session
+follows the visible activity. **Go to call** (or Enter) goes to the first indexed
+record of a run-wide call number. Earlier history loads forward from the run's
+start, so until it has loaded the box shows no range and a call not yet indexed
+says so; after that, a call that isn't recorded names the latest recorded call.
+Without a connection it asks for a reconnect rather than waiting. A session or
+jump-list pick replaces a call still being found. The jump list lists
+compactions planned, applied, deferred or rejected, model errors and failed,
+timed-out or nonzero-exit tool results, latest first, so the last one leads. Each
+entry reads as controller time, event and call, such as `0:08 · exec exited with
+status 1 · call 2`. It pages by 64 with Later/Earlier controls and says when
+earlier history is still loading. Jump to live cancels pending navigation and
+resumes following. Reconnect restores a paused position by its archived event
+sequence, independent of rebuilt row IDs.
 
 At each session start, **Memory received** shows the exact recorded delivery,
 including an explicitly available empty memento, no memento supplied, or unavailable
@@ -313,10 +333,13 @@ are explicitly unavailable where the current API does not project them.
   A final response replaces streamed text; unknown observations keep source data.
   Retained references resolve by matching published content metadata to opaque IDs,
   with an explicit bounded lookup and visible failure if not published/found.
+  The index also keeps the jump list's entries and the latest call number, charged
+  to the same 32 MiB bound, so the jump list and **Go to call** read no history.
 - `progress.rs` keeps the run's progress from indexed records and words the run
   header. It holds the frozen limits, the count of completed sessions, the latest
   session's requests and the latest record's time and activity, so its memory
-  stays bounded by one session.
+  stays bounded by one session. It also words each record's jump-list entry, if
+  it has one.
 - `ui.rs` renders prepared strings/pixels and emits intents. It virtualizes the
   timeline, caps expanded items and pages file metadata. No URL, file, HTML, SVG or
   script loader is installed. egui/eframe/egui_kittest are pinned to 0.34.3; image is
@@ -326,7 +349,9 @@ are explicitly unavailable where the current API does not project them.
 | --- | --- |
 | Event inbox | 64 records and 4 MiB serialized bytes, backpressured |
 | Transcript payload / index | 16 MiB / 32 MiB, conservative index accounting |
-| Prepared timeline window / laid-out source | 64 rows / 64 KiB |
+| Prepared timeline window / laid-out text per frame | 64 rows / 64 KiB |
+| Inspector source and file pages | 24 KiB per page |
+| Prepared jump list | 64 entries per page; entries included in 32 MiB transcript bound |
 | Prepared session chooser | 64 entries per page; session index included in 32 MiB transcript bound |
 | Inline boundary previews | 64 current-window entries; ≤512 KiB; 2 reads concurrently |
 | Sparse timeline height cache | 2,048 measurements; ≤256 KiB |
@@ -429,7 +454,11 @@ provisional thinking and bounded long excerpts at both viewport sizes. Their
 commands are synthetic data and never execute. The `session-memory` and
 `session-interrupted` pairs show delivered/published memory with contextual file
 controls, and a submitted handoff without a published checkpoint. These are
-focused synthetic trace views, without the run-header fixture.
+focused synthetic trace views, without the run-header fixture. The
+[jump list](../crates/playtime-ui/tests/snapshots/jump-list.png) opens over a
+synthetic continuous run with a model error, a failed command and compactions;
+the [file text](../crates/playtime-ui/tests/snapshots/file-text.png) view shows the
+first page of a synthetic CSV file.
 
 The #124 projection was also inspected against retained native live archive
 `20261023T054921Z-728c128b`: five calls, their associated commands/end-session

@@ -279,3 +279,54 @@ fn a_long_stream_cannot_grow_a_prepared_section_beyond_its_limit() {
     assert!(w.rows[0].sections[0].text.ends_with(" …"));
     assert!(t.raw(501, 0).is_some());
 }
+
+#[test]
+fn the_jump_list_names_each_error_with_its_call_and_pages_by_64() {
+    let mut t = Transcript::default();
+    // Earlier history can arrive after the records that follow it, so the
+    // call is named once its request is indexed.
+    t.apply(observation(200, "model_error", None, json!({"error":{"kind":"parse","message":"bad tool call"},"recovery_allowed":true,"token_budget_charge":0,"consecutive_errors":1,"tool_parse_errors":1,"usage":{"known_generated_tokens":0,"unknown_reserved_tokens":0,"unknown_requests":0,"budget_charged_tokens":0,"usage_complete":true}})), None).unwrap();
+    for seq in (10..150).step_by(2) {
+        t.apply(
+            observation(
+                seq,
+                "tool_request",
+                Some(seq),
+                json!({"name":"exec","arguments":{"command":"false"}}),
+            ),
+            None,
+        )
+        .unwrap();
+        t.apply(observation(seq + 1, "tool_result", Some(seq), json!({"name":"exec","request_sequence":seq,"result":{"exit_code":1},"unabridged_result":null})), None).unwrap();
+    }
+    assert_eq!(
+        t.jumps(0, true).items[1].label,
+        "0:00 · exec exited with status 1"
+    );
+    t.apply(request(), None).unwrap();
+    let latest = t.jumps(0, true);
+    assert_eq!(
+        (latest.start, latest.total, latest.items.len()),
+        (0, 71, 64)
+    );
+    assert_eq!(
+        (latest.items[0].sequence, latest.items[0].label.as_str()),
+        (200, "0:00 · Model error: parse · call 1")
+    );
+    assert_eq!(
+        (latest.items[1].sequence, latest.items[1].label.as_str()),
+        (149, "0:00 · exec exited with status 1 · call 1")
+    );
+    let earlier = t.jumps(64, true);
+    assert_eq!((earlier.start, earlier.items.len()), (64, 7));
+    assert_eq!(earlier.items.last().unwrap().sequence, 11);
+    // A page past the end shows the earliest page.
+    assert_eq!(t.jumps(500, true).start, 64);
+    // The model error shares its call's row; a call starts at its request.
+    let (call, _) = t.location(View::Readable, 200).unwrap();
+    assert_eq!(t.row_for(1), Some(call));
+    assert_eq!(
+        (t.call_sequence(1), t.call_sequence(2), t.calls()),
+        (Some(1), None, 1)
+    );
+}

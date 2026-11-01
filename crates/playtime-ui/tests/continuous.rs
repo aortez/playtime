@@ -267,6 +267,299 @@ fn the_header_counts_errors_failed_tools_deferrals_and_rejections() {
     );
 }
 
+#[test]
+fn the_jump_list_leads_with_the_latest_compaction_or_error() {
+    let build = |reverse: bool| {
+        let mut t = Transcript::default();
+        let mut events = scene::troubled_events();
+        if reverse {
+            events.reverse();
+        }
+        for e in events {
+            t.apply(e, None).unwrap();
+        }
+        t
+    };
+    let t = build(false);
+    let labels = |t: &Transcript| {
+        t.jumps(0, true)
+            .items
+            .into_iter()
+            .map(|jump| (jump.sequence, jump.label))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        labels(&t),
+        [
+            (11, "0:11 · Compaction rejected".into()),
+            (10, "0:10 · Compaction 1 planned".into()),
+            (9, "0:09 · Compaction 1 deferred".into()),
+            (8, "0:08 · exec exited with status 1 · call 2".into()),
+            (4, "0:04 · Model error: parse · call 1".into()),
+        ]
+    );
+    assert_eq!(labels(&build(true)), labels(&t));
+    // Each entry and each call lands on its own row.
+    let window = t.window(View::Readable, 0, 64);
+    let title = |sequence| {
+        let (id, _) = t.location(View::Readable, sequence).unwrap();
+        window
+            .rows
+            .iter()
+            .find(|r| r.id == id)
+            .unwrap()
+            .title
+            .clone()
+    };
+    assert_eq!(title(4), "Call 1 · Work");
+    assert_eq!(title(8), "Tool · exec");
+    assert_eq!(title(9), "Compaction 1 · deferred");
+    assert_eq!(title(11), "Compaction rejected");
+    assert_eq!(t.calls(), 2);
+    assert_eq!(title(t.call_sequence(2).unwrap()), "Call 2 · Work");
+    assert_eq!(
+        (t.call_sequence(1), t.call_sequence(2), t.call_sequence(3)),
+        (Some(3), Some(5), None)
+    );
+    assert_eq!(t.find_call(2, false), Ok(5));
+    assert_eq!(
+        t.find_call(3, true),
+        Err("Call 3 isn't recorded; the latest recorded call is 2".into())
+    );
+    // Earlier history loads forward from the run's start, so a call past the
+    // latest indexed may still be recorded until it has loaded.
+    let mut first = Transcript::default();
+    for e in scene::troubled_events().into_iter().take(4) {
+        first.apply(e, None).unwrap();
+    }
+    assert_eq!(first.calls(), 1);
+    assert_eq!(
+        first.find_call(2, false),
+        Err("Call 2 isn't indexed yet; earlier history is still loading".into())
+    );
+    assert_eq!(
+        Transcript::default().find_call(1, true),
+        Err("This run has no recorded model calls".into())
+    );
+}
+
+/// The workbench on the troubled continuous scene, with history loaded.
+async fn troubled() -> Harness<'static, Workbench> {
+    let mut app = common::demo(false).await;
+    let run = &mut app.model.run.as_mut().unwrap().value;
+    run.harness = Some(ArchivedHarness {
+        configuration: run.input_manifest.clone().unwrap(),
+        harness: HarnessView::continuous(Default::default()).unwrap(),
+    });
+    let mut t = Transcript::default();
+    for e in scene::troubled_events() {
+        t.apply(e, None).unwrap();
+    }
+    app.model.window = t.window(View::Readable, 0, 64);
+    app.model.window.jumps = t.jumps(0, true);
+    app.model.window.calls.complete = true;
+    app.model.connection = playtime_ui::model::ConnectionState::Connected;
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    h
+}
+fn located(h: &Harness<'_, Workbench>, sequence: u64) -> bool {
+    h.state().model.commands.iter().any(|c| {
+        matches!(c.action, playtime_ui::model::Action::Locate(s, View::Readable) if s == sequence)
+    })
+}
+fn reply(h: &mut Harness<'_, Workbench>, call: u64, found: Result<u64, String>) {
+    arrive(h, call, found);
+    h.run();
+}
+/// Applies a found call's reply without running a frame.
+fn arrive(h: &mut Harness<'_, Workbench>, call: u64, found: Result<u64, String>) {
+    let model = &mut h.state_mut().model;
+    model.apply(playtime_ui::model::Reply {
+        tag: model.tag,
+        run: model.selected.clone(),
+        data: playtime_ui::model::Data::CallFound(call, found),
+    });
+}
+/// Clicks `label`, calling `pressed` between the press and the release, so
+/// that what it does lands in the frame where the click registers.
+fn pick(
+    h: &mut Harness<'_, Workbench>,
+    label: &str,
+    pressed: impl FnOnce(&mut Harness<'_, Workbench>),
+) {
+    let pos = h.get_by_label(label).rect().center();
+    let button = |pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.event(egui::Event::PointerMoved(pos));
+    h.event(button(true));
+    h.step();
+    pressed(h);
+    h.event(button(false));
+    h.step();
+    h.run();
+}
+fn type_call(h: &mut Harness<'_, Workbench>, call: &str) {
+    h.state_mut().model.call_text = call.into();
+    h.run();
+    h.get_by_label("Go to call").click();
+    h.run();
+}
+
+#[tokio::test]
+async fn the_jump_list_and_a_found_call_go_to_their_records() {
+    use playtime_ui::model::Action;
+    let mut h = troubled().await;
+    h.get_by_label("Jump to a compaction or error").click();
+    h.run();
+    h.get_by_label("0:08 · exec exited with status 1 · call 2")
+        .click();
+    h.run();
+    assert!(located(&h, 8));
+    assert!(!h.state().model.following);
+    // The call field takes a number; the find goes to the backend.
+    h.state_mut().model.commands.clear();
+    type_call(&mut h, "2");
+    assert!(
+        h.state()
+            .model
+            .commands
+            .iter()
+            .any(|c| matches!(c.action, Action::FindCall(2)))
+    );
+    reply(&mut h, 2, Ok(5));
+    assert!(located(&h, 5));
+    // An unrecorded call says why, and the timeline stays put.
+    h.state_mut().model.commands.clear();
+    type_call(&mut h, "9");
+    reply(
+        &mut h,
+        9,
+        Err("Call 9 isn't recorded; the latest recorded call is 2".into()),
+    );
+    assert_eq!(
+        h.state().model.notice,
+        "Call 9 isn't recorded; the latest recorded call is 2"
+    );
+    assert!(
+        !h.state()
+            .model
+            .commands
+            .iter()
+            .any(|c| matches!(c.action, Action::Locate(..)))
+    );
+    type_call(&mut h, "call two");
+    assert_eq!(h.state().model.notice, "Enter a call number, such as 12");
+    // A pick replaces a find still waiting for its reply, whether the reply
+    // arrives later or in the pick's own frame.
+    for same_frame in [false, true] {
+        h.state_mut().model.commands.clear();
+        type_call(&mut h, "1");
+        h.get_by_label("Jump to a compaction or error").click();
+        h.run();
+        pick(&mut h, "0:09 · Compaction 1 deferred", |h| {
+            if same_frame {
+                arrive(h, 1, Ok(3));
+            }
+        });
+        reply(&mut h, 1, Ok(3));
+        assert!(located(&h, 9));
+        assert!(!located(&h, 3), "same frame: {same_frame}");
+    }
+    // Jumping to live drops a find still waiting for its reply.
+    type_call(&mut h, "1");
+    h.state_mut().model.jump_live();
+    reply(&mut h, 1, Ok(3));
+    assert!(!located(&h, 3));
+    assert!(h.state().model.following);
+    // Without the run's stream, a find would go unanswered.
+    h.state_mut().model.commands.clear();
+    h.state_mut().model.connection =
+        playtime_ui::model::ConnectionState::Error("stream ended".into());
+    type_call(&mut h, "2");
+    assert_eq!(h.state().model.notice, "Reconnect to go to a call");
+    assert!(
+        !h.state()
+            .model
+            .commands
+            .iter()
+            .any(|c| matches!(c.action, Action::FindCall(..)))
+    );
+}
+
+#[tokio::test]
+async fn an_opened_text_file_shows_its_name_and_pages_only_when_it_must() {
+    use playtime_ui::model::{Action, ContentView, Inspector};
+    let mut app = common::demo(false).await;
+    let artifact = |name: &str, size: usize| Artifact {
+        artifact_id: ArtifactId::new("notes").unwrap(),
+        name: name.into(),
+        kind: "file".into(),
+        content: playtime_protocol::archive::ContentRef {
+            path: playtime_core::ArchivePath::new("artifacts/notes").unwrap(),
+            sha256: playtime_core::Sha256Digest::new("a".repeat(64)).unwrap(),
+            size_bytes: size as u64,
+        },
+        session_id: None,
+        published_sequence: 1,
+        frozen_input: false,
+    };
+    let text = "line of notes\n".repeat(5000);
+    app.model.content = Some(ContentView {
+        artifact: artifact("notes.md", text.len()),
+        source: Some(playtime_ui::transcript::inspector_page(&text, 0)),
+        image: None,
+        notice: String::new(),
+        animated: false,
+    });
+    app.model.inspector = Inspector::Files;
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    assert!(h.query_by_label("notes.md").is_some());
+    assert!(h.query_by_label("68.4 KiB").is_some());
+    assert!(
+        h.query_by_label("Showing bytes 1–24,576 of 70,000")
+            .is_some()
+    );
+    // The inspector draws first; its page leaves the timeline its text.
+    assert!(h.query_by_label_contains("Text viewport limit").is_none());
+    h.get_by_label("Next file page").click();
+    h.run();
+    assert!(
+        h.state()
+            .model
+            .commands
+            .iter()
+            .any(|c| matches!(&c.action, Action::Content(_, id, 24576) if id.as_str() == "notes"))
+    );
+    // The page read scrolls to the file once it arrives.
+    assert!(h.state().model.reveal_content);
+    let short = "one line\n";
+    h.state_mut().model.content = Some(ContentView {
+        artifact: artifact("short.txt", short.len()),
+        source: Some(playtime_ui::transcript::inspector_page(short, 0)),
+        image: None,
+        notice: String::new(),
+        animated: false,
+    });
+    h.run();
+    assert!(!h.state().model.reveal_content);
+    assert!(h.query_by_label("short.txt").is_some());
+    assert!(h.query_by_label("Next file page").is_none());
+    assert!(h.query_by_label_contains("Showing bytes").is_none());
+    h.get_by_label("Close file").click();
+    h.run();
+    assert!(h.state().model.content.is_none());
+}
+
 #[tokio::test]
 async fn compaction_editor_preserves_invalid_input_and_emits_explicit_settings() {
     let mut app = common::harness_editor().await;
