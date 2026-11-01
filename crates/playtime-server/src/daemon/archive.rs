@@ -7,7 +7,7 @@ use playtime_engine::simulation::Scenario;
 use playtime_protocol::{
     api::*,
     storage::{ArchiveIdentity, EventFrontier},
-    worker::{self, Binding, Receipt, Status, WorkerKind},
+    worker::{self, Binding, Receipt, Status, WorkerKind, WorkerState},
 };
 use playtime_storage::{ArchiveReader, ConfirmationAuthority, ReadPrefix, Snapshot, StorageLimits};
 use playtime_worker::bundle::VerifiedBundle;
@@ -15,7 +15,12 @@ use playtime_worker_control::{
     Bootstrap, Credential, FileLock, boot_id, boot_ms, create_private_dir, digest, random_id,
     read_private, write_once,
 };
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 #[derive(Clone)]
 pub(super) struct Archive {
@@ -38,35 +43,161 @@ pub(super) struct Archive {
     execution_gate: Arc<tokio::sync::Mutex<()>>,
     snapshots: Arc<Snapshots>,
 }
-/// Snapshots this daemon's own verification produced, by run. A later read at
-/// the same confirmed frontier reuses one instead of verifying the archive
-/// again, with the uncommitted byte count that verification saw; a changed
-/// frontier or a restart verifies again. At most the runs the daemon refreshes
-/// at once are kept.
+/// How long confirmations continue one pass before a confirmation validates the
+/// whole committed prefix again.
+pub(super) const FULL_PASS: Duration = Duration::from_secs(60);
+
+/// The latest verification this daemon made of a run: the reader it opened and
+/// checked for the run's prepared launch, and the snapshot it verified.
+#[derive(Clone)]
+pub(super) struct Verified {
+    prepared: PreparedLaunch,
+    pub reader: Arc<ArchiveReader>,
+    pub snapshot: Snapshot,
+    /// When a pass last validated the whole committed prefix.
+    full: Instant,
+}
+/// Verifications by run. A later read at the same confirmed frontier reuses
+/// one instead of verifying the archive again, with the uncommitted byte count
+/// that verification saw; a changed frontier or a restart verifies again. At
+/// most the runs the daemon refreshes at once are kept.
 #[derive(Default)]
-pub(super) struct Snapshots(std::sync::Mutex<HashMap<playtime_core::RunId, Snapshot>>);
+pub(super) struct Snapshots(std::sync::Mutex<HashMap<playtime_core::RunId, Verified>>);
 impl Snapshots {
-    pub(super) fn remember(&self, run: &playtime_core::RunId, snapshot: &Snapshot) {
+    pub(super) fn remember(&self, verified: Verified) {
         let mut snapshots = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let run = &verified.prepared.binding.run_id;
         if !snapshots.contains_key(run) && snapshots.len() >= crate::lifecycle::RUNS {
             let stale = snapshots.keys().next().cloned();
             if let Some(stale) = stale {
                 snapshots.remove(&stale);
             }
         }
-        snapshots.insert(run.clone(), snapshot.clone());
+        snapshots.insert(run.clone(), verified);
     }
-    pub(super) fn remembered(
-        &self,
-        run: &playtime_core::RunId,
-        frontier: &EventFrontier,
-    ) -> Option<Snapshot> {
+    fn latest(&self, prepared: &PreparedLaunch) -> Option<Verified> {
         let snapshots = self.0.lock().unwrap_or_else(|e| e.into_inner());
         snapshots
-            .get(run)
-            .filter(|snapshot| snapshot.frontier() == frontier)
+            .get(&prepared.binding.run_id)
+            .filter(|verified| verified.prepared == *prepared)
             .cloned()
     }
+    /// The launch's verification at exactly `frontier`.
+    pub(super) fn remembered(
+        &self,
+        prepared: &PreparedLaunch,
+        frontier: &EventFrontier,
+    ) -> Option<Verified> {
+        self.latest(prepared)
+            .filter(|verified| verified.snapshot.frontier() == frontier)
+    }
+    /// The reader of the run's latest verification.
+    pub(super) fn reader(&self, run: &playtime_core::RunId) -> Option<Arc<ArchiveReader>> {
+        let snapshots = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        snapshots.get(run).map(|verified| verified.reader.clone())
+    }
+    /// Verifies `receipt` as an exact extension of `previous`, the launch's
+    /// last confirmation, and remembers the result. While the worker appends,
+    /// a receipt that extends the latest verification here continues its pass
+    /// over the new bytes only, which checks them, and that they extend it,
+    /// as a full pass would. Otherwise, and at least every `FULL_PASS`, a new
+    /// reader from `open` validates the whole prefix.
+    pub(super) fn confirm(
+        &self,
+        prepared: &PreparedLaunch,
+        open: impl FnOnce() -> life::Result<ArchiveReader>,
+        previous: Option<&Receipt>,
+        receipt: &Receipt,
+        appending: bool,
+        now: Instant,
+    ) -> life::Result<EventFrontier> {
+        if previous.is_some_and(|previous| {
+            receipt.sequence < previous.sequence
+                || (receipt.sequence > previous.sequence && receipt.bytes <= previous.bytes)
+                || (receipt.sequence == previous.sequence && receipt != previous)
+        }) {
+            return Err(Error::Uncertain);
+        }
+        let authority = |reader: &ArchiveReader| Authority {
+            identity: reader.identity().clone(),
+            prefix: prefix(receipt),
+        };
+        let latest = self.latest(prepared).filter(|latest| {
+            appending
+                && previous.is_some_and(|previous| at(&latest.snapshot, previous))
+                && now.saturating_duration_since(latest.full) < FULL_PASS
+        });
+        let verified = match latest {
+            Some(latest) => Verified {
+                snapshot: latest
+                    .reader
+                    .confirmed_snapshot_continuing(&authority(&latest.reader), &latest.snapshot)
+                    .map_err(storage)?,
+                ..latest
+            },
+            None => {
+                let reader = Arc::new(open()?);
+                // One pass validates the receipt's prefix and, when there is
+                // one, the previous confirmation as an exact boundary within it.
+                let snapshot = match previous {
+                    Some(previous) => {
+                        reader.confirmed_snapshot_extending(&authority(&reader), prefix(previous))
+                    }
+                    None => reader.confirmed_snapshot(&authority(&reader)),
+                }
+                .map_err(storage)?;
+                Verified {
+                    prepared: prepared.clone(),
+                    reader,
+                    snapshot,
+                    full: now,
+                }
+            }
+        };
+        let frontier = verified.snapshot.frontier().clone();
+        self.remember(verified);
+        Ok(frontier)
+    }
+}
+/// Whether the run at `snapshot` completed normally, from its history read
+/// through `reader`. Only a committed run end gives a run its outcome, and
+/// storage records each one, so until then it reads nothing. Reading the
+/// history validates the whole prefix and its content again, but `reader`
+/// hashed the frozen inputs when it opened, up to `FULL_PASS` earlier, so a
+/// run completes only once `open` has hashed them again.
+pub(super) fn completed(
+    admission: &Admission,
+    reader: Arc<ArchiveReader>,
+    snapshot: Snapshot,
+    open: impl FnOnce() -> life::Result<ArchiveReader>,
+) -> life::Result<bool> {
+    if snapshot.inspection().terminal.is_none() {
+        return Ok(false);
+    }
+    let query = playtime_runner::ArchiveQueries::from_snapshot(reader, snapshot)
+        .map_err(|_| Error::Uncertain)?;
+    let run = query.run().map_err(|_| Error::Uncertain)?;
+    let completed = !admission
+        .last_status
+        .as_ref()
+        .is_none_or(|s| s.publication_pending)
+        && run.unsettled_model_intents.is_empty()
+        && run.outcome.is_some_and(|outcome| {
+            outcome.reason != StopReason::Interrupted
+                && outcome.reason != StopReason::InfrastructureFailure
+                && outcome.cleanup == playtime_protocol::events::CleanupOutcome::Complete
+        });
+    if completed {
+        open().map_err(|_| Error::Uncertain)?;
+    }
+    Ok(completed)
+}
+/// Whether `snapshot` ends exactly at `receipt`.
+fn at(snapshot: &Snapshot, receipt: &Receipt) -> bool {
+    let frontier = snapshot.frontier();
+    frontier.committed_sequence == receipt.sequence
+        && frontier.committed_bytes == receipt.bytes
+        && frontier.prefix_sha256 == receipt.sha256
 }
 /// The live model as the daemon reaches it: host bindings frozen at startup
 /// and an adapter for read-only identity checks at admission.
@@ -767,7 +898,7 @@ impl Archive {
     pub fn saved_snapshot(
         &self,
         record: &Admission,
-    ) -> life::Result<Option<(ArchiveReader, Snapshot)>> {
+    ) -> life::Result<Option<(Arc<ArchiveReader>, Snapshot)>> {
         let Some(confirmation) = &record.confirmed_read else {
             return Ok(None);
         };
@@ -777,13 +908,11 @@ impl Archive {
             return Err(Error::Uncertain);
         }
         let prepared = record.prepared.as_ref().ok_or(Error::Uncertain)?;
-        let reader = self.reader(prepared)?;
-        if let Some(snapshot) = self
-            .snapshots
-            .remembered(&prepared.binding.run_id, &confirmation.frontier)
-        {
-            return Ok(Some((reader, snapshot)));
+        if let Some(verified) = self.snapshots.remembered(prepared, &confirmation.frontier) {
+            return Ok(Some((verified.reader, verified.snapshot)));
         }
+        let reader = Arc::new(self.reader(prepared)?);
+        let now = Instant::now();
         let authorized = Authority {
             identity: confirmation.frontier.archive.clone(),
             prefix: ReadPrefix {
@@ -796,8 +925,24 @@ impl Archive {
         if snapshot.frontier() != &confirmation.frontier {
             return Err(Error::Uncertain);
         }
-        self.snapshots.remember(&prepared.binding.run_id, &snapshot);
+        self.snapshots.remember(Verified {
+            prepared: prepared.clone(),
+            reader: reader.clone(),
+            snapshot: snapshot.clone(),
+            full: now,
+        });
         Ok(Some((reader, snapshot)))
+    }
+    /// A reader of the run's archive: the one this daemon last verified the
+    /// run with, or a new one.
+    pub fn run_reader(
+        &self,
+        run: &playtime_core::RunId,
+    ) -> playtime_storage::Result<Arc<ArchiveReader>> {
+        match self.snapshots.reader(run) {
+            Some(reader) => Ok(reader),
+            None => ArchiveReader::open(self.path(run), StorageLimits::default()).map(Arc::new),
+        }
     }
     fn reader(&self, prepared: &PreparedLaunch) -> life::Result<ArchiveReader> {
         let reader = ArchiveReader::open(
@@ -824,30 +969,21 @@ impl Archive {
         previous: Option<&Receipt>,
         status: &Status,
     ) -> life::Result<EventFrontier> {
-        let reader = self.reader(prepared)?;
         let receipt = status.latest_receipt.as_ref().ok_or(Error::Uncertain)?;
-        let authority = Authority {
-            identity: reader.identity().clone(),
-            prefix: prefix(receipt),
-        };
-        // One pass validates the receipt's prefix and, when there is one, the
-        // previous confirmation as an exact boundary within it.
-        let snapshot = match previous {
-            Some(previous) => {
-                if receipt.sequence < previous.sequence
-                    || (receipt.sequence > previous.sequence && receipt.bytes <= previous.bytes)
-                    || (receipt.sequence == previous.sequence && receipt != previous)
-                {
-                    return Err(Error::Uncertain);
-                }
-                reader
-                    .confirmed_snapshot_extending(&authority, prefix(previous))
-                    .map_err(storage)?
-            }
-            None => reader.confirmed_snapshot(&authority).map_err(storage)?,
-        };
-        self.snapshots.remember(&prepared.binding.run_id, &snapshot);
-        Ok(snapshot.frontier().clone())
+        // A running or cancelling worker may still append. One in another
+        // state hasn't begun or ended without a normal outcome, so each of its
+        // confirmations validates the whole prefix. After a normal end the
+        // worker still reports running or cancelling, and the completion check
+        // validates the whole history before the run completes.
+        let appending = matches!(status.state, WorkerState::Running | WorkerState::Cancelling);
+        self.snapshots.confirm(
+            prepared,
+            || self.reader(prepared),
+            previous,
+            receipt,
+            appending,
+            Instant::now(),
+        )
     }
 }
 /// Every live preview leads with this, whatever its harness.
@@ -955,19 +1091,8 @@ impl ArchivePort for Archive {
             let Some((reader, snapshot)) = archive.saved_snapshot(&admission)? else {
                 return Ok(false);
             };
-            let query = playtime_runner::ArchiveQueries::from_snapshot(reader, snapshot)
-                .map_err(|_| Error::Uncertain)?;
-            let run = query.run().map_err(|_| Error::Uncertain)?;
-            Ok(!admission
-                .last_status
-                .as_ref()
-                .is_none_or(|s| s.publication_pending)
-                && run.unsettled_model_intents.is_empty()
-                && run.outcome.is_some_and(|outcome| {
-                    outcome.reason != StopReason::Interrupted
-                        && outcome.reason != StopReason::InfrastructureFailure
-                        && outcome.cleanup == playtime_protocol::events::CleanupOutcome::Complete
-                }))
+            let prepared = admission.prepared.as_ref().ok_or(Error::Uncertain)?;
+            completed(&admission, reader, snapshot, || archive.reader(prepared))
         })
         .await
         .map_err(|_| Error::Uncertain)?

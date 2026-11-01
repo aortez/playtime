@@ -5,7 +5,7 @@ use playtime_protocol::{
     v1::UsageSummary,
 };
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Attempt {
     purpose: Option<RequestPurpose>,
     admitted: bool,
@@ -133,6 +133,7 @@ impl ArchiveQueries {
 }
 
 /// `request_accounting`'s state while a pass goes through the history.
+#[derive(Clone)]
 pub(super) struct AccountingFold {
     attempts: BTreeMap<RequestId, Attempt>,
     admission_evidence: bool,
@@ -237,7 +238,7 @@ impl AccountingFold {
         Ok(())
     }
 
-    pub(super) fn finish(self, queries: &ArchiveQueries) -> Result<RequestAccounting> {
+    pub(super) fn finish(&self, queries: &ArchiveQueries) -> Result<RequestAccounting> {
         let mut by_purpose: BTreeMap<RequestPurpose, Totals> = BTreeMap::new();
         let mut unclassified = Totals::default();
         let mut all = Totals::default();

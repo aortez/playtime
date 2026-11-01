@@ -992,3 +992,62 @@ timeline section shows up to 4,092 bytes, so a 4,096-byte cut lost the reason's
 last bytes there too. Messages of 4,001 to 4,096 bytes, which were kept whole,
 are now cut. Only an archive with a failure message over 4,000 bytes differs;
 the HTTP schema and the goldens are unchanged.
+
+## Continued reads of a running archive (2026-11-01)
+
+The daemon's work for a running run grew with its log. Each refresh opened a
+reader, which hashed the frozen inputs, and validated the whole committed
+prefix, even when the receipt hadn't changed. The completion check then rebuilt
+the run from the whole history, a changed receipt projected it again, and each
+live stream update opened a reader and made two more passes. In a 60-minute
+trial on the Framework, the daemon used 52% of a core on average and 93% by
+15 MB of log.
+
+A storage snapshot now keeps the pass that validated it, 72 bytes a record
+(7.2 MB at the 100,000-event limit) and its state, which
+`Snapshot::without_continuation` drops for a snapshot kept for reads.
+`confirmed_snapshot_continuing` continues that pass over the new bytes, through
+the reader that made it: it checks the new records as a full pass does, and the
+content they reference that no earlier record did, without reading the earlier
+ones. `Snapshot::check_position` checks a position against the kept record
+boundaries without reading. A page reads only the records it returns and fails
+with `archive_corrupt` when one's digest differs from the pass's; it no longer
+validates the rest of the prefix or the content that earlier records reference.
+A sub-snapshot checks its position in the covering snapshot and then validates
+the prefix up to it, so corruption past the position no longer fails it.
+
+The daemon keeps, for at most 16 runs, the reader that verified a run's latest
+confirmation and the snapshot it verified. While the worker runs or cancels, a
+confirmation that extends that snapshot continues its pass. A new reader and a
+full pass verify the first confirmation, one that doesn't extend the latest,
+each one from a worker that hasn't begun or that ended without a normal outcome,
+and at least one every 60 seconds. After a normal end the worker still reports
+running or cancelling, so instead the completion check reads the whole history
+again and a new reader hashes the frozen inputs again before the run completes.
+So changed bytes that an earlier confirmation verified fail a confirmation
+within 60 seconds, or keep the run from completing, rather than failing at the
+next refresh, and a page or content read that returns them fails at once. Apart
+from that check, the frozen inputs are hashed when the daemon opens a reader for
+a full pass or a run it hasn't kept, rather than at each refresh and history
+read. The projection keeps its fold of the history for each run until the run is
+terminal and, when the fold's prefix is a record boundary of the new snapshot,
+reads only the records after it; otherwise, as after a restart or for a
+historical frontier, it reads the whole history. The completion check reads the
+history only once storage holds a committed run end. History and downloads use
+the run's kept reader when it has one. A followed cursor is checked against the
+published snapshot without a pass, and a download verifies its content's bytes
+without a log pass, so a corrupt log no longer fails a download with
+`archive_corrupt`. Published evidence keeps its snapshot for reads only,
+72 bytes a record for each published run; the state a continuation needs, about
+three times as much, stays only with the latest verification of at most 16 runs.
+
+Measured in release builds on that trial's archive (5,685 records, 15.2 MB),
+refreshing at every fifth record as the log grew: verification took 56.5 s of
+CPU as full passes and 0.28 s continued, one unchanged receipt at the end took
+102 ms and now takes 0.28 ms, and projections took 131 s from the start and
+0.39 s continued, with the same views, checkpoints and artifacts at all 1,137
+steps. On the 99 archives in the trial roots, continued snapshots equal full
+passes at about a hundred points each, and continued projections equal whole
+ones at about twenty. Their snapshots for reads hold 5.0 MB in all, against
+0.9 MB of inspections before and 17.6 MB with the state a continuation needs.
+Archive bytes, the HTTP schema and the goldens are unchanged.

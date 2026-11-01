@@ -75,3 +75,106 @@ pub fn copy(source: &Path, destination: &Path) {
         }
     }
 }
+
+/// A confirmation of one committed prefix, as a daemon's would be.
+pub struct Confirmed(
+    pub playtime_protocol::storage::ArchiveIdentity,
+    pub playtime_storage::ReadPrefix,
+);
+impl playtime_storage::ConfirmationAuthority for Confirmed {
+    fn authorize(
+        &self,
+        archive: &playtime_protocol::storage::ArchiveIdentity,
+    ) -> playtime_storage::Result<playtime_storage::ReadPrefix> {
+        assert_eq!(archive, &self.0);
+        Ok(self.1.clone())
+    }
+}
+
+/// Queries at the record boundaries of a finished archive's committed log
+/// whose sequence `keep` accepts, from the empty prefix on, sharing a reader.
+/// Each boundary's snapshot continues the previous one's pass, and equals a
+/// full pass to that boundary.
+pub fn boundaries(
+    archive: &Path,
+    keep: impl Fn(u64) -> bool,
+) -> Vec<playtime_runner::ArchiveQueries> {
+    use playtime_storage::{ArchiveReader, ReadPrefix, Snapshot, StorageLimits};
+    let reader =
+        std::sync::Arc::new(ArchiveReader::open(archive, StorageLimits::default()).unwrap());
+    let last = reader.offline_snapshot().unwrap();
+    let log = fs::read(archive.join("events.jsonl")).unwrap();
+    let log = &log[..last.frontier().committed_bytes as usize];
+    let mut ends = vec![0];
+    for line in log.split_inclusive(|byte| *byte == b'\n') {
+        ends.push(ends.last().unwrap() + line.len());
+    }
+    let last_sequence = ends.len() as u64 - 1;
+    let mut previous: Option<Snapshot> = None;
+    ends.iter()
+        .enumerate()
+        .filter(|(sequence, _)| keep(*sequence as u64) || *sequence as u64 == last_sequence)
+        .map(|(sequence, &end)| {
+            let prefix = ReadPrefix {
+                sequence: sequence as u64,
+                bytes: end as u64,
+                sha256: playtime_storage::sha256(&log[..end]),
+            };
+            let authority = Confirmed(reader.identity().clone(), prefix);
+            let full = reader.confirmed_snapshot(&authority).unwrap();
+            let snapshot = match &previous {
+                Some(previous) => reader
+                    .confirmed_snapshot_continuing(&authority, previous)
+                    .unwrap(),
+                None => full.clone(),
+            };
+            assert_eq!(snapshot.frontier(), full.frontier());
+            assert_eq!(snapshot.inspection(), full.inspection());
+            previous = Some(snapshot.clone());
+            playtime_runner::ArchiveQueries::from_snapshot(reader.clone(), snapshot).unwrap()
+        })
+        .collect()
+}
+
+/// An overview that goes on from a fold of any earlier boundary, or from
+/// each boundary's fold in turn, equals one read from the start, and its
+/// visitor sees only the entries after the fold's.
+pub fn continued_overviews_equal_whole_ones(queries: &[playtime_runner::ArchiveQueries]) {
+    let whole = |queries: &playtime_runner::ArchiveQueries| {
+        let mut entries = Vec::new();
+        let (overview, fold) = queries
+            .overview_from(None, |entry| {
+                entries.push(entry.clone());
+                Ok(())
+            })
+            .unwrap();
+        (overview, fold, entries)
+    };
+    let last = queries.last().unwrap();
+    let (expected, latest, entries) = whole(last);
+    let mut chained = None;
+    for earlier in queries {
+        let (own, fold, _) = whole(earlier);
+        let mut seen = Vec::new();
+        let (overview, _) = last
+            .overview_from(Some(fold), |entry| {
+                seen.push(entry.clone());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(overview.run, expected.run);
+        assert_eq!(overview.request_accounting, expected.request_accounting);
+        assert_eq!(overview.captures, expected.captures);
+        let after = earlier.snapshot().frontier().committed_sequence as usize;
+        assert_eq!(seen, entries[after..]);
+        let (overview, fold) = earlier.overview_from(chained, |_| Ok(())).unwrap();
+        assert_eq!(overview.run, own.run);
+        assert_eq!(overview.request_accounting, own.request_accounting);
+        assert_eq!(overview.captures, own.captures);
+        chained = Some(fold);
+    }
+    // A fold of a later prefix doesn't go on to an earlier one.
+    let first = &queries[0];
+    assert!(!first.continues(&latest));
+    assert!(first.overview_from(Some(latest), |_| Ok(())).is_err());
+}

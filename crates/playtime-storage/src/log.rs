@@ -1,9 +1,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom},
 };
 
-use playtime_core::{ArchivePath, RequestId, UsageTotals};
+use playtime_core::{ArchivePath, RequestId, Sha256Digest, UsageTotals};
 use playtime_protocol::{
     archive::{ContentRef, InputManifest},
     bridge::{BridgeEvent, decode_checkpoint_index, decode_source_map},
@@ -428,13 +428,94 @@ pub(crate) fn decode_line(bytes: &[u8], limits: &StorageLimits) -> Result<Decode
     decode_event(utf8(bytes)?).map_err(Into::into)
 }
 
-pub(crate) struct Scan {
+/// One record as the pass that validated it saw it: where it ends, its own
+/// digest, and the digest of the committed prefix through it.
+#[derive(Clone, Copy)]
+pub(crate) struct Record {
+    pub end: u64,
+    pub sha256: [u8; 32],
+    pub prefix_sha256: [u8; 32],
+}
+
+/// A pass's state where it stopped. A later pass can continue it over the
+/// bytes after it without reading the earlier ones again, and a read can
+/// check the records it returns against what the pass validated.
+#[derive(Clone)]
+pub(crate) struct Pass {
     pub state: LogState,
-    pub events: Vec<StoredEvent>,
+    hash: Sha256,
+    verified: BTreeSet<ArchivePath>,
+    pub records: Vec<Record>,
+}
+
+/// What a pass carries from record to record besides the records themselves:
+/// the log state, the running digest and the content already verified. A
+/// continuation needs it, reads don't, and it is most of a pass's memory.
+pub(crate) struct Carried {
+    state: LogState,
+    hash: Sha256,
+    verified: BTreeSet<ArchivePath>,
+}
+
+impl Pass {
+    /// The records, which reads check, apart from what a continuation needs.
+    pub(crate) fn split(self) -> (Vec<Record>, Carried) {
+        let Self {
+            state,
+            hash,
+            verified,
+            records,
+        } = self;
+        (
+            records,
+            Carried {
+                state,
+                hash,
+                verified,
+            },
+        )
+    }
+
+    /// The pass that `split` divided, to continue it.
+    pub(crate) fn rejoined(records: &[Record], carried: &Carried) -> Self {
+        Self {
+            state: carried.state.clone(),
+            hash: carried.hash.clone(),
+            verified: carried.verified.clone(),
+            records: records.to_vec(),
+        }
+    }
+
+    fn prepared(
+        descriptor: &ArchiveDescriptor,
+        manifest: &InputManifest,
+        limits: &StorageLimits,
+    ) -> Result<Self> {
+        let state = LogState::prepared(descriptor, manifest, limits)?;
+        Ok(Self {
+            verified: state.references.keys().cloned().collect(),
+            state,
+            hash: Sha256::new(),
+            records: Vec::new(),
+        })
+    }
+
+    /// The committed bytes this pass has validated.
+    pub(crate) fn bytes(&self) -> u64 {
+        self.records.last().map_or(0, |record| record.end)
+    }
+
+    fn prefix_sha256(&self) -> Sha256Digest {
+        digest_value(self.hash.clone().finalize().as_slice())
+    }
+}
+
+pub(crate) struct Scan {
+    pub pass: Pass,
     pub suffix_bytes: u64,
-    /// The state at the requested checkpoint, verified as an exact record
-    /// boundary of the scanned prefix during the same pass.
-    pub checkpoint: Option<LogState>,
+    /// The pass as it stood at the requested checkpoint, verified as an exact
+    /// record boundary of the scanned prefix during the same pass.
+    pub checkpoint: Option<Pass>,
 }
 
 fn checkpoint_mismatch() -> StorageError {
@@ -444,24 +525,25 @@ fn checkpoint_mismatch() -> StorageError {
     )
 }
 
-/// What one pass returns besides validation: a page of events after a
-/// sequence, and the state at a checkpoint position beneath the frontier.
-/// A visitor instead receives every record once it has validated, and the
-/// pass collects no page.
+/// What one pass does besides validation: check a position beneath the
+/// frontier, hand every record to a visitor once it has validated, or
+/// continue an earlier pass instead of starting at the first record.
 #[derive(Default)]
 pub(crate) struct ScanOptions<'a> {
-    pub after: u64,
-    pub limit: u32,
     pub checkpoint: Option<&'a ReadPrefix>,
     pub visitor: Option<&'a mut dyn FnMut(StoredEvent) -> Result<()>>,
+    /// Validates only the bytes after this pass, from its state: it never
+    /// reads the earlier records again or verifies the content they reference.
+    pub resume: Option<Pass>,
 }
 
-/// Validates the committed prefix at `frontier` in one pass. A checkpoint
-/// position beneath it is checked where the pass crosses its byte count:
-/// the sequence and running SHA-256 must match there exactly, so a position
-/// inside a record or with another history fails without a second pass. The
-/// pass still runs to the frontier first, so a prefix that fails its own
-/// validation reports corruption rather than a bad position.
+/// Validates the committed prefix at `frontier` in one pass, or only the bytes
+/// after an earlier pass it resumes. A checkpoint position beneath it is
+/// checked where the pass crosses its byte count: the sequence and running
+/// SHA-256 must match there exactly, so a position inside a record or with
+/// another history fails without a second pass. The pass still runs to the
+/// frontier first, so a prefix that fails its own validation reports
+/// corruption rather than a bad position.
 pub(crate) fn scan(
     directory: &Directory,
     descriptor: &ArchiveDescriptor,
@@ -471,10 +553,9 @@ pub(crate) fn scan(
     options: ScanOptions<'_>,
 ) -> Result<Scan> {
     let ScanOptions {
-        after,
-        limit,
         checkpoint,
         mut visitor,
+        resume,
     } = options;
     if checkpoint.is_some_and(|prefix| {
         prefix.bytes > frontier.committed_bytes || prefix.sequence > frontier.committed_sequence
@@ -484,6 +565,14 @@ pub(crate) fn scan(
             "checkpoint prefix exceeds the committed prefix",
         ));
     }
+    if resume.as_ref().is_some_and(|pass| {
+        pass.bytes() > frontier.committed_bytes || pass.state.sequence > frontier.committed_sequence
+    }) {
+        return Err(StorageError::new(
+            ErrorCode::CursorAhead,
+            "previous prefix exceeds the committed prefix",
+        ));
+    }
     if frontier.committed_bytes > limits.event_log_bytes
         || frontier.committed_sequence > limits.events
     {
@@ -491,31 +580,36 @@ pub(crate) fn scan(
             "committed prefix exceeds reader limits",
         ));
     }
-    let file = directory.open_file("events.jsonl", OFlags::RDONLY)?;
+    let mut file = directory.open_file("events.jsonl", OFlags::RDONLY)?;
     let length = file.metadata()?.len();
     if length < frontier.committed_bytes {
         return Err(StorageError::corrupt(
             "commit marker points beyond event file",
         ));
     }
-    let mut reader = BufReader::new(file.take(frontier.committed_bytes));
-    let mut hash = Sha256::new();
-    let mut state = LogState::prepared(descriptor, manifest, limits)?;
-    let mut verified: BTreeSet<_> = state.references.keys().cloned().collect();
-    let mut events = Vec::new();
-    let mut page_bytes = 0;
-    let mut page_full = false;
-    let mut consumed = 0;
+    let mut pass = match resume {
+        Some(pass) => pass,
+        None => Pass::prepared(descriptor, manifest, limits)?,
+    };
+    // The frontier says how many records the pass ends with, within the event
+    // bound, so their list is allocated once at that size.
+    pass.records
+        .reserve_exact((frontier.committed_sequence - pass.state.sequence) as usize);
+    let start = pass.bytes();
+    file.seek(SeekFrom::Start(start))?;
+    let mut reader = BufReader::new(file.take(frontier.committed_bytes - start));
+    let mut consumed = start;
     let mut checkpoint_state = None;
     let mut checkpoint_crossed = false;
     if let Some(prefix) = checkpoint
-        && prefix.bytes == 0
+        && prefix.bytes <= start
     {
         checkpoint_crossed = true;
-        if prefix.sequence == 0
-            && prefix.sha256 == digest_value(Sha256::new().finalize().as_slice())
+        if prefix.bytes == start
+            && prefix.sequence == pass.state.sequence
+            && prefix.sha256 == pass.prefix_sha256()
         {
-            checkpoint_state = Some(state.clone());
+            checkpoint_state = Some(pass.clone());
         }
     }
     loop {
@@ -528,53 +622,48 @@ pub(crate) fn scan(
             break;
         }
         consumed += count as u64;
-        hash.update(&bytes);
+        pass.hash.update(&bytes);
         let decoded = decode_line(&bytes, limits).map_err(committed_error)?;
-        for reference in state
+        for reference in pass
+            .state
             .observe(
                 &decoded,
                 &bytes,
                 descriptor,
                 limits,
                 directory,
-                state.sequence,
+                pass.state.sequence,
             )
             .map_err(committed_error)?
         {
-            if verified.insert(reference.path.clone()) {
+            if pass.verified.insert(reference.path.clone()) {
                 directory.verify(&reference, limits.content_bytes)?;
             }
         }
+        pass.records.push(Record {
+            end: consumed,
+            sha256: digest_bytes(Sha256::digest(&bytes).as_slice()),
+            prefix_sha256: digest_bytes(pass.hash.clone().finalize().as_slice()),
+        });
         if let Some(prefix) = checkpoint
             && !checkpoint_crossed
             && consumed >= prefix.bytes
         {
             checkpoint_crossed = true;
             if consumed == prefix.bytes
-                && state.sequence == prefix.sequence
-                && digest_value(hash.clone().finalize().as_slice()) == prefix.sha256
+                && pass.state.sequence == prefix.sequence
+                && pass.prefix_sha256() == prefix.sha256
             {
-                checkpoint_state = Some(state.clone());
+                checkpoint_state = Some(pass.clone());
             }
         }
         if let Some(visitor) = visitor.as_mut() {
             visitor(StoredEvent::new(decoded.envelope().clone(), bytes))?;
-        } else if !page_full && state.sequence > after && events.len() < limit as usize {
-            // Returning fewer than limit is allowed; every page still has a
-            // strict byte bound. Validate the rest of the prefix before return.
-            if page_bytes + bytes.len() as u64 <= limits.page_bytes {
-                page_bytes += bytes.len() as u64;
-                events.push(StoredEvent::new(decoded.envelope().clone(), bytes));
-            } else {
-                // Once full, never skip a large record to fit a later small one.
-                // The next page starts immediately after the last returned event.
-                page_full = true;
-            }
         }
     }
     if consumed != frontier.committed_bytes
-        || state.sequence != frontier.committed_sequence
-        || digest_value(hash.finalize().as_slice()) != frontier.prefix_sha256
+        || pass.state.sequence != frontier.committed_sequence
+        || pass.prefix_sha256() != frontier.prefix_sha256
     {
         return Err(StorageError::corrupt(
             "committed prefix length, sequence, or SHA-256 mismatch",
@@ -584,14 +673,17 @@ pub(crate) fn scan(
         return Err(checkpoint_mismatch());
     }
     Ok(Scan {
-        state,
-        events,
+        pass,
         suffix_bytes: length - frontier.committed_bytes,
         checkpoint: checkpoint_state,
     })
 }
 
-fn committed_error(error: StorageError) -> StorageError {
+pub(crate) fn digest_bytes(digest: &[u8]) -> [u8; 32] {
+    digest.try_into().expect("SHA-256 has 32 bytes")
+}
+
+pub(crate) fn committed_error(error: StorageError) -> StorageError {
     if error.code == ErrorCode::MalformedData {
         StorageError::corrupt(error.message)
     } else {

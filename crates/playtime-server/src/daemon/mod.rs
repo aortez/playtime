@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use playtime_core::{RunId, RunMode, SessionId};
 use playtime_protocol::{api::*, worker::WorkerState};
 use playtime_runner::ArchiveQueries;
-use playtime_storage::{ArchiveReader, ReadPrefix, StorageLimits};
+use playtime_storage::{ArchiveReader, ReadPrefix};
 use playtime_worker::bundle::VerifiedBundle;
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 use tokio::sync::{RwLock, Semaphore, watch};
@@ -31,6 +31,7 @@ struct Inner {
     archive: Arc<Archive>,
     coordinator: Coordinator,
     published: RwLock<BTreeMap<RunId, Published>>,
+    folds: projection::Folds,
     reads: Arc<Semaphore>,
     test_supervision: bool,
     catalog: crate::catalog::Catalog,
@@ -168,6 +169,7 @@ impl Daemon {
                 archive,
                 coordinator,
                 published: RwLock::new(BTreeMap::new()),
+                folds: Default::default(),
                 reads: Arc::new(Semaphore::new(4)),
                 test_supervision,
                 models,
@@ -242,18 +244,31 @@ impl Daemon {
         let projected = if record.confirmed_read.is_none() {
             Ok(None)
         } else {
+            let inner = self.inner.clone();
             self.blocking(move || {
+                // Taken once the read starts: a projection refused for want of
+                // a read permit leaves the fold for the next one.
+                let fold = inner.folds.take(&saved.run_id);
                 archive
                     .saved_snapshot(&saved)
                     .map_err(projection::evidence)?
                     .map(|(reader, snapshot)| {
                         let query = ArchiveQueries::from_snapshot(reader, snapshot)
                             .map_err(projection::evidence)?;
-                        projection::project(&saved, &query).map(Arc::new)
+                        projection::project(&saved, &query, fold)
                     })
                     .transpose()
             })
             .await
+            .map(|projected| {
+                projected.map(|(evidence, fold)| {
+                    // A terminal run's projection is its last.
+                    if record.phase != Phase::Terminal {
+                        self.inner.folds.keep(&record.run_id, fold);
+                    }
+                    Arc::new(evidence)
+                })
+            })
         };
         let mut published = self.inner.published.write().await;
         if published
@@ -389,14 +404,14 @@ impl Daemon {
         let Some(frontier) = selected else {
             return Ok(current);
         };
-        let path = self.inner.archive.path(run);
+        let (archive, run) = (self.inner.archive.clone(), run.clone());
         self.blocking(move || {
-            let reader = ArchiveReader::open(path, StorageLimits::default())
-                .map_err(projection::evidence)?;
+            let reader = archive.run_reader(&run).map_err(projection::evidence)?;
             let snapshot = historical(&reader, &current.snapshot, &frontier)?;
             let query =
                 ArchiveQueries::from_snapshot(reader, snapshot).map_err(projection::evidence)?;
-            projection::project(&published.record, &query).map(Arc::new)
+            projection::project(&published.record, &query, None)
+                .map(|(evidence, _)| Arc::new(evidence))
         })
         .await
     }
@@ -439,32 +454,37 @@ fn lifecycle(error: life::Error) -> ApiError {
         _ => ApiError::new("ownership_unresolved"),
     }
 }
+/// A public frontier's prefix, once it is an exact record boundary of
+/// `covering`. It reads nothing.
+fn position(covering: &playtime_storage::Snapshot, f: &Frontier) -> Result<ReadPrefix> {
+    let archive = &covering.frontier().archive;
+    if f.run_id != archive.run_id || f.manifest_sha256 != archive.input_manifest.sha256 {
+        return Err(ApiError::new("invalid_cursor"));
+    }
+    let prefix = ReadPrefix {
+        sequence: f.prefix.sequence,
+        bytes: f.prefix.byte_offset,
+        sha256: f.prefix.sha256.clone(),
+    };
+    covering.check_position(&prefix).map_err(cursor)?;
+    Ok(prefix)
+}
+/// The snapshot at a public frontier beneath `covering`.
 fn historical(
     reader: &ArchiveReader,
     covering: &playtime_storage::Snapshot,
     f: &Frontier,
 ) -> Result<playtime_storage::Snapshot> {
-    if f.run_id != reader.identity().run_id
-        || f.manifest_sha256 != reader.identity().input_manifest.sha256
-    {
-        return Err(ApiError::new("invalid_cursor"));
-    }
     reader
-        .sub_snapshot(
-            covering,
-            ReadPrefix {
-                sequence: f.prefix.sequence,
-                bytes: f.prefix.byte_offset,
-                sha256: f.prefix.sha256.clone(),
-            },
-        )
-        .map_err(|e| {
-            ApiError::new(if e.code == playtime_storage::ErrorCode::CursorAhead {
-                "cursor_ahead"
-            } else {
-                "invalid_cursor"
-            })
-        })
+        .sub_snapshot(covering, position(covering, f)?)
+        .map_err(cursor)
+}
+fn cursor(error: playtime_storage::StorageError) -> ApiError {
+    ApiError::new(if error.code == playtime_storage::ErrorCode::CursorAhead {
+        "cursor_ahead"
+    } else {
+        "invalid_cursor"
+    })
 }
 #[async_trait]
 impl Application for Daemon {
@@ -879,15 +899,17 @@ impl Application for Daemon {
         byte_limit: usize,
     ) -> Result<History> {
         let evidence = self.selected(&run, None).await?;
-        let path = self.inner.archive.path(&run);
+        let archive = self.inner.archive.clone();
         self.blocking(move || {
-            let reader = ArchiveReader::open(path, StorageLimits::default())
-                .map_err(projection::evidence)?;
+            let reader = archive.run_reader(&run).map_err(projection::evidence)?;
             let mut snapshot = evidence.snapshot.clone();
             let after = if let Some(cursor) = cursor {
-                let older = historical(&reader, &snapshot, &cursor.frontier)?;
-                if !follow {
-                    snapshot = older;
+                // Following reads on from the cursor within the current
+                // snapshot, so it only needs the cursor's position there.
+                if follow {
+                    position(&snapshot, &cursor.frontier)?;
+                } else {
+                    snapshot = historical(&reader, &snapshot, &cursor.frontier)?;
                 }
                 cursor.after_sequence
             } else {
@@ -983,23 +1005,13 @@ impl Application for Daemon {
             .find(|a| a.artifact_id == artifact)
             .cloned()
             .ok_or_else(|| ApiError::new("not_found"))?;
-        let path = self.inner.archive.path(&run);
+        let archive = self.inner.archive.clone();
         self.blocking(move || {
-            let reader = ArchiveReader::open(path, StorageLimits::default())
-                .map_err(projection::evidence)?;
-            let f = evidence.snapshot.frontier();
-            let snapshot = reader
-                .sub_snapshot(
-                    &evidence.snapshot,
-                    ReadPrefix {
-                        sequence: f.committed_sequence,
-                        bytes: f.committed_bytes,
-                        sha256: f.prefix_sha256.clone(),
-                    },
-                )
-                .map_err(projection::evidence)?;
+            let reader = archive.run_reader(&run).map_err(projection::evidence)?;
+            // The content is referenced by the verified snapshot, and reading
+            // it verifies its bytes.
             let bytes = reader
-                .read_content(&snapshot, &metadata.content)
+                .read_content(&evidence.snapshot, &metadata.content)
                 .map_err(|_| ApiError::new("content_mismatch"))?;
             Ok(Download {
                 artifact: metadata,

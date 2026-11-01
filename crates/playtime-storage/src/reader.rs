@@ -1,6 +1,10 @@
 use std::{
-    io::{Read, Seek, SeekFrom},
+    io::{BufReader, Read, Seek, SeekFrom},
     path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use playtime_core::Sha256Digest;
@@ -17,11 +21,12 @@ use playtime_protocol::{
     v1::UsageSummary,
 };
 use rustix::fs::OFlags;
+use sha2::{Digest, Sha256};
 
 use crate::{
     CommittedFrontier, ErrorCode, Result, StorageError, StorageLimits,
-    files::{Directory, WriterLock, reference, sha256, utf8},
-    log::{LogState, ScanOptions, scan},
+    files::{Directory, WriterLock, digest_value, reference, sha256, utf8},
+    log::{Carried, LogState, Pass, Record, ScanOptions, committed_error, decode_line, scan},
     validate_limits,
 };
 
@@ -81,17 +86,74 @@ pub struct Inspection {
     pub worker: WorkerAvailability,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Snapshot {
     frontier: EventFrontier,
     inspection: Inspection,
+    /// Each record's end, digest and running prefix digest, as the pass that
+    /// validated this prefix saw them, 72 bytes a record: a page checks the
+    /// records it returns against them.
+    records: Arc<Vec<Record>>,
+    /// The rest of that pass, which a confirmation continues, until
+    /// `without_continuation` drops it.
+    carried: Option<Arc<Carried>>,
+    /// The reader whose pass this is. Only it continues the pass, with the
+    /// same directory and limits that validated the earlier bytes.
+    reader: u64,
+}
+impl std::fmt::Debug for Snapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Snapshot")
+            .field("frontier", &self.frontier)
+            .field("inspection", &self.inspection)
+            .finish_non_exhaustive()
+    }
 }
 impl Snapshot {
     pub fn frontier(&self) -> &EventFrontier {
         &self.frontier
     }
+    /// Checks that `position` is an exact record boundary of this snapshot's
+    /// prefix, by sequence, byte count and running digest, as the pass that
+    /// validated the prefix recorded them. It reads nothing.
+    pub fn check_position(&self, position: &ReadPrefix) -> Result<()> {
+        if position.sequence > self.frontier.committed_sequence
+            || position.bytes > self.frontier.committed_bytes
+        {
+            return Err(StorageError::new(
+                ErrorCode::CursorAhead,
+                "position exceeds the snapshot",
+            ));
+        }
+        let (bytes, sha256) = match position.sequence.checked_sub(1) {
+            None => (0, digest_value(Sha256::new().finalize().as_slice())),
+            Some(index) => {
+                let record = self
+                    .records
+                    .get(index as usize)
+                    .ok_or_else(|| StorageError::corrupt("snapshot pass is missing a record"))?;
+                (record.end, digest_value(&record.prefix_sha256))
+            }
+        };
+        if position.bytes != bytes || position.sha256 != sha256 {
+            return Err(StorageError::new(
+                ErrorCode::InvalidCursor,
+                "position is not an exact record boundary of the snapshot's prefix",
+            ));
+        }
+        Ok(())
+    }
     pub fn inspection(&self) -> &Inspection {
         &self.inspection
+    }
+    /// The same snapshot for reads only. It keeps what pages and position
+    /// checks use and drops what a confirmation would continue from, most
+    /// of its pass's memory, so it can't be continued.
+    pub fn without_continuation(&self) -> Self {
+        Self {
+            carried: None,
+            ..self.clone()
+        }
     }
     pub fn query(&self, after_sequence: u64, limit: u32) -> EventQuery {
         EventQuery {
@@ -117,7 +179,12 @@ pub struct ArchiveReader {
     identity: ArchiveIdentity,
     manifest: InputManifest,
     limits: StorageLimits,
+    /// Unique among this process's readers, so a snapshot names the reader
+    /// that validated it.
+    id: u64,
 }
+
+static READERS: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn prepared(
     directory: &Directory,
@@ -163,6 +230,7 @@ impl ArchiveReader {
             identity,
             manifest,
             limits,
+            id: READERS.fetch_add(1, Ordering::Relaxed),
         })
     }
     pub fn descriptor(&self) -> &ArchiveDescriptor {
@@ -224,9 +292,9 @@ impl ArchiveReader {
     }
 
     /// A public historical position is usable only beneath an already trusted
-    /// covering snapshot. Verify both exact prefixes, even for an equal cursor:
-    /// one pass validates the covering prefix completely and the position as
-    /// an exact record boundary within it.
+    /// covering snapshot. The position must be an exact record boundary of
+    /// the covering prefix, as the pass that validated it recorded, even for
+    /// an equal cursor; a new pass then validates the prefix up to it.
     pub fn sub_snapshot(&self, covering: &Snapshot, prefix: ReadPrefix) -> Result<Snapshot> {
         if covering.frontier.archive != self.identity {
             return Err(StorageError::new(
@@ -234,16 +302,8 @@ impl ArchiveReader {
                 "wrong covering archive",
             ));
         }
-        if prefix.sequence > covering.frontier.committed_sequence
-            || prefix.bytes > covering.frontier.committed_bytes
-        {
-            return Err(StorageError::new(
-                ErrorCode::CursorAhead,
-                "prefix exceeds confirmation",
-            ));
-        }
-        let (_, inner) = self.scanned(covering.frontier.clone(), Some(prefix))?;
-        inner.ok_or_else(|| StorageError::corrupt("checkpoint snapshot missing"))
+        covering.check_position(&prefix)?;
+        self.snapshot_at(self.read_frontier(prefix)?)
     }
 
     /// Read only, like `confirmed_snapshot`, and the same pass also checks
@@ -263,7 +323,45 @@ impl ArchiveReader {
                 "previous prefix exceeds confirmation",
             ));
         }
-        Ok(self.scanned(frontier, Some(previous))?.0)
+        Ok(self.scanned(frontier, Some(previous), None)?.0)
+    }
+
+    /// Read only, like `confirmed_snapshot`, for an authorized prefix that
+    /// extends `previous`, a snapshot this reader validated. It continues the
+    /// pass that validated `previous` over the bytes after it, from that
+    /// pass's running digest and state, so it checks the new records as a
+    /// full pass would. It never reads the earlier records or the content they
+    /// reference again: a later change to them shows in a full pass, or in a
+    /// page or content read that returns them. Neither position becomes a
+    /// writer receipt.
+    pub fn confirmed_snapshot_continuing(
+        &self,
+        authority: &dyn ConfirmationAuthority,
+        previous: &Snapshot,
+    ) -> Result<Snapshot> {
+        if previous.frontier.archive != self.identity {
+            return Err(StorageError::new(
+                ErrorCode::InvalidCursor,
+                "previous snapshot belongs to another archive",
+            ));
+        }
+        // Another reader may read another copy or have other limits, so its
+        // pass says nothing about the earlier bytes this one would read.
+        if previous.reader != self.id {
+            return Err(StorageError::new(
+                ErrorCode::InvalidCursor,
+                "previous snapshot was validated by another reader",
+            ));
+        }
+        let carried = previous.carried.as_ref().ok_or_else(|| {
+            StorageError::new(
+                ErrorCode::InvalidCursor,
+                "previous snapshot keeps no pass to continue",
+            )
+        })?;
+        let frontier = self.read_frontier(authority.authorize(&self.identity)?)?;
+        let pass = Pass::rejoined(&previous.records, carried);
+        Ok(self.scanned(frontier, None, Some(pass))?.0)
     }
 
     fn read_frontier(&self, prefix: ReadPrefix) -> Result<EventFrontier> {
@@ -287,16 +385,18 @@ impl ArchiveReader {
     }
 
     fn snapshot_at(&self, frontier: EventFrontier) -> Result<Snapshot> {
-        Ok(self.scanned(frontier, None)?.0)
+        Ok(self.scanned(frontier, None, None)?.0)
     }
 
-    /// One pass over the committed prefix at `frontier`. With a checkpoint,
-    /// that pass also verifies the position and returns the snapshot there,
-    /// as a pass stopping at the checkpoint would have built it.
+    /// One pass over the committed prefix at `frontier`, or over the bytes
+    /// after a pass it resumes. With a checkpoint, that pass also verifies the
+    /// position and returns the snapshot there, as a pass stopping at the
+    /// checkpoint would have built it.
     fn scanned(
         &self,
         frontier: EventFrontier,
         checkpoint: Option<ReadPrefix>,
+        resume: Option<Pass>,
     ) -> Result<(Snapshot, Option<Snapshot>)> {
         if frontier.archive != self.identity {
             return Err(StorageError::new(
@@ -313,37 +413,50 @@ impl ArchiveReader {
             &self.limits,
             ScanOptions {
                 checkpoint: checkpoint.as_ref(),
+                resume,
                 ..ScanOptions::default()
             },
         )?;
         let inner = match (checkpoint, scanned.checkpoint) {
-            (Some(prefix), Some(state)) => {
+            (Some(prefix), Some(pass)) => {
                 // Bytes between the checkpoint and the frontier are committed
                 // but beyond that snapshot, as a pass ending there would see.
                 let uncommitted = scanned.suffix_bytes + (frontier.committed_bytes - prefix.bytes);
-                Some(Snapshot {
-                    frontier: self.read_frontier(prefix)?,
-                    inspection: self.inspection(state, uncommitted),
-                })
+                Some(self.snapshot(self.read_frontier(prefix)?, pass, uncommitted))
             }
             (None, None) => None,
             _ => return Err(StorageError::corrupt("checkpoint state missing")),
         };
-        let covering = Snapshot {
-            inspection: self.inspection(scanned.state, scanned.suffix_bytes),
-            frontier,
-        };
+        let covering = self.snapshot(frontier, scanned.pass, scanned.suffix_bytes);
         Ok((covering, inner))
     }
 
-    fn inspection(&self, state: LogState, uncommitted_event_bytes: u64) -> Inspection {
+    /// The snapshot at `frontier` that `pass` validated.
+    fn snapshot(
+        &self,
+        frontier: EventFrontier,
+        pass: Pass,
+        uncommitted_event_bytes: u64,
+    ) -> Snapshot {
+        let inspection = self.inspection(&pass.state, uncommitted_event_bytes);
+        let (records, carried) = pass.split();
+        Snapshot {
+            frontier,
+            inspection,
+            records: Arc::new(records),
+            carried: Some(Arc::new(carried)),
+            reader: self.id,
+        }
+    }
+
+    fn inspection(&self, state: &LogState, uncommitted_event_bytes: u64) -> Inspection {
         Inspection {
             usage: state.usage.into(),
-            checkpoints: state.checkpoints,
+            checkpoints: state.checkpoints.clone(),
             incomplete_evidence: state.terminal.is_none(),
-            terminal: state.terminal,
+            terminal: state.terminal.clone(),
             uncommitted_event_bytes,
-            referenced_content: state.references.into_values().collect(),
+            referenced_content: state.references.values().cloned().collect(),
             worker: WorkerAvailability {
                 executable_bytes_verified: true,
                 execution_checked: false,
@@ -376,24 +489,56 @@ impl ArchiveReader {
             ));
         }
         self.validate_identity()?;
-        let scanned = scan(
-            &self.directory,
-            &self.descriptor,
-            &self.manifest,
-            &snapshot.frontier,
-            &self.limits,
-            ScanOptions {
-                after: query.after_sequence,
-                limit: query.limit,
-                ..ScanOptions::default()
-            },
-        )?;
-        let next_after_sequence = scanned
-            .events
+        let records = &snapshot.records;
+        let after = query.after_sequence as usize;
+        let missing = || StorageError::corrupt("snapshot pass is missing a record");
+        let page_records = records
+            .get(after..query.through_sequence as usize)
+            .ok_or_else(missing)?;
+        let mut offset = match after.checked_sub(1) {
+            None => 0,
+            Some(index) => records.get(index).ok_or_else(missing)?.end,
+        };
+        let mut file = self.directory.open_file("events.jsonl", OFlags::RDONLY)?;
+        if file.metadata()?.len() < snapshot.frontier.committed_bytes {
+            return Err(StorageError::corrupt(
+                "commit marker points beyond event file",
+            ));
+        }
+        file.seek(SeekFrom::Start(offset))?;
+        let mut file = BufReader::new(file);
+        let mut events = Vec::new();
+        let mut page_bytes = 0;
+        for record in page_records {
+            // Returning fewer than limit is allowed; every page still has a
+            // strict byte bound. Once full, never skip a large record to fit
+            // a later small one: the next page starts after the last one.
+            let length = record.end - offset;
+            if events.len() == query.limit as usize || page_bytes + length > self.limits.page_bytes
+            {
+                break;
+            }
+            let mut bytes = vec![0; length as usize];
+            file.read_exact(&mut bytes)?;
+            if Sha256::digest(&bytes).as_slice() != record.sha256 {
+                return Err(StorageError::corrupt(
+                    "a committed record changed after its snapshot validated",
+                ));
+            }
+            let decoded = decode_line(&bytes, &self.limits).map_err(committed_error)?;
+            page_bytes += length;
+            offset = record.end;
+            events.push(StoredEvent {
+                envelope: decoded.envelope().clone(),
+                sha256: digest_value(&record.sha256),
+                bytes,
+            });
+        }
+        let next_after_sequence = events
             .last()
             .map_or(query.after_sequence, |event| event.envelope.sequence.get());
         Ok(EventPage {
-            events: scanned.events,
+            events,
             next_after_sequence,
             frontier: snapshot.frontier.clone(),
             has_more: next_after_sequence < snapshot.frontier.committed_sequence,
@@ -402,10 +547,11 @@ impl ArchiveReader {
 
     /// Hands every record of the snapshot's committed prefix to `visitor` in
     /// order, in one pass, instead of a page at a time. The pass validates the
-    /// complete prefix as a page does, but the visitor sees each record once
-    /// that record has validated, before the rest of the prefix has: what it
-    /// builds is evidence only if `visit` returns Ok. A visitor's error ends
-    /// the pass and is returned as is.
+    /// complete prefix and the content it references, as a full confirmation
+    /// does, but the visitor sees each record once that record has validated,
+    /// before the rest of the prefix has: what it builds is evidence only if
+    /// `visit` returns Ok. A visitor's error ends the pass and is returned as
+    /// is.
     pub fn visit<E: From<StorageError>>(
         &self,
         snapshot: &Snapshot,

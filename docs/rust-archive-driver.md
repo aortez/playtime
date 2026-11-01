@@ -91,7 +91,11 @@ rewritten and no v2 recovery/continuation is provided.
 history in one storage visit. `overview()` returns `run()` and, for an execution
 archive, `request_accounting()` and `captures()` from a single pass that also
 hands every history entry to the caller, whose result counts only if that pass
-succeeds.
+succeeds. `overview_from()` also returns the fold at its snapshot. Given
+that fold, a later snapshot of the same history goes on from it: `continues()`
+checks that the fold's prefix is an exact record boundary of the new snapshot,
+and only the records after it are read, in pages that check each one against
+the digest the snapshot's validating pass recorded.
 
 The new `workspace-execution-v2.json` golden records the complete scripted contract.
 The probe gate covers shared budgets and deadlines, preflight/post-dispatch

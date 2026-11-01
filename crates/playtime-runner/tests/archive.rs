@@ -40,6 +40,7 @@ fn real_controller_archive_survives_folder_only_copy_with_exact_transcript_and_i
     assert_eq!(overview.run, run);
     assert!(overview.request_accounting.is_none() && overview.captures.is_empty());
     assert_eq!(visited, run.frontier.committed_sequence);
+    continued_overviews_equal_whole_ones(&boundaries(&copied, |_| true));
     assert_eq!(run.usage.known_generated_tokens, 26);
     assert_eq!(run.first_stop, Some(StopReason::AgentFinished));
     assert!(!run.incomplete_evidence);

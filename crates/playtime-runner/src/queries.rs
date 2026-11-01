@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, num::NonZeroU64, path::Path};
+use std::{collections::BTreeMap, num::NonZeroU64, path::Path, sync::Arc};
 
 use playtime_core::{RequestId, SessionId};
 use playtime_protocol::{
@@ -7,8 +7,11 @@ use playtime_protocol::{
     bridge::{BridgeEvent, EffectIntent, FileVersion, decode_checkpoint_index},
     events::{EventPayload, KnownEvent, decode_event},
     observations::{ObservationData, ObservationLocation},
+    storage::{ArchiveIdentity, EventFrontier},
 };
-use playtime_storage::{ArchiveReader, CommittedFrontier, Snapshot, StorageLimits, StoredEvent};
+use playtime_storage::{
+    ArchiveReader, CommittedFrontier, ReadPrefix, Snapshot, StorageLimits, StoredEvent,
+};
 
 use crate::{Error, Result};
 mod execution;
@@ -17,7 +20,7 @@ mod execution;
 /// offline construction acquires the storage inspection lock. No database or
 /// original checkout participates in any query.
 pub struct ArchiveQueries {
-    reader: ArchiveReader,
+    reader: Arc<ArchiveReader>,
     snapshot: Snapshot,
 }
 
@@ -32,8 +35,13 @@ pub struct ArchiveOverview {
 
 impl ArchiveQueries {
     /// Reuse a storage-verified read authority without reconstructing a writer
-    /// receipt. A snapshot cannot be constructed from public DTOs.
-    pub fn from_snapshot(reader: ArchiveReader, snapshot: Snapshot) -> Result<Self> {
+    /// receipt. A snapshot cannot be constructed from public DTOs. The reader
+    /// may be shared, as a daemon shares the one it verifies a run with.
+    pub fn from_snapshot(
+        reader: impl Into<Arc<ArchiveReader>>,
+        snapshot: Snapshot,
+    ) -> Result<Self> {
+        let reader = reader.into();
         if reader.identity() != &snapshot.frontier().archive {
             return Err(Error::Invalid("query snapshot archive mismatch".into()));
         }
@@ -42,7 +50,10 @@ impl ArchiveQueries {
     pub fn offline(path: impl AsRef<Path>, limits: StorageLimits) -> Result<Self> {
         let reader = ArchiveReader::open(path, limits)?;
         let snapshot = reader.offline_snapshot()?;
-        Ok(Self { reader, snapshot })
+        Ok(Self {
+            reader: Arc::new(reader),
+            snapshot,
+        })
     }
 
     pub fn live(
@@ -52,7 +63,10 @@ impl ArchiveQueries {
     ) -> Result<Self> {
         let reader = ArchiveReader::open(path, limits)?;
         let snapshot = reader.live_snapshot(receipt)?;
-        Ok(Self { reader, snapshot })
+        Ok(Self {
+            reader: Arc::new(reader),
+            snapshot,
+        })
     }
 
     pub fn snapshot(&self) -> &Snapshot {
@@ -149,7 +163,7 @@ impl ArchiveQueries {
             run.add(entry);
             Ok(())
         })?;
-        Ok(run.finish())
+        Ok(run.finish(self))
     }
 
     /// `run`, and for an execution archive `request_accounting` and
@@ -159,30 +173,66 @@ impl ArchiveQueries {
     /// fail after the visitor has seen every entry.
     pub fn overview(
         &self,
-        mut visitor: impl FnMut(&ArchiveHistoryEntry) -> Result<()>,
+        visitor: impl FnMut(&ArchiveHistoryEntry) -> Result<()>,
     ) -> Result<ArchiveOverview> {
-        let mut run = RunFold::new(self);
-        let mut accounting = run
-            .run
-            .execution
-            .is_some()
-            .then(|| execution::AccountingFold::new(self));
-        let mut captures = Vec::new();
-        self.visit(|entry| {
-            run.add(entry);
-            if let Some(accounting) = &mut accounting {
-                accounting.add(self, entry)?;
+        Ok(self.overview_from(None, visitor)?.0)
+    }
+
+    /// `overview`, and the fold at this snapshot for a later call. Given a
+    /// fold that an earlier call returned, this goes on from its last entry,
+    /// which must be an exact record boundary of this snapshot's history: it
+    /// reads only the entries after it, in pages that check each record
+    /// against the digest this snapshot's validating pass recorded, and hands
+    /// only those to `visitor`. Without one, it reads the whole history in one
+    /// validating pass.
+    pub fn overview_from(
+        &self,
+        fold: Option<OverviewFold>,
+        mut visitor: impl FnMut(&ArchiveHistoryEntry) -> Result<()>,
+    ) -> Result<(ArchiveOverview, OverviewFold)> {
+        let mut fold = match fold {
+            Some(mut fold) => {
+                if !self.continues(&fold) {
+                    return Err(Error::Invalid(
+                        "the fold read another history or a later prefix".into(),
+                    ));
+                }
+                let through = self.snapshot.frontier().committed_sequence;
+                while fold.position.sequence < through {
+                    let page = self.reader.page(
+                        &self.snapshot,
+                        &self.snapshot.query(fold.position.sequence, 1000),
+                    )?;
+                    if page.events.is_empty() {
+                        return Err(Error::Invalid("a history page returned no entry".into()));
+                    }
+                    for stored in page.events {
+                        let entry = self.entry(stored, false)?;
+                        fold.add(self, &entry)?;
+                        visitor(&entry)?;
+                    }
+                    fold.position.sequence = page.next_after_sequence;
+                }
+                fold
             }
-            captures.extend(self.capture(entry)?);
-            visitor(entry)
-        })?;
-        Ok(ArchiveOverview {
-            run: run.finish(),
-            request_accounting: accounting
-                .map(|accounting| accounting.finish(self))
-                .transpose()?,
-            captures,
-        })
+            None => {
+                let mut fold = OverviewFold::new(self);
+                self.visit(|entry| {
+                    fold.add(self, entry)?;
+                    visitor(entry)
+                })?;
+                fold
+            }
+        };
+        fold.position = position(self.snapshot.frontier());
+        Ok((fold.finish(self)?, fold))
+    }
+
+    /// Whether `fold` read a prefix of this snapshot's history, which
+    /// `overview_from` can go on from.
+    pub fn continues(&self, fold: &OverviewFold) -> bool {
+        fold.archive == self.snapshot.frontier().archive
+            && self.snapshot.check_position(&fold.position).is_ok()
     }
 
     pub fn checkpoints(&self) -> Result<Vec<ArchiveCheckpoint>> {
@@ -265,7 +315,66 @@ impl ArchiveQueries {
     }
 }
 
+/// What `overview_from` read from a prefix of a history, to go on from.
+#[derive(Clone)]
+pub struct OverviewFold {
+    archive: ArchiveIdentity,
+    /// Where the prefix ends, at a record boundary.
+    position: ReadPrefix,
+    run: RunFold,
+    accounting: Option<execution::AccountingFold>,
+    captures: Vec<ArchiveCapture>,
+}
+
+impl OverviewFold {
+    fn new(queries: &ArchiveQueries) -> Self {
+        let run = RunFold::new(queries);
+        let accounting = run
+            .run
+            .execution
+            .is_some()
+            .then(|| execution::AccountingFold::new(queries));
+        Self {
+            archive: queries.snapshot.frontier().archive.clone(),
+            position: position(queries.snapshot.frontier()),
+            run,
+            accounting,
+            captures: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, queries: &ArchiveQueries, entry: &ArchiveHistoryEntry) -> Result<()> {
+        self.run.add(entry);
+        if let Some(accounting) = &mut self.accounting {
+            accounting.add(queries, entry)?;
+        }
+        self.captures.extend(queries.capture(entry)?);
+        Ok(())
+    }
+
+    fn finish(&self, queries: &ArchiveQueries) -> Result<ArchiveOverview> {
+        Ok(ArchiveOverview {
+            run: self.run.finish(queries),
+            request_accounting: self
+                .accounting
+                .as_ref()
+                .map(|accounting| accounting.finish(queries))
+                .transpose()?,
+            captures: self.captures.clone(),
+        })
+    }
+}
+
+fn position(frontier: &EventFrontier) -> ReadPrefix {
+    ReadPrefix {
+        sequence: frontier.committed_sequence,
+        bytes: frontier.committed_bytes,
+        sha256: frontier.prefix_sha256.clone(),
+    }
+}
+
 /// `run`'s state while a pass goes through the history.
+#[derive(Clone)]
 struct RunFold {
     run: ArchiveRun,
     unsettled: BTreeMap<RequestId, EffectIntent>,
@@ -380,13 +489,20 @@ impl RunFold {
         }
     }
 
-    fn finish(mut self) -> ArchiveRun {
-        self.run.unsettled_model_intents = self.unsettled.into_values().collect();
-        if let Some(execution) = &mut self.run.execution {
-            execution.unsettled_model_intents = self.execution_intents.into_values().collect();
+    /// The run at `queries`' snapshot, whose history this fold has read.
+    fn finish(&self, queries: &ArchiveQueries) -> ArchiveRun {
+        let inspection = queries.snapshot.inspection();
+        let mut run = self.run.clone();
+        run.usage = inspection.usage.clone();
+        run.frontier = queries.snapshot.frontier().clone();
+        run.incomplete_evidence = inspection.incomplete_evidence;
+        run.uncommitted_event_bytes = inspection.uncommitted_event_bytes;
+        run.unsettled_model_intents = self.unsettled.values().cloned().collect();
+        if let Some(execution) = &mut run.execution {
+            execution.unsettled_model_intents = self.execution_intents.values().cloned().collect();
         }
-        self.run.contention = contention(&self.timings);
-        self.run
+        run.contention = contention(&self.timings);
+        run
     }
 }
 
