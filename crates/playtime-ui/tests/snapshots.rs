@@ -78,6 +78,7 @@ fn progress_screen(app: &mut Workbench, ended: bool) {
     app.model.run = Some(prepare_run(view));
     app.model.window = transcript.window(View::Readable, 0, 64);
     app.model.window.progress = transcript.progress(true);
+    app.model.window.results = transcript.results(true);
     app.model.window.sessions = transcript.sessions(0, true);
     app.model.window.jumps = transcript.jumps(0, true);
     app.model.window.calls.complete = true;
@@ -336,6 +337,9 @@ async fn reviewed_workbench_screens() {
         ("narrow", false, true, Inspector::Details, false),
         ("running", false, false, Inspector::Details, false),
         ("ended", false, false, Inspector::Details, false),
+        ("results", false, false, Inspector::Results, false),
+        ("results-narrow", false, true, Inspector::Results, false),
+        ("results-sessions", false, false, Inspector::Results, false),
     ] {
         let mut app = if name.starts_with("harness-editor") || name.starts_with("compaction-editor")
         {
@@ -357,14 +361,19 @@ async fn reviewed_workbench_screens() {
             draft.name = "Curiosity: continuous conversation".into();
             draft.prompt = "Explore a question raised by the seed files. Keep verified results and uncertainty clear; finish when the work is complete.".into();
         }
-        if matches!(name, "compaction-trace" | "jump-list" | "read-mode") {
+        if matches!(
+            name,
+            "compaction-trace" | "jump-list" | "read-mode" | "results" | "results-narrow"
+        ) {
             // The compaction trace starts its timeline at the compaction; the
             // header and lists sum the whole scene. The jump list shows the
-            // troubled scene's compactions and errors, and read mode a long
-            // response.
+            // troubled scene's compactions and errors, read mode a long
+            // response, and the results the scene with failures, a
+            // compaction and a final capture.
             let (events, first) = match name {
                 "jump-list" => (continuous_scene::troubled_events(), 1),
                 "read-mode" => (continuous_scene::long_response_events(), 1),
+                "results" | "results-narrow" => (continuous_scene::results_events(), 1),
                 _ => (continuous_scene::events(), 7),
             };
             let mut transcript = Transcript::default();
@@ -377,6 +386,7 @@ async fn reviewed_workbench_screens() {
             }
             app.model.window = transcript.window(View::Readable, 0, 64);
             app.model.window.progress = whole.progress(true);
+            app.model.window.results = whole.results(true);
             app.model.window.jumps = whole.jumps(0, true);
             app.model.window.calls.latest = whole.calls();
             app.model.window.calls.complete = true;
@@ -391,9 +401,57 @@ async fn reviewed_workbench_screens() {
                 configuration: run.input_manifest.clone().unwrap(),
                 harness: HarnessView::continuous(Default::default()).unwrap(),
             });
+            if name.starts_with("results") {
+                // The scene's run ended at its wall limit with the final
+                // capture listed: two images and a script.
+                run.outcome = Some(ExperimentalOutcome {
+                    reason: playtime_core::StopReason::WallLimit,
+                    event_sequence: 26,
+                });
+                run.usage = Some(UsageSummary {
+                    known_generated_tokens: 196,
+                    unknown_reserved_tokens: 4096,
+                    unknown_requests: 1,
+                    budget_charged_tokens: 4292,
+                    usage_complete: false,
+                });
+                run.cleanup = Cleanup::Complete;
+                let artifact = |name: &str, bytes: u64| {
+                    serde_json::from_value::<Artifact>(serde_json::json!({
+                        "artifact_id": format!("{:0>64}", name.len()),
+                        "name": name,
+                        "kind": "file_version",
+                        "content": {"path": format!("artifacts/final/files/{name}"), "sha256": "d".repeat(64), "size_bytes": bytes},
+                        "session_id": null,
+                        "published_sequence": 25,
+                        "frozen_input": false,
+                    }))
+                    .unwrap()
+                };
+                app.model.final_listing = Some(playtime_ui::model::FinalListing::from_artifacts(
+                    &[
+                        artifact("plot.png", 1_048_576),
+                        artifact("make.py", 2_048),
+                        artifact("zoom.gif", 204_800),
+                    ],
+                    true,
+                ));
+            }
             app.model.selected = Some(run.run_id.clone());
             app.model.runs = vec![run.clone()];
             app.model.run = Some(prepare_run(run));
+        }
+        if name == "results-sessions" {
+            // The controller-observation fixture's ended run with its last
+            // checkpoint's files.
+            progress_screen(&mut app, true);
+            let last = app
+                .model
+                .checkpoints
+                .iter()
+                .max_by_key(|c| c.checkpoint.published_sequence)
+                .unwrap();
+            app.model.final_listing = Some(playtime_ui::model::FinalListing::from_checkpoint(last));
         }
         if name.starts_with("model-register") || name == "model-registration-pending" {
             registration_scenes::prepare(&mut app, name);
@@ -644,7 +702,7 @@ async fn reviewed_workbench_screens() {
                 .push(egui::Event::PointerMoved(egui::pos2(670.0, 750.0)));
             h.run();
         }
-        if name.starts_with("files-") {
+        if name.starts_with("files-") || name == "results-narrow" {
             use egui_kittest::kittest::Queryable;
             h.get_by_label("Inspector").click();
             h.run();

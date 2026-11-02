@@ -1869,11 +1869,12 @@ async fn observe(
                         if let Some(request) = request { reloading = true; jobs.spawn(reload(reads.clone(), tx.clone(), reload_budget.clone(), request)); }
                     }
                     window.progress = index.progress(history_done);
+                    window.results = index.results(history_done);
                     window.sessions = index.sessions(session_page, history_done);
                     window.jumps = index.jumps(jump_page, history_done);
                     window.calls.complete = history_done;
                     let status = format!("{} records indexed · {}", index.metrics.records, if history_done { "Earlier history loaded" } else { "Loading earlier history independently of live activity" });
-                    out.send(tag, Some(run.clone()), Data::Window(window, status, live)).await; dirty = false;
+                    out.send(tag, Some(run.clone()), Data::Window(Box::new(window), status, live)).await; dirty = false;
                 }
             }
         }
@@ -2064,12 +2065,12 @@ mod tests {
                 tag: Tag::default(),
                 run: None,
                 data: Data::Window(
-                    transcript::Window {
+                    Box::new(transcript::Window {
                         start: number,
                         total: 64,
                         rows,
                         ..Default::default()
-                    },
+                    }),
                     String::new(),
                     0,
                 ),

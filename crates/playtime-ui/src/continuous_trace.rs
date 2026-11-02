@@ -28,6 +28,9 @@ fn estimate(value: &Value, tokens: &str, basis: &str, what: &str) -> String {
     }
 }
 pub(super) fn project(fact: &Fact, p: &mut Projection) {
+    // The final capture and run end add to the results; an observation's
+    // progress update, below, carries its own.
+    p.progress.results = crate::summary::Update::fact(fact);
     match fact {
         Fact::Observation(o) => {
             p.title = words(&o.observation_kind);

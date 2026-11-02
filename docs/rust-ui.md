@@ -128,7 +128,10 @@ a secondary run ID. When a run names a recipe the list lacks, as a run launched
 after the list was read does, the workbench asks for the recipe list again, once
 per recipe. Run state has its own untruncated line, so a long recipe name cannot
 hide `needs release`, including at the minimum sidebar width. This does not
-infer the start of model execution.
+infer the start of model execution. Under the state, an ended run's row says
+how it ended, what it charged and how cleanup went, such as `wall limit ·
+173,191 tokens · cleanup complete`; a run still going shows its tokens charged
+so far. These come from the run view, so they need no history.
 
 The Files inspector offers **Open image** or **Open file**, with readable size and
 file kind. Each available file's **Details** contains the full name, exact byte size,
@@ -314,6 +317,31 @@ reads "released by operator". A run the daemon stopped monitoring shows its
 `playtime runs release` command, and Cancel is off once the worker has stopped.
 When the worker reported why its execution failed, the run details show that text
 as a `Worker failure:` line.
+
+A run opens on the inspector's **Results** tab, which totals what the index
+has recorded once earlier history has loaded, and keeps totalling as live
+records arrive: the time elapsed and the share of it in model requests by
+purpose, with the rest as tools and controller; the calls by purpose with their
+median and longest durations, the tokens the server reported and their rate
+over the calls that reported them; calls settled with unknown usage, their
+tokens charged and the time spent in them; model errors by recorded kind and
+the longest consecutive streak; tool calls by name, how many failed, exited
+non-zero or timed out, and each distinct failure message with its count;
+compactions applied, planned, deferred and rejected and when each was applied;
+a memento run's sessions started, checkpoints saved and handoffs the model
+skipped; and the final workspace's captured size. A line that counts records
+is a link to the first of them. A call is counted when both its request and
+its settlement are indexed, so a call still waiting reads as in progress while
+the run goes on and as unsettled once it has ended; a rate or median is left
+out rather than guessed. Under the totals, the final workspace's files are
+counted by kind from the final capture listing, asked for once when an ended
+continuous run opens, or from a memento run's last published checkpoint once
+the whole checkpoint list is in hand, with its images listed to open in place
+and **Every file in Files** for the rest. Reviewed views:
+[continuous](../crates/playtime-ui/tests/snapshots/results.png),
+[narrow](../crates/playtime-ui/tests/snapshots/results-narrow.png) and
+[memento](../crates/playtime-ui/tests/snapshots/results-sessions.png); they
+are synthetic scenes, not native execution evidence.
 Memory compares delivered/published sources; publication does not verify model
 claims. It shows 4 KiB excerpts of the delivered memory, the saved publication
 and the controller evidence, whose source buttons page each whole text, and the
@@ -371,6 +399,12 @@ are explicitly unavailable where the current API does not project them.
   session's requests and the latest record's time and activity, so its memory
   stays bounded by one session. It also words each record's jump-list entry, if
   it has one.
+- `summary.rs` keeps the run's results from the same records and words the
+  Results tab. Calls pair their request and settlement by request identity in
+  a bounded set of open calls; settled calls fold into per-purpose totals that
+  keep at most 8,192 durations each for the median. Tool names, distinct
+  failure messages and compaction times are bounded too, with the overflow
+  counted. Nothing in it reads model text as evidence.
 - `ui.rs` renders prepared strings/pixels and emits intents. It virtualizes the
   timeline, caps expanded items and pages file metadata. No URL, file, HTML, SVG or
   script loader is installed. egui/eframe/egui_kittest are pinned to 0.34.3; image is
@@ -384,6 +418,7 @@ are explicitly unavailable where the current API does not project them.
 | Inspector pages: source, file, read-mode text, run JSON, memory diff | 24 KiB per page |
 | Prepared jump list | 64 entries per page; entries included in 32 MiB transcript bound |
 | Prepared session chooser | 64 entries per page; session index included in 32 MiB transcript bound |
+| Results totals | 4,096 open calls; 8,192 durations per purpose; 16 tool names; 24 failure messages; 64 compaction times; included in 32 MiB transcript bound |
 | Inline boundary previews | 64 current-window entries; ≤512 KiB; 2 reads concurrently |
 | Sparse timeline height cache | 2,048 measurements; ≤256 KiB |
 | Apply work per frame | 100 prepared rows/replies or 4 ms, with deferred replies |

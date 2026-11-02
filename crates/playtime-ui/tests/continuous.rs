@@ -181,6 +181,24 @@ fn rejections_show_their_reason_and_detail() {
     );
 }
 
+#[test]
+fn the_results_scene_reads_in_either_order() {
+    let rows = readable(scene::results_events());
+    assert_eq!(
+        row(&rows, "Call 1 · Work").1,
+        "Response recorded · 2.0 s · 900 prompt tokens · 120 generated · 60 tokens/s"
+    );
+    assert_eq!(
+        row(&rows, "Call 4 · Compaction summary").1,
+        "Response recorded · 2.0 s · 11,800 prompt tokens · 36 generated · 18 tokens/s"
+    );
+    let captured = row(
+        &rows,
+        "Final stopped workspace captured · open Files to inspect",
+    );
+    assert!(captured.2 && captured.3.is_empty());
+}
+
 /// The contract fixture's completed run, as the header tests use it.
 fn completed_run() -> RunView {
     let contract: serde_json::Value = serde_json::from_str(include_str!(
