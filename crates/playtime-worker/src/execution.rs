@@ -183,6 +183,9 @@ impl ControlExecution for Execution {
                     for diagnostic in &report.diagnostics {
                         eprintln!("worker execution: {diagnostic}");
                     }
+                    for delay in &report.unrecorded_delays {
+                        eprintln!("worker execution: {delay} after the run ended");
+                    }
                     let late = report.pending_publication.take().map(|publication| {
                         loop {
                             if let Some(result) = publication.poll() {

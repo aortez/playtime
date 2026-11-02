@@ -346,12 +346,14 @@ fn unresolved_storage_retains_ownership_and_can_commit_after_the_driver_returns_
         &prepared,
         &mut clock(),
         DriverOptions {
-            // The supervision bound applies to every write. Keep the normal
-            // bound so earlier filesystem work can reach the checkpoint gate.
+            // The supervision bound applies to every write. Five seconds let
+            // earlier filesystem work reach the checkpoint gate on a contended
+            // runner without waiting out the default bound.
             writer_hooks: Box::new(BlockCheckpoint {
                 release: receiver,
                 entered: entered.clone(),
             }),
+            publication_wait: Duration::from_secs(5),
             ..DriverOptions::default()
         },
     )
@@ -377,4 +379,129 @@ fn unresolved_storage_retains_ownership_and_can_commit_after_the_driver_returns_
     let queries = ArchiveQueries::live(temp.archive(), StorageLimits::default(), &receipt).unwrap();
     assert_eq!(queries.checkpoints().unwrap().len(), 1);
     assert!(queries.run().unwrap().incomplete_evidence);
+}
+
+/// Holds the batch that carries `kind` for `delay` before it commits.
+struct SlowWrite {
+    kind: &'static str,
+    delay: Duration,
+}
+impl WriterHooks for SlowWrite {
+    fn before(
+        &mut self,
+        context: &CommitContext,
+        _: &mut ArchiveWriter,
+    ) -> playtime_runner::Result<()> {
+        if context.kinds.iter().any(|kind| kind == self.kind) {
+            std::thread::sleep(self.delay);
+        }
+        Ok(())
+    }
+}
+/// The archive's `publication_delayed` observations: (waited_ms, events, bytes).
+fn delays(archive: &std::path::Path) -> Vec<(u64, u64, u64)> {
+    std::fs::read_to_string(archive.join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .filter_map(|line| {
+            let row: serde_json::Value = serde_json::from_str(line).ok()?;
+            // A legacy controller observation, or a v2 observation fact.
+            let data = if row["kind"] == "controller_observation" {
+                &row["data"]
+            } else {
+                &row["data"]["fact"]["data"]
+            };
+            (data["observation_kind"] == "publication_delayed").then(|| {
+                let value = &data["data"]["value"];
+                (
+                    value["waited_ms"].as_u64().unwrap(),
+                    value["events"].as_u64().unwrap(),
+                    value["bytes"].as_u64().unwrap(),
+                )
+            })
+        })
+        .collect()
+}
+#[test]
+fn a_slow_publication_within_the_bound_is_recorded_and_the_run_goes_on() {
+    let temp = Temp::new();
+    let slow = prepared(&temp, &scenario());
+    let report = run_prepared(
+        temp.archive(),
+        &slow,
+        &mut clock(),
+        DriverOptions {
+            writer_hooks: Box::new(SlowWrite {
+                kind: "run_started",
+                delay: Duration::from_millis(1500),
+            }),
+            // An ordinary fsync on a busy runner stays well under a second.
+            slow_publication: Duration::from_secs(1),
+            ..DriverOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(report.terminal_committed);
+    assert!(report.pending_publication.is_none());
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+    let recorded = delays(&temp.archive());
+    let held: Vec<_> = recorded.iter().filter(|d| d.0 >= 1500).collect();
+    assert_eq!(held.len(), 1, "{recorded:?}");
+    let (_, events, bytes) = *held[0];
+    assert!(events >= 1 && bytes > 0);
+    // A prompt write records nothing.
+    let prompt = Temp::new();
+    let prompt_prepared = prepared(&prompt, &scenario());
+    run_prepared(
+        prompt.archive(),
+        &prompt_prepared,
+        &mut clock(),
+        DriverOptions::default(),
+    )
+    .unwrap();
+    assert!(
+        delays(&prompt.archive()).iter().all(|d| d.0 < 1500),
+        "{:?}",
+        delays(&prompt.archive())
+    );
+}
+#[test]
+fn a_slow_terminal_publication_stays_in_the_report() {
+    let temp = Temp::new();
+    let prepared = prepared(&temp, &scenario());
+    let report = run_prepared(
+        temp.archive(),
+        &prepared,
+        &mut clock(),
+        DriverOptions {
+            writer_hooks: Box::new(SlowWrite {
+                kind: "run_finished",
+                delay: Duration::from_millis(1500),
+            }),
+            slow_publication: Duration::from_secs(1),
+            ..DriverOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(report.terminal_committed);
+    assert!(
+        delays(&temp.archive()).iter().all(|d| d.0 < 1500),
+        "{:?}",
+        delays(&temp.archive())
+    );
+    // The delay is in the report, apart from the diagnostics that would make
+    // an ending a failure.
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+    let delay = report
+        .unrecorded_delays
+        .iter()
+        .find(|d| d.waited_ms >= 1500)
+        .unwrap_or_else(|| panic!("{:?}", report.unrecorded_delays));
+    assert_eq!(
+        delay.to_string(),
+        format!(
+            "publication of {} events ({} bytes) took {} ms",
+            delay.events, delay.bytes, delay.waited_ms
+        )
+    );
 }

@@ -505,6 +505,18 @@ impl<I: IdSource> Controller<I> {
             }
             Input::ExternalLogBudgetExhausted => self.stop(StopReason::LogLimit),
             Input::PublicationCommitted { effect_id } => self.publication_committed(effect_id),
+            // Nothing follows the terminal record, which the deadline check
+            // above may just have emitted.
+            Input::PublicationDelayed {
+                waited_ms,
+                events,
+                bytes,
+            } if self.stage != Stage::Done => {
+                self.emit(
+                    "publication_delayed",
+                    json!({"waited_ms": waited_ms, "events": events, "bytes": bytes}),
+                );
+            }
             _ => {}
         }
         self.pump();

@@ -28,6 +28,9 @@ pub struct DriverOptions {
     /// Supervision bound for unresolved filesystem work, not evidence that the
     /// operation failed. Returning retains its owner in pending_publication.
     pub publication_wait: Duration,
+    /// A batch that takes this long or longer, but commits within the bound,
+    /// is recorded as a delayed publication: the run stood still meanwhile.
+    pub slow_publication: Duration,
 }
 impl Default for DriverOptions {
     fn default() -> Self {
@@ -35,8 +38,26 @@ impl Default for DriverOptions {
             cancellation: Cancellation::default(),
             confirmed: crate::LatestReceipt::default(),
             writer_hooks: Box::new(NoWriterHooks),
-            publication_wait: Duration::from_secs(5),
+            publication_wait: Duration::from_secs(60),
+            slow_publication: Duration::from_secs(5),
         }
+    }
+}
+
+/// A batch that took `slow_publication` or longer to commit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublicationDelay {
+    pub waited_ms: u64,
+    pub events: u64,
+    pub bytes: u64,
+}
+impl std::fmt::Display for PublicationDelay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "publication of {} events ({} bytes) took {} ms",
+            self.events, self.bytes, self.waited_ms
+        )
     }
 }
 
@@ -46,6 +67,9 @@ pub struct RunReport {
     pub confirmed: CommittedFrontier,
     pub terminal_committed: bool,
     pub diagnostics: Vec<String>,
+    /// Slow batches the controller had finished before, so no record holds
+    /// them. They are not failures.
+    pub unrecorded_delays: Vec<PublicationDelay>,
     pub dispatches: Vec<Dispatch>,
     pub accounted_log_bytes: u64,
     pub peak_queued_bytes: u64,
@@ -360,6 +384,7 @@ fn execute(
         }
     };
     let mut diagnostics = Vec::new();
+    let mut unrecorded_delays = Vec::new();
     let mut healthy = true;
     let mut flush = true;
     let mut queue_since = None;
@@ -468,6 +493,32 @@ fn execute(
                         confirmed = receipt;
                         committed_log_bytes += completed.publication.log_cost();
                         encoder.confirmed(&completed.publication);
+                        let waited = completed.started.elapsed();
+                        if waited >= options.slow_publication {
+                            let (events, bytes) = (
+                                completed.publication.events.len() as u64,
+                                completed.publication.queued_bytes(),
+                            );
+                            let waited_ms = waited.as_millis().min(u64::MAX as u128) as u64;
+                            // A finished controller records nothing more; the
+                            // report keeps the delay instead.
+                            if controller.result().is_none() {
+                                controller.advance(
+                                    clock.now_ms(),
+                                    Input::PublicationDelayed {
+                                        waited_ms,
+                                        events,
+                                        bytes,
+                                    },
+                                )?;
+                            } else if unrecorded_delays.len() < 8 {
+                                unrecorded_delays.push(PublicationDelay {
+                                    waited_ms,
+                                    events,
+                                    bytes,
+                                });
+                            }
+                        }
                         for event in &completed.publication.events {
                             if event.kind == "effect_intent" {
                                 intents.insert(event.effect_id.unwrap());
@@ -555,6 +606,7 @@ fn execute(
                 confirmed,
                 terminal_committed,
                 diagnostics,
+                unrecorded_delays,
                 dispatches,
                 accounted_log_bytes: committed_log_bytes,
                 peak_queued_bytes,

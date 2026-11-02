@@ -919,3 +919,26 @@ async fn narrow_no_break_spaces_are_shown_as_no_break_spaces() {
     h.get_by_label_contains("side\u{a0}by\u{a0}side");
     assert!(h.query_by_label_contains("\u{202f}").is_none());
 }
+
+#[test]
+fn a_delayed_archive_write_is_named_and_listed_among_the_jumps() {
+    let rows = readable(scene::delayed_events());
+    let delayed = row(&rows, "Archive write delayed · 6.2 s");
+    assert!(delayed.3.iter().any(|(label, text)| {
+        label == "Delay"
+            && text
+                == "3 events (47,827 bytes) took 6.2 s to commit; no record was published meanwhile."
+    }));
+    let mut t = Transcript::default();
+    for event in scene::delayed_events() {
+        t.apply(event, None).unwrap();
+    }
+    assert!(
+        t.jumps(0, true)
+            .items
+            .iter()
+            .any(|jump| jump.label.contains("Archive write delayed 6.2 s")),
+        "{:?}",
+        t.jumps(0, true).items
+    );
+}

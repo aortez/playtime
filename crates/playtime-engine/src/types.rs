@@ -349,6 +349,14 @@ pub enum Input {
     PublicationCommitted {
         effect_id: u64,
     },
+    /// A batch of events took `waited_ms` to commit, longer than the driver
+    /// calls prompt but within its bound: no record was published meanwhile. It is
+    /// recorded and changes nothing else.
+    PublicationDelayed {
+        waited_ms: u64,
+        events: u64,
+        bytes: u64,
+    },
 }
 
 /// Internal observation; #19 supplies UTC timestamps and durable envelopes.

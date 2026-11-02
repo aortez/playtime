@@ -146,7 +146,7 @@ impl Display {
 }
 /// A call's duration: milliseconds under a second, tenths under ten seconds
 /// and whole seconds beyond.
-pub(super) fn duration_words(ms: u64) -> String {
+pub(crate) fn duration_words(ms: u64) -> String {
     if ms < 1000 {
         format!("{ms} ms")
     } else if ms < 10_000 {
