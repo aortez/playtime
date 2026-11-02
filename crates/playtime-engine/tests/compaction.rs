@@ -2029,3 +2029,39 @@ fn a_delayed_publication_is_recorded_and_changes_nothing() {
     ));
     assert_eq!(run.request().purpose, RequestPurpose::Work);
 }
+
+#[test]
+fn a_read_of_base64_reaches_the_model_as_markers_and_the_archive_whole() {
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    let page = format!(
+        "<h1>Gallery</h1>\n<img src=\"data:image/png;base64,{}\">\n<p>Made with Pillow.</p>\n",
+        png.repeat(60)
+    );
+    let mut run = Run::new(config());
+    run.response(json!({"role":"assistant","tool_calls":[call("read_file", json!({"path": "/work/gallery.html"}))]}));
+    run.complete(Outcome::Tool(
+        json!({"content": page, "offset_bytes": 0, "truncated": true}),
+    ));
+    let request = run.request().clone();
+    let message = request.messages.last().unwrap();
+    assert_eq!(message["role"], "tool");
+    let content = message["content"].as_str().unwrap();
+    // The markup and the note, with the image as a marker.
+    assert!(content.contains("<h1>Gallery</h1>"), "{content}");
+    assert!(content.contains("Made with Pillow."), "{content}");
+    assert!(content.contains("replaced by markers"), "{content}");
+    assert!(!content.contains(png), "{content}");
+    assert!(content.len() < 1024, "{}", content.len());
+    // The record keeps the whole slice as the unabridged result.
+    let record = &run
+        .records
+        .iter()
+        .rev()
+        .find(|r| r.kind == "tool_result")
+        .unwrap()
+        .data;
+    assert_eq!(record["result"]["base64"]["withheld_bytes"], png.len() * 60);
+    assert_eq!(record["result"]["base64"]["slice_bytes"], page.len());
+    assert_eq!(record["unabridged_result"]["content"], page);
+    assert_eq!(run.request().purpose, RequestPurpose::Work);
+}

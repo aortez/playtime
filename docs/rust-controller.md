@@ -211,20 +211,25 @@ versioned source links and bounded archive projections are described in the
 the ordinary model-request/admission facts identify any actual attempt. A rejected
 or canceled plan cannot inherit the previous work request's purpose.
 
-Work exposes `exec`, `read_file`, `write_file` and `finish_run`. The latter takes
-exactly one non-whitespace `summary` string of at most 8 KiB and must be the sole
-tool call in a normally completed response. The controller validates the entire
-batch before tool effects. A malformed or mixed finish stops the run with
-`invalid_completion`, and ordinary prose does not finish. A response that calls
-no tool gets a notice to continue or call `finish_run`; otherwise the next request
-would end with the model's own message, and gpt-oss then returned empty
-one-token responses until the run stopped. When an ordinary call
-is invalid, no call in the batch runs, but the run continues. Each call's result
-is an error: its own, or "Not run because another call in this response was
-invalid". Until 2026-10-26 (UTC), such a batch stopped the run. A valid
-declaration enters final-only capture;
-publication acknowledgment is still required before `agent_finished`. Capture
-failure, cleanup failure, cancellation and late receipts retain their independent
+Work exposes `exec`, `read_file`, `write_file` and `finish_run`. The latter
+takes exactly one non-whitespace `summary` string of at most 8 KiB and must be
+the sole tool call in a normally completed response. The controller validates
+the entire batch before tool effects. A malformed or mixed finish stops the run
+with `invalid_completion`, and ordinary prose does not finish. A response that
+calls no tool gets a notice to continue or call `finish_run`; otherwise the next
+request would end with the model's own message, and gpt-oss then returned empty
+one-token responses until the run stopped. When an ordinary call is invalid, no
+call in the batch runs, but the run continues. Each call's result is an error:
+its own, or "Not run because another call in this response was invalid". Until
+2026-10-26 (UTC), such a batch stopped the run. In a `read_file` slice, runs of
+64 or more base64 characters that total at least 1 KiB, when one of them holds
+`+` or `/` (hex, digits and letters alone never do), reach the model as markers
+with their byte counts, the rest of the slice as it was, and
+`base64.withheld_bytes`, `base64.slice_bytes` and a note that points at exec for
+the file as is; the `tool_result` record keeps the whole slice as its unabridged
+result. A valid declaration enters final-only capture; publication
+acknowledgment is still required before `agent_finished`. Capture failure,
+cleanup failure, cancellation and late receipts retain their independent
 evidence and established first-stop precedence.
 
 Settings with `allow_finish_run: false` leave `finish_run` out of work requests,

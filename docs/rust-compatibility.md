@@ -1112,3 +1112,25 @@ report's `unrecorded_delays`, which the worker's journal prints and which never
 counts as a failure. New archives may carry the new observation kind; readers
 treat an unknown kind as data, and the workbench names it. The goldens are
 unchanged: no scripted scenario writes slowly.
+
+## Reads of base64 reach the model as a head and a note (2026-11-02)
+
+`read_file` returned up to 16 KiB of any UTF-8 file, embedded images included.
+In Framework run 8 the model read a gallery page of base64 four times: each read
+cost about 10,800 tokens, set off a compaction and grew the context by 22K
+tokens, and taught it nothing.
+
+Runs of 64 or more base64 characters in a slice, when they total at least 1 KiB
+and one of them holds `+` or `/` (hex digests, nucleotides, digits and letters
+alone never do), now reach the model as markers with their byte counts, `[…
+5520 bytes of base64 withheld …]`, with the rest of the slice as it was: a
+gallery page keeps its captions and loses its images. `base64.withheld_bytes`
+and `base64.slice_bytes` say what was withheld and how long the slice was, and
+`base64.note` says that exec reads, decodes or summarizes the file as is and
+that `offset_bytes` past `slice_bytes` reads on. The tool's definition is
+unchanged: an argument or a sentence added to it would have changed the pinned
+definitions the frozen Python suite checks, the memento observation goldens and
+the compaction contract golden, whose byte-based bounds count the tool
+definitions in every request. The archive's `tool_result` record keeps the whole
+slice as `unabridged_result`, as it does for fitted results, so the evidence is
+unchanged. No scripted scenario reads such a file, so no golden moved.
