@@ -123,10 +123,12 @@ the exact frozen revision, regardless of these display summaries.
 
 The connection bar keeps backend kind and endpoint visible; **Backend details**
 contains its description. Run rows lead with recipe name (or execution recipe ID
-when its catalog entry is unavailable), recorded admission time labeled UTC, and a
-secondary run ID. Run state has its own untruncated line, so a long recipe name
-cannot hide `needs release`, including at the minimum sidebar width. This does
-not infer the start of model execution.
+when its catalog entry is unavailable), recorded admission time labeled UTC, and
+a secondary run ID. When a run names a recipe the list lacks, as a run launched
+after the list was read does, the workbench asks for the recipe list again, once
+per recipe. Run state has its own untruncated line, so a long recipe name cannot
+hide `needs release`, including at the minimum sidebar width. This does not
+infer the start of model execution.
 
 The Files inspector offers **Open image** or **Open file**, with readable size and
 file kind. Each available file's **Details** contains the full name, exact byte size,
@@ -216,12 +218,17 @@ sections, and streamed text merged from several records until its final response
 have no single source, so they offer only source inspection. Model responses,
 thinking, summaries, completion claims and mementos read as prose; commands,
 output and data stay monospace. The proportional font falls back to the bundled
-Hack font for characters it lacks, such as the non-breaking hyphen, narrow
-no-break space and arrows that models write. Empty sections disappear; missing
-fields, incomplete inference, not-dispatched actions and upstream truncation stay
-explicit. A request with no result says it is awaiting a recorded result while
-live, or has no recorded result after the run ends. A write result does not claim
-checkpoint publication, and a submitted memento does not verify model claims.
+Hack font for characters it lacks, such as the non-breaking hyphen and arrows
+that models write; the narrow no-break space, which Hack shows as a wide gap in
+prose, is shown there as a no-break space; monospace text keeps it. Empty
+sections disappear; missing fields, incomplete inference, not-dispatched actions
+and upstream truncation stay explicit. A request with no result says it is
+awaiting a recorded result while live, or has no recorded result after the run
+ends. A call settled with unknown usage and no response, as the wall limit
+leaves its last call, says it was cut off before a response and what its
+settlement charged; a failure recorded after the settlement names itself. A
+write result does not claim checkpoint publication, and a submitted memento does
+not verify model claims.
 
 Compact and Readable leave out the archive records that repeat observations
 (`run_started`, `phase_changed`, `effect_intent`, `request_finished`,

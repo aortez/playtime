@@ -885,3 +885,37 @@ fn proportional_text_draws_the_characters_models_write() {
         fonts.has_glyphs(&egui::FontId::proportional(14.0), "\u{2011}\u{202f}→")
     }));
 }
+
+#[test]
+fn a_call_settled_without_a_response_is_shown_cut_off() {
+    let rows = readable(scene::cut_off_events());
+    // The failure recorded after the first call's settlement names itself.
+    assert_eq!(
+        row(&rows, "Call 1 · Work").1,
+        "Model error · partial inference may be present · 3.0 s"
+    );
+    // The run's stop left the second call without a response.
+    let cut = row(&rows, "Call 2 · Work");
+    assert_eq!(
+        cut.1,
+        "Cut off before a response · 8,192 tokens charged as unknown usage · 2.0 s"
+    );
+    assert!(cut.3.iter().any(|(_, text)| text == "cut by the wall"));
+}
+
+/// The narrow no-break space that models write is shown as a no-break space,
+/// which the fonts have at a space's width.
+#[tokio::test]
+async fn narrow_no_break_spaces_are_shown_as_no_break_spaces() {
+    let mut app = common::demo(false).await;
+    let mut t = Transcript::default();
+    for event in scene::long_response_events() {
+        t.apply(event, None).unwrap();
+    }
+    app.model.window = t.window(View::Readable, 0, 64);
+    let h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.get_by_label_contains("side\u{a0}by\u{a0}side");
+    assert!(h.query_by_label_contains("\u{202f}").is_none());
+}

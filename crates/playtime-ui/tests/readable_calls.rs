@@ -330,3 +330,79 @@ fn the_jump_list_names_each_error_with_its_call_and_pages_by_64() {
         (Some(1), None, 1)
     );
 }
+
+#[test]
+fn a_request_settled_without_a_response_is_shown_cut_off() {
+    let settled = |seq: u64, usage: Value| {
+        observation(
+            seq,
+            "request_settled",
+            None,
+            json!({"call":1, "usage":usage,
+            "totals":{"budget_charged_tokens":8192,"known_generated_tokens":0,"unknown_requests":1,"unknown_reserved_tokens":8192,"usage_complete":false}}),
+        )
+    };
+    let unknown = || settled(3, json!({"status":"unknown","reserved_tokens":8192}));
+    let error = observation(
+        4,
+        "model_error",
+        None,
+        json!({"call":1,
+        "error":{"kind":"parse","message":"error parsing tool call: raw='x', err=unexpected end of JSON input"},
+        "recovery_allowed":true,"token_budget_charge":8192,"consecutive_errors":1,"tool_parse_errors":1,
+        "usage":{"budget_charged_tokens":8192,"known_generated_tokens":0,"unknown_requests":1,"unknown_reserved_tokens":8192,"usage_complete":false}}),
+    );
+    // The first row's status and sections, the same in either delivery order.
+    let rows = |events: &[EventEnvelope]| {
+        let build = |events: Vec<EventEnvelope>| {
+            let mut t = Transcript::default();
+            for event in events {
+                t.apply(event, None).unwrap();
+            }
+            let w = t.window(View::Readable, 0, 64);
+            (
+                w.rows[0].status.clone(),
+                w.rows[0]
+                    .sections
+                    .iter()
+                    .map(|s| s.text.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let forward = build(events.to_vec());
+        assert_eq!(forward, build(events.iter().rev().cloned().collect()));
+        forward
+    };
+    let chunk = observation(
+        2,
+        "model_chunk",
+        None,
+        json!({"call":1,"chunk":{"message":{"thinking":"unfinished thought"}}}),
+    );
+    // The run stopped before a response, as at a wall limit.
+    let (status, sections) = rows(&[request(), chunk.clone(), unknown()]);
+    assert!(
+        status.starts_with("Cut off before a response · 8,192 tokens charged as unknown usage"),
+        "{status}"
+    );
+    assert!(sections.contains(&"unfinished thought".to_owned()));
+    // A failure recorded after the settlement names itself instead.
+    let (status, _) = rows(&[request(), chunk, unknown(), error]);
+    assert!(
+        status.starts_with("Model error · partial inference may be present"),
+        "{status}"
+    );
+    // A settlement with known usage changes nothing.
+    let response = observation(
+        2,
+        "model_response",
+        None,
+        json!({"call":1,"response":{"done":true,"generated_tokens":10,"prompt_tokens":100,"message":{"role":"assistant","content":"done"}}}),
+    );
+    let (status, _) = rows(&[
+        request(),
+        response,
+        settled(3, json!({"status":"known","generated_tokens":10})),
+    ]);
+    assert!(status.starts_with("Response recorded"), "{status}");
+}

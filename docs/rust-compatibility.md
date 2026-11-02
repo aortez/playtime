@@ -1067,3 +1067,27 @@ an empty one leaves the sentence as it was. The controller's own parse failure,
 `invalid assistant message`, is named the same way. The goldens carry no retry
 notice and are unchanged; the archives of new runs record the longer notice in
 their requests.
+
+## Workbench: cut-off calls, narrow spaces and new runs' recipes (2026-11-01)
+
+A call the wall limit cut before its response kept the state of its last chunk,
+"Streaming · incomplete", after the run had ended. A request settled with
+unknown usage and no response now shows "Cut off before a response ·
+8,192 tokens charged as unknown usage" (the reserved tokens of its settlement),
+in both archive formats. A failure recorded after the settlement, such as a
+parse error, names itself as before. A call's answer time now comes from the
+latest record that carries one, so a call settled and then failed shows the
+failure's time whatever the order its records arrive in; before, the last record
+delivered that carried a time won.
+
+gpt-oss writes a narrow no-break space (U+202F) between a number and its unit.
+The proportional font lacks it and the fallback font shows it as a wide gap.
+Prose the workbench shows (model text, thinking, summaries, mementos, claims and
+previews) now carries a no-break space (U+00A0) in its place, which the fonts
+have at a space's width. Monospace text, where every glyph is one cell wide,
+keeps the character, as do source pages, the archive and downloads.
+
+The workbench read the recipe list when it connected and never again while open,
+so a run launched after that was listed by its recipe id. The run list now asks
+for the recipe list again when a run names a recipe it lacks, once per recipe,
+and names the run once the list arrives.

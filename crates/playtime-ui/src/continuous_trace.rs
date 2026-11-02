@@ -120,6 +120,18 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                     p.display.state = Some("Model error · partial inference may be present".into());
                     text(p, &v["error"], "message", "Error");
                 }
+                // A request settled with unknown usage got no response: the
+                // run stopped first, or a failure recorded next names itself.
+                "request_settled" if v["usage"]["status"] == "unknown" => {
+                    p.display.state = Some(match v["usage"]["reserved_tokens"].as_u64() {
+                        Some(tokens) => format!(
+                            "Cut off before a response · {} tokens charged as unknown usage",
+                            thousands(tokens)
+                        ),
+                        None => "Cut off before a response · usage unknown".into(),
+                    });
+                    p.display.answered_ms = Some(o.elapsed_ms);
+                }
                 "tool_request" => {
                     let name = v["name"].as_str().unwrap_or("unknown");
                     let args = &v["arguments"];
