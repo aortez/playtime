@@ -219,16 +219,18 @@ with `invalid_completion`, and ordinary prose does not finish. A response that
 calls no tool gets a notice to continue or call `finish_run`; otherwise the next
 request would end with the model's own message, and gpt-oss then returned empty
 one-token responses until the run stopped. When an ordinary call is invalid, no
-call in the batch runs, but the run continues. A `read_file` slice of at least
-1 KiB that is nine tenths base64, in runs of 64 characters or more, reaches the
-model as its first 512 bytes with a note (`base64.bytes`, `base64.note`) that
-points at exec for the file as is; the `tool_result` record keeps the whole
-slice as its unabridged result. Each call's result is an error: its own, or "Not
-run because another call in this response was invalid". Until 2026-10-26 (UTC),
-such a batch stopped the run. A valid declaration enters final-only capture;
-publication acknowledgment is still required before `agent_finished`. Capture
-failure, cleanup failure, cancellation and late receipts retain their
-independent evidence and established first-stop precedence.
+call in the batch runs, but the run continues. Each call's result is an error:
+its own, or "Not run because another call in this response was invalid". Until
+2026-10-26 (UTC), such a batch stopped the run. In a `read_file` slice, runs of
+64 or more base64 characters that total at least 1 KiB, when one of them holds
+`+` or `/` (hex, digits and letters alone never do), reach the model as markers
+with their byte counts, the rest of the slice as it was, and
+`base64.withheld_bytes`, `base64.slice_bytes` and a note that points at exec for
+the file as is; the `tool_result` record keeps the whole slice as its unabridged
+result. A valid declaration enters final-only capture; publication
+acknowledgment is still required before `agent_finished`. Capture failure,
+cleanup failure, cancellation and late receipts retain their independent
+evidence and established first-stop precedence.
 
 Settings with `allow_finish_run: false` leave `finish_run` out of work requests,
 and admission refuses a proposal that offers it. A call to it is then an

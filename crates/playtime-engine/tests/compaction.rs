@@ -2031,23 +2031,26 @@ fn a_delayed_publication_is_recorded_and_changes_nothing() {
 }
 
 #[test]
-fn a_read_of_base64_reaches_the_model_as_its_head_and_the_archive_whole() {
+fn a_read_of_base64_reaches_the_model_as_markers_and_the_archive_whole() {
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     let page = format!(
-        "<img src=\"data:image/png;base64,{}\">\n",
-        "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODk="
-            .repeat(60)
+        "<h1>Gallery</h1>\n<img src=\"data:image/png;base64,{}\">\n<p>Made with Pillow.</p>\n",
+        png.repeat(60)
     );
     let mut run = Run::new(config());
     run.response(json!({"role":"assistant","tool_calls":[call("read_file", json!({"path": "/work/gallery.html"}))]}));
     run.complete(Outcome::Tool(
-        json!({"content": page, "offset_bytes": 0, "size_bytes": 1_638_400, "truncated": true}),
+        json!({"content": page, "offset_bytes": 0, "truncated": true}),
     ));
     let request = run.request().clone();
     let message = request.messages.last().unwrap();
     assert_eq!(message["role"], "tool");
     let content = message["content"].as_str().unwrap();
-    assert!(content.contains("which this tool withholds"), "{content}");
-    // The head, the note and the fields, not the five-kilobyte slice.
+    // The markup and the note, with the image as a marker.
+    assert!(content.contains("<h1>Gallery</h1>"), "{content}");
+    assert!(content.contains("Made with Pillow."), "{content}");
+    assert!(content.contains("replaced by markers"), "{content}");
+    assert!(!content.contains(png), "{content}");
     assert!(content.len() < 1024, "{}", content.len());
     // The record keeps the whole slice as the unabridged result.
     let record = &run
@@ -2057,7 +2060,8 @@ fn a_read_of_base64_reaches_the_model_as_its_head_and_the_archive_whole() {
         .find(|r| r.kind == "tool_result")
         .unwrap()
         .data;
-    assert_eq!(record["result"]["base64"]["bytes"], page.len());
+    assert_eq!(record["result"]["base64"]["withheld_bytes"], png.len() * 60);
+    assert_eq!(record["result"]["base64"]["slice_bytes"], page.len());
     assert_eq!(record["unabridged_result"]["content"], page);
     assert_eq!(run.request().purpose, RequestPurpose::Work);
 }

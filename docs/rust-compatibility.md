@@ -1120,13 +1120,17 @@ In Framework run 8 the model read a gallery page of base64 four times: each read
 cost about 10,800 tokens, set off a compaction and grew the context by 22K
 tokens, and taught it nothing.
 
-A slice of at least 1 KiB whose bytes are at least nine tenths base64, in runs
-of 64 characters or more, now reaches the model as its first 512 bytes plus
-`base64: {bytes, note}`, where the note says the rest is withheld and that exec
-reads, decodes or summarizes the file as is. The tool's definition is unchanged:
-an argument or a sentence added to it would have changed the pinned definitions
-the frozen Python suite checks, the memento observation goldens and the
-compaction contract golden, whose byte-based bounds count the tool definitions
-in every request. The archive's `tool_result` record keeps the whole slice as
-`unabridged_result`, as it does for fitted results, so the evidence is
+Runs of 64 or more base64 characters in a slice, when they total at least 1 KiB
+and one of them holds `+` or `/` (hex digests, nucleotides, digits and letters
+alone never do), now reach the model as markers with their byte counts, `[…
+5520 bytes of base64 withheld …]`, with the rest of the slice as it was: a
+gallery page keeps its captions and loses its images. `base64.withheld_bytes`
+and `base64.slice_bytes` say what was withheld and how long the slice was, and
+`base64.note` says that exec reads, decodes or summarizes the file as is and
+that `offset_bytes` past `slice_bytes` reads on. The tool's definition is
+unchanged: an argument or a sentence added to it would have changed the pinned
+definitions the frozen Python suite checks, the memento observation goldens and
+the compaction contract golden, whose byte-based bounds count the tool
+definitions in every request. The archive's `tool_result` record keeps the whole
+slice as `unabridged_result`, as it does for fitted results, so the evidence is
 unchanged. No scripted scenario reads such a file, so no golden moved.
