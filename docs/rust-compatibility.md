@@ -1143,13 +1143,18 @@ tool failures by message, compactions and the final files. The workbench now
 keeps those totals in its transcript index, next to the progress tracker, and
 shows them on a new **Results** inspector tab, which a run opens on. Each
 count links to the first record it counts. The totals stay bounded (open
-calls, durations per purpose, tool names, failure messages and compaction
-times each have a cap, with the overflow counted) and appear only once earlier
-history has loaded, so a partial load never reads as a total. A call counts
-when its request and its settlement are both indexed; the settlement's time,
-which the controller records with the response or error, bounds the call, and
-the time of calls settled with unknown usage is reported as such rather than
-attributed to errors. A rate or median is left out, never guessed.
+calls, durations per purpose, error kinds, tool names, failure messages and
+compaction times each have a cap, with the overflow counted) and appear only
+once earlier history has loaded, so a partial load never reads as a total. A
+call counts when its request and its settlement are both indexed; the
+settlement's time, which the controller records with the response or error,
+bounds the call, and the time of calls settled with unknown usage is reported
+as such rather than attributed to errors. A request the controller never
+dispatched counts as such, and a memento request whose payload is retained
+elsewhere, with its handoff flag, counts on a line of its own rather than as
+work. The workspace size is the latest captured until the run has ended, and
+an ended continuous run without a final capture says so rather than listing
+an empty workspace. A rate or median is left out, never guessed.
 
 Run rows add a line under the state: an ended run's stop reason, tokens
 charged and cleanup, and a running run's tokens so far, from the run view

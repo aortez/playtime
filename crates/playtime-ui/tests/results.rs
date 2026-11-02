@@ -133,7 +133,7 @@ fn a_memento_run_totals_its_sessions_and_handoffs() {
     );
     assert_eq!(
         section("Sessions"),
-        [("2 sessions started · 2 checkpoints saved", None)]
+        [("2 sessions started · 2 completed", None)]
     );
     let workspace = section("Final workspace");
     assert!(workspace[0].0.ends_with(" captured") && workspace[0].1.is_some());
@@ -163,9 +163,183 @@ fn a_memento_run_totals_its_sessions_and_handoffs() {
     assert_eq!(
         sessions[0],
         Line {
-            text: "2 sessions started · 2 checkpoints saved · 1 handoff missing".into(),
+            text: "2 sessions started · 2 completed · 1 handoff missing".into(),
             jump: Some(60),
         }
+    );
+}
+
+/// The Model calls lines' text.
+fn call_lines(results: &Results) -> Vec<String> {
+    results
+        .sections
+        .iter()
+        .find(|s| s.title == "Model calls")
+        .map(|s| s.lines.iter().map(|line| line.text.clone()).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn a_memento_handoff_or_retained_request_counts_on_its_own_line() {
+    // The fixture's second request asks for the handoff.
+    let mut events = legacy();
+    assert_eq!(events[18].data["observation_kind"], "model_request");
+    events[18].data["data"]["value"]["handoff"] = json!(true);
+    assert_eq!(
+        call_lines(&indexed(events).results(true)),
+        [
+            "3 work calls · median 50 ms · longest 300 ms · 21 tokens",
+            "1 handoff call · median 0 ms · longest 0 ms · 5 tokens",
+        ]
+    );
+    // With its payload retained elsewhere, the request's handoff flag isn't
+    // in the index, so the call is neither guessed as work nor as handoff.
+    let mut events = legacy();
+    events[18].data["data"] = json!({
+        "storage": "artifact",
+        "content": {"path": "observations/r2.json", "sha256": "e".repeat(64), "size_bytes": 300_000},
+    });
+    assert_eq!(
+        call_lines(&indexed(events).results(true)),
+        [
+            "3 work calls · median 50 ms · longest 300 ms · 21 tokens",
+            "1 call with a retained request · median 0 ms · longest 0 ms · 5 tokens",
+        ]
+    );
+}
+
+/// A v2 observation of `kind` for work call `call`, at `seq` seconds.
+fn v2(seq: u64, kind: &str, call: u64, value: serde_json::Value) -> EventEnvelope {
+    let request = json!({"effect_id":call,"request_id":format!("r{call}"),"call":call,"scope":{"kind":"run"},"purpose":"work"});
+    serde_json::from_value(json!({"schema_version":1,"run_id":"continuous-ui","sequence":seq,"time":"2026-10-25T00:00:00Z","kind":"execution_v2","data":{"schema_version":2,"fact":{"kind":"observation","data":{"controller_sequence":seq,"elapsed_ms":seq*1000,"scope":{"kind":"run"},"observation_kind":kind,"identity":{"effect_id":call,"request_id":format!("r{call}"),"tool_request_sequence":null},"request":request,"data":{"storage":"inline","value":value}}}}})).unwrap()
+}
+/// A v2 fact that isn't an observation.
+fn v2_fact(seq: u64, fact: serde_json::Value) -> EventEnvelope {
+    serde_json::from_value(json!({"schema_version":1,"run_id":"continuous-ui","sequence":seq,"time":"2026-10-25T00:00:00Z","kind":"execution_v2","data":{"schema_version":2,"fact":fact}})).unwrap()
+}
+
+#[test]
+fn calls_never_dispatched_and_omitted_settlements_still_count() {
+    // A request the controller never dispatched ends without a settlement
+    // and counts as such, not as a call in progress.
+    let mut events = scene::results_events();
+    events.push(v2(
+        27,
+        "model_request",
+        5,
+        json!({"purpose":"work","request_id":"r5","call":5,"context_input_bound":1500,"context_basis":"input_bytes","context_reserve":4096}),
+    ));
+    events.push(v2(
+        28,
+        "request_not_dispatched",
+        5,
+        json!({"call":5,"released_tokens":4096}),
+    ));
+    let forward = indexed(events.clone()).results(true);
+    events.reverse();
+    assert_eq!(indexed(events).results(true), forward);
+    let lines = &forward
+        .sections
+        .iter()
+        .find(|s| s.title == "Model calls")
+        .unwrap()
+        .lines;
+    assert_eq!(lines.len(), 4);
+    assert_eq!(
+        lines[3],
+        Line {
+            text: "1 call never dispatched".into(),
+            jump: Some(27),
+        }
+    );
+
+    // A settlement whose observation the controller log limit omitted still
+    // has its time in the omission and its usage in the settlement fact.
+    let request =
+        json!({"effect_id":1,"request_id":"r1","call":1,"scope":{"kind":"run"},"purpose":"work"});
+    let events = vec![
+        v2(
+            1,
+            "model_request",
+            1,
+            json!({"purpose":"work","request_id":"r1","call":1,"context_input_bound":1150,"context_basis":"input_bytes","context_reserve":4096}),
+        ),
+        v2_fact(
+            2,
+            json!({"kind":"request_settled","data":{"request":request,"usage":{"status":"known","generated_tokens":50}}}),
+        ),
+        v2_fact(
+            3,
+            json!({"kind":"observation_omitted","data":{"controller_sequence":3,"observation_kind":"request_settled","elapsed_ms":3000,"scope":{"kind":"run"},"identity":{"effect_id":1,"request_id":"r1","tool_request_sequence":null},"request":request,"size_bytes":120,"reason":"controller_log_limit"}}),
+        ),
+    ];
+    let expected = ["1 work call · median 2.0 s · longest 2.0 s · 50 tokens · 25 tokens/s"];
+    assert_eq!(call_lines(&indexed(events.clone()).results(true)), expected);
+    let mut reversed = events;
+    reversed.reverse();
+    assert_eq!(call_lines(&indexed(reversed).results(true)), expected);
+}
+
+#[test]
+fn model_errors_count_their_kinds_up_to_a_bound() {
+    // Sixteen kinds are named; the rest count as other kinds.
+    let events: Vec<EventEnvelope> = (1..=17)
+        .map(|seq| {
+            v2(
+                seq,
+                "model_error",
+                1,
+                json!({"error":{"kind":format!("e{seq:02}"),"message":"scripted"},"recovery_allowed":true,"token_budget_charge":4096,"consecutive_errors":1,"tool_parse_errors":0,
+                    "usage":{"budget_charged_tokens":4096,"known_generated_tokens":0,"unknown_requests":1,"unknown_reserved_tokens":4096,"usage_complete":false}}),
+            )
+        })
+        .collect();
+    let results = indexed(events).results(true);
+    let errors = &results
+        .sections
+        .iter()
+        .find(|s| s.title == "Model errors")
+        .unwrap()
+        .lines;
+    assert_eq!(
+        errors[..],
+        [Line {
+            text: format!(
+                "17 model errors: {} · 1 of other kinds",
+                (1..=16)
+                    .map(|i| format!("1 e{i:02}"))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            ),
+            jump: Some(1),
+        }]
+    );
+    // A memento error's kind is an open vocabulary, kept to an excerpt, and
+    // the controller's consecutive count is its parse streak.
+    let mut error: EventEnvelope = serde_json::from_str(
+        include_str!(
+            "../../playtime-protocol/tests/fixtures/controller-observations/partial-failure.jsonl"
+        )
+        .lines()
+        .find(|line| line.contains(r#""observation_kind":"model_error""#))
+        .unwrap(),
+    )
+    .unwrap();
+    error.data["data"]["value"]["error"]["kind"] = json!("x".repeat(200));
+    error.data["data"]["value"]["consecutive_errors"] = json!(3);
+    let results = indexed(vec![error]).results(true);
+    let errors = &results
+        .sections
+        .iter()
+        .find(|s| s.title == "Model errors")
+        .unwrap()
+        .lines;
+    assert_eq!(
+        errors[0].text,
+        format!(
+            "1 model error: 1 {} … · longest parse streak 3",
+            "x".repeat(40)
+        )
     );
 }
 
@@ -205,10 +379,37 @@ fn results_wait_for_history_and_bound_their_open_calls() {
     ended.apply(end, None).expect("the run's end");
     assert_eq!(
         calls(&ended.results(true)),
-        [Line {
-            text: "4,097 calls without a recorded settlement".into(),
-            jump: Some(2)
-        }]
+        [
+            Line {
+                text: "4,096 calls without a recorded settlement".into(),
+                jump: Some(2),
+            },
+            Line {
+                text: "1 call dropped at the bound of 4,096 open calls".into(),
+                jump: None,
+            },
+        ]
+    );
+    // The dropped call's settlement arrives on its own: a settlement without
+    // its request, never a call counted twice.
+    let settlement = serde_json::from_value::<EventEnvelope>(json!({"schema_version":1,"run_id":"continuous-ui","sequence":5_001,"time":"2026-10-25T00:00:00Z","kind":"execution_v2","data":{"schema_version":2,"fact":{"kind":"observation","data":{"controller_sequence":5001,"elapsed_ms":5001000,"scope":{"kind":"run"},"observation_kind":"request_settled","identity":{"effect_id":1,"request_id":"r1","tool_request_sequence":null},"request":{"effect_id":1,"request_id":"r1","call":1,"scope":{"kind":"run"},"purpose":"work"},"data":{"storage":"inline","value":{"call":1,"usage":{"status":"known","generated_tokens":1},"totals":{"budget_charged_tokens":1,"known_generated_tokens":1,"unknown_requests":0,"unknown_reserved_tokens":0,"usage_complete":true}}}}}}})).unwrap();
+    ended.apply(settlement, None).unwrap();
+    assert_eq!(
+        calls(&ended.results(true)),
+        [
+            Line {
+                text: "4,095 calls without a recorded settlement".into(),
+                jump: Some(3),
+            },
+            Line {
+                text: "1 settled call without a recorded request".into(),
+                jump: Some(5_001),
+            },
+            Line {
+                text: "2 calls dropped at the bound of 4,096 open calls".into(),
+                jump: None,
+            },
+        ]
     );
 }
 
@@ -274,15 +475,28 @@ fn the_results_tab_opens_first_links_each_count_and_asks_for_the_final_files() {
     h.get_by_label("wall limit · 4,292 tokens · cleanup complete");
     // An ended continuous run's final capture listing is asked for once.
     h.run();
-    assert_eq!(
-        h.state()
-            .model
-            .commands
-            .iter()
-            .filter(|c| matches!(&c.action, Action::FinalFiles(id) if *id == run))
-            .count(),
-        1
-    );
+    let asked: Vec<_> = h
+        .state()
+        .model
+        .commands
+        .iter()
+        .filter(|c| matches!(&c.action, Action::FinalFiles(id) if *id == run))
+        .collect();
+    assert_eq!(asked.len(), 1);
+    let tag = asked[0].tag;
+    // Its reply applies after a later inspection too, and an empty listing
+    // is no final workspace, not an empty one.
+    let model = &mut h.state_mut().model;
+    model.inspect(0, 3);
+    model.inspector = Inspector::Results;
+    model.apply(Reply {
+        tag,
+        run: Some(run.clone()),
+        data: Data::FinalFiles(vec![], true),
+    });
+    assert_eq!(model.final_listing, None);
+    h.run();
+    h.get_by_label("No final workspace publication was found.");
     h.get_by_label("1 model error: 1 parse").click();
     h.run();
     assert!(!h.state().model.following);
@@ -326,7 +540,19 @@ fn the_results_tab_opens_first_links_each_count_and_asks_for_the_final_files() {
     );
     assert!(!listing.incomplete && listing.more_images == 0);
     let model = &mut h.state_mut().model;
-    model.final_listing = Some(listing);
+    model.apply(Reply {
+        tag,
+        run: Some(run.clone()),
+        data: Data::FinalFiles(
+            vec![
+                artifact("zoom.gif", 204_800),
+                artifact("make.py", 2_048),
+                artifact("plot.png", 1_048_576),
+            ],
+            true,
+        ),
+    });
+    assert_eq!(model.final_listing, Some(listing));
     h.run();
     h.get_by_label("3 files · 1.2 MiB · 2 images · 1 script");
     h.get_all_by_label("Open image").next().unwrap().click();
@@ -338,6 +564,45 @@ fn the_results_tab_opens_first_links_each_count_and_asks_for_the_final_files() {
     h.get_by_label("Every file in Files").click();
     h.run();
     assert_eq!(h.state().model.inspector, Inspector::Files);
+}
+
+#[test]
+fn a_running_run_shows_its_latest_workspace_as_such() {
+    // Before the run's end, the workspace captured is the latest, not final.
+    let mut events = scene::results_events();
+    events.truncate(25);
+    let results = indexed(events).results(true);
+    assert_eq!(
+        sections(&results).last(),
+        Some(&("Latest workspace", vec![("12.6 MiB captured", Some(25))]))
+    );
+    // A memento run still going lists its latest checkpoint as such.
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../playtime-server/tests/fixtures/http-contract.json"
+    ))
+    .unwrap();
+    let checkpoints: Page<Checkpoint> =
+        serde_json::from_value(contract["checkpoints"].clone()).unwrap();
+    let mut view: RunView = serde_json::from_value(contract["completed_run"].clone()).unwrap();
+    view.orchestration.state = OrchestrationState::Running;
+    view.outcome = None;
+    let mut app = workbench(view);
+    app.model.window.results = Results {
+        complete: true,
+        sections: vec![],
+    };
+    let tag = app.model.tag;
+    app.model.apply(Reply {
+        tag,
+        run: app.model.selected.clone(),
+        data: Data::Checkpoints(checkpoints, Default::default()),
+    });
+    assert!(app.model.final_listing.is_some());
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    h.get_by_label("Latest checkpoint");
 }
 
 #[test]

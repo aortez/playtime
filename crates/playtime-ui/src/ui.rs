@@ -1395,15 +1395,24 @@ impl Workbench {
             }
             ui.add_space(6.0);
         }
+        let ended = self
+            .model
+            .run
+            .as_ref()
+            .is_some_and(|run| run.value.orchestration.state == OrchestrationState::Terminal);
         let captured = results
             .sections
             .iter()
-            .any(|section| section.title == "Final workspace");
+            .any(|section| matches!(section.title, "Final workspace" | "Latest workspace"));
         let mut open = None;
         let mut files = false;
         if let Some(listing) = &self.model.final_listing {
             if !captured {
-                ui.strong("Final workspace");
+                ui.strong(if ended {
+                    "Final workspace"
+                } else {
+                    "Latest checkpoint"
+                });
             }
             ui.add(egui::Label::new(brief(&listing.summary, 500)).wrap());
             if listing.incomplete {
@@ -1427,6 +1436,14 @@ impl Workbench {
                 ui.small(format!("{} more images in Files", listing.more_images));
             }
             files = ui.small_button("Every file in Files").clicked();
+        } else if let Some((files, complete)) = &self.model.final_files
+            && files.is_empty()
+        {
+            ui.small(if *complete {
+                "No final workspace publication was found."
+            } else {
+                "Listing limit reached before any final workspace file."
+            });
         } else if !continuous && self.model.checkpoints_next.is_some() {
             ui.small("Load the remaining checkpoints in Files to see the final workspace.");
         }

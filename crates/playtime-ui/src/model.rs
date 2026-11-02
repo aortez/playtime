@@ -34,8 +34,9 @@ pub enum Disclosure {
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Inspector {
-    #[default]
+    /// Where a selected run opens.
     Results,
+    #[default]
     Details,
     Memory,
     Files,
@@ -155,7 +156,7 @@ impl FinalListing {
             total += 1;
             let lower = name.to_ascii_lowercase();
             if [
-                ".py", ".sh", ".js", ".ts", ".rs", ".c", ".cpp", ".h", ".go", ".rb",
+                ".c", ".cpp", ".go", ".h", ".js", ".py", ".rb", ".rs", ".sh", ".ts",
             ]
             .iter()
             .any(|suffix| lower.ends_with(suffix))
@@ -164,7 +165,7 @@ impl FinalListing {
             }
             match content {
                 Some((artifact_id, size)) => {
-                    bytes += size;
+                    bytes = bytes.saturating_add(size);
                     if crate::media::image_name(name) {
                         images.push(ListedFile {
                             name: name.to_owned(),
@@ -549,7 +550,7 @@ impl Default for Model {
             memory: None,
             content: None,
             reveal_content: false,
-            inspector: Inspector::Details,
+            inspector: Inspector::default(),
             show_inspector: true,
             show_runs: true,
             enlarged: false,
@@ -1012,10 +1013,11 @@ impl Model {
         {
             return;
         }
+        // The final files are the run's, not an inspection's, so a later
+        // inspection doesn't discard the listing the Results tab asked for.
         if matches!(
             &reply.data,
-            Data::FinalFiles(..)
-                | Data::Checkpoint(..)
+            Data::Checkpoint(..)
                 | Data::Content(_)
                 | Data::Source(..)
                 | Data::Text(..)
@@ -1335,7 +1337,9 @@ impl Model {
                 self.command(Action::Runs(None));
             }
             Data::FinalFiles(files, complete) => {
-                self.final_listing = Some(FinalListing::from_artifacts(&files, complete));
+                // No files is no final capture, not an empty workspace.
+                self.final_listing =
+                    (!files.is_empty()).then(|| FinalListing::from_artifacts(&files, complete));
                 self.final_files = Some((files, complete));
                 self.file_page = 0;
             }
