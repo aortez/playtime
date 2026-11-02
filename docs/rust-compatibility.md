@@ -1051,3 +1051,19 @@ passes at about a hundred points each, and continued projections equal whole
 ones at about twenty. Their snapshots for reads hold 5.0 MB in all, against
 0.9 MB of inspections before and 17.6 MB with the state a continuation needs.
 Archive bytes, the HTTP schema and the goldens are unchanged.
+
+## Parse retry notices name the server's reason (2026-11-01)
+
+The notice that asked the model to try again after a response the server
+couldn't parse, in memento and in continuous compaction, said only that a tool
+call could not be parsed. In Framework run 8, nine of 156 work calls failed to
+parse, and one response thought for 8,192 tokens about a parse error it had been
+told nothing about.
+
+The notice's first sentence now ends with the server's reason: the text after
+the last `, err=` of Ollama's message, which follows the raw call, or else the
+whole message, within 512 bytes. A reason that is cut ends with an ellipsis, and
+an empty one leaves the sentence as it was. The controller's own parse failure,
+`invalid assistant message`, is named the same way. The goldens carry no retry
+notice and are unchanged; the archives of new runs record the longer notice in
+their requests.

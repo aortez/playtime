@@ -1330,13 +1330,15 @@ fn invalid_tool_batches_return_errors_without_running_any_call() {
 }
 
 fn notice() -> Value {
-    json!({"role":"user","content":"The server rejected your last response because a tool call could not be parsed. None of that response's tools ran. Try again with valid JSON object arguments."})
+    json!({"role":"user","content":"The server rejected your last response because a tool call could not be parsed: invalid character ']' after object key:value pair. None of that response's tools ran. Try again with valid JSON object arguments."})
 }
 fn continue_notice() -> Value {
     json!({"role":"user","content":"Your last response did not call a tool, so the run continues. Continue independently, or call finish_run alone if the task is finished; ordinary prose does not finish the run."})
 }
 fn parse_failure() -> Outcome {
-    Outcome::ModelError(ModelFailure::Parse("error parsing tool call".into()))
+    Outcome::ModelError(ModelFailure::Parse(
+        "error parsing tool call: raw='{\"command\":\"echo ok\"]', err=invalid character ']' after object key:value pair".into(),
+    ))
 }
 
 #[test]
@@ -1432,22 +1434,49 @@ fn a_retried_exchange_fits_its_tool_results_like_any_other() {
     assert_eq!(results(true), results(false));
 }
 
-/// Alternates parse failures and short responses until compaction is planned
-/// while a retry notice waits for its exchange.
+/// Steers the context to just below the compaction trigger with tool-free
+/// responses, then fails a parse, so that the retry notice crosses the
+/// trigger: compaction is planned while the notice waits for its exchange.
+/// The engine's own measure of a reply and of a notice is taken at the start,
+/// so the steering follows the notice texts. Each failure charges a full call
+/// and each request logs the whole conversation, so both budgets are raised.
 fn compaction_with_pending_notice() -> Run {
     let mut config = config();
     config.parameters.limits.generated_tokens = 100_000.try_into().unwrap();
+    config.parameters.limits.log_bytes = (8 << 20).try_into().unwrap();
     let mut run = Run::new(config);
-    for n in 0..200 {
-        run.complete(parse_failure());
-        if run.request().purpose == RequestPurpose::Compaction {
-            return run;
-        }
-        run.response(
-            json!({"role":"assistant","content":format!("Exchange {n}: {}", "x".repeat(150))}),
-        );
-        if run.request().purpose == RequestPurpose::Compaction {
-            run.response(json!({"role":"assistant","content":format!("Summary {n}.")}));
+    // The trigger as the engine rounds it, at the default 75%.
+    let trigger = (16384u64 * 75).div_ceil(100);
+    let projected = |run: &Run| {
+        let request = run.request();
+        assert_eq!(request.purpose, RequestPurpose::Work);
+        request.context_input_bound + request.maximum_tokens
+    };
+    let reply = |n: usize, filler: u64| json!({"role":"assistant","content":format!("Exchange {n}: {}", "x".repeat(filler as usize))});
+    // What a reply with the longest filler adds, its continue notice included,
+    // and what a retry notice adds.
+    let before = projected(&run);
+    run.response(reply(0, 150));
+    let full_reply = projected(&run) - before;
+    let before = projected(&run);
+    run.complete(parse_failure());
+    let notice = projected(&run) - before;
+    let overhead = full_reply - 150;
+    for n in 1..400 {
+        // Tokens left below the trigger. A margin covers the digits of `n`.
+        let left = trigger.saturating_sub(projected(&run));
+        if left <= notice + 4 || left < overhead + 4 {
+            run.complete(parse_failure());
+            if run.request().purpose == RequestPurpose::Compaction {
+                return run;
+            }
+        } else {
+            // Stop about half a notice short of the trigger.
+            let filler = (left - overhead).saturating_sub(notice / 2).min(150);
+            run.response(reply(n, filler));
+            if run.request().purpose == RequestPurpose::Compaction {
+                run.response(json!({"role":"assistant","content":format!("Summary {n}.")}));
+            }
         }
     }
     panic!("no compaction while a notice was pending");
