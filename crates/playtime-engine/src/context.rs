@@ -199,6 +199,54 @@ pub(crate) fn tool_message(name: &str, result: &Value) -> Value {
     json!({"role": "tool", "tool_name": name, "content": canonical(result)})
 }
 
+/// The least a `read_file` slice holds before base64 is withheld from it.
+const BASE64_GUARD_BYTES: usize = 1024;
+/// A run of base64 characters this long counts as base64.
+const BASE64_RUN: usize = 64;
+/// How much of a withheld slice the model still sees.
+const BASE64_HEAD: usize = 512;
+const BASE64_NOTE: &str = "The rest of this slice is base64, which this tool withholds. Use exec to read, decode or summarize the file as is, or offset_bytes to read past it.";
+
+/// A `read_file` result as the model receives it. A slice of at least
+/// `BASE64_GUARD_BYTES` whose bytes are at least nine tenths base64, in runs
+/// of `BASE64_RUN` or more, teaches the model nothing at a high price in
+/// context: embedded images in an HTML page cost run 8 a compaction. Such a
+/// slice is cut to its head with a note. The archive keeps the whole slice as
+/// the unabridged result, and exec reads the file as is.
+pub(crate) fn withhold_base64(mut result: Value) -> Value {
+    let Some(content) = result["content"].as_str() else {
+        return result;
+    };
+    if content.len() < BASE64_GUARD_BYTES || !mostly_base64(content.as_bytes()) {
+        return result;
+    }
+    let mut end = BASE64_HEAD;
+    while !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    let (head, bytes) = (content[..end].to_owned(), content.len());
+    result["content"] = json!(head);
+    result["base64"] = json!({"bytes": bytes, "note": BASE64_NOTE});
+    result
+}
+
+fn mostly_base64(bytes: &[u8]) -> bool {
+    let is_base64 = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=');
+    let mut counted = 0;
+    let mut run = 0;
+    for &byte in bytes.iter().chain([b'\n'].iter()) {
+        if is_base64(byte) {
+            run += 1;
+        } else {
+            if run >= BASE64_RUN {
+                counted += run;
+            }
+            run = 0;
+        }
+    }
+    counted * 10 >= bytes.len() * 9
+}
+
 pub(crate) fn fit_tool_result(name: &str, result: Value, maximum: u64) -> Value {
     fit_tool_result_with_notice(
         name,
@@ -263,6 +311,53 @@ pub(crate) fn fit_tool_result_with_notice(
 mod tests {
     use super::*;
     use crate::policy::memento_contract::TOOLS;
+
+    #[test]
+    fn base64_slices_are_withheld_with_a_note() {
+        let base64 = |n: usize| {
+            "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODk="
+                .repeat(n)
+        };
+        let result = |content: String| json!({"content": content, "offset_bytes": 0, "size_bytes": 1_638_400, "truncated": true});
+        // A page of embedded images: the head stays, with a note.
+        let page = format!("<img src=\"data:image/png;base64,{}\">\n", base64(60));
+        let kept = withhold_base64(result(page.clone()));
+        assert_eq!(kept["content"].as_str().unwrap(), &page[..512]);
+        assert_eq!(kept["base64"]["bytes"], page.len());
+        assert_eq!(kept["base64"]["note"], BASE64_NOTE);
+        assert_eq!(kept["offset_bytes"], 0);
+        assert_eq!(kept["size_bytes"], 1_638_400);
+        assert_eq!(kept["truncated"], true);
+        // Prose with a long token stays, and so does a short slice.
+        let prose = format!(
+            "{} {}\n",
+            "The quick brown fox jumps over the lazy dog.".repeat(40),
+            base64(2)
+        );
+        assert_eq!(withhold_base64(result(prose.clone()))["content"], prose);
+        let short = base64(10);
+        assert!(short.len() < BASE64_GUARD_BYTES);
+        assert_eq!(withhold_base64(result(short.clone()))["content"], short);
+        // Base64 broken into lines of 76 still counts; a JSON file of short
+        // base64 fields does not.
+        let lines = base64(40)
+            .as_bytes()
+            .chunks(76)
+            .map(|c| std::str::from_utf8(c).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(withhold_base64(result(lines)).get("base64").is_some());
+        let fields = (0..40)
+            .map(|i| format!("{{\"id\": {i}, \"icon\": \"{}\"}}", &base64(1)[..40]))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        assert!(fields.len() >= BASE64_GUARD_BYTES);
+        assert!(withhold_base64(result(fields)).get("base64").is_none());
+        // The head ends at a character boundary: byte 512 is inside the é.
+        let wide = format!("{}é{}", &base64(10)[..511], base64(30));
+        let cut = withhold_base64(result(wide.clone()));
+        assert_eq!(cut["content"].as_str().unwrap(), &wide[..511]);
+    }
 
     #[test]
     fn numeric_spelling_and_unicode_match_the_python_context_oracle() {

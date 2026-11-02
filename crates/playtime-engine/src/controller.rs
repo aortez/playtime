@@ -1394,6 +1394,13 @@ impl<I: IdSource> Controller<I> {
             self.ended = true;
             self.finished = tool.finish_run;
         }
+        // A read of base64 is cut before fitting; the record keeps the whole
+        // slice as the unabridged result.
+        let received = if tool.request.name == "read_file" {
+            crate::context::withhold_base64(original.clone())
+        } else {
+            original.clone()
+        };
         let result = self.policy.fit_result(
             View {
                 config: &self.config,
@@ -1401,7 +1408,7 @@ impl<I: IdSource> Controller<I> {
             },
             &self.context,
             &tool.request.name,
-            &original,
+            &received,
         );
         if self.config.compaction.is_some() {
             self.tool_result_bytes =
