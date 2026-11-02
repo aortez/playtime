@@ -295,12 +295,7 @@ impl Workbench {
                     ui.scope(|ui| {
                         ui.set_min_height(96.0);
                         let run = &self.model.runs[i];
-                        let recipe = self
-                            .model
-                            .recipes
-                            .iter()
-                            .find(|recipe| recipe.recipe_id == run.recipe_id)
-                            .map_or(run.recipe_id.as_str(), |recipe| recipe.name.as_str());
+                        let recipe = self.model.recipe_name(run);
                         let response = ui
                             .add(
                                 egui::Button::new(brief(recipe, 60))
@@ -1460,10 +1455,20 @@ fn brief(text: &str, max: usize) -> &str {
     }
     &text[..end]
 }
+/// Text as the fonts show it. gpt-oss writes a narrow no-break space between
+/// a number and its unit, which the proportional font lacks and the fallback
+/// font shows as a wide gap; the no-break space keeps the join and the width.
+fn shown(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.contains('\u{202F}') {
+        std::borrow::Cow::Owned(text.replace('\u{202F}', "\u{A0}"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
 fn trace_text(ui: &mut egui::Ui, label: &str, value: &str, metrics: &mut FrameMetrics) {
     let visible = brief(value, metrics.remaining());
     metrics.text_bytes += visible.len();
-    let mut rich = RichText::new(visible).color(Color32::from_gray(220));
+    let mut rich = RichText::new(shown(visible)).color(Color32::from_gray(220));
     if !matches!(
         label,
         "Preview"
@@ -1488,7 +1493,7 @@ fn prose(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
 fn text(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
     let visible = brief(value, metrics.remaining());
     metrics.text_bytes += visible.len();
-    ui.add(egui::Label::new(RichText::new(visible).monospace()).wrap());
+    ui.add(egui::Label::new(RichText::new(shown(visible)).monospace()).wrap());
     if visible.len() < value.len() {
         ui.small("Text viewport limit reached · inspect the next source page for continuation");
     }

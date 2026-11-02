@@ -341,3 +341,64 @@ pub fn troubled_events() -> Vec<EventEnvelope> {
         ),
     ]
 }
+
+/// A work call the wall limit cut before its response, and one that failed to
+/// parse: both settle with unknown usage, and only the second records an error.
+pub fn cut_off_events() -> Vec<EventEnvelope> {
+    let settled = |seq: u64, call: u64| {
+        observation(
+            seq,
+            "request_settled",
+            Some((call, "work")),
+            None,
+            json!({"call":call,"usage":{"status":"unknown","reserved_tokens":8192},
+                "totals":{"budget_charged_tokens":8192,"known_generated_tokens":0,"unknown_requests":1,"unknown_reserved_tokens":8192,"usage_complete":false}}),
+        )
+    };
+    vec![
+        observation(
+            1,
+            "model_request",
+            Some((1, "work")),
+            None,
+            json!({"purpose":"work","request_id":"r1","call":1,"context_input_bound":1150,"context_basis":"input_bytes","context_reserve":4096}),
+        ),
+        observation(
+            2,
+            "model_chunk",
+            Some((1, "work")),
+            None,
+            json!({"call":1,"chunk":{"done":false,"message":{"thinking":"unfinished thought"}}}),
+        ),
+        settled(3, 1),
+        observation(
+            4,
+            "model_error",
+            Some((1, "work")),
+            None,
+            json!({"call":1,"error":{"kind":"parse","message":"error parsing tool call: raw='x', err=unexpected end of JSON input"}}),
+        ),
+        observation(
+            5,
+            "model_request",
+            Some((2, "work")),
+            None,
+            json!({"purpose":"work","request_id":"r2","call":2,"context_input_bound":1150,"context_basis":"input_bytes","context_reserve":4096}),
+        ),
+        observation(
+            6,
+            "model_chunk",
+            Some((2, "work")),
+            None,
+            json!({"call":2,"chunk":{"done":false,"message":{"thinking":"cut by the wall"}}}),
+        ),
+        settled(7, 2),
+        observation(
+            8,
+            "controller_stop",
+            None,
+            None,
+            json!({"reason":"wall_limit"}),
+        ),
+    ]
+}

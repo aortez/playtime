@@ -587,3 +587,70 @@ async fn recovered_save_preserves_an_unfinished_numeric_draft() {
         )));
     }
 }
+
+/// A run launched after the recipe list was read names its recipe once the
+/// list is read again, which the run list asks for once per recipe.
+#[tokio::test]
+async fn a_run_with_an_unlisted_recipe_refreshes_the_recipe_list_once() {
+    let app = common::demo(false).await;
+    let old = app.model.runs[0].clone();
+    let mut run = old.clone();
+    run.run_id = RunId::new("later-run").unwrap();
+    run.recipe_id = RecipeId::new("saved-later").unwrap();
+    let listed = app.model.recipes[0].clone();
+    let mut h = Harness::builder()
+        .with_size([1440.0, 900.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.state_mut().model.commands.clear();
+    let page = Page {
+        items: vec![run.clone(), old.clone()],
+        next_cursor: None,
+        frontier: None,
+    };
+    reply(&mut h, None, Data::Runs(page.clone()));
+    let asked = |h: &Harness<'_, Workbench>| {
+        h.state()
+            .model
+            .commands
+            .iter()
+            .filter(|c| matches!(c.action, Action::Recipes(None)))
+            .count()
+    };
+    assert_eq!(asked(&h), 1);
+    // Until the list arrives, the row names the recipe by its id.
+    assert_eq!(h.state().model.recipe_name(&run), "saved-later");
+    assert_eq!(h.state().model.recipe_name(&old), listed.name);
+    reply(&mut h, None, Data::Runs(page));
+    assert_eq!(asked(&h), 1);
+    reply(
+        &mut h,
+        None,
+        Data::Recipes(Page {
+            items: vec![
+                listed.clone(),
+                Recipe {
+                    recipe_id: run.recipe_id.clone(),
+                    name: "Later recipe".into(),
+                    ..listed
+                },
+            ],
+            next_cursor: None,
+            frontier: None,
+        }),
+    );
+    assert_eq!(h.state().model.recipe_name(&run), "Later recipe");
+    // A recipe the list still lacks is asked for no more.
+    let mut unlisted = run.clone();
+    unlisted.recipe_id = RecipeId::new("saved-later").unwrap();
+    h.state_mut().model.recipes.clear();
+    reply(
+        &mut h,
+        None,
+        Data::Runs(Page {
+            items: vec![unlisted],
+            next_cursor: None,
+            frontier: None,
+        }),
+    );
+    assert_eq!(asked(&h), 1);
+}

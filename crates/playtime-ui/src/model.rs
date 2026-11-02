@@ -293,6 +293,9 @@ pub struct Model {
     pub clock: f64,
     pub recipes: Vec<Recipe>,
     pub recipe_next: Option<String>,
+    /// Recipes the run list has asked for by refreshing the recipe list,
+    /// once each, so a recipe the list never holds asks no more.
+    pub recipes_sought: Vec<RecipeId>,
     pub recipe: Option<RecipeId>,
     pub mode: RunMode,
     pub preview: Option<PreviewView>,
@@ -379,6 +382,7 @@ impl Default for Model {
             clock: 0.0,
             recipes: vec![],
             recipe_next: None,
+            recipes_sought: vec![],
             recipe: None,
             mode: RunMode::Simulation,
             preview: None,
@@ -439,6 +443,13 @@ impl Default for Model {
     }
 }
 impl Model {
+    /// A run's recipe by name, or by id while the recipe list lacks it.
+    pub fn recipe_name<'a>(&'a self, run: &'a RunView) -> &'a str {
+        self.recipes
+            .iter()
+            .find(|recipe| recipe.recipe_id == run.recipe_id)
+            .map_or(run.recipe_id.as_str(), |recipe| recipe.name.as_str())
+    }
     /// Shows `notice` in the status bar. A notice about a run lasts only while
     /// that run is open.
     pub fn notify(&mut self, notice: impl Into<String>, run: Option<RunId>) {
@@ -1109,6 +1120,21 @@ impl Model {
             Data::Runs(p) => {
                 self.runs = p.items;
                 self.runs_next = p.next_cursor;
+                // A run launched since the recipe list was read is named by
+                // its recipe once the list is read again.
+                let unknown: Vec<RecipeId> = self
+                    .runs
+                    .iter()
+                    .map(|run| run.recipe_id.clone())
+                    .filter(|id| {
+                        !self.recipes.iter().any(|recipe| recipe.recipe_id == *id)
+                            && !self.recipes_sought.contains(id)
+                    })
+                    .collect();
+                if !unknown.is_empty() {
+                    self.recipes_sought.extend(unknown);
+                    self.command(Action::Recipes(None));
+                }
             }
             Data::Receipts(items, next) => {
                 self.receipts = items;

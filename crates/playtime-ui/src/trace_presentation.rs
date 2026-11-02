@@ -17,8 +17,10 @@ pub(super) struct Display {
     pub(super) pending: bool,
     /// Controller time when the model request was recorded.
     pub(super) requested_ms: Option<u64>,
-    /// Controller time when its response or error was recorded.
+    /// Controller time when its response or error was recorded, from the
+    /// latest record that carries one.
     pub(super) answered_ms: Option<u64>,
+    answered_sequence: u64,
     /// The server's counts for the response, when it reported them.
     pub(super) prompt_tokens: Option<u64>,
     pub(super) generated_tokens: Option<u64>,
@@ -45,9 +47,14 @@ impl Display {
             self.state_sequence = sequence;
             self.pending = other.pending;
         }
+        // The latest record's time, so that a call settled and then failed
+        // shows the failure's time whatever the delivery order.
+        if other.answered_ms.is_some() && sequence >= self.answered_sequence {
+            self.answered_ms = other.answered_ms;
+            self.answered_sequence = sequence;
+        }
         for (mine, theirs) in [
             (&mut self.requested_ms, other.requested_ms),
-            (&mut self.answered_ms, other.answered_ms),
             (&mut self.prompt_tokens, other.prompt_tokens),
             (&mut self.generated_tokens, other.generated_tokens),
         ] {
@@ -384,6 +391,18 @@ pub(super) fn observation(o: &DecodedObservation) -> (Display, Vec<Section>) {
             {
                 push(&mut parts, "Output limit", "Recorded output was truncated");
             }
+        }
+        // A request settled with unknown usage got no response: the run
+        // stopped first, or a failure recorded next names itself.
+        KnownObservation::RequestSettled {
+            usage: playtime_core::GenerationUsage::Unknown { reserved_tokens },
+            ..
+        } => {
+            d.state = Some(format!(
+                "Cut off before a response · {} tokens charged as unknown usage",
+                thousands(reserved_tokens.get())
+            ));
+            d.answered_ms = Some(record.elapsed_ms);
         }
         // These facts stay in source; they must not overwrite the model result
         // or add JSON bookkeeping to the readable call.

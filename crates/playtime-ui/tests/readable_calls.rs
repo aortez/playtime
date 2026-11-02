@@ -330,3 +330,70 @@ fn the_jump_list_names_each_error_with_its_call_and_pages_by_64() {
         (Some(1), None, 1)
     );
 }
+
+#[test]
+fn a_request_settled_without_a_response_is_shown_cut_off() {
+    let mut t = Transcript::default();
+    t.apply(request(), None).unwrap();
+    t.apply(
+        observation(
+            2,
+            "model_chunk",
+            None,
+            json!({"call":1,"chunk":{"message":{"thinking":"unfinished thought"}}}),
+        ),
+        None,
+    )
+    .unwrap();
+    let settled = |seq: u64| {
+        observation(
+            seq,
+            "request_settled",
+            None,
+            json!({"call":1,
+            "usage":{"status":"unknown","reserved_tokens":8192},
+            "totals":{"budget_charged_tokens":8192,"known_generated_tokens":0,"unknown_requests":1,"unknown_reserved_tokens":8192,"usage_complete":false}}),
+        )
+    };
+    t.apply(settled(3), None).unwrap();
+    let w = t.window(View::Readable, 0, 64);
+    // The run stopped before a response, as at a wall limit.
+    assert!(
+        w.rows[0]
+            .status
+            .starts_with("Cut off before a response · 8,192 tokens charged as unknown usage"),
+        "{}",
+        w.rows[0].status
+    );
+    assert!(
+        w.rows[0]
+            .sections
+            .iter()
+            .any(|s| s.text == "unfinished thought")
+    );
+    // A failure recorded after the settlement names itself instead.
+    t.apply(observation(4, "model_error", None, json!({"call":1,
+        "error":{"kind":"parse","message":"error parsing tool call: raw='x', err=unexpected end of JSON input"},
+        "recovery_allowed":true,"token_budget_charge":8192,"consecutive_errors":1,"tool_parse_errors":1,
+        "usage":{"budget_charged_tokens":8192,"known_generated_tokens":0,"unknown_requests":1,"unknown_reserved_tokens":8192,"usage_complete":false}})), None).unwrap();
+    let w = t.window(View::Readable, 0, 64);
+    assert!(
+        w.rows[0]
+            .status
+            .starts_with("Model error · partial inference may be present"),
+        "{}",
+        w.rows[0].status
+    );
+    // A settlement with known usage changes nothing.
+    let mut t = Transcript::default();
+    t.apply(request(), None).unwrap();
+    t.apply(observation(2, "model_response", None, json!({"call":1,"response":{"done":true,"generated_tokens":10,"prompt_tokens":100,"message":{"role":"assistant","content":"done"}}})), None).unwrap();
+    t.apply(observation(3, "request_settled", None, json!({"call":1,
+        "usage":{"status":"known","generated_tokens":10},
+        "totals":{"budget_charged_tokens":10,"known_generated_tokens":10,"unknown_requests":0,"unknown_reserved_tokens":0,"usage_complete":true}})), None).unwrap();
+    assert!(
+        t.window(View::Readable, 0, 64).rows[0]
+            .status
+            .starts_with("Response recorded")
+    );
+}
