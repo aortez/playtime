@@ -1997,3 +1997,35 @@ fn tool_call_summaries_plan_the_same_compaction_again_until_the_consecutive_limi
             .all(|plan| plan["ordinal"] == plans(&run)[0]["ordinal"])
     );
 }
+
+#[test]
+fn a_delayed_publication_is_recorded_and_changes_nothing() {
+    let mut run = Run::new(config());
+    let request = run.request().clone();
+    let records = run.records.len();
+    run.input(Input::PublicationDelayed {
+        waited_ms: 6_200,
+        events: 3,
+        bytes: 47_827,
+    });
+    let delayed: Vec<&Record> = run
+        .records
+        .iter()
+        .filter(|r| r.kind == "publication_delayed")
+        .collect();
+    assert_eq!(delayed.len(), 1);
+    assert_eq!(
+        delayed[0].data,
+        json!({"waited_ms": 6200, "events": 3, "bytes": 47827})
+    );
+    assert_eq!(run.records.len(), records + 1);
+    // The same request is still pending, and the run goes on as before.
+    assert_eq!(run.request(), &request);
+    run.response(
+        json!({"role":"assistant","tool_calls":[call("exec",json!({"command":"echo ok"}))]}),
+    );
+    run.complete(Outcome::Tool(
+        json!({"exit_code":0,"stdout":"ok\n","stderr":"","timed_out":false}),
+    ));
+    assert_eq!(run.request().purpose, RequestPurpose::Work);
+}

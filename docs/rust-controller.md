@@ -335,9 +335,11 @@ only. A fresh session retains workspace/memento and optionally bounded evidence,
 but no prior messages, measured context, processes, or `/tmp`. Tool arguments
 and memento UTF-8 sizes are checked before dispatch. Dispatch-intent records
 precede effects; `request_not_dispatched` and `tool_not_dispatched` explicitly
-cancel those intents. Evidence excludes execs that never crossed the dispatch
-boundary. Final-record persistence failures are retained in result diagnostics
-even after a primary stop decision.
+cancel those intents. `publication_delayed` records a batch of events that the
+driver found slow to commit, with its wait, and changes nothing. Evidence
+excludes execs that never crossed the dispatch boundary. Final-record
+persistence failures are retained in result diagnostics even after a primary
+stop decision.
 
 ## Script format and limits
 

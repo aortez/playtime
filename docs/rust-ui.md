@@ -242,25 +242,25 @@ are laid out. Expansion, resize, late history and disclosure changes preserve th
 reader's activity. Follow controls scrolling only; pausing it prevents later
 records from moving the reader to the end.
 
-A navigation row above the timeline holds the session chooser, a **Call** box and
-a jump list; each jump pauses following. The session chooser jumps to recorded
-session boundaries. It shows at most 64 entries in a scrollable popup, with
-Earlier/More controls for longer runs. The list says when earlier history is
-incomplete; configured session limits never create entries. The current session
-follows the visible activity. **Go to call** (or Enter) goes to the first indexed
-record of a run-wide call number. Earlier history loads forward from the run's
-start, so until it has loaded the box shows no range and a call not yet indexed
-says so; after that, a call that isn't recorded names the latest recorded call.
-Without a connection it asks for a reconnect rather than waiting. A session or
-jump-list pick replaces a call still being found. The jump list lists
-compactions planned, applied, deferred or rejected, model errors, rejected tool
-calls and failed, timed-out or nonzero-exit tool results, latest first, so the
-last one leads. Each entry reads as controller time, event and call, such as
-`0:08 · exec exited with status 1 · call 2`. It pages by 64 with Later/Earlier
-controls and says when earlier history is still loading. Jump to live cancels
-pending navigation, returns the reader to the latest activity and resumes
-following. Reconnect restores a paused position by its archived event sequence,
-independent of rebuilt row IDs.
+A navigation row above the timeline holds the session chooser, a **Call** box
+and a jump list; each jump pauses following. The session chooser jumps to
+recorded session boundaries. It shows at most 64 entries in a scrollable popup,
+with Earlier/More controls for longer runs. The list says when earlier history
+is incomplete; configured session limits never create entries. The current
+session follows the visible activity. **Go to call** (or Enter) goes to the
+first indexed record of a run-wide call number. Earlier history loads forward
+from the run's start, so until it has loaded the box shows no range and a call
+not yet indexed says so; after that, a call that isn't recorded names the latest
+recorded call. Without a connection it asks for a reconnect rather than waiting.
+A session or jump-list pick replaces a call still being found. The jump list
+lists compactions planned, applied, deferred or rejected, model errors, rejected
+tool calls, failed, timed-out or nonzero-exit tool results and delayed archive
+writes, latest first, so the last one leads. Each entry reads as controller
+time, event and call, such as `0:08 · exec exited with status 1 · call 2`. It
+pages by 64 with Later/Earlier controls and says when earlier history is still
+loading. Jump to live cancels pending navigation, returns the reader to the
+latest activity and resumes following. Reconnect restores a paused position by
+its archived event sequence, independent of rebuilt row IDs.
 
 At each session start, **Memory received** shows the exact recorded delivery,
 including an explicitly available empty memento, no memento supplied, or unavailable

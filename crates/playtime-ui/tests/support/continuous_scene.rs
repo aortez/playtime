@@ -405,3 +405,18 @@ pub fn cut_off_events() -> Vec<EventEnvelope> {
         ),
     ]
 }
+
+/// The scene with an archive write the driver found slow, after the run's
+/// first tool result.
+pub fn delayed_events() -> Vec<EventEnvelope> {
+    let mut events = events();
+    let seq = events.len() as u64 + 1;
+    events.push(observation(
+        seq,
+        "publication_delayed",
+        None,
+        None,
+        json!({"waited_ms":6200,"events":3,"bytes":47827}),
+    ));
+    events
+}

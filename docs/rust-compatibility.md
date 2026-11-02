@@ -1091,3 +1091,22 @@ The workbench read the recipe list when it connected and never again while open,
 so a run launched after that was listed by its recipe id. The run list now asks
 for the recipe list again when a run names a recipe it lacks, once per recipe,
 and names the run once the list arrives.
+
+## A slow archive write no longer ends a run (2026-11-01)
+
+The driver gave an in-flight archive batch five seconds
+(`DriverOptions::publication_wait`) before calling the write uncertain: the
+execution failed, the queued events were retired, and the run ended, while the
+write usually committed a moment later (issue #157: an 11-second disk reset in
+trial 10, and run 9's write during a build on the same disk). The default is now
+60 seconds. The rules are unchanged: no same-writer retry, no promotion of
+uncommitted bytes, and expiry still means uncertainty; only the bound moved.
+
+A batch that commits within the bound but takes
+`DriverOptions::slow_publication` (five seconds) or longer is now recorded: the
+controller emits a `publication_delayed` observation with `waited_ms`, `events`
+and `bytes` as the next record, so the archive shows that the run stood still
+and for how long. A slow terminal batch can't be followed by a record, so the
+driver keeps it in the report's diagnostics instead. New archives may carry the
+new observation kind; readers treat an unknown kind as data, and the workbench
+names it. The goldens are unchanged: no scripted scenario writes slowly.

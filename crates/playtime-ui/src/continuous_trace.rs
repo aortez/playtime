@@ -236,6 +236,23 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                         ),
                     );
                 }
+                "publication_delayed" => {
+                    let waited = v["waited_ms"].as_u64().unwrap_or(0);
+                    p.title = format!(
+                        "Archive write delayed · {}",
+                        super::presentation::duration_words(waited)
+                    );
+                    section(
+                        p,
+                        "Delay",
+                        format!(
+                            "{} events ({} bytes) took {} to commit; the run stood still meanwhile.",
+                            thousands(v["events"].as_u64().unwrap_or(0)),
+                            thousands(v["bytes"].as_u64().unwrap_or(0)),
+                            super::presentation::duration_words(waited)
+                        ),
+                    );
+                }
                 "compaction_applied" => {
                     p.title = format!("Compaction {} · applied", v["ordinal"]);
                     text(p, v, "summary", "Applied summary");

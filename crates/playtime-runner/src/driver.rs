@@ -28,6 +28,9 @@ pub struct DriverOptions {
     /// Supervision bound for unresolved filesystem work, not evidence that the
     /// operation failed. Returning retains its owner in pending_publication.
     pub publication_wait: Duration,
+    /// A batch that takes this long or longer, but commits within the bound,
+    /// is recorded as a delayed publication: the run stood still meanwhile.
+    pub slow_publication: Duration,
 }
 impl Default for DriverOptions {
     fn default() -> Self {
@@ -35,7 +38,8 @@ impl Default for DriverOptions {
             cancellation: Cancellation::default(),
             confirmed: crate::LatestReceipt::default(),
             writer_hooks: Box::new(NoWriterHooks),
-            publication_wait: Duration::from_secs(5),
+            publication_wait: Duration::from_secs(60),
+            slow_publication: Duration::from_secs(5),
         }
     }
 }
@@ -468,6 +472,30 @@ fn execute(
                         confirmed = receipt;
                         committed_log_bytes += completed.publication.log_cost();
                         encoder.confirmed(&completed.publication);
+                        let waited = completed.started.elapsed();
+                        if waited >= options.slow_publication {
+                            let (events, bytes) = (
+                                completed.publication.events.len() as u64,
+                                completed.publication.queued_bytes(),
+                            );
+                            let waited_ms = waited.as_millis().min(u64::MAX as u128) as u64;
+                            // A finished controller records nothing more; the
+                            // report keeps the delay instead.
+                            if controller.result().is_none() {
+                                controller.advance(
+                                    clock.now_ms(),
+                                    Input::PublicationDelayed {
+                                        waited_ms,
+                                        events,
+                                        bytes,
+                                    },
+                                )?;
+                            } else if diagnostics.len() < 8 {
+                                diagnostics.push(format!(
+                                    "publication of {events} events ({bytes} bytes) took {waited_ms} ms"
+                                ));
+                            }
+                        }
                         for event in &completed.publication.events {
                             if event.kind == "effect_intent" {
                                 intents.insert(event.effect_id.unwrap());
