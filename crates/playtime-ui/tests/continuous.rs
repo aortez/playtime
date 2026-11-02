@@ -927,7 +927,7 @@ fn a_delayed_archive_write_is_named_and_listed_among_the_jumps() {
     assert!(delayed.3.iter().any(|(label, text)| {
         label == "Delay"
             && text
-                == "3 events (47,827 bytes) took 6.2 s to commit; the run stood still meanwhile."
+                == "3 events (47,827 bytes) took 6.2 s to commit; no record was published meanwhile."
     }));
     let mut t = Transcript::default();
     for event in scene::delayed_events() {

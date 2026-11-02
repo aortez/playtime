@@ -201,19 +201,20 @@ as its status `failure`, adding how a pending publication settled; see
 [worker lifecycle](rust-worker-lifecycle.md).
 
 `DriverOptions::publication_wait` bounds waiting for unresolved storage (default
-60 real seconds; it was five until 2026-11-01, which a disk pause of six seconds
+60 real seconds; it was five until 2026-11-01, which an 11-second disk reset
 exceeded). A batch that commits within the bound but takes `slow_publication`
 (default five seconds) or longer is recorded as a `publication_delayed`
-observation with its wait, event count and bytes, or in the report's diagnostics
-when the controller has already finished: the run stood still meanwhile, and
-nothing else changes. Expiry does not prove that I/O failed or cannot commit.
-The driver returns incomplete evidence and a `PendingPublication` holding the
-storage owner and immutable batch. The lock remains held until that thread
-actually settles. An owner can poll its receipt for supervision; dropping the
-handle does not cancel the operation. No terminal event is fabricated. Lost
-receipts likewise remain incomplete from the driver's confirmed frontier even if
-offline inspection later discovers a newer marker. Automatic
-reconciliation/continuation is not implemented.
+observation with its wait, event count and bytes, or in the report's
+`unrecorded_delays` when the controller has already finished: no record was
+published meanwhile, dispatched model and tool work went on and their deadlines
+were serviced, and nothing else changes. Expiry does not prove that I/O failed
+or cannot commit. The driver returns incomplete evidence and a
+`PendingPublication` holding the storage owner and immutable batch. The lock
+remains held until that thread actually settles. An owner can poll its receipt
+for supervision; dropping the handle does not cancel the operation. No terminal
+event is fabricated. Lost receipts likewise remain incomplete from the driver's
+confirmed frontier even if offline inspection later discovers a newer marker.
+Automatic reconciliation/continuation is not implemented.
 
 `DriverOptions::confirmed` accepts a cloneable read-only `LatestReceipt`. It
 coalesces updates to one in-memory value, initialized only by the verified empty

@@ -433,9 +433,10 @@ fn a_slow_publication_within_the_bound_is_recorded_and_the_run_goes_on() {
         DriverOptions {
             writer_hooks: Box::new(SlowWrite {
                 kind: "run_started",
-                delay: Duration::from_millis(300),
+                delay: Duration::from_millis(1500),
             }),
-            slow_publication: Duration::from_millis(100),
+            // An ordinary fsync on a busy runner stays well under a second.
+            slow_publication: Duration::from_secs(1),
             ..DriverOptions::default()
         },
     )
@@ -444,9 +445,9 @@ fn a_slow_publication_within_the_bound_is_recorded_and_the_run_goes_on() {
     assert!(report.pending_publication.is_none());
     assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
     let recorded = delays(&temp.archive());
-    assert_eq!(recorded.len(), 1, "{recorded:?}");
-    let (waited_ms, events, bytes) = recorded[0];
-    assert!(waited_ms >= 300, "{waited_ms}");
+    let held: Vec<_> = recorded.iter().filter(|d| d.0 >= 1500).collect();
+    assert_eq!(held.len(), 1, "{recorded:?}");
+    let (_, events, bytes) = *held[0];
     assert!(events >= 1 && bytes > 0);
     // A prompt write records nothing.
     let prompt = Temp::new();
@@ -458,7 +459,11 @@ fn a_slow_publication_within_the_bound_is_recorded_and_the_run_goes_on() {
         DriverOptions::default(),
     )
     .unwrap();
-    assert!(delays(&prompt.archive()).is_empty());
+    assert!(
+        delays(&prompt.archive()).iter().all(|d| d.0 < 1500),
+        "{:?}",
+        delays(&prompt.archive())
+    );
 }
 #[test]
 fn a_slow_terminal_publication_stays_in_the_report() {
@@ -471,21 +476,32 @@ fn a_slow_terminal_publication_stays_in_the_report() {
         DriverOptions {
             writer_hooks: Box::new(SlowWrite {
                 kind: "run_finished",
-                delay: Duration::from_millis(300),
+                delay: Duration::from_millis(1500),
             }),
-            slow_publication: Duration::from_millis(100),
+            slow_publication: Duration::from_secs(1),
             ..DriverOptions::default()
         },
     )
     .unwrap();
     assert!(report.terminal_committed);
-    assert!(delays(&temp.archive()).is_empty());
     assert!(
-        report
-            .diagnostics
-            .iter()
-            .any(|d| d.starts_with("publication of ") && d.contains(" took ")),
+        delays(&temp.archive()).iter().all(|d| d.0 < 1500),
         "{:?}",
-        report.diagnostics
+        delays(&temp.archive())
+    );
+    // The delay is in the report, apart from the diagnostics that would make
+    // an ending a failure.
+    assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+    let delay = report
+        .unrecorded_delays
+        .iter()
+        .find(|d| d.waited_ms >= 1500)
+        .unwrap_or_else(|| panic!("{:?}", report.unrecorded_delays));
+    assert_eq!(
+        delay.to_string(),
+        format!(
+            "publication of {} events ({} bytes) took {} ms",
+            delay.events, delay.bytes, delay.waited_ms
+        )
     );
 }

@@ -44,12 +44,32 @@ impl Default for DriverOptions {
     }
 }
 
+/// A batch that took `slow_publication` or longer to commit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublicationDelay {
+    pub waited_ms: u64,
+    pub events: u64,
+    pub bytes: u64,
+}
+impl std::fmt::Display for PublicationDelay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "publication of {} events ({} bytes) took {} ms",
+            self.events, self.bytes, self.waited_ms
+        )
+    }
+}
+
 pub struct RunReport {
     /// In-memory cleanup/result is diagnostic unless terminal_committed is true.
     pub result: Option<RunResult>,
     pub confirmed: CommittedFrontier,
     pub terminal_committed: bool,
     pub diagnostics: Vec<String>,
+    /// Slow batches the controller had finished before, so no record holds
+    /// them. They are not failures.
+    pub unrecorded_delays: Vec<PublicationDelay>,
     pub dispatches: Vec<Dispatch>,
     pub accounted_log_bytes: u64,
     pub peak_queued_bytes: u64,
@@ -364,6 +384,7 @@ fn execute(
         }
     };
     let mut diagnostics = Vec::new();
+    let mut unrecorded_delays = Vec::new();
     let mut healthy = true;
     let mut flush = true;
     let mut queue_since = None;
@@ -490,10 +511,12 @@ fn execute(
                                         bytes,
                                     },
                                 )?;
-                            } else if diagnostics.len() < 8 {
-                                diagnostics.push(format!(
-                                    "publication of {events} events ({bytes} bytes) took {waited_ms} ms"
-                                ));
+                            } else if unrecorded_delays.len() < 8 {
+                                unrecorded_delays.push(PublicationDelay {
+                                    waited_ms,
+                                    events,
+                                    bytes,
+                                });
                             }
                         }
                         for event in &completed.publication.events {
@@ -583,6 +606,7 @@ fn execute(
                 confirmed,
                 terminal_committed,
                 diagnostics,
+                unrecorded_delays,
                 dispatches,
                 accounted_log_bytes: committed_log_bytes,
                 peak_queued_bytes,

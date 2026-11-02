@@ -246,7 +246,7 @@ pub(super) fn project(fact: &Fact, p: &mut Projection) {
                         p,
                         "Delay",
                         format!(
-                            "{} events ({} bytes) took {} to commit; the run stood still meanwhile.",
+                            "{} events ({} bytes) took {} to commit; no record was published meanwhile.",
                             thousands(v["events"].as_u64().unwrap_or(0)),
                             thousands(v["bytes"].as_u64().unwrap_or(0)),
                             super::presentation::duration_words(waited)

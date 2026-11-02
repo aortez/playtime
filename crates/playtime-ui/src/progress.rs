@@ -274,8 +274,8 @@ impl Update {
                 update.mark("Compaction rejected".into(), o.elapsed_ms);
                 None
             }
-            // The driver found a batch of events slow to commit: the run
-            // stood still for the wait.
+            // The driver found a batch of events slow to commit: no record
+            // was published for the wait.
             "publication_delayed" => {
                 let waited = value.and_then(|v| v["waited_ms"].as_u64()).unwrap_or(0);
                 update.mark(

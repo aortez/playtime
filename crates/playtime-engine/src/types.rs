@@ -350,7 +350,7 @@ pub enum Input {
         effect_id: u64,
     },
     /// A batch of events took `waited_ms` to commit, longer than the driver
-    /// calls prompt but within its bound: the run stood still meanwhile. It is
+    /// calls prompt but within its bound: no record was published meanwhile. It is
     /// recorded and changes nothing else.
     PublicationDelayed {
         waited_ms: u64,

@@ -1105,8 +1105,10 @@ uncommitted bytes, and expiry still means uncertainty; only the bound moved.
 A batch that commits within the bound but takes
 `DriverOptions::slow_publication` (five seconds) or longer is now recorded: the
 controller emits a `publication_delayed` observation with `waited_ms`, `events`
-and `bytes` as the next record, so the archive shows that the run stood still
-and for how long. A slow terminal batch can't be followed by a record, so the
-driver keeps it in the report's diagnostics instead. New archives may carry the
-new observation kind; readers treat an unknown kind as data, and the workbench
-names it. The goldens are unchanged: no scripted scenario writes slowly.
+and `bytes` as the next record, so the archive shows that no record was
+published for that long; dispatched model and tool work went on meanwhile. A
+slow terminal batch can't be followed by a record, so the driver keeps it in the
+report's `unrecorded_delays`, which the worker's journal prints and which never
+counts as a failure. New archives may carry the new observation kind; readers
+treat an unknown kind as data, and the workbench names it. The goldens are
+unchanged: no scripted scenario writes slowly.
