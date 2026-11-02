@@ -1050,6 +1050,7 @@ impl Model {
                 self.connection = ConnectionState::Connected;
                 self.stale = false;
                 self.last_update = self.clock;
+                self.recipes_sought.clear();
                 self.command(Action::Recipes(None));
                 self.command(Action::Runs(None));
                 self.command(Action::Receipts(None));
@@ -1122,15 +1123,16 @@ impl Model {
                 self.runs_next = p.next_cursor;
                 // A run launched since the recipe list was read is named by
                 // its recipe once the list is read again.
-                let unknown: Vec<RecipeId> = self
-                    .runs
-                    .iter()
-                    .map(|run| run.recipe_id.clone())
-                    .filter(|id| {
-                        !self.recipes.iter().any(|recipe| recipe.recipe_id == *id)
-                            && !self.recipes_sought.contains(id)
-                    })
-                    .collect();
+                let mut unknown: Vec<RecipeId> = vec![];
+                for run in &self.runs {
+                    let id = &run.recipe_id;
+                    if !self.recipes.iter().any(|recipe| recipe.recipe_id == *id)
+                        && !self.recipes_sought.contains(id)
+                        && !unknown.contains(id)
+                    {
+                        unknown.push(id.clone());
+                    }
+                }
                 if !unknown.is_empty() {
                     self.recipes_sought.extend(unknown);
                     self.command(Action::Recipes(None));

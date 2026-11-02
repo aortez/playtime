@@ -17,8 +17,8 @@ pub(super) struct Display {
     pub(super) pending: bool,
     /// Controller time when the model request was recorded.
     pub(super) requested_ms: Option<u64>,
-    /// Controller time when its response or error was recorded, from the
-    /// latest record that carries one.
+    /// Controller time when its response, error or settlement was recorded,
+    /// from the latest record that carries one.
     pub(super) answered_ms: Option<u64>,
     answered_sequence: u64,
     /// The server's counts for the response, when it reported them.

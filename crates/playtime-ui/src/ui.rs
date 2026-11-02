@@ -1455,9 +1455,10 @@ fn brief(text: &str, max: usize) -> &str {
     }
     &text[..end]
 }
-/// Text as the fonts show it. gpt-oss writes a narrow no-break space between
+/// Prose as the fonts show it. gpt-oss writes a narrow no-break space between
 /// a number and its unit, which the proportional font lacks and the fallback
 /// font shows as a wide gap; the no-break space keeps the join and the width.
+/// Monospace text keeps the character: every glyph there is one cell wide.
 fn shown(text: &str) -> std::borrow::Cow<'_, str> {
     if text.contains('\u{202F}') {
         std::borrow::Cow::Owned(text.replace('\u{202F}', "\u{A0}"))
@@ -1468,8 +1469,7 @@ fn shown(text: &str) -> std::borrow::Cow<'_, str> {
 fn trace_text(ui: &mut egui::Ui, label: &str, value: &str, metrics: &mut FrameMetrics) {
     let visible = brief(value, metrics.remaining());
     metrics.text_bytes += visible.len();
-    let mut rich = RichText::new(shown(visible)).color(Color32::from_gray(220));
-    if !matches!(
+    let rich = if matches!(
         label,
         "Preview"
             | "Recorded thinking"
@@ -1480,8 +1480,11 @@ fn trace_text(ui: &mut egui::Ui, label: &str, value: &str, metrics: &mut FrameMe
             | "Applied summary"
             | "Completion claim"
     ) {
-        rich = rich.monospace();
+        RichText::new(shown(visible))
+    } else {
+        RichText::new(visible).monospace()
     }
+    .color(Color32::from_gray(220));
     ui.add(egui::Label::new(rich).wrap());
     if visible.len() < value.len() {
         ui.small("Text viewport limit · inspect source for continuation");
@@ -1493,7 +1496,7 @@ fn prose(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
 fn text(ui: &mut egui::Ui, value: &str, metrics: &mut FrameMetrics) {
     let visible = brief(value, metrics.remaining());
     metrics.text_bytes += visible.len();
-    ui.add(egui::Label::new(RichText::new(shown(visible)).monospace()).wrap());
+    ui.add(egui::Label::new(RichText::new(visible).monospace()).wrap());
     if visible.len() < value.len() {
         ui.small("Text viewport limit reached · inspect the next source page for continuation");
     }

@@ -219,15 +219,16 @@ have no single source, so they offer only source inspection. Model responses,
 thinking, summaries, completion claims and mementos read as prose; commands,
 output and data stay monospace. The proportional font falls back to the bundled
 Hack font for characters it lacks, such as the non-breaking hyphen and arrows
-that models write; the narrow no-break space, which Hack shows as a wide gap, is
-shown as a no-break space. Empty sections disappear; missing fields, incomplete
-inference, not-dispatched actions and upstream truncation stay explicit. A
-request with no result says it is awaiting a recorded result while live, or has
-no recorded result after the run ends. A call settled with unknown usage and no
-response, as the wall limit leaves its last call, says it was cut off before a
-response and what its settlement charged; a failure recorded after the
-settlement names itself. A write result does not claim checkpoint publication,
-and a submitted memento does not verify model claims.
+that models write; the narrow no-break space, which Hack shows as a wide gap in
+prose, is shown there as a no-break space; monospace text keeps it. Empty
+sections disappear; missing fields, incomplete inference, not-dispatched actions
+and upstream truncation stay explicit. A request with no result says it is
+awaiting a recorded result while live, or has no recorded result after the run
+ends. A call settled with unknown usage and no response, as the wall limit
+leaves its last call, says it was cut off before a response and what its
+settlement charged; a failure recorded after the settlement names itself. A
+write result does not claim checkpoint publication, and a submitted memento does
+not verify model claims.
 
 Compact and Readable leave out the archive records that repeat observations
 (`run_started`, `phase_changed`, `effect_intent`, `request_finished`,

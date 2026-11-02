@@ -376,7 +376,10 @@ pub fn cut_off_events() -> Vec<EventEnvelope> {
             "model_error",
             Some((1, "work")),
             None,
-            json!({"call":1,"error":{"kind":"parse","message":"error parsing tool call: raw='x', err=unexpected end of JSON input"}}),
+            json!({
+                "error":{"kind":"parse","message":"error parsing tool call: raw='x', err=unexpected end of JSON input"},
+                "recovery_allowed":true,"token_budget_charge":8192,"consecutive_errors":1,"tool_parse_errors":1,
+                "usage":{"budget_charged_tokens":8192,"known_generated_tokens":0,"unknown_requests":1,"unknown_reserved_tokens":8192,"usage_complete":false}}),
         ),
         observation(
             5,
