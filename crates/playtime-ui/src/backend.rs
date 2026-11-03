@@ -43,6 +43,7 @@ impl Out {
         let image = match &mut data {
             Data::Content(content) => content.image.as_mut(),
             Data::GifFrame(pixels, _) => Some(pixels),
+            Data::Thumbnail(_, Ok(pixels)) => Some(pixels),
             _ => None,
         };
         if let Some(image) = image {
@@ -419,7 +420,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     // A download reports on the saved file, not the open run, so
                     // its result still arrives and stays after another run opens.
                     let run = match &command.action {
-                        Action::FinalFiles(run) | Action::Trace(run, ..) | Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
+                        Action::FinalFiles(run) | Action::Thumbnails(run, _) | Action::Trace(run, ..) | Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
                     };
                     let action = command.action.clone();
                     let result = perform(&session, &out, command, previews).await;
@@ -1160,6 +1161,16 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
             out.send(tag, Some(run), Data::FinalFiles(files, complete))
                 .await;
         }
+        Action::Thumbnails(run, ids) => {
+            // One image at a time under one preview permit; each thumbnail
+            // arrives as soon as it is decoded.
+            let _permit = previews.acquire_owned().await.map_err(|e| e.to_string())?;
+            for id in ids.into_iter().take(LISTED_IMAGES) {
+                let thumbnail = thumbnail(client, &run, &id).await.map(Arc::new);
+                out.send(tag, Some(run.clone()), Data::Thumbnail(id, thumbnail))
+                    .await;
+            }
+        }
         Action::Content(run, id, offset) => {
             let _permit = previews.acquire_owned().await.map_err(|e| e.to_string())?;
             let artifact = client.artifact(&run, &id).await.map_err(safe)?;
@@ -1538,6 +1549,13 @@ async fn content_bytes(
         .await
         .map_err(safe)?;
     Ok(bytes)
+}
+/// A listed image's thumbnail: its verified bytes decoded under the preview
+/// limits and scaled to the thumbnail box, outside the render loop.
+async fn thumbnail(client: &Client, run: &RunId, id: &ArtifactId) -> Result<media::Pixels> {
+    let artifact = client.artifact(run, id).await.map_err(safe)?;
+    let bytes = content_bytes(client, run, &artifact, media::ENCODED_BYTES as u64).await?;
+    local(move || media::thumbnail(&bytes)).await
 }
 async fn retained_artifact(
     client: &Client,

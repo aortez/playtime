@@ -34,6 +34,25 @@ fn explicit_image_codecs_validate_dimensions_and_reject_active_content() {
     assert!(Gif::new(encoded(ImageFormat::Gif, 1025, 1)).is_err());
 }
 #[test]
+fn a_thumbnail_fits_the_box_and_keeps_its_aspect() {
+    let wide = thumbnail(&encoded(ImageFormat::Png, 640, 480)).unwrap();
+    assert_eq!(wide.image.size, [224, 168]);
+    assert_eq!(wide.bytes, 224 * 168 * 4);
+    assert_eq!(wide.image.pixels[0], egui::Color32::from_rgb(32, 180, 130));
+    let tall = thumbnail(&encoded(ImageFormat::Jpeg, 300, 900)).unwrap();
+    assert_eq!(tall.image.size, [56, 168]);
+    // A GIF's first frame; a small image is kept as it is.
+    let gif = thumbnail(&encoded(ImageFormat::Gif, 448, 100)).unwrap();
+    assert_eq!(gif.image.size, [224, 50]);
+    assert!(gif.notice.starts_with("GIF frame 1"));
+    let small = thumbnail(&encoded(ImageFormat::WebP, 3, 2)).unwrap();
+    assert_eq!(small.image.size, [3, 2]);
+    // The preview limits still apply before any scaling.
+    assert!(thumbnail(b"\x89PNG\r\n\x1a\ncorrupt").is_err());
+    assert!(thumbnail(&encoded(ImageFormat::Png, 4097, 1)).is_err());
+    assert!(thumbnail(&vec![0; ENCODED_BYTES + 1]).is_err());
+}
+#[test]
 fn animation_is_incremental_and_stops_at_300_frames() {
     let mut encoded = vec![];
     {

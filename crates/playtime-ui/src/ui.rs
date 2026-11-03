@@ -11,12 +11,16 @@ use crate::{
 use egui::{Color32, RichText, Vec2};
 use playtime_client::config::Options;
 use playtime_core::{RunId, RunMode};
-use playtime_protocol::api::{ContentAvailability, Enforcement, OrchestrationState, RunView};
-use std::{path::PathBuf, sync::Arc};
+use playtime_protocol::api::{
+    ArtifactId, ContentAvailability, Enforcement, OrchestrationState, RunView,
+};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 const ACCENT: Color32 = Color32::from_rgb(96, 214, 185);
 /// A run row: recipe, state, outcome, time and ID.
 const RUN_ROW_HEIGHT: f32 = 112.0;
+/// A thumbnail's cell in the Results tab, half the decoded thumbnail box.
+const THUMBNAIL_CELL: Vec2 = Vec2::new(112.0, 84.0);
 #[derive(Clone, Debug, Default)]
 pub struct FrameMetrics {
     pub laid_out_rows: usize,
@@ -40,6 +44,8 @@ pub struct Workbench {
     pub backend: Option<Backend>,
     pub metrics: FrameMetrics,
     texture: Option<(Arc<crate::media::Pixels>, egui::TextureHandle)>,
+    /// The listed images' thumbnail textures, following the model's thumbnails.
+    thumbnails: BTreeMap<ArtifactId, (Arc<crate::media::Pixels>, egui::TextureHandle)>,
     requested_range: Option<(View, usize, usize)>,
     pub options: Options,
     previous_narrow: Option<bool>,
@@ -85,6 +91,9 @@ impl Workbench {
             .is_none_or(|c| c.image.is_none())
         {
             self.texture = None;
+        }
+        if self.model.thumbnails.is_empty() {
+            self.thumbnails.clear();
         }
         let old_widths = (
             self.model.preferences.left_width,
@@ -1372,6 +1381,7 @@ impl Workbench {
             NO_FINAL_FILE_LISTED, NO_FINAL_WORKSPACE,
         };
         self.model.seek_final_files();
+        self.sync_thumbnails(ui);
         let mut jump = None;
         let results = &self.model.window.results;
         if !results.complete {
@@ -1422,15 +1432,53 @@ impl Workbench {
             if listing.incomplete {
                 ui.colored_label(Color32::YELLOW, LISTING_INCOMPLETE);
             }
-            for image in &listing.images {
-                ui.horizontal_wrapped(|ui| {
-                    ui.push_id(image.artifact_id.as_str(), |ui| {
-                        if ui.button("Open image").clicked() {
-                            open = Some(image.artifact_id.clone());
-                        }
-                    });
-                    ui.label(brief(&image.name, 120));
-                    ui.small(&image.size);
+            // The listed images as thumbnails, each a button to open it in
+            // place, with its name and size under it, in rows of as many
+            // cells as the pane is wide.
+            let spacing = ui.spacing().item_spacing.x;
+            let columns = ((ui.available_width() + spacing) / (THUMBNAIL_CELL.x + spacing))
+                .floor()
+                .max(1.0) as usize;
+            for row in listing.images.chunks(columns) {
+                ui.horizontal(|ui| {
+                    for image in row {
+                        ui.push_id(image.artifact_id.as_str(), |ui| {
+                            ui.vertical(|ui| {
+                                ui.set_max_width(THUMBNAIL_CELL.x);
+                                let response = match (
+                                    self.model.thumbnails.get(&image.artifact_id),
+                                    self.thumbnails.get(&image.artifact_id),
+                                ) {
+                                    (Some(Ok(_)), Some((_, texture))) => {
+                                        let size = texture.size_vec2();
+                                        let scale = (THUMBNAIL_CELL.x / size.x)
+                                            .min(THUMBNAIL_CELL.y / size.y)
+                                            .min(4.0);
+                                        ui.add(egui::Button::image((texture.id(), size * scale)))
+                                    }
+                                    (Some(Err(notice)), _) => ui
+                                        .add_sized(THUMBNAIL_CELL, egui::Button::new("No preview"))
+                                        .on_hover_text(notice),
+                                    _ => ui.add_sized(THUMBNAIL_CELL, egui::Button::new("Loading")),
+                                };
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::labeled(
+                                        egui::WidgetType::Button,
+                                        true,
+                                        format!("Open image {}", image.name),
+                                    )
+                                });
+                                if response.on_hover_text(&image.name).clicked() {
+                                    open = Some(image.artifact_id.clone());
+                                }
+                                ui.add(
+                                    egui::Label::new(RichText::new(brief(&image.name, 60)).small())
+                                        .wrap(),
+                                );
+                                ui.small(&image.size);
+                            });
+                        });
+                    }
                 });
             }
             if listing.more_images > 0 {
@@ -1460,6 +1508,34 @@ impl Workbench {
             self.model.inspect_action(Action::Content(run, id, 0));
         }
     }
+    /// Thumbnail textures follow the model's thumbnails: dropped with them,
+    /// created once each when the pixels arrive. Their bytes count toward
+    /// the frame's texture payload.
+    fn sync_thumbnails(&mut self, ui: &mut egui::Ui) {
+        let current = &self.model.thumbnails;
+        self.thumbnails.retain(|id, (pixels, _)| {
+            matches!(current.get(id), Some(Ok(latest)) if Arc::ptr_eq(latest, pixels))
+        });
+        for (id, pixels) in current
+            .iter()
+            .filter_map(|(id, thumbnail)| Some((id, thumbnail.as_ref().ok()?)))
+        {
+            if !self.thumbnails.contains_key(id) {
+                let texture = ui.ctx().load_texture(
+                    format!("thumbnail-{id}"),
+                    egui::ImageData::Color(pixels.image.clone()),
+                    egui::TextureOptions::LINEAR,
+                );
+                self.thumbnails
+                    .insert(id.clone(), (pixels.clone(), texture));
+            }
+        }
+        self.metrics.texture_bytes += self
+            .thumbnails
+            .values()
+            .map(|(pixels, _)| pixels.bytes)
+            .sum::<usize>();
+    }
     /// Goes to a record: the timeline locates it on its next frame.
     fn jump_to(&mut self, sequence: u64) {
         self.model.location = None;
@@ -1487,7 +1563,7 @@ impl Workbench {
             );
             self.texture = Some((pixels.clone(), texture));
         }
-        self.metrics.texture_bytes = pixels.bytes;
+        self.metrics.texture_bytes += pixels.bytes;
         if self.model.content.as_ref().is_some_and(|c| c.animated) {
             if self.model.playing {
                 if ui.button("Pause GIF").clicked() {

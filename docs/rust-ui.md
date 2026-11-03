@@ -341,9 +341,14 @@ than guessed. Under the totals, the final workspace's files are counted by
 kind from the final capture listing, asked for once when an ended continuous
 run opens, or from a memento run's last published checkpoint once the whole
 checkpoint list is in hand (its latest checkpoint, named so, while the run
-goes on), with its images listed to open in place and **Every file in Files**
+goes on), with its images shown as thumbnails and **Every file in Files**
 for the rest; an ended run without a final capture says so rather than
-listing an empty workspace. Reviewed views:
+listing an empty workspace. The thumbnails are asked for once per listing,
+at most 12, decoded one at a time in the background from each image's
+verified bytes under the preview limits and scaled to fit 224×168 pixels;
+one still loading, or without a preview, says so in its place. Each
+thumbnail is a button, named **Open image** and the file's name, that opens
+the image in place, with the name and size written under it. Reviewed views:
 [continuous](../crates/playtime-ui/tests/snapshots/results.png),
 [narrow](../crates/playtime-ui/tests/snapshots/results-narrow.png) and
 [memento](../crates/playtime-ui/tests/snapshots/results-sessions.png); they
@@ -438,7 +443,7 @@ are explicitly unavailable where the current API does not project them.
 | Static image | 4 MiB encoded, side ≤4096, ≤16 million pixels |
 | GIF | 1024² canvas, 300 frames or 60 source seconds per explicit play |
 | GIF pacing | incremental decode, UI acknowledgment, ≥34 ms between updates |
-| Managed CPU pixels / GPU texture payload | 64 MiB / 64 MiB; one selected texture |
+| Managed CPU pixels / GPU texture payload | 64 MiB / 64 MiB; one selected texture and at most 12 thumbnails of at most 224×168 pixels |
 
 Missing memory remains unavailable, not an empty string or an unchanged diff.
 Raw source has continuation controls. Image decoding checks dimensions before

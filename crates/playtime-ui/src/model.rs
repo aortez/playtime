@@ -5,7 +5,7 @@ use playtime_core::{RunId, RunMode, SessionId};
 use playtime_protocol::api::*;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     path::PathBuf,
     sync::Arc,
 };
@@ -141,8 +141,8 @@ pub struct ListedFile {
     pub artifact_id: ArtifactId,
     pub size: String,
 }
-/// Images the Results tab lists itself.
-const LISTED_IMAGES: usize = 12;
+/// Images the Results tab lists itself, with their thumbnails.
+pub const LISTED_IMAGES: usize = 12;
 impl FinalListing {
     /// The counted listing and each retained file's name, artifact and size,
     /// for the images to open.
@@ -274,6 +274,8 @@ pub enum Action {
     /// A page of a section's full text.
     Text(TextRef, usize),
     FinalFiles(RunId),
+    /// The listed images' thumbnails, in this order.
+    Thumbnails(RunId, Vec<ArtifactId>),
     Checkpoints(RunId, Option<String>),
     Checkpoint(RunId, SessionId),
     Content(RunId, ArtifactId, usize),
@@ -336,6 +338,8 @@ pub enum Data {
     CallFound(u64, Result<u64, String>),
     /// Bounded retained final workspace listing, with explicit completeness.
     FinalFiles(Vec<Artifact>, bool),
+    /// A listed image's thumbnail, or why it has none.
+    Thumbnail(ArtifactId, Result<Arc<crate::media::Pixels>, String>),
     /// The page and, by session, what each checkpoint saved.
     Checkpoints(Page<Checkpoint>, BTreeMap<String, String>),
     Checkpoint(Box<Checkpoint>, MemoryView),
@@ -422,6 +426,11 @@ pub struct Model {
     pub final_listing: Option<FinalListing>,
     /// The Results tab asked for the final capture listing once.
     final_files_sought: bool,
+    /// The listed images' thumbnails, by artifact, as they arrive; an error
+    /// says why one has none.
+    pub thumbnails: BTreeMap<ArtifactId, Result<Arc<crate::media::Pixels>, String>>,
+    /// The images whose thumbnails were asked for.
+    thumbnails_sought: BTreeSet<ArtifactId>,
     pub checkpoints: Vec<Checkpoint>,
     pub checkpoints_next: Option<String>,
     /// What each checkpoint saved, by session, for the timeline's markers.
@@ -505,6 +514,8 @@ impl Default for Model {
             final_files: None,
             final_listing: None,
             final_files_sought: false,
+            thumbnails: BTreeMap::new(),
+            thumbnails_sought: BTreeSet::new(),
             checkpoints: vec![],
             checkpoints_next: None,
             checkpoint_files: BTreeMap::new(),
@@ -773,6 +784,8 @@ impl Model {
         self.final_files = None;
         self.final_listing = None;
         self.final_files_sought = false;
+        self.thumbnails.clear();
+        self.thumbnails_sought.clear();
         self.checkpoints.clear();
         self.checkpoint_files.clear();
         self.checkpoint = None;
@@ -905,6 +918,33 @@ impl Model {
         }
         self.final_files_sought = true;
         self.command(Action::FinalFiles(run.run_id.clone()));
+    }
+    /// Asks once for each listed image's thumbnail, in listing order, once a
+    /// listing is in hand.
+    fn seek_thumbnails(&mut self) {
+        if self.connection != ConnectionState::Connected {
+            return;
+        }
+        let Some(run) = self.selected.clone() else {
+            return;
+        };
+        let ids: Vec<ArtifactId> = self
+            .final_listing
+            .as_ref()
+            .map(|listing| {
+                listing
+                    .images
+                    .iter()
+                    .map(|image| image.artifact_id.clone())
+                    .filter(|id| !self.thumbnails_sought.contains(id))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if ids.is_empty() {
+            return;
+        }
+        self.thumbnails_sought.extend(ids.iter().cloned());
+        self.command(Action::Thumbnails(run, ids));
     }
     pub fn jump_live(&mut self) {
         self.location = None;
@@ -1306,6 +1346,13 @@ impl Model {
                     (!files.is_empty()).then(|| FinalListing::from_artifacts(&files, complete));
                 self.final_files = Some((files, complete));
                 self.file_page = 0;
+                self.seek_thumbnails();
+            }
+            Data::Thumbnail(id, thumbnail) => {
+                // Only listed images were asked for, so the map stays small.
+                if self.thumbnails_sought.contains(&id) {
+                    self.thumbnails.insert(id, thumbnail);
+                }
             }
             Data::Run(run) => {
                 self.apply_run(*run);
@@ -1386,6 +1433,7 @@ impl Model {
                 {
                     self.final_listing = Some(FinalListing::from_checkpoint(last));
                 }
+                self.seek_thumbnails();
             }
             Data::Checkpoint(c, memory) => {
                 if self

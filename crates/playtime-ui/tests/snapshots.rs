@@ -83,6 +83,17 @@ fn progress_screen(app: &mut Workbench, ended: bool) {
     app.model.window.jumps = transcript.jumps(0, true);
     app.model.window.calls.complete = true;
 }
+/// A PNG of a gradient, to decode as a thumbnail.
+fn picture(width: u32, height: u32, seed: u8) -> Vec<u8> {
+    let image = image::RgbaImage::from_fn(width, height, |x, y| {
+        image::Rgba([(x * 255 / width) as u8, (y * 255 / height) as u8, seed, 255])
+    });
+    let mut bytes = std::io::Cursor::new(vec![]);
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    bytes.into_inner()
+}
 /// A long data file the model wrote, opened in the Files inspector.
 fn text_file(app: &mut Workbench) {
     let mut text = "step,stage,elapsed_ms,status\n".to_owned();
@@ -418,7 +429,7 @@ async fn reviewed_workbench_screens() {
                 run.cleanup = Cleanup::Complete;
                 let artifact = |name: &str, bytes: u64| {
                     serde_json::from_value::<Artifact>(serde_json::json!({
-                        "artifact_id": format!("{:0>64}", name.len()),
+                        "artifact_id": format!("{:0>64}", name.bytes().fold(7u64, |h, b| h.wrapping_mul(31).wrapping_add(u64::from(b)))),
                         "name": name,
                         "kind": "file_version",
                         "content": {"path": format!("artifacts/final/files/{name}"), "sha256": "d".repeat(64), "size_bytes": bytes},
@@ -452,6 +463,27 @@ async fn reviewed_workbench_screens() {
                 .max_by_key(|c| c.checkpoint.published_sequence)
                 .unwrap();
             app.model.final_listing = Some(playtime_ui::model::FinalListing::from_checkpoint(last));
+        }
+        if name.starts_with("results") {
+            // The listed images' thumbnails, decoded from synthetic pictures.
+            let images: Vec<_> = app
+                .model
+                .final_listing
+                .as_ref()
+                .map(|listing| {
+                    listing
+                        .images
+                        .iter()
+                        .map(|image| image.artifact_id.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            for (n, id) in images.into_iter().enumerate() {
+                let (width, height) = if n % 2 == 0 { (640, 480) } else { (300, 300) };
+                let pixels =
+                    playtime_ui::media::thumbnail(&picture(width, height, n as u8 * 90)).unwrap();
+                app.model.thumbnails.insert(id, Ok(Arc::new(pixels)));
+            }
         }
         if name.starts_with("model-register") || name == "model-registration-pending" {
             registration_scenes::prepare(&mut app, name);

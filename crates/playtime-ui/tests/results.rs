@@ -15,6 +15,28 @@ use playtime_ui::{
     ui::Workbench,
 };
 use serde_json::json;
+use std::sync::Arc;
+
+/// A distinct opaque ID for a named file.
+fn artifact_id(name: &str) -> ArtifactId {
+    ArtifactId::new(format!(
+        "{:0>64}",
+        name.bytes()
+            .fold(7u64, |h, b| h.wrapping_mul(31).wrapping_add(u64::from(b)))
+    ))
+    .unwrap()
+}
+/// A PNG of a gradient, to decode as a thumbnail.
+fn picture(width: u32, height: u32, seed: u8) -> Vec<u8> {
+    let image = image::RgbaImage::from_fn(width, height, |x, y| {
+        image::Rgba([(x * 255 / width) as u8, (y * 255 / height) as u8, seed, 255])
+    });
+    let mut bytes = std::io::Cursor::new(vec![]);
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    bytes.into_inner()
+}
 
 fn indexed(events: Vec<EventEnvelope>) -> Transcript {
     let mut transcript = Transcript::default();
@@ -500,8 +522,10 @@ fn the_results_tab_opens_first_links_each_count_and_asks_for_the_final_files() {
 
     let app = workbench(ended_continuous());
     let run = app.model.selected.clone().unwrap();
+    // Tall enough for the whole tab, thumbnails included, to be clickable
+    // without scrolling.
     let mut h = Harness::builder()
-        .with_size([1440.0, 900.0])
+        .with_size([1440.0, 1400.0])
         .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
     h.run();
     // The row says how the run ended.
@@ -544,7 +568,7 @@ fn the_results_tab_opens_first_links_each_count_and_asks_for_the_final_files() {
     // The listing counts the files and lists the images to open.
     let artifact = |name: &str, bytes: u64| {
         serde_json::from_value::<Artifact>(json!({
-            "artifact_id": format!("{:0>64}", name.len()),
+            "artifact_id": artifact_id(name),
             "name": name,
             "kind": "file_version",
             "content": {"path": format!("artifacts/final/files/{name}"), "sha256": "d".repeat(64), "size_bytes": bytes},
@@ -586,17 +610,72 @@ fn the_results_tab_opens_first_links_each_count_and_asks_for_the_final_files() {
         ),
     });
     assert_eq!(model.final_listing, Some(listing));
+    // The listed images' thumbnails are asked for once, in listing order.
+    let sought: Vec<_> = model
+        .commands
+        .iter()
+        .filter_map(|c| match &c.action {
+            Action::Thumbnails(id, ids) if *id == run => Some(ids.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sought,
+        vec![vec![artifact_id("plot.png"), artifact_id("zoom.gif")]]
+    );
+    // They arrive one by one; a reply for another run or for an image that
+    // wasn't asked for is ignored, and an image without one says why.
+    let pixels = playtime_ui::media::thumbnail(&picture(640, 480, 0)).unwrap();
+    assert_eq!(pixels.image.size, [224, 168]);
+    for (run, image, thumbnail) in [
+        (run.clone(), "plot.png", Ok(Arc::new(pixels))),
+        (
+            run.clone(),
+            "zoom.gif",
+            Err("GIF exceeds encoded preview limit".to_owned()),
+        ),
+        (
+            RunId::new("other").unwrap(),
+            "make.py",
+            Err("other run".to_owned()),
+        ),
+        (run.clone(), "make.py", Err("not listed".to_owned())),
+    ] {
+        model.apply(Reply {
+            tag,
+            run: Some(run),
+            data: Data::Thumbnail(artifact_id(image), thumbnail),
+        });
+    }
+    assert_eq!(model.thumbnails.len(), 2);
+    assert_eq!(
+        model
+            .thumbnails
+            .get(&artifact_id("zoom.gif"))
+            .and_then(|thumbnail| thumbnail.as_ref().err())
+            .map(String::as_str),
+        Some("GIF exceeds encoded preview limit")
+    );
     h.run();
     h.get_by_label("3 files · 1.2 MiB · 2 images · 1 script");
-    h.get_all_by_label("Open image").next().unwrap().click();
+    // Each thumbnail is a button to open its image in place, named after it,
+    // with or without a preview; the name is written under it.
+    h.get_by_label("Open image zoom.gif");
+    h.get_by_label("plot.png");
+    h.get_by_label("Open image plot.png").click();
     h.run();
     assert!(h.state().model.commands.iter().any(|c| matches!(
         &c.action,
-        Action::Content(id, artifact, 0) if *id == run && artifact.as_str() == format!("{:0>64}", 8)
+        Action::Content(id, artifact, 0) if *id == run && *artifact == artifact_id("plot.png")
     )));
     h.get_by_label("Every file in Files").click();
     h.run();
     assert_eq!(h.state().model.inspector, Inspector::Files);
+    // Another run's selection drops them.
+    h.state_mut()
+        .model
+        .select_run(RunId::new("another").unwrap());
+    assert!(h.state().model.thumbnails.is_empty());
 }
 
 #[test]
