@@ -719,6 +719,11 @@ fn event_page(history: History, limits: &ApiLimits) -> Result<EventPage> {
             .map_err(|_| ApiError::new("archive_corrupt"))?,
     };
     let mut sequence = history.after_sequence;
+    // The page encodes as its framing, the page without its events, plus each
+    // event's encoding and a separator per event after the first. Each event
+    // is encoded once; the framing again as its cursors change, which is
+    // small, instead of the whole page again for every event added.
+    let mut event_bytes = 0;
     for event in history.events {
         if event.run_id != history.frontier.run_id
             || Some(event.sequence.get()) != sequence.checked_add(1)
@@ -726,16 +731,23 @@ fn event_page(history: History, limits: &ApiLimits) -> Result<EventPage> {
         {
             return Err(ApiError::new("archive_corrupt"));
         }
-        bounded_json(&event, limits.event_bytes)?;
+        let encoded = bounded_json(&event, limits.event_bytes)?.len();
         let previous_cursor = page.resume_cursor.clone();
         page.resume_cursor = EventCursor::new(history.frontier.clone(), event.sequence.get())
             .unwrap()
             .encode()
             .unwrap();
         page.next_cursor = Some(page.resume_cursor.clone());
-        page.events.push(event);
-        if bounded_json(&page, limits.json_bytes).is_err() {
-            page.events.pop();
+        let framing = serde_json::to_vec(&EventPage {
+            events: vec![],
+            frontier: page.frontier.clone(),
+            has_more: page.has_more,
+            next_cursor: page.next_cursor.clone(),
+            resume_cursor: page.resume_cursor.clone(),
+        })
+        .map_err(|_| ApiError::new("internal_error"))?
+        .len();
+        if framing + event_bytes + encoded + page.events.len() > limits.json_bytes {
             page.resume_cursor = previous_cursor;
             if page.events.is_empty() {
                 return Err(ApiError::new("evidence_limit_exceeded"));
@@ -743,6 +755,8 @@ fn event_page(history: History, limits: &ApiLimits) -> Result<EventPage> {
             page.has_more = true;
             break;
         }
+        event_bytes += encoded;
+        page.events.push(event);
         sequence += 1;
     }
     page.has_more |= sequence < history.frontier.prefix.sequence;
@@ -756,6 +770,79 @@ fn event_page(history: History, limits: &ApiLimits) -> Result<EventPage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The page holds as many events as its whole encoding fits within the
+    /// bound, which is what encoding the whole page after each event found.
+    #[test]
+    fn a_page_holds_as_many_events_as_its_whole_encoding_fits() {
+        let fixture = playtime_storage::fixture::two_session().unwrap();
+        let events: Vec<playtime_protocol::events::EventEnvelope> = fixture
+            .events
+            .iter()
+            .map(|bytes| serde_json::from_slice(bytes).unwrap())
+            .collect();
+        let frontier = Frontier {
+            run_id: fixture.descriptor.run_id.clone(),
+            manifest_sha256: fixture.descriptor.input_manifest.sha256.clone(),
+            prefix: Prefix {
+                sequence: events.len() as u64,
+                byte_offset: fixture.events.iter().map(|line| line.len() as u64).sum(),
+                sha256: playtime_storage::sha256(&fixture.events.concat()),
+            },
+        };
+        let cursor = |after: usize| {
+            EventCursor::new(frontier.clone(), after as u64)
+                .unwrap()
+                .encode()
+                .unwrap()
+        };
+        // The page as the whole-page check saw it: the events so far, with
+        // the last one's cursor as both cursors.
+        let fits = |after: usize, count: usize, json_bytes: usize| {
+            let resume_cursor = cursor(after + count);
+            bounded_json(
+                &EventPage {
+                    events: events[after..after + count].to_vec(),
+                    frontier: frontier.clone(),
+                    has_more: false,
+                    next_cursor: Some(resume_cursor.clone()),
+                    resume_cursor,
+                },
+                json_bytes,
+            )
+            .is_ok()
+        };
+        for after in [0, 3] {
+            for json_bytes in (900..9_000).step_by(53) {
+                let limits = ApiLimits {
+                    json_bytes,
+                    ..ApiLimits::default()
+                };
+                let page = event_page(
+                    History {
+                        events: events[after..].to_vec(),
+                        frontier: frontier.clone(),
+                        after_sequence: after as u64,
+                        has_more: false,
+                    },
+                    &limits,
+                )
+                .map(|page| page.events.len())
+                .map_err(|error| error.0.code);
+                let expected = (1..=events.len() - after)
+                    .take_while(|&count| fits(after, count, json_bytes))
+                    .last();
+                match expected {
+                    Some(count) => assert_eq!(page, Ok(count), "json_bytes {json_bytes}"),
+                    None => assert_eq!(
+                        page,
+                        Err("evidence_limit_exceeded".into()),
+                        "json_bytes {json_bytes}"
+                    ),
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn oversized_safe_details_preserve_the_bounded_error_envelope() {

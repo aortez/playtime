@@ -29,9 +29,8 @@ fn queue(tx: &mpsc::Sender<Frame>, budget: &Arc<Semaphore>, bytes: Vec<u8>) -> R
     })
     .map_err(|_| ApiError::new("too_many_observers"))
 }
-/// The next history page fits what the client's pending queue can still take.
-/// Each read rescans the archive prefix, so one record per read made following
-/// a long run quadratic.
+/// The next history page fits what the client's pending queue can still take:
+/// as many records as it has room for, in one read.
 fn room(free_records: usize, free_bytes: usize, limits: &ApiLimits) -> (u32, usize) {
     let records = free_records.min(limits.stream_pending_records);
     let framing = records * limits.sse_framing_bytes;

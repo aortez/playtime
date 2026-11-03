@@ -207,9 +207,10 @@ The application adapter must implement these authority boundaries:
   worker's own bounded account of an execution that ended without a normal
   outcome, taken from its verified status; it is absent when the worker gave none.
 - `history` checks both identity and the exact claimed historical prefix against
-  trusted committed evidence. `follow=false` pins that prefix. `follow=true`
-  validates the old prefix before advancing to newer writer-confirmed evidence.
-  Historical validation cannot require a superseded marker file.
+  trusted committed evidence. `follow=false` pins that prefix and pages it from
+  the current evidence, without a pass over it. `follow=true` validates the old
+  prefix before advancing to newer writer-confirmed evidence. Historical
+  validation cannot require a superseded marker file.
 - `subscribe` registers a bounded watch notification before reads begin. A
   notification is a reason to reread evidence, not evidence itself. Only the
   lifecycle owner supplies a reconciled `StreamEnd` when no commits remain.
@@ -275,7 +276,8 @@ resume-cursor ID. Heartbeat comments run every 15 seconds, including during
 subsequent backend reads. `stream_error` and reconciled `stream_end` have no ID.
 EOF is a disconnect, never proof of completion. Pending queues are bounded by
 both records and bytes. Each backend read takes as many records as the queue can
-still hold, because every read rescans the archive prefix. A client that doesn't
+still hold; a read pages the published snapshot without a pass over the
+archive. A client that doesn't
 drain a full queue within one heartbeat interval is closed rather than blocking
 experimental work. A resumed client can receive an applied-but-unacknowledged
 record again.
