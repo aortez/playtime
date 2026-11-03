@@ -398,6 +398,9 @@ fn text(value: &Value) -> String {
                 word(&data["connection"])
             )
         }
+        "result" if data.get("workspace").is_some() && data.get("files").is_some() => {
+            download_text(data)
+        }
         "result" if data.get("verified_bytes").is_some() => format!(
             "Verified {} bytes to {} (artifact {})",
             word(&data["verified_bytes"]),
@@ -427,6 +430,33 @@ fn text(value: &Value) -> String {
         _ if data.get("orchestration").is_some() => run_summary(data),
         _ => serde_json::to_string_pretty(data).unwrap(),
     }
+}
+/// A workspace download: a line with the totals, then one per file.
+fn download_text(data: &Value) -> String {
+    let files = data["files"].as_array().cloned().unwrap_or_default();
+    let source = match data["workspace"]["source"].as_str() {
+        Some("final_capture") => "the final capture".to_owned(),
+        _ => format!("checkpoint {}", word(&data["workspace"]["session_id"])),
+    };
+    let mut lines = vec![format!(
+        "Saved {} of {} files, {} bytes, to {} from {}",
+        word(&data["saved"]),
+        files.len(),
+        word(&data["saved_bytes"]),
+        word(&data["output"]),
+        source
+    )];
+    for file in &files {
+        let name = word(&file["name"]);
+        lines.push(match file["status"].as_str() {
+            Some("saved") => format!("saved  {} bytes  {name}", word(&file["verified_bytes"])),
+            Some("exists") => format!("exists (use --force to replace)  {name}"),
+            Some("failed") => format!("failed ({})  {name}", word(&file["error"]["message"])),
+            Some(status) => format!("{status} ({})  {name}", word(&file["reason"])),
+            None => word(file),
+        });
+    }
+    lines.join("\n")
 }
 pub fn bytes(format: Format, value: &Value) -> Result<Vec<u8>, Failure> {
     let rendered = match format {

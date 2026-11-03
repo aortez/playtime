@@ -4,7 +4,9 @@ use rustix::fs::{
 };
 use std::{ffi::OsString, fs::File, path::PathBuf};
 
-struct Staged {
+/// A download staged in a private sibling file of its destination, published
+/// only once verified; dropped unpublished, it removes the staging file.
+pub(crate) struct Staged {
     directory: File,
     temporary: String,
     destination: OsString,
@@ -15,7 +17,7 @@ impl Drop for Staged {
     }
 }
 impl Staged {
-    fn create(path: &Path, force: bool) -> Result<(Self, tokio::fs::File)> {
+    fn create(path: &Path, force: bool) -> Result<(Self, File)> {
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -29,6 +31,16 @@ impl Staged {
             )
             .map_err(|_| Error::Io)?,
         );
+        Self::in_directory(directory, destination, force)
+    }
+    /// A private staging file beside `destination` in the open `directory`,
+    /// which the staging holds so that a renamed directory can't redirect
+    /// the publication.
+    pub(crate) fn in_directory(
+        directory: File,
+        destination: OsString,
+        force: bool,
+    ) -> Result<(Self, File)> {
         let staged = Self {
             directory,
             temporary: format!(
@@ -45,7 +57,7 @@ impl Staged {
             Mode::from_raw_mode(0o600),
         )
         .map_err(|_| Error::Io)?;
-        Ok((staged, tokio::fs::File::from_std(File::from(fd))))
+        Ok((staged, File::from(fd)))
     }
     fn check_destination(&self, force: bool) -> Result<()> {
         match statat(
@@ -60,7 +72,7 @@ impl Staged {
             _ => Err(Error::Io),
         }
     }
-    fn publish(self, force: bool) -> Result<()> {
+    pub(crate) fn publish(self, force: bool) -> Result<()> {
         self.check_destination(force)?;
         if force {
             // Rename replaces the directory entry, never follows a symlink.
@@ -108,9 +120,10 @@ impl Client {
         cancel: &CancellationToken,
     ) -> Result<u64> {
         let path: PathBuf = path.to_owned();
-        let (staged, mut file) = tokio::task::spawn_blocking(move || Staged::create(&path, force))
+        let (staged, file) = tokio::task::spawn_blocking(move || Staged::create(&path, force))
             .await
             .map_err(|_| Error::Io)??;
+        let mut file = tokio::fs::File::from_std(file);
         let bytes = self.download(id, artifact, &mut file, cancel).await?;
         file.sync_all().await.map_err(|_| Error::Io)?;
         drop(file);

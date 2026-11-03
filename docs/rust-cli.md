@@ -46,6 +46,7 @@ reserved-command explanations, and local receipt listing work offline.
 | `runs cancel ID [--wait]` | Cancellation intent, optionally await quiescence and cleanup |
 | `runs release ID --reason TEXT` | Operator release of an interrupted or failed run; refused with what remains |
 | `runs report ID [--limit N]` | The run's records totalled, as Markdown or typed with `--format json`; see [run reports](#run-reports) |
+| `runs download ID --output DIR [--session SESSION] [--force]` | The run's final workspace, or a checkpoint's, saved under a directory, each file verified; see [workspace downloads](#workspace-downloads) |
 | `events ID [--cursor CURSOR \| --cursor-file FILE] [--limit N] [--all \| --follow]` | Fixed-frontier page by default; all keeps that frontier, follow observes later commits |
 | `checkpoints list ID`; `checkpoints show ID SESSION` | Published checkpoint metadata and content references |
 | `artifacts list ID`; `artifacts show ID ARTIFACT` | Published/frozen-content catalog and metadata |
@@ -215,6 +216,44 @@ No local filename is derived from model-controlled metadata. Ordinary failures
 remove staging; abrupt process death may leave a `.part` file. An interrupted HTTP
 body can be a transport failure before the digest comparison is possible; it is
 still never published as a successful download.
+
+## Workspace downloads
+
+`playtime runs download RUN_ID --output DIR` saves the run's final workspace
+under the directory: an ended continuous run's final capture, or a memento
+run's last published checkpoint, as `runs report` lists it; `--session`
+names a published checkpoint instead. A continuous run without a published
+capture yet has no workspace to save (exit 5). The shared client
+(`playtime_client::workspace`) resolves the workspace's files to the
+artifacts holding their content, from the capture index, read and decoded
+as a checkpoint's is, or from the checkpoint's file list, then saves each
+retained file as `download_to_path_with_force` saves one: staged beside its
+destination, verified, then published, so a file that fails publishes
+nothing and leaves no staging file.
+
+Files are saved under the names their index gave them, which the model
+chose, under a policy rather than by sanitizing: a name is a relative path
+without an empty, `.` or `..` component, control character or backslash,
+with components of at most 255 bytes and at most 1,024 in all; any other is
+refused, and its content stays downloadable by artifact ID. The directories
+a name lists are created private (0700) as needed and opened without
+following a link, so a link planted among them, or at the name, is never
+written through, even with `--force`; the output directory itself is created
+when missing, but not its parents. Saved files are private (0600) regardless
+of the archived mode, so a saved script isn't executable until the reviewer
+makes it so. An existing file at a name is left alone unless `--force`,
+which replaces a regular file only. Content the archive didn't retain is
+listed as unavailable with the archive's reason and isn't a failure.
+
+The result lists every file (name, kind, artifact ID and content reference
+when retained, status, path, verified bytes, or the reason or error) with the
+totals saved, unavailable and not saved, and names the workspace's source,
+session and published sequence. Every file is tried; the command then exits
+0 when nothing that could have been saved wasn't, and otherwise with the
+first such file's exit code: 7 for a refused name or an existing file, and
+the download's own classification (6 for a verification failure, 3 for
+transport) for a failed one. Cancellation ends the download at the current
+file.
 
 ## Run reports
 

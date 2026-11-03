@@ -8,11 +8,15 @@ use playtime_client::{
     config::{self, Environment},
     report::{Listing, ListingSource, Totals, Update},
     state::{LaunchReceipt, ReceiptStore},
+    workspace::Outcome,
 };
-use playtime_core::RunId;
+use playtime_core::{RunId, SessionId};
 use playtime_protocol::api::*;
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
@@ -260,6 +264,115 @@ impl Context {
         }
         Ok(None)
     }
+    /// Saves the run's final workspace, or a published checkpoint's, under
+    /// the output directory and reports each file. A file that could have
+    /// been saved and wasn't fails the command with that file's exit code;
+    /// content the archive didn't retain doesn't.
+    async fn download(
+        &self,
+        id: &RunId,
+        session: Option<&SessionId>,
+        directory: &Path,
+        force: bool,
+    ) -> Result<i32, Failure> {
+        let workspace = match session {
+            Some(session) => self.client.checkpoint_workspace(id, session).await?,
+            None => {
+                let view = self.client.run(id).await?;
+                self.client
+                    .final_workspace(&view, &self.cancel)
+                    .await?
+                    .ok_or_else(|| {
+                        Failure::new(
+                            5,
+                            "no_workspace",
+                            "the run has no published final workspace yet",
+                        )
+                    })?
+            }
+        };
+        let downloads = self
+            .client
+            .download_workspace(id, &workspace, directory, force, &self.cancel)
+            .await?;
+        let mut exit = 0;
+        let (mut saved, mut saved_bytes, mut unavailable, mut not_saved) = (0u64, 0u64, 0u64, 0u64);
+        let files: Vec<Value> = downloads
+            .into_iter()
+            .map(|download| {
+                let mut file = json!({"name":download.file.name,"kind":download.file.kind});
+                if let ContentAvailability::Available {
+                    artifact_id,
+                    content,
+                } = &download.file.content
+                {
+                    file["artifact_id"] = json!(artifact_id);
+                    file["content"] = json!(content);
+                }
+                match download.outcome {
+                    Outcome::Saved { path, bytes } => {
+                        saved += 1;
+                        saved_bytes = saved_bytes.saturating_add(bytes);
+                        file["status"] = json!("saved");
+                        file["path"] = json!(path);
+                        file["verified_bytes"] = json!(bytes);
+                    }
+                    Outcome::Unavailable { reason } => {
+                        unavailable += 1;
+                        file["status"] = json!("unavailable");
+                        file["reason"] = json!(reason);
+                    }
+                    Outcome::Refused { reason } => {
+                        not_saved += 1;
+                        if exit == 0 {
+                            exit = 7;
+                        }
+                        file["status"] = json!("refused");
+                        file["reason"] = json!(reason);
+                    }
+                    Outcome::Exists { path } => {
+                        not_saved += 1;
+                        if exit == 0 {
+                            exit = 7;
+                        }
+                        file["status"] = json!("exists");
+                        file["path"] = json!(path);
+                    }
+                    Outcome::Failed { path, error } => {
+                        not_saved += 1;
+                        let failure = Failure::from(error);
+                        if exit == 0 {
+                            exit = failure.exit;
+                        }
+                        file["status"] = json!("failed");
+                        file["path"] = json!(path);
+                        file["error"] = failure.data;
+                    }
+                }
+                file
+            })
+            .collect();
+        self.output
+            .emit(
+                "result",
+                json!({
+                    "run_id": id,
+                    "output": directory,
+                    "workspace": {
+                        "source": workspace.source,
+                        "session_id": workspace.session_id,
+                        "published_sequence": workspace.published_sequence,
+                    },
+                    "files": files,
+                    "saved": saved,
+                    "saved_bytes": saved_bytes,
+                    "unavailable": unavailable,
+                    "not_saved": not_saved,
+                }),
+            )
+            .await?;
+        Ok(exit)
+    }
     async fn events(&self, args: &Events) -> Result<i32, Failure> {
         let cwd = std::env::current_dir().map_err(|_| {
             Failure::new(
@@ -473,6 +586,16 @@ pub async fn execute(
             output.emit("result", ctx.client.run(run_id).await?).await?
         }
         Command::Runs(Runs::Report { run_id, limit }) => return ctx.report(run_id, *limit).await,
+        Command::Runs(Runs::Download {
+            run_id,
+            output: directory,
+            session,
+            force,
+        }) => {
+            return ctx
+                .download(run_id, session.as_ref(), directory, *force)
+                .await;
+        }
         Command::Runs(Runs::Wait { run_id }) => return ctx.wait(run_id, false).await,
         Command::Runs(Runs::Cancel { run_id, wait }) => {
             let reply = ctx.client.cancel(run_id).await?;
