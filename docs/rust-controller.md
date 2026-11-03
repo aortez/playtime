@@ -203,6 +203,40 @@ conversation's byte estimate (the same basis), fit below the trigger and leave
 all work reserves. Rewritten context cannot reuse a server measurement for a
 different prefix. A summary response the server can't parse is retried as below;
 any other failure stops explicitly.
+
+Replacement also retains controller-generated `failure_history_v3` evidence
+from the exchanges it removes. A non-null, non-false `error`, or an `exec`
+result with a nonzero exit code or `timed_out: true`, creates an observation from
+the original result before output fitting. Each records the model request ID,
+tool request/result controller sequences, elapsed milliseconds, tool and argument
+excerpts, exit/timeout status and diagnostic excerpts. No command text is parsed
+to infer an artifact, task, cause or repair. These sequence numbers identify
+controller observations, not archive records or writer receipts.
+
+A recorded model parse failure contributes a separate `model_parse_error` fact:
+failed request ID/purpose, the `model_error` controller sequence, elapsed time,
+bounded parser diagnostic, recovery decision and either measured generated tokens
+or an unknown-usage reservation. Measured counts require the validated terminal
+parser-error envelope described in [live models](rust-live-model.md#terminal-parser-error-usage-extension).
+No tools from that response executed. This records the failure without attributing
+it to model generation or backend parsing. Failed attempts have no successful
+response exchange, so their bounded facts join the next completed work exchange,
+alongside retry notices. Pending facts survive intervening compactions; summary
+retries keep their existing identical-input behavior. A terminal failure remains
+in the archive even if no later work exchange completes.
+
+The history keeps at most four recent failures within a 4,096-byte encoded
+message, including its notice and escaping. Each excerpt is at most 256 encoded
+bytes, preserving its beginning and end with an omitted-byte count; older
+evictions have a separate count. A retained recent exchange keeps its ordinary
+tool result until it too is compacted. Accepted summaries promote the removed
+exchanges' failures; rejected summaries leave history unchanged. This message
+accompanies future work and later summary requests, and all replacement
+progress, input and context checks include it. It describes historical outcomes,
+not unresolved problems: a later success does not erase a failure or establish
+that the same problem was repaired. Model parse failures retain their separate
+record kind without a fabricated tool result. Full observations remain in the archive.
+
 Observations retain source/retained request IDs, prior summary, exact before/after
 messages, estimates and their bases, summary content and outcome. Durable
 versioned source links and bounded archive projections are described in the
@@ -298,15 +332,18 @@ controller deadlines alone cannot establish Docker or model-host termination.
 2. One request is in flight at most. Its positive allowance is reserved before
    its effect is exposed. Admission requires completed charges plus allowance
    plus the work-request handoff reserve to fit the original run allocation.
-3. Settlement occurs once. A complete measured response replaces only its own
-   pending allowance. Failure/cancellation/absent usage after dispatch moves that
-   full allowance to completed unknown usage. Previously unknown usage is never
+3. Settlement occurs once. A complete measured response or validated terminal
+   parser failure replaces only its own pending allowance. Other failures,
+   cancellation and absent usage after dispatch move that full allowance to
+   completed unknown usage. Previously unknown usage is never
    erased. Admission and actual dispatch are separate observations; model_calls
    counts admitted attempts, including preflight failures.
 4. The *pending plus completed* total may decrease on measured settlement; it is
    not a monotonic metric. A server can report more than its allowance; the
    reported amount is charged, and exceeding the run allocation stops execution
-   before tools. An unrepresentable total records the reported count in the
+   before tools. Continuous work and summary requests also stop when measured
+   generation exceeds their admitted allowance, whether parsing succeeds or fails.
+   An unrepresentable total records the reported count in the
    diagnostic event, retains the full unknown allowance, and stops.
 5. No new model/tool effect follows a terminal decision. Checkpoint and cleanup
    effects remain legal. Successful zero-token responses still consume turns.

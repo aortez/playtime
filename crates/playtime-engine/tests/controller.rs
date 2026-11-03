@@ -855,6 +855,102 @@ fn controller() -> Controller<SequentialIds> {
 }
 
 #[test]
+fn memento_parse_retry_notices_match_the_failed_requests_usage() {
+    fn complete(controller: &mut Controller<SequentialIds>, outcome: Outcome) {
+        let effect_id = controller.pending().unwrap().id;
+        controller
+            .advance(1, Input::Dispatched { effect_id })
+            .unwrap();
+        controller
+            .advance(1, Input::Complete { effect_id, outcome })
+            .unwrap();
+    }
+
+    for handoff in [false, true] {
+        for measured in [None, Some(0), Some(23)] {
+            let mut controller = controller();
+            complete(
+                &mut controller,
+                Outcome::Started(Memory::loaded(String::new())),
+            );
+            if handoff {
+                complete(
+                    &mut controller,
+                    Outcome::Model(ModelResponse {
+                        done: true,
+                        generated_tokens: Some(1),
+                        prompt_tokens: None,
+                        message: json!({"role":"assistant","content":"Ready for handoff."}),
+                    }),
+                );
+            }
+            let EffectKind::Model(request) = &controller.pending().unwrap().kind else {
+                panic!("expected model request");
+            };
+            assert_eq!(
+                request.purpose == playtime_core::RequestPurpose::Handoff,
+                handoff
+            );
+            let maximum_tokens = request.maximum_tokens;
+            let previous_tokens = controller.usage().known_generated_tokens();
+            let detail = "error parsing tool call: invalid JSON";
+            complete(
+                &mut controller,
+                match measured {
+                    Some(generated_tokens) => Outcome::ModelParseError {
+                        detail: detail.into(),
+                        generated_tokens,
+                    },
+                    None => Outcome::ModelError(ModelFailure::Parse(detail.into())),
+                },
+            );
+            let EffectKind::Model(retry) = &controller.pending().unwrap().kind else {
+                panic!("expected recovery request");
+            };
+            let notice = retry
+                .messages
+                .iter()
+                .filter_map(|m| m["content"].as_str())
+                .find(|text| text.starts_with("The server rejected your last response"))
+                .expect("parse retry notice");
+            let charge = match measured {
+                Some(tokens) => format!("The failed request's measured usage of {tokens} generated tokens was charged to the budget."),
+                None => "The failed request's full generation allowance was charged to the budget; its actual usage is unknown.".into(),
+            };
+            assert_eq!(
+                notice.split(" Budget: ").next().unwrap(),
+                format!(
+                    "The server rejected your last response because a tool call could not be parsed: {detail}. None of that response's tools ran. Try again with valid JSON object arguments. {charge}"
+                )
+            );
+            assert_eq!(
+                controller.usage().known_generated_tokens(),
+                previous_tokens + measured.unwrap_or(0)
+            );
+            assert_eq!(
+                controller.usage().unknown_requests(),
+                u64::from(measured.is_none())
+            );
+            assert_eq!(
+                controller.usage().unknown_reserved_tokens(),
+                if measured.is_none() {
+                    maximum_tokens
+                } else {
+                    0
+                }
+            );
+            let records = controller.take_records();
+            let error = records.iter().find(|r| r.kind == "model_error").unwrap();
+            assert_eq!(
+                error.data["token_budget_charge"],
+                measured.unwrap_or(maximum_tokens)
+            );
+            assert!(records.iter().all(|r| r.kind != "tool_dispatch"));
+        }
+    }
+}
+
+#[test]
 fn duplicate_wrong_type_and_stale_completions_cannot_change_accounting() {
     let mut controller = controller();
     let start = controller.pending().unwrap().id;

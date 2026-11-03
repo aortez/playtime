@@ -21,8 +21,8 @@ mod registered_model;
 pub use definition::{CompactionDefinition, FrozenRecipe};
 pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
 pub use registered_model::{
-    GPT_OSS_120B_MODEL_LOCK, QWEN_CODER_NEXT_MODEL_LOCK, QWEN_MODEL_LOCK,
-    reviewed_identity_capabilities,
+    GPT_OSS_120B_MODEL_LOCK, GPT_OSS_120B_USAGE_MODEL_LOCK, QWEN_CODER_NEXT_MODEL_LOCK,
+    QWEN_MODEL_LOCK, reviewed_identity_capabilities,
 };
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
@@ -74,11 +74,13 @@ pub fn digest() -> Result<Sha256Digest> {
         // A worker that predates authoring must not accept an authored profile
         // merely because its ordinary recipe template is unchanged, nor run a
         // continuous profile without tool-call or summary recovery, the finish
-        // choice, transcript summaries or tool-call summary retries.
-        serde_json::json!({"inference_targets": 1, "immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1}),
+        // choice, transcript summaries, tool-call summary retries or retained
+        // tool and parse-failure observations.
+        serde_json::json!({"inference_targets": 1, "immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1, "continuous_tool_failure_history": 1, "continuous_failure_history": 3, "terminal_parse_error_usage": 2}),
         serde_json::from_slice(QWEN_MODEL_LOCK)?,
         serde_json::from_slice(QWEN_CODER_NEXT_MODEL_LOCK)?,
         serde_json::from_slice(GPT_OSS_120B_MODEL_LOCK)?,
+        serde_json::from_slice(GPT_OSS_120B_USAGE_MODEL_LOCK)?,
         serde_json::to_value(CompactionDefinition::new(&Recipe::reference()?))?,
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))

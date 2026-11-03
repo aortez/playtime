@@ -81,7 +81,7 @@ def execute(args, limits):
     if seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     start = time.monotonic()
-    process = subprocess.Popen(["/bin/bash", "--noprofile", "--norc", "-c", command],
+    process = subprocess.Popen(["/bin/bash", "--noprofile", "--norc", "-o", "pipefail", "-c", command],
                                cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                stdin=subprocess.DEVNULL, start_new_session=True)
     chunks = {"stdout": bytearray(), "stderr": bytearray()}

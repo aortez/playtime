@@ -161,9 +161,21 @@ impl Memento {
         Recovery::Stop(reason)
     }
 
-    pub fn retry(&mut self, view: View<'_>, error: &ModelFailure) {
-        self.messages.push(message("user", format!(
-            "{} The failed request's full generation allowance was charged to the budget; its actual usage is unknown. Budget: {}", parse_retry_notice(error), canonical(&budget(view)))));
+    pub fn retry(&mut self, view: View<'_>, error: &ModelFailure, generated_tokens: Option<u64>) {
+        let charge = match generated_tokens {
+            Some(tokens) => format!(
+                "The failed request's measured usage of {tokens} generated tokens was charged to the budget."
+            ),
+            None => "The failed request's full generation allowance was charged to the budget; its actual usage is unknown.".into(),
+        };
+        self.messages.push(message(
+            "user",
+            format!(
+                "{} {charge} Budget: {}",
+                parse_retry_notice(error),
+                canonical(&budget(view))
+            ),
+        ));
     }
 
     pub fn fit_result(

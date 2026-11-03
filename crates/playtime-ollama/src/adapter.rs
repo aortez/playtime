@@ -26,6 +26,8 @@ pub enum RemoteOutcome {
 #[derive(Clone, Debug)]
 pub struct ChatResult {
     pub outcome: Result<ModelResponse>,
+    /// Present only for a validated terminal backend tool-parse failure.
+    pub error_generated_tokens: Option<u64>,
     pub finish_reason: Option<String>,
     pub dispatch: Dispatch,
     pub remote: RemoteOutcome,
@@ -77,7 +79,9 @@ impl<T: Transport> Adapter<T> {
         self.verified = false;
         let aggregate = deadline.min(Instant::now() + Duration::from_secs(45));
         let version = self.metadata(Operation::Version, aggregate, cancel).await?;
-        if version.get("version").and_then(serde_json::Value::as_str) != Some(Profile::VERSION) {
+        if version.get("version").and_then(serde_json::Value::as_str)
+            != Some(self.lock.backend_version.as_str())
+        {
             return Err(Failure::new(
                 FailureKind::Identity,
                 "unsupported or changed Ollama version",
@@ -179,6 +183,7 @@ impl<T: Transport> Adapter<T> {
             Err(error) => {
                 return ChatResult {
                     outcome: Err(error),
+                    error_generated_tokens: None,
                     finish_reason: None,
                     dispatch: Dispatch::NotDispatched,
                     remote: RemoteOutcome::NotStarted,
@@ -248,8 +253,14 @@ impl<T: Transport> Adapter<T> {
         {
             self.verified = false;
         }
+        let error_generated_tokens = outcome
+            .as_ref()
+            .err()
+            .filter(|e| e.kind == FailureKind::BackendToolParse)
+            .and(decoder.error_generated_tokens());
         ChatResult {
             outcome,
+            error_generated_tokens,
             finish_reason: decoder.finish_reason().map(str::to_owned),
             dispatch: Dispatch::PossiblySent,
             remote: if decoder.terminal_observed() {
@@ -314,6 +325,7 @@ impl<T: Transport> Adapter<T> {
             } else {
                 error
             }),
+            error_generated_tokens: None,
             finish_reason: None,
             dispatch: Dispatch::PossiblySent,
             remote: RemoteOutcome::Uncertain,

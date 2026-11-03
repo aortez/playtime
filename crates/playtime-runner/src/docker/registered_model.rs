@@ -8,6 +8,8 @@ pub const QWEN_MODEL_LOCK: &[u8] = include_bytes!("qwen3-1.7b-lock.json");
 pub const QWEN_CODER_NEXT_MODEL_LOCK: &[u8] = include_bytes!("qwen3-coder-next-lock.json");
 pub const GPT_OSS_120B_MODEL_LOCK: &[u8] = include_bytes!("gpt-oss-120b-lock.json");
 
+pub const GPT_OSS_120B_USAGE_MODEL_LOCK: &[u8] = include_bytes!("gpt-oss-120b-usage-v1-lock.json");
+
 pub fn reviewed_identity_capabilities(
     name: &str,
     digest: &str,
@@ -19,6 +21,7 @@ pub fn reviewed_identity_capabilities(
         QWEN_MODEL_LOCK,
         QWEN_CODER_NEXT_MODEL_LOCK,
         GPT_OSS_120B_MODEL_LOCK,
+        GPT_OSS_120B_USAGE_MODEL_LOCK,
     ] {
         let lock: Value = serde_json::from_slice(bytes).ok()?;
         if lock["name"].as_str() != Some(name)
@@ -49,7 +52,11 @@ pub fn reviewed_identity_capabilities(
             )
         } else {
             (
-                "reviewed-gpt-oss-120b-ollama-0.32.3-v1; reasoning and tools checked on Framework; context ceiling from locked model_info",
+                if bytes == GPT_OSS_120B_USAGE_MODEL_LOCK {
+                    "reviewed-gpt-oss-120b-ollama-0.32.3-playtime-usage-v1; terminal parser-error usage extension; original model definition and Vulkan payload"
+                } else {
+                    "reviewed-gpt-oss-120b-ollama-0.32.3-v1; reasoning and tools checked on Framework; context ceiling from locked model_info"
+                },
                 vec![
                     RecipeReasoning::ModelDefault,
                     RecipeReasoning::Low,

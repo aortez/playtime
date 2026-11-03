@@ -48,7 +48,7 @@ impl CompactionDefinition {
             protocol: Self::protocol(recipe, true),
             inventory: format!(
                 "{}\nYour workspace /work holds {} and {} files and directories; /tmp holds {}. Both last until the run ends.\nA command still running after {} is stopped, along with any background jobs it started. The tool results of one response share {}; longer output is shortened. For longer work, start a background job with its output in a file, such as `python3 job.py > job.log 2>&1 &`, and check the file in later calls.\n",
-                include_str!("continuous-inventory-v1.txt"),
+                include_str!("continuous-inventory-v2.txt"),
                 binary_size(w.workspace_bytes.get()),
                 recipe.workspace_entries,
                 binary_size(w.tmp_bytes.get()),

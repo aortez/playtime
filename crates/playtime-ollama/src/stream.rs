@@ -111,6 +111,7 @@ pub struct Decoder {
     finished: bool,
     terminal_observed: bool,
     finish_reason: Option<String>,
+    error_generated_tokens: Option<u64>,
 }
 impl Decoder {
     pub fn new(limits: Limits) -> Result<Self> {
@@ -139,6 +140,7 @@ impl Decoder {
             finished: false,
             terminal_observed: false,
             finish_reason: None,
+            error_generated_tokens: None,
         })
     }
     pub fn partial(&self) -> &AssistantMessage {
@@ -156,6 +158,10 @@ impl Decoder {
     /// Backend metadata only; absence never implies normal completion.
     pub fn finish_reason(&self) -> Option<&str> {
         self.finish_reason.as_deref()
+    }
+    /// Measured usage on the versioned terminal parser-error envelope only.
+    pub fn error_generated_tokens(&self) -> Option<u64> {
+        self.error_generated_tokens
     }
     pub fn pending_fragment(&self) -> &[u8] {
         if self.diagnostic.is_empty() {
@@ -265,6 +271,39 @@ impl Decoder {
             let error = error.as_str().ok_or_else(|| {
                 Failure::new(FailureKind::Protocol, "native error must be a string")
             })?;
+            if object.contains_key("playtime_error_usage") {
+                crate::identity::local(&chunk)?;
+                if object.get("model").and_then(Value::as_str) != Some(&self.model_name) {
+                    return Err(Failure::new(
+                        FailureKind::Identity,
+                        "error response model changed or missing",
+                    ));
+                }
+                if object["playtime_error_usage"] != value!(1)
+                    || object.get("done") != Some(&Value::Bool(true))
+                    || !Profile::tool_parse_error(error)
+                {
+                    return Err(Failure::new(
+                        FailureKind::Protocol,
+                        "invalid terminal parser-error usage envelope",
+                    ));
+                }
+                let tokens = object
+                    .get("eval_count")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| {
+                        Failure::new(
+                            FailureKind::MissingUsage,
+                            "parser-error envelope lacks valid nonnegative integer usage",
+                        )
+                    })?;
+                self.error_generated_tokens = Some(tokens);
+                self.terminal_observed = true;
+                self.finish_reason = object
+                    .get("done_reason")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
             return Err(Failure::new(
                 if Profile::tool_parse_error(error) {
                     FailureKind::BackendToolParse

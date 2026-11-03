@@ -491,3 +491,48 @@ async fn observed_response_identity_change_invalidates_checked_identity() {
         ]
     );
 }
+
+#[tokio::test]
+async fn counted_parser_error_survives_adapter_and_requires_exact_backend_identity() {
+    for changed in [false, true] {
+        let mut values = metadata();
+        values[0]["version"] = json!(if changed {
+            Profile::VERSION
+        } else {
+            Profile::ERROR_USAGE_VERSION
+        });
+        let mut model = ExecutionModel::locked(&lock()).unwrap();
+        model.backend_version = Profile::ERROR_USAGE_VERSION.into();
+        let frame = json!({"model":Profile::MODEL,"done":true,"done_reason":"stop",
+            "playtime_error_usage":1,"eval_count":405,"error":"error parsing tool call: bad JSON"});
+        let transport = Fake::new(
+            values
+                .into_iter()
+                .map(|v| response(200, serde_json::to_vec(&v).unwrap()))
+                .chain([response(200, format!("{frame}\n").into_bytes())]),
+        );
+        let mut adapter = Adapter::with_model(transport, model, Limits::default()).unwrap();
+        let (tx, _rx) = observations(&Limits::default()).unwrap();
+        let result = adapter
+            .chat(
+                &request(),
+                &EffectiveSettings::default(),
+                deadline(),
+                &CancellationToken::new(),
+                &tx,
+            )
+            .await;
+        if changed {
+            assert_eq!(result.outcome.unwrap_err().kind, FailureKind::Identity);
+            assert_eq!(result.dispatch, Dispatch::NotDispatched);
+            assert_eq!(result.error_generated_tokens, None);
+        } else {
+            assert_eq!(
+                result.outcome.unwrap_err().kind,
+                FailureKind::BackendToolParse
+            );
+            assert_eq!(result.remote, RemoteOutcome::TerminalObserved);
+            assert_eq!(result.error_generated_tokens, Some(405));
+        }
+    }
+}

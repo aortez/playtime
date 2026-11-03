@@ -25,6 +25,12 @@ Use numerical checks, DOM inspection, and other text observations as needed.
 `exec` with Pillow; for example, `Image.open(path).size` and `.mode`. Verify image
 contents with numerical checks; reading the file is not visual inspection.
 
+Commands run in Bash with `pipefail`: a pipeline reports its rightmost nonzero
+exit status, even when its last command succeeds. `errexit` is not enabled.
+A consumer that exits early (for example, `yes | head -n 1`) can make its producer
+exit with SIGPIPE (141). Handle that status explicitly when it is expected;
+do not treat a failed archive check as success just because a later filter ran.
+
 Shell commands have a timeout and an output limit. Save longer output in files
 and read relevant portions. Background processes may run until the end of this
 session. Redirect their output to files and save useful state before the reset.

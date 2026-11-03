@@ -5,6 +5,7 @@
 //! feature-gated workspace probe remains a CPU-only test policy.
 
 mod compaction;
+mod failures;
 mod memento;
 pub(crate) mod memento_contract;
 #[cfg(feature = "test-harness")]
@@ -19,6 +20,7 @@ use crate::{
     evidence::Evidence,
 };
 
+pub(crate) use failures::{ModelErrorSource, ToolResultSource};
 pub(crate) use memento::Memento;
 pub use memento::SessionInput;
 
@@ -197,7 +199,7 @@ pub(crate) enum Policy {
     Memento(Memento),
     #[cfg(feature = "test-harness")]
     Probe(probe::Probe),
-    Compaction(compaction::Compaction),
+    Compaction(Box<compaction::Compaction>),
 }
 
 impl Policy {
@@ -214,7 +216,7 @@ impl Policy {
                 "initial compaction context cannot fit below the trigger with its required reserves",
             ));
         }
-        Ok(Self::Compaction(policy))
+        Ok(Self::Compaction(Box::new(policy)))
     }
     pub fn propose(&mut self, view: View<'_>, _context: &ContextWindow) -> Proposal {
         match self {
@@ -295,12 +297,22 @@ impl Policy {
             }),
         }
     }
-    pub fn retry(&mut self, view: View<'_>, error: &ModelFailure) {
+    pub fn retry(&mut self, view: View<'_>, error: &ModelFailure, generated_tokens: Option<u64>) {
         match self {
-            Self::Memento(policy) => policy.retry(view.memento(), error),
+            Self::Memento(policy) => policy.retry(view.memento(), error, generated_tokens),
             Self::Compaction(policy) => policy.retry(error),
             #[cfg(feature = "test-harness")]
             Self::Probe(_) => unreachable!("test policy never retries"),
+        }
+    }
+    pub fn model_error(
+        &mut self,
+        request: &crate::RequestContext,
+        error: &ModelFailure,
+        source: ModelErrorSource,
+    ) {
+        if let Self::Compaction(policy) = self {
+            policy.model_error(request, error, source);
         }
     }
     pub fn fit_result(
@@ -321,12 +333,18 @@ impl Policy {
             ),
         }
     }
-    pub fn tool_result(&mut self, name: &str, result: &Value) {
+    pub fn tool_result(
+        &mut self,
+        tool: &ToolRequest,
+        original: &Value,
+        result: &Value,
+        source: ToolResultSource,
+    ) {
         match self {
-            Self::Memento(policy) => policy.tool_result(name, result),
+            Self::Memento(policy) => policy.tool_result(&tool.name, result),
             #[cfg(feature = "test-harness")]
-            Self::Probe(policy) => policy.tool_result(name, result),
-            Self::Compaction(policy) => policy.tool_result(name, result),
+            Self::Probe(policy) => policy.tool_result(&tool.name, result),
+            Self::Compaction(policy) => policy.tool_result(tool, original, result, source),
         }
     }
     pub fn after_response(&mut self, view: View<'_>, complete: bool) -> Option<&'static str> {

@@ -1135,6 +1135,119 @@ definitions in every request. The archive's `tool_result` record keeps the whole
 slice as `unabridged_result`, as it does for fitted results, so the evidence is
 unchanged. No scripted scenario reads such a file, so no golden moved.
 
+## Tool-failure evidence survives compaction (2026-11-02)
+
+In Framework run `20261102T173751Z-b2f3612b`, tar reported quota and unexpected-EOF
+failures, but later summaries claimed the archive had been recreated and
+verified. The full results were recorded and sent to the model; summarization
+removed them from its working conversation.
+
+Continuous compaction now carries `tool_failure_history_v1` beside the generated
+summary. The controller derives it from recorded tool errors, nonzero exec exits
+and timeouts before output fitting. It retains up to four failures in a
+4,096-byte encoded message, with bounded head/tail excerpts, explicit omission
+counts and original request/controller-observation references. It neither parses
+commands for semantic meaning nor claims failures remain unresolved. Later
+success does not erase prior evidence. Retained suffix exchanges contribute when
+they are compacted; failed summaries do not change the history. Later work and
+summary requests carry it, and existing context/progress checks count its bytes.
+
+`tool-failure-history-v1.json` is a new simulated golden for the record and notice.
+Regression coverage retains a failed archive check through a later successful
+call and two summaries falsely claiming repair, in both summary request formats.
+Healthy compaction and memento goldens are unchanged. No archive/API schema or
+recipe limits change. The `continuous_tool_failure_history` capability changes
+the native digest, requiring a matched daemon and worker rebuild. This preserves
+evidence for the model; it does not establish that the model will interpret it
+correctly or verify artifacts. Parse failures remain outside this tool-result
+history.
+
+## Native smoke summary allocation (2026-11-02)
+
+The owner requested a correction after Framework's GPT-OSS 120B High-reasoning
+summary exhausted the native smoke's 512-token cap without final content. Its
+isolated replay needed 3,104 tokens and 85 seconds. The fixed continuous native
+profile now allows 4,096 summary/output tokens and 400 seconds per inference,
+matching the existing hour experiment's summary allowance and deadline. Its
+absolute run cap rises from 300 to 900 seconds and total generated-token cap
+from 16,384 to 32,768 so repeated compactions can complete. Context rises to
+32,768 tokens to fit the larger reserves and retained exchanges; the smoke's
+trigger moves to 40% so its 48 stages still exercise multiple compactions.
+Normal admission, accounting and partial-summary rejection stay in force.
+Catalog recipes and policy/API defaults do not change.
+
+The frozen template changes the native capability digest, so preparation requires
+a matching rebuilt worker. Old archives retain their original inputs and failed
+outcomes. No behavioral golden contains this fixed native template. An archive
+driver regression completes a 3,104-token summary after 85 simulated seconds,
+then continues through later compaction and final capture. The native gate can
+explicitly select the already reviewed GPT-OSS 120B identity at High reasoning;
+Qwen with reasoning off remains its default.
+
+## Parse-failure history and explicit gate diagnostics (2026-11-02)
+
+The owner approved retaining malformed-call evidence before the next Vulkan
+hour experiment. `failure_history_v2` extends the bounded tool-only history with
+typed `tool_result` and `model_parse_error` records. Parse records come only from
+emitted `model_error` observations, retain the failed request ID/purpose and
+source sequence, and mark usage unknown with its charged reservation. Bounded
+pending records join the next successful work exchange and survive intervening
+compaction. Summary retries keep their existing inputs; accepted compaction
+promotes removed exchanges' evidence. Success does not erase it. The same four
+record/4-KiB message/256-byte excerpt limits apply to both kinds together.
+
+The new versioned history golden and captured Framework parser-error fixture
+exercise recovery, no malformed tool dispatch, accounting and repeated
+compaction. The old tool-only golden remains historical; healthy compaction and
+memento goldens are unchanged. The native capability digest includes version 2,
+requiring matching daemon and worker builds. The strict native gate now states
+its unknown-request and reserved-token counts when it fails; its acceptance
+conditions are unchanged. This does not invent missing backend token usage or
+establish that the model interprets retained evidence correctly.
+
+## Workshop pipeline status (2026-11-03)
+
+The owner approved fixing a masked failure from the Vulkan hour: `tar -tzf ... |
+wc -l` returned zero while tar reported a truncated archive. The bridge now starts
+Bash with `pipefail`, without enabling `errexit`. Expected early-consumer SIGPIPE
+statuses are visible too; explicit handling and normal sequential-command
+semantics remain available. Successful stderr output is not reclassified.
+The existing controller failure history consumes the resulting nonzero status.
+
+The workshop was deliberately prepared with refresh through the existing
+environment-only preparation helper; this does not refresh the model lock or run
+a Python experiment. The general and embedded native image locks identify the
+new image; prior image archives and run inputs remain intact. New continuous
+selections use `continuous-inventory-v2.txt`, and the catalog inventory describes
+the shell semantics. Recipe limits are unchanged. Existing saved definitions
+remain immutable and require their original matching runtime; new runs need a
+new selection and a matching rebuilt daemon/worker. The new image identity
+changes the native capability digest. No behavioral or schema goldens change.
+
+## Measured usage on rejected tool calls (2026-11-03)
+
+The owner approved fixing the observed loss of 405 generated tokens between
+llama.cpp and Ollama's parser-error response. A versioned local Ollama patch
+preserves terminal metrics through both the Harmony-error and stream-writer
+paths. Its distinct `0.32.3-playtime-usage-v1` identity is selected explicitly;
+the original model locks, runtime and native inference payload remain available.
+
+The native adapter validates the terminal error envelope and passes a typed
+`ModelParseError` outcome to the controller with its measured count. This is not
+a successful assistant response. Known errors settle once, retain parse/retry
+behavior, obey the total token allocation, and never execute rejected tools.
+The full error observation carries `request_usage`; existing unknown errors keep
+their old record shape and full reservation. Overflow, cancellation, invalid
+usage and late completions cannot fabricate a count or replace a settlement.
+
+`failure-history-v3.json` versions the notice/record contract so a parse-failure
+history can carry either known generated tokens or an unknown reservation.
+Version 2 remains historical. Regression coverage checks both request purposes,
+zero and nonzero measured counts, recovery, repeated compaction and archive
+accounting. Existing healthy compaction and memento goldens do not change.
+The native capability digest includes the usage contract and new reviewed model
+lock; paired daemon/worker rebuilds are required. Recipe limits do not change.
+
 ## The workbench totals a run's results (2026-11-02)
 
 After each real run the operator summed the archive by hand: time in model
@@ -1195,6 +1308,23 @@ lacks (its observation omitted by the controller log limit) or nothing.
 The number words both clients use (counts, sizes, durations, excerpts) live
 in `playtime-client` too (`words`). No archive bytes, API or goldens change,
 and the workbench's wording and screenshots are unchanged.
+
+## Parser-error accounting review corrections (2026-11-03)
+
+PR review found that measured parse failures enforced the total allocation but
+missed continuous requests' per-call allowance. The controller now captures the
+admitted allowance before settling usage and stops with
+`TokenLimitExceededByServer` on either overrun. The measured count and failure
+remain recorded, with recovery disabled. Tests distinguish an exact-cap failure
+from a one-token overrun for work and summary requests below the total allocation.
+
+Memento retries previously claimed unknown usage even when the patched backend
+reported a count. They now state the measured charge; unknown failures retain
+the existing notice verbatim. Work/handoff regressions cover zero, nonzero and
+unknown usage without changing legacy goldens. The internal
+`terminal_parse_error_usage` capability advances to version 2, requiring matching
+daemon/worker builds. The backend wire extension, backend version and model
+locks do not change.
 
 ## History pages take no pass over the prefix and are bounded once (2026-11-02)
 
