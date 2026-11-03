@@ -542,3 +542,38 @@ Evidence, diagnostic source and lock file, and `native-report-v2.json` are under
 `/home/data2/playtime/pr-integration-20261103`. The earlier Docker/backend/native
 checks above precede this report integration; no native execution code changed
 during the merge or integration follow-up.
+
+### Independent review corrections
+
+The independent PR review found two accounting/reporting defects. Counted parser
+failures could exceed a continuous request's admitted token allowance and still
+retry below the total run allocation. Memento retries also described measured
+failures as unknown full-allowance charges. Both are corrected: per-call overruns
+stop after recording their measured charge and error, and retry wording now
+matches the failed request's known or unknown usage. Unknown memento notices
+remain byte-for-byte unchanged. A second read-only review found no remaining
+actionable issues.
+
+Regressions cover work and summary calls at their cap and one token above it,
+and memento work/handoff retries with zero, nonzero and unknown usage. The
+retention test's 405-token simulated summary failure now has a 512-token
+allowance; previously its 256-token allowance unintentionally relied on the
+missing overrun guard. The native capability advances to
+`terminal_parse_error_usage: 2`; the backend patch and model locks are unchanged.
+
+Evidence is under `/home/data2/playtime/pr180-review-20261103`. Formatting,
+workspace/feature Clippy, 669 workspace tests, 92 feature-gated engine tests,
+13 workspace-probe tests, the frozen Python suite (101 tests, six skips), and
+the worker package gate passed. The scripted run-and-view and worker-loss gates
+passed (`20261103T041536Z-8be3e5b4`). Scripted native run
+`continuous-56e3b7de33ce` passed 15 compactions and final capture.
+
+The subsequent Framework live run `continuous-7bf1d41d5a79` passed two compactions,
+final capture and cleanup with 6,153 known tokens and zero unknown usage.
+Its two parse failures (`r22`, 476 tokens; `r41`, 33 tokens) recovered and retained
+known accounting. `native-proof.json` verifies the captured worker receipt,
+raw error counts, absence of rejected-tool dispatch, retained failure references,
+and final capture hashes. The run evidence is at
+`/home/data2/pt/pc.Twxt55Zx/run`. The isolated service and owned tunnel were stopped,
+and the original backend restored with unchanged installed binary hashes and
+API version `0.32.3`.

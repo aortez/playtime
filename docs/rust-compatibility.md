@@ -1308,3 +1308,20 @@ lacks (its observation omitted by the controller log limit) or nothing.
 The number words both clients use (counts, sizes, durations, excerpts) live
 in `playtime-client` too (`words`). No archive bytes, API or goldens change,
 and the workbench's wording and screenshots are unchanged.
+
+## Parser-error accounting review corrections (2026-11-03)
+
+PR review found that measured parse failures enforced the total allocation but
+missed continuous requests' per-call allowance. The controller now captures the
+admitted allowance before settling usage and stops with
+`TokenLimitExceededByServer` on either overrun. The measured count and failure
+remain recorded, with recovery disabled. Tests distinguish an exact-cap failure
+from a one-token overrun for work and summary requests below the total allocation.
+
+Memento retries previously claimed unknown usage even when the patched backend
+reported a count. They now state the measured charge; unknown failures retain
+the existing notice verbatim. Work/handoff regressions cover zero, nonzero and
+unknown usage without changing legacy goldens. The internal
+`terminal_parse_error_usage` capability advances to version 2, requiring matching
+daemon/worker builds. The backend wire extension, backend version and model
+locks do not change.

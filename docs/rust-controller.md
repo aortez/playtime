@@ -234,8 +234,8 @@ exchanges' failures; rejected summaries leave history unchanged. This message
 accompanies future work and later summary requests, and all replacement
 progress, input and context checks include it. It describes historical outcomes,
 not unresolved problems: a later success does not erase a failure or establish
-that the same problem was repaired. Model parse failures have no tool result and
-are outside this history. Full observations remain in the archive.
+that the same problem was repaired. Model parse failures retain their separate
+record kind without a fabricated tool result. Full observations remain in the archive.
 
 Observations retain source/retained request IDs, prior summary, exact before/after
 messages, estimates and their bases, summary content and outcome. Durable
@@ -332,15 +332,18 @@ controller deadlines alone cannot establish Docker or model-host termination.
 2. One request is in flight at most. Its positive allowance is reserved before
    its effect is exposed. Admission requires completed charges plus allowance
    plus the work-request handoff reserve to fit the original run allocation.
-3. Settlement occurs once. A complete measured response replaces only its own
-   pending allowance. Failure/cancellation/absent usage after dispatch moves that
-   full allowance to completed unknown usage. Previously unknown usage is never
+3. Settlement occurs once. A complete measured response or validated terminal
+   parser failure replaces only its own pending allowance. Other failures,
+   cancellation and absent usage after dispatch move that full allowance to
+   completed unknown usage. Previously unknown usage is never
    erased. Admission and actual dispatch are separate observations; model_calls
    counts admitted attempts, including preflight failures.
 4. The *pending plus completed* total may decrease on measured settlement; it is
    not a monotonic metric. A server can report more than its allowance; the
    reported amount is charged, and exceeding the run allocation stops execution
-   before tools. An unrepresentable total records the reported count in the
+   before tools. Continuous work and summary requests also stop when measured
+   generation exceeds their admitted allowance, whether parsing succeeds or fails.
+   An unrepresentable total records the reported count in the
    diagnostic event, retains the full unknown allowance, and stops.
 5. No new model/tool effect follows a terminal decision. Checkpoint and cleanup
    effects remain legal. Successful zero-token responses still consume turns.

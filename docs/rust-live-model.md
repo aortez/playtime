@@ -111,6 +111,9 @@ HTTP errors remain unknown. A valid counted error settles once as known, emits
 never emits a successful model response or dispatches any rejected tools.
 Cancellation/deadline winners and accounting overflow retain the existing
 unknown-settlement rules; an over-budget measured count stops further work.
+Continuous requests also enforce their admitted per-call allowance on these
+failures. Memento retry notices distinguish measured usage from an unknown
+reservation, including measured zero-token failures.
 
 The backend patch also preserves these fields in its non-streaming HTTP error
 response, but Playtime always requests streaming and does not consume that path.

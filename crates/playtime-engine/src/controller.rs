@@ -1218,7 +1218,8 @@ impl<I: IdSource> Controller<I> {
 
     fn model_error_with_usage(&mut self, error: ModelFailure, generated_tokens: Option<u64>) {
         self.pending = None;
-        let charge = generated_tokens.unwrap_or_else(|| self.reserved_tokens());
+        let maximum_tokens = self.reserved_tokens();
+        let charge = generated_tokens.unwrap_or(maximum_tokens);
         if let Some(tokens) = generated_tokens {
             if !self.settle_known(tokens) {
                 return;
@@ -1236,10 +1237,11 @@ impl<I: IdSource> Controller<I> {
         ) {
             self.parse_streak += 1;
         }
-        let decision = if generated_tokens.is_some()
-            && self.totals.budget_charged_tokens()
-                > self.config.parameters.limits.generated_tokens.get()
-        {
+        let decision = if generated_tokens.is_some_and(|tokens| {
+            (self.config.compaction.is_some() && tokens > maximum_tokens)
+                || self.totals.budget_charged_tokens()
+                    > self.config.parameters.limits.generated_tokens.get()
+        }) {
             Recovery::Stop(StopReason::TokenLimitExceededByServer)
         } else {
             self.policy.recovery(
@@ -1281,6 +1283,7 @@ impl<I: IdSource> Controller<I> {
                         facts: self.facts(),
                     },
                     &error,
+                    generated_tokens,
                 );
                 if end_session {
                     self.emit(

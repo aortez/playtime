@@ -76,7 +76,7 @@ pub fn digest() -> Result<Sha256Digest> {
         // continuous profile without tool-call or summary recovery, the finish
         // choice, transcript summaries, tool-call summary retries or retained
         // tool and parse-failure observations.
-        serde_json::json!({"inference_targets": 1, "immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1, "continuous_tool_failure_history": 1, "continuous_failure_history": 3, "terminal_parse_error_usage": 1}),
+        serde_json::json!({"inference_targets": 1, "immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1, "continuous_tool_failure_history": 1, "continuous_failure_history": 3, "terminal_parse_error_usage": 2}),
         serde_json::from_slice(QWEN_MODEL_LOCK)?,
         serde_json::from_slice(QWEN_CODER_NEXT_MODEL_LOCK)?,
         serde_json::from_slice(GPT_OSS_120B_MODEL_LOCK)?,

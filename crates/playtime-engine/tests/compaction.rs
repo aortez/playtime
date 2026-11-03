@@ -322,6 +322,7 @@ fn captured_parse_failure_survives_recovery_and_repeated_compaction() {
             for purpose in [RequestPurpose::Work, RequestPurpose::Compaction] {
                 let mut cfg = config();
                 cfg.settings.recent_exchanges = retained;
+                cfg.settings.summary_tokens = 512.try_into().unwrap();
                 let mut run = Run::new(cfg);
                 if purpose == RequestPurpose::Compaction {
                     run.until_summary();
@@ -2337,6 +2338,75 @@ fn a_read_of_base64_reaches_the_model_as_markers_and_the_archive_whole() {
     assert_eq!(record["result"]["base64"]["slice_bytes"], page.len());
     assert_eq!(record["unabridged_result"]["content"], page);
     assert_eq!(run.request().purpose, RequestPurpose::Work);
+}
+
+#[test]
+fn counted_parse_errors_enforce_the_admitted_work_and_summary_allowances() {
+    for purpose in [RequestPurpose::Work, RequestPurpose::Compaction] {
+        for excess in [0, 1] {
+            let mut run = Run::new(config());
+            if purpose == RequestPurpose::Compaction {
+                run.until_summary();
+            }
+            let request = run.request().clone();
+            assert_eq!(request.purpose, purpose);
+            let previous_tokens: u64 = run
+                .records
+                .iter()
+                .filter(|r| r.kind == "request_settled")
+                .map(|r| r.data["usage"]["generated_tokens"].as_u64().unwrap())
+                .sum();
+            let generated_tokens = request.maximum_tokens + excess;
+            // Isolate the per-request bound from the total run allocation.
+            assert!(previous_tokens + generated_tokens < 10000);
+            run.complete(Outcome::ModelParseError {
+                detail: "error parsing tool call: invalid JSON".into(),
+                generated_tokens,
+            });
+            let record = run
+                .records
+                .iter()
+                .find(|r| r.kind == "model_error")
+                .unwrap();
+            assert_eq!(record.data["recovery_allowed"], excess == 0);
+            assert_eq!(record.data["token_budget_charge"], generated_tokens);
+            assert_eq!(
+                record.data["request_usage"],
+                json!({"status":"known","generated_tokens":generated_tokens})
+            );
+            if excess == 0 {
+                // An exact-cap failure can still be corrected by another call.
+                assert_eq!(run.request().purpose, purpose);
+                run.input(Input::Cancel);
+            }
+            let result = run.finalize();
+            assert_eq!(
+                result.reason,
+                if excess == 0 {
+                    StopReason::Interrupted
+                } else {
+                    StopReason::TokenLimitExceededByServer
+                }
+            );
+            assert_eq!(
+                result.usage.known_generated_tokens,
+                previous_tokens + generated_tokens
+            );
+            assert_eq!(result.usage.unknown_requests, 0);
+            assert!(
+                run.dispatches
+                    .iter()
+                    .all(|e| !matches!(e.kind, EffectKind::Tool(_)))
+            );
+            assert_eq!(
+                run.records
+                    .iter()
+                    .filter(|r| r.kind == "model_error")
+                    .count(),
+                1
+            );
+        }
+    }
 }
 
 #[test]

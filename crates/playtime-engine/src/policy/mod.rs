@@ -297,9 +297,9 @@ impl Policy {
             }),
         }
     }
-    pub fn retry(&mut self, view: View<'_>, error: &ModelFailure) {
+    pub fn retry(&mut self, view: View<'_>, error: &ModelFailure, generated_tokens: Option<u64>) {
         match self {
-            Self::Memento(policy) => policy.retry(view.memento(), error),
+            Self::Memento(policy) => policy.retry(view.memento(), error, generated_tokens),
             Self::Compaction(policy) => policy.retry(error),
             #[cfg(feature = "test-harness")]
             Self::Probe(_) => unreachable!("test policy never retries"),
