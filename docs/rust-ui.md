@@ -428,7 +428,7 @@ are explicitly unavailable where the current API does not project them.
 | Inspector pages: source, file, read-mode text, run JSON, memory diff | 24 KiB per page |
 | Prepared jump list | 64 entries per page; entries included in 32 MiB transcript bound |
 | Prepared session chooser | 64 entries per page; session index included in 32 MiB transcript bound |
-| Results totals | 4,096 open calls; 1,024 settled calls remembered for late usage records; 8,192 durations per purpose; 16 error kinds; 16 tool names; 24 failure messages; 64 compaction times; included in 32 MiB transcript bound |
+| Results totals | 4,096 open calls; 8,192 durations per purpose; 16 error kinds; 16 tool names; 24 failure messages; 64 compaction times; included in 32 MiB transcript bound. 1,024 settled calls remembered for late usage records, a constant outside that accounting |
 | Inline boundary previews | 64 current-window entries; ≤512 KiB; 2 reads concurrently |
 | Sparse timeline height cache | 2,048 measurements; ≤256 KiB |
 | Apply work per frame | 100 prepared rows/replies or 4 ms, with deferred replies |

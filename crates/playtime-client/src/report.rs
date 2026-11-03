@@ -65,6 +65,10 @@ pub struct Update {
     /// A compaction harness is configured.
     compacting: bool,
     compaction: Option<CompactionRecord>,
+    /// The session the record names.
+    session: Option<String>,
+    /// The run's end is recorded.
+    finished: bool,
 }
 /// What one record says about a model call, by request identity.
 #[derive(Debug, Default)]
@@ -267,6 +271,7 @@ impl Update {
             "workspace_captured" => {
                 update.workspace_bytes = value.and_then(|v| v["workspace"]["size_bytes"].as_u64());
             }
+            "controller_finished" => update.finished = true,
             _ => (),
         }
         update
@@ -281,11 +286,11 @@ impl Update {
             Fact::CapturePublished { capture } => {
                 update.workspace_bytes = Some(capture.workspace.size_bytes);
             }
-            Fact::RunFinished {
-                last_capture: Some(capture),
-                ..
-            } => {
-                update.workspace_bytes = Some(capture.workspace.size_bytes);
+            Fact::RunFinished { last_capture, .. } => {
+                update.finished = true;
+                update.workspace_bytes = last_capture
+                    .as_ref()
+                    .map(|capture| capture.workspace.size_bytes);
             }
             Fact::RequestSettled { request, usage } => {
                 update.call = Some(Call {
@@ -318,6 +323,8 @@ impl Update {
         let o = observation.observation();
         let mut update = Self {
             elapsed_ms: Some(o.elapsed_ms),
+            session: o.session_id.as_ref().map(|id| id.as_str().to_owned()),
+            finished: o.observation_kind == "controller_finished",
             ..Self::default()
         };
         // A call is its request and its end, which name the request. The
@@ -393,17 +400,24 @@ impl Update {
     pub fn event(event: &KnownEvent) -> Self {
         let mut update = Self::default();
         match event {
-            KnownEvent::SessionStarted { ordinal, .. } => {
+            KnownEvent::SessionStarted {
+                session_id,
+                ordinal,
+                ..
+            } => {
+                update.session = Some(session_id.as_str().to_owned());
                 update.ordinal = Some(ordinal.get().into());
             }
             KnownEvent::CheckpointPublished { checkpoint } => {
                 update.workspace_bytes = Some(checkpoint.workspace.size_bytes);
             }
             KnownEvent::RunFinished {
-                last_checkpoint: Some(checkpoint),
-                ..
+                last_checkpoint, ..
             } => {
-                update.workspace_bytes = Some(checkpoint.workspace.size_bytes);
+                update.finished = true;
+                update.workspace_bytes = last_checkpoint
+                    .as_ref()
+                    .map(|checkpoint| checkpoint.workspace.size_bytes);
             }
             _ => (),
         }
@@ -543,10 +557,16 @@ pub struct Totals {
     latest: Option<(u64, u64)>,
     /// The highest session ordinal recorded.
     max_ordinal: u64,
+    /// The latest session named by a record: that record's sequence, the
+    /// session and its ordinal once a record carries it. A session whose
+    /// ordinal hasn't arrived is the next one, as the run header counts it.
+    session: Option<(u64, String, Option<u64>)>,
     /// The highest uninterrupted checkpoint. Sessions run in order and an
     /// interrupted checkpoint is the run's last, so this counts the sessions
     /// completed.
     completed: u64,
+    /// The run's end is recorded.
+    finished: bool,
     /// A compaction harness or record has been indexed.
     compacting: bool,
     /// The highest ordinal planned and the highest applied; the deferrals
@@ -618,9 +638,23 @@ impl Totals {
         if let Some(ordinal) = update.ordinal {
             self.max_ordinal = self.max_ordinal.max(ordinal);
         }
+        if let Some(id) = update.session {
+            match &mut self.session {
+                Some((latest, current, ordinal)) if *current == id => {
+                    *latest = (*latest).max(sequence);
+                    if update.ordinal.is_some() {
+                        *ordinal = update.ordinal;
+                    }
+                }
+                // A record of an earlier session changes nothing here.
+                Some((latest, ..)) if sequence <= *latest => (),
+                _ => self.session = Some((sequence, id, update.ordinal)),
+            }
+        }
         if let Some(ordinal) = update.completed {
             self.completed = self.completed.max(ordinal);
         }
+        self.finished |= update.finished;
         self.compacting |= update.compacting;
         if let Some(record) = update.compaction {
             self.compacting = true;
@@ -650,10 +684,12 @@ impl Totals {
             return;
         }
         if !self.open.contains_key(&call.request_id) {
+            // An evicted entry with only usage was never a call's record.
             if self.open.len() >= OPEN_CALLS
                 && let Some((_, oldest)) = self.arrivals.pop_first()
+                && let Some(evicted) = self.open.remove(&oldest)
+                && (evicted.call.requested_ms.is_some() || evicted.call.ended_ms.is_some())
             {
-                self.open.remove(&oldest);
                 self.dropped += 1;
             }
             self.arrived += 1;
@@ -743,6 +779,17 @@ impl Totals {
         self.purposes
             .iter()
             .fold(0, |sum, p| sum.saturating_add(field(p)))
+    }
+    /// Whether a record of the run's end has been counted.
+    pub fn finished(&self) -> bool {
+        self.finished
+    }
+    /// Sessions started, as the run header counts them: the latest session's
+    /// ordinal, or the next ordinal while the latest session's hasn't arrived.
+    fn sessions_started(&self) -> u64 {
+        self.session.as_ref().map_or(0, |(_, _, ordinal)| {
+            ordinal.unwrap_or_else(|| self.max_ordinal.saturating_add(1))
+        })
     }
     /// The run's results so far, once every earlier record is counted.
     /// `ended` says whether an open call is still in progress or never
@@ -869,11 +916,11 @@ impl Totals {
                 first_applied_sequence: (self.applied_count.count > 0)
                     .then_some(self.applied_count.first),
             }),
-            sessions: (self.max_ordinal > 0
+            sessions: (self.sessions_started() > 0
                 || self.completed > 0
                 || self.handoffs_missing.count > 0)
                 .then(|| Sessions {
-                    started: self.max_ordinal,
+                    started: self.sessions_started(),
                     completed: self.completed,
                     handoffs_missing: self.handoffs_missing.some(),
                 }),
@@ -1101,9 +1148,9 @@ impl Report {
         );
         add(
             if self.ended {
-                "Final workspace"
+                FINAL_WORKSPACE
             } else {
-                "Latest workspace"
+                LATEST_WORKSPACE
             },
             self.workspace
                 .map(|captured| Line {
@@ -1360,6 +1407,19 @@ fn session_lines(sessions: &Sessions) -> Vec<Line> {
     }]
 }
 
+/// The workspace section's heading once the run has ended.
+pub const FINAL_WORKSPACE: &str = "Final workspace";
+/// The heading of the workspace a record captured while the run goes on.
+pub const LATEST_WORKSPACE: &str = "Latest workspace";
+/// The heading of a listing from the last checkpoint while the run goes on.
+pub const LATEST_CHECKPOINT: &str = "Latest checkpoint";
+/// A listing that reached its bound before the end.
+pub const LISTING_INCOMPLETE: &str = "Listing limit reached; this listing is incomplete.";
+/// An ended continuous run whose final capture listing has no file.
+pub const NO_FINAL_WORKSPACE: &str = "No final workspace publication was found.";
+/// A final capture listing that reached its bound before any file.
+pub const NO_FINAL_FILE_LISTED: &str = "Listing limit reached before any final workspace file.";
+
 /// The report's prepared sections.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Results {
@@ -1394,31 +1454,29 @@ impl Results {
         if listing.files == 0 && listing.source == ListingSource::FinalCapture {
             lines.push(Line::plain(
                 if listing.incomplete {
-                    "Listing limit reached before any final workspace file."
+                    NO_FINAL_FILE_LISTED
                 } else {
-                    "No final workspace publication was found."
+                    NO_FINAL_WORKSPACE
                 }
                 .into(),
             ));
         } else {
             lines.push(Line::plain(listing.words()));
             if listing.incomplete {
-                lines.push(Line::plain(
-                    "Listing limit reached; this listing is incomplete.".into(),
-                ));
+                lines.push(Line::plain(LISTING_INCOMPLETE.into()));
             }
         }
         match self
             .sections
             .iter_mut()
-            .find(|section| matches!(section.title, "Final workspace" | "Latest workspace"))
+            .find(|section| matches!(section.title, FINAL_WORKSPACE | LATEST_WORKSPACE))
         {
             Some(section) => section.lines.extend(lines),
             None => self.sections.push(Section {
                 title: if ended {
-                    "Final workspace"
+                    FINAL_WORKSPACE
                 } else {
-                    "Latest checkpoint"
+                    LATEST_CHECKPOINT
                 },
                 lines,
             }),

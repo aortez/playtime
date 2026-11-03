@@ -208,6 +208,20 @@ fn run_summary(view: &Value) -> String {
     }
     summary
 }
+/// Text with the Markdown link, image and HTML punctuation escaped, so a
+/// name or message a model chose can't embed a link, an image or a tag in
+/// a report. The archive's text reaches a report through tool names, error
+/// kinds and failure messages.
+fn markdown_safe(text: &str) -> String {
+    let mut safe = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '\\' | '[' | ']' | '<' | '>') {
+            safe.push('\\');
+        }
+        safe.push(c);
+    }
+    safe
+}
 /// A run's report as Markdown: a heading with the run, a line with its
 /// state, outcome, recipe, mode and the records counted, then each section
 /// as a heading with a line per total.
@@ -242,7 +256,8 @@ fn report_text(data: &Value) -> String {
         lines.push(String::new());
         lines.push(format!("## {}", word(&section["title"])));
         for line in section["lines"].as_array().map_or(&[][..], Vec::as_slice) {
-            lines.push(format!("- {}", word(&line["text"])));
+            let text = line["text"].as_str().unwrap_or_default();
+            lines.push(format!("- {}", escape(&markdown_safe(text))));
         }
     }
     lines.join("\n")
@@ -512,6 +527,14 @@ mod tests {
             text(&empty)
                 .ends_with("| 1,234 records\nNo model calls, tools or compactions recorded.")
         );
+        // A model-chosen path in a failure message can't become an image, a
+        // link or a tag when the report is rendered.
+        let mut hostile = empty;
+        hostile["data"]["summary"] = json!([{"title":"Tools","lines":[
+            {"text":"1 × read_file: FileNotFoundError: '![x](http://host/x)' <img src=\"http://host/y\"> \\[y](z)","first_sequence":9}]}]);
+        assert!(text(&hostile).ends_with(
+            "\n## Tools\n- 1 × read_file: FileNotFoundError: '!\\[x\\](http://host/x)' \\<img src=\"http://host/y\"\\> \\\\\\[y\\](z)"
+        ));
     }
     #[test]
     fn a_failed_run_shows_the_workers_diagnostic() {

@@ -1164,7 +1164,7 @@ No archive bytes, API or goldens change. The reviewed screenshots changed on
 every screen with a run list (the row line) and every run view (the tab); the
 three results views are new baselines.
 
-## `playtime runs report` totals a run (2026-11-03)
+## `playtime runs report` totals a run (2026-11-02)
 
 The totals behind the workbench's Results tab moved to a shared accumulator
 in `playtime-client` (`report`), fed by the workbench from its transcript
@@ -1173,12 +1173,14 @@ way. `playtime runs report RUN_ID` reads every record of the run as of the
 frontier its first page fixes, totals them within the workbench's bounds,
 then lists the final workspace: an ended continuous run's final capture from
 its artifact listing, or a memento run's last published checkpoint. Its text
-output is Markdown, a heading per section with a line per total; `--format
+output is Markdown, a heading per section with a line per total, with the
+link, image and HTML punctuation of archive-sourced text escaped; `--format
 json` adds the typed totals (`report`), the listing (`files`), the run view
-and the records counted next to the worded sections (`summary`). A run that
-hasn't ended reports its totals so far, with open calls in progress and its
-latest workspace. The reserved top-level `report` command (#26, the Python
-HTML report) is unchanged.
+and the records counted next to the worded sections (`summary`). The run has
+ended when the service reports it terminal or its archive records its end. A
+run that hasn't ended reports its totals so far, with open calls in progress
+and its latest workspace. The reserved top-level `report` command (#26, the
+Python HTML report) is unchanged.
 
 Reporting the Framework hour run in sequence order found a defect in the
 accumulator the Results tab shipped with: the continuous format records a

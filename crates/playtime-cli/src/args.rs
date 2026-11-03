@@ -168,6 +168,9 @@ pub enum Runs {
     Report {
         #[arg(value_parser = run_id)]
         run_id: RunId,
+        /// Records read per page; the service's default when left out.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=1000))]
+        limit: Option<u32>,
     },
     Wait {
         #[arg(value_parser = run_id)]

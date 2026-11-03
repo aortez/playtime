@@ -465,6 +465,98 @@ fn a_settlement_fact_after_its_observation_adds_nothing_or_the_missing_usage() {
 }
 
 #[test]
+fn a_late_usage_record_past_the_remembered_calls_is_not_a_call() {
+    // 1,025 calls settle, then a usage fact for the first arrives, past the
+    // bound of settled calls remembered: it opens nothing that counts as a
+    // call, and nothing is reported dropped.
+    let mut events = vec![];
+    for call in 1..=1025u64 {
+        events.push(observation(
+            2 * call - 1,
+            "model_request",
+            Some((call, "work")),
+            None,
+            json!({"purpose":"work","request_id":format!("r{call}"),"call":call}),
+        ));
+        events.push(observation(
+            2 * call,
+            "request_settled",
+            Some((call, "work")),
+            None,
+            json!({"call":call,"usage":{"status":"known","generated_tokens":1}}),
+        ));
+    }
+    events.push(v2(
+        3000,
+        json!({"kind":"request_settled","data":{"request":{"effect_id":1,"request_id":"r1","call":1,"scope":{"kind":"run"},"purpose":"work"},"usage":{"status":"known","generated_tokens":1}}}),
+    ));
+    let calls = totals(&events).report(true, true).calls;
+    assert_eq!(
+        calls
+            .work
+            .as_ref()
+            .map(|w| (w.calls, w.known_calls, w.known_tokens)),
+        Some((1025, 1025, 1025))
+    );
+    assert!(calls.unrequested.is_none() && calls.open.is_none());
+    assert_eq!(calls.dropped, 0);
+}
+
+#[test]
+fn the_runs_end_and_latest_session_are_remembered() {
+    // A run's end is its controller's finish or the run_finished record;
+    // without one the totals don't know the run ended.
+    let events: Vec<EventEnvelope> = include_str!(
+        "../../playtime-protocol/tests/fixtures/controller-observations/completed.jsonl"
+    )
+    .lines()
+    .map(|line| serde_json::from_str(line).unwrap())
+    .collect();
+    assert!(totals(&events).finished());
+    let unfinished: Vec<EventEnvelope> = events
+        .iter()
+        .filter(|event| event.data["observation_kind"] != "controller_finished")
+        .cloned()
+        .collect();
+    assert!(unfinished.len() < events.len() && !totals(&unfinished).finished());
+    assert!(!totals(&continuous()).finished());
+    // A record naming a later session whose ordinal hasn't arrived counts
+    // that session as started, as the run header does; a record of an
+    // earlier session changes nothing.
+    let mut later = events.clone();
+    let mut next = events[6].clone();
+    assert_eq!(next.kind, "controller_observation");
+    next.sequence = std::num::NonZeroU64::new(60).unwrap();
+    next.data["controller_sequence"] = json!(60);
+    next.data["session_id"] = json!("s3");
+    next.data["observation_kind"] = json!("future_note");
+    next.data["identity"] =
+        json!({"effect_id": null, "request_id": null, "tool_request_sequence": null});
+    next.data["data"] = json!({"storage": "inline", "value": {}});
+    later.push(next);
+    let started = |events: &[EventEnvelope]| {
+        totals(events)
+            .report(true, true)
+            .sessions
+            .map(|s| (s.started, s.completed))
+    };
+    assert_eq!(started(&later), Some((3, 2)));
+    later.reverse();
+    assert_eq!(started(&later), Some((3, 2)));
+    let mut earlier = events.clone();
+    let mut first = events[6].clone();
+    first.sequence = std::num::NonZeroU64::new(2).unwrap();
+    first.data["controller_sequence"] = json!(2);
+    first.data["session_id"] = json!("s0");
+    first.data["observation_kind"] = json!("future_note");
+    first.data["identity"] =
+        json!({"effect_id": null, "request_id": null, "tool_request_sequence": null});
+    first.data["data"] = json!({"storage": "inline", "value": {}});
+    earlier.push(first);
+    assert_eq!(started(&earlier), Some((2, 2)));
+}
+
+#[test]
 fn a_malformed_record_is_an_invalid_response() {
     let bad: EventEnvelope = serde_json::from_value(json!({"schema_version":1,"run_id":"r","sequence":1,"time":"2026-11-03T00:00:00Z","kind":"run_finished","data":{"reason":"agent_finished"}})).unwrap();
     assert!(Update::decode(&bad).is_err());

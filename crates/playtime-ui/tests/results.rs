@@ -279,9 +279,10 @@ fn calls_never_dispatched_and_omitted_settlements_still_count() {
     reversed.reverse();
     assert_eq!(call_lines(&indexed(reversed).results(true)), expected);
 
-    // The archive records the settlement fact a few records after the
-    // observation, or omission, that settles the call: it adds the usage
-    // the call still lacks, never a second call.
+    // The archive records the settlement fact after the observation that
+    // settles the call, and before an omission of it; whichever side of the
+    // end it lands on, the fact adds the usage the call still lacks, never
+    // a second call.
     let mut late = vec![events[0].clone(), events[2].clone(), events[1].clone()];
     late[1].sequence = std::num::NonZeroU64::new(2).unwrap();
     late[2].sequence = std::num::NonZeroU64::new(3).unwrap();

@@ -167,17 +167,18 @@ impl Context {
         Ok(exit)
     }
     /// Totals every record of the run, as of the frontier its first page
-    /// fixes, then lists its final workspace.
-    async fn report(&self, id: &RunId) -> Result<i32, Failure> {
+    /// fixes, then lists its final workspace. The run has ended when the
+    /// service reports it terminal or its archive records its end, as the
+    /// workbench reads it.
+    async fn report(&self, id: &RunId, limit: Option<u32>) -> Result<i32, Failure> {
         let view = self.client.run(id).await?;
-        let ended = view.orchestration.state == OrchestrationState::Terminal;
         let mut totals = Totals::default();
         let mut records = 0u64;
-        // The service's default page keeps each read well inside its handler
-        // deadline; a long run's largest pages take seconds to assemble.
+        // The service's default page keeps each read inside its handler
+        // deadline; a long run's thousand-record pages can take longer.
         let mut query = PageQuery {
             cursor: None,
-            limit: None,
+            limit,
         };
         loop {
             let page = self.client.history(id, &query).await?;
@@ -190,9 +191,13 @@ impl Context {
             }
             query.cursor = page.next_cursor;
         }
+        let ended = view.orchestration.state == OrchestrationState::Terminal || totals.finished();
         let report = totals.report(true, ended);
         let mut results = report.results();
-        let files = self.listing(&view, ended).await?;
+        // The totals took the longest, so they are written before a listing
+        // failure fails the command.
+        let listing = self.listing(&view, ended).await;
+        let files = listing.as_ref().ok().cloned().flatten();
         if let Some(listing) = &files {
             results.list_workspace(ended, listing);
         }
@@ -202,7 +207,7 @@ impl Context {
                 json!({"run":view,"records":records,"report":report,"files":files,"summary":results.sections}),
             )
             .await?;
-        Ok(0)
+        listing.map(|_| 0)
     }
     /// The final workspace's files: an ended continuous run's final capture,
     /// or a memento run's last published checkpoint once its whole
@@ -468,7 +473,7 @@ pub async fn execute(
         Command::Runs(Runs::Show { run_id }) => {
             output.emit("result", ctx.client.run(run_id).await?).await?
         }
-        Command::Runs(Runs::Report { run_id }) => return ctx.report(run_id).await,
+        Command::Runs(Runs::Report { run_id, limit }) => return ctx.report(run_id, *limit).await,
         Command::Runs(Runs::Wait { run_id }) => return ctx.wait(run_id, false).await,
         Command::Runs(Runs::Cancel { run_id, wait }) => {
             let reply = ctx.client.cancel(run_id).await?;
