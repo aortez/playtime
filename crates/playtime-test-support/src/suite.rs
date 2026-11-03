@@ -319,6 +319,32 @@ async fn cases(cli: &Path, fixture: Option<&Path>) -> Result<usize> {
                 && events[1]["data"]["event"]["data"]["unknown_field"]["retained"] == true,
             "unknown event or history record lost"
         );
+        // One record per page, so the report pages through the whole run.
+        let report = h
+            .run(&["runs", "report", &run, "--limit", "1", "--format", "json"])
+            .await?;
+        report.expect(0)?;
+        let report = report.json()?;
+        ensure!(
+            report["data"]["records"] == 4
+                && report["data"]["report"]["complete"] == true
+                && report["data"]["report"]["ended"] == true
+                && report["data"]["files"]["source"] == "checkpoint"
+                && report["data"]["files"]["files"] == 2
+                && report["data"]["files"]["images"] == 1
+                && report["data"]["files"]["unavailable"] == 1,
+            format!("report totals lost: {report}")
+        );
+        let report = h.run(&["runs", "report", &run]).await?;
+        report.expect(0)?;
+        let text = String::from_utf8_lossy(&report.stdout);
+        ensure!(
+            text.contains("| 4 records\n")
+                && text.contains(
+                    "\n## Final workspace\n- 2 files · 68 bytes · 1 image · 1 unavailable\n"
+                ),
+            format!("report text: {text}")
+        );
         let retry = h
             .run(&["launches", "retry", "commands", "--format", "json"])
             .await?;
@@ -432,6 +458,26 @@ async fn cases(cli: &Path, fixture: Option<&Path>) -> Result<usize> {
     });
     case!("signals deadlines cancellation and pipes", "hold", h, {
         let run = h.launched("hold", false).await?;
+        // A run still going, with nothing recorded yet, reports as such.
+        let report = h.run(&["runs", "report", &run, "--format", "json"]).await?;
+        report.expect(0)?;
+        let report = report.json()?;
+        ensure!(
+            report["data"]["report"]["ended"] == false
+                && report["data"]["records"] == 0
+                && report["data"]["files"].is_null()
+                && report["data"]["summary"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty),
+            format!("held report lost: {report}")
+        );
+        let held = h.run(&["runs", "report", &run]).await?;
+        held.expect(0)?;
+        ensure!(
+            String::from_utf8_lossy(&held.stdout)
+                .ends_with("| 0 records\nNo model calls, tools or compactions recorded.\n"),
+            "held report text"
+        );
         h.run(&[
             "runs",
             "wait",
@@ -512,6 +558,17 @@ async fn cases(cli: &Path, fixture: Option<&Path>) -> Result<usize> {
         h.run(&["runs", "show", &run, "--format", "json"])
             .await?
             .expect(0)?;
+        // An interrupted run's report has ended, with the records revealed
+        // by its end and its checkpoint.
+        let report = h.run(&["runs", "report", &run, "--format", "json"]).await?;
+        report.expect(0)?;
+        let report = report.json()?;
+        ensure!(
+            report["data"]["report"]["ended"] == true
+                && report["data"]["records"] == 4
+                && report["data"]["files"]["source"] == "checkpoint",
+            format!("interrupted report lost: {report}")
+        );
     });
     case!("cursor publication and redelivery", "normal", h, {
         let run = h.launched("cursor", true).await?;

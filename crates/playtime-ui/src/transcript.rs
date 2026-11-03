@@ -140,6 +140,8 @@ pub struct Window {
     pub anchor: Option<(usize, usize)>,
     /// The run's progress, for the header.
     pub progress: Progress,
+    /// The run's results, for the inspector.
+    pub results: playtime_client::report::Results,
     pub sessions: Sessions,
     pub jumps: Jumps,
     pub calls: Calls,
@@ -219,14 +221,7 @@ pub struct Transcript {
     pub boundary: bool,
 }
 
-pub fn excerpt(text: &str, bytes: usize) -> String {
-    let end = floor(text, bytes.min(text.len()));
-    let mut result = text[..end].to_owned();
-    if end < text.len() {
-        result.push_str(" …");
-    }
-    result
-}
+pub use playtime_client::words::{excerpt, size, thousands};
 fn floor(text: &str, mut index: usize) -> usize {
     while !text.is_char_boundary(index) {
         index -= 1;
@@ -259,26 +254,6 @@ pub(crate) fn page(text: &str, offset: usize, bytes: usize) -> SourcePage {
 }
 fn json(value: &impl serde::Serialize) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "Unavailable source".into())
-}
-/// Formats a count with thousands separators, such as 300,000.
-pub fn thousands(value: u64) -> String {
-    let digits = value.to_string();
-    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, digit) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
-    grouped
-}
-/// Formats a byte count, such as 512 bytes or 1.5 KiB.
-pub fn size(bytes: u64) -> String {
-    match bytes {
-        0..1024 => format!("{bytes} bytes"),
-        1024..1_048_576 => format!("{:.1} KiB", bytes as f64 / 1024.0),
-        _ => format!("{:.1} MiB", bytes as f64 / 1_048_576.0),
-    }
 }
 /// A wire value such as `session_limit` as words.
 pub(crate) fn words(value: &impl serde::Serialize) -> String {
@@ -901,6 +876,10 @@ impl Transcript {
     pub fn progress(&self, complete: bool) -> Progress {
         self.progress.progress(complete)
     }
+    /// The run's results, once earlier history has loaded.
+    pub fn results(&self, complete: bool) -> playtime_client::report::Results {
+        self.progress.results(complete, self.ended)
+    }
     fn order(&self, view: View) -> &[usize] {
         match view {
             View::Readable => &self.readable,
@@ -1117,6 +1096,7 @@ impl Transcript {
             metrics: self.metrics.clone(),
             anchor: None,
             progress: Progress::default(),
+            results: Default::default(),
             sessions: self.sessions(0, false),
             jumps: self.jumps(0, false),
             calls: Calls {

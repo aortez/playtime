@@ -34,6 +34,8 @@ pub enum Disclosure {
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Inspector {
+    /// Where a selected run opens.
+    Results,
     #[default]
     Details,
     Memory,
@@ -121,6 +123,84 @@ pub struct ContentView {
     pub image: Option<Arc<crate::media::Pixels>>,
     pub notice: String,
     pub animated: bool,
+}
+/// The final workspace's files for the Results tab: counts by kind and the
+/// images to open. Prepared when a listing arrives, not while drawing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FinalListing {
+    pub summary: String,
+    pub images: Vec<ListedFile>,
+    /// Images beyond those listed, which the Files tab lists.
+    pub more_images: usize,
+    /// The listing reached its bound before the end.
+    pub incomplete: bool,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListedFile {
+    pub name: String,
+    pub artifact_id: ArtifactId,
+    pub size: String,
+}
+/// Images the Results tab lists itself.
+const LISTED_IMAGES: usize = 12;
+impl FinalListing {
+    /// The counted listing and each retained file's name, artifact and size,
+    /// for the images to open.
+    fn new<'a>(
+        listing: playtime_client::report::Listing,
+        files: impl Iterator<Item = (&'a str, &'a ArtifactId, u64)>,
+    ) -> Self {
+        let mut images: Vec<ListedFile> = files
+            .filter(|(name, ..)| crate::media::image_name(name))
+            .map(|(name, artifact_id, size)| ListedFile {
+                name: name.to_owned(),
+                artifact_id: artifact_id.clone(),
+                size: crate::preview::bytes(size),
+            })
+            .collect();
+        images.sort_by(|a, b| a.name.cmp(&b.name));
+        let more_images = images.len().saturating_sub(LISTED_IMAGES);
+        images.truncate(LISTED_IMAGES);
+        Self {
+            summary: listing.words(),
+            images,
+            more_images,
+            incomplete: listing.incomplete,
+        }
+    }
+    /// A continuous run's retained final files.
+    pub fn from_artifacts(files: &[Artifact], complete: bool) -> Self {
+        Self::new(
+            playtime_client::report::Listing::from_artifacts(files, complete),
+            files
+                .iter()
+                .filter(|artifact| artifact.kind == "file_version")
+                .map(|artifact| {
+                    (
+                        artifact.name.as_str(),
+                        &artifact.artifact_id,
+                        artifact.content.size_bytes,
+                    )
+                }),
+        )
+    }
+    /// A memento run's last published checkpoint.
+    pub fn from_checkpoint(checkpoint: &Checkpoint) -> Self {
+        Self::new(
+            playtime_client::report::Listing::from_checkpoint(checkpoint),
+            checkpoint
+                .files
+                .iter()
+                .filter(|file| !matches!(file.kind.as_str(), "5" | "directory"))
+                .filter_map(|file| match &file.content {
+                    ContentAvailability::Available {
+                        artifact_id,
+                        content,
+                    } => Some((file.name.as_str(), artifact_id, content.size_bytes)),
+                    ContentAvailability::Unavailable { .. } => None,
+                }),
+        )
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -251,7 +331,7 @@ pub enum Data {
     RunModel(Result<Option<crate::run_model::ArchivedModel>, String>),
     Cancellation(Box<RunViewData>),
     CancellationUnresolved(String),
-    Window(Window, String, u64),
+    Window(Box<Window>, String, u64),
     /// A model call's first record, or why it isn't indexed.
     CallFound(u64, Result<u64, String>),
     /// Bounded retained final workspace listing, with explicit completeness.
@@ -337,6 +417,11 @@ pub struct Model {
     /// A reading page arrived, to scroll to its start.
     pub reveal_reading: bool,
     pub final_files: Option<(Vec<Artifact>, bool)>,
+    /// The final workspace's files, from the final capture listing or the
+    /// last checkpoint, for the Results tab.
+    pub final_listing: Option<FinalListing>,
+    /// The Results tab asked for the final capture listing once.
+    final_files_sought: bool,
     pub checkpoints: Vec<Checkpoint>,
     pub checkpoints_next: Option<String>,
     /// What each checkpoint saved, by session, for the timeline's markers.
@@ -418,6 +503,8 @@ impl Default for Model {
             reading: None,
             reveal_reading: false,
             final_files: None,
+            final_listing: None,
+            final_files_sought: false,
             checkpoints: vec![],
             checkpoints_next: None,
             checkpoint_files: BTreeMap::new(),
@@ -427,7 +514,7 @@ impl Default for Model {
             memory: None,
             content: None,
             reveal_content: false,
-            inspector: Inspector::Details,
+            inspector: Inspector::default(),
             show_inspector: true,
             show_runs: true,
             enlarged: false,
@@ -684,6 +771,8 @@ impl Model {
         self.source = None;
         self.close_reading();
         self.final_files = None;
+        self.final_listing = None;
+        self.final_files_sought = false;
         self.checkpoints.clear();
         self.checkpoint_files.clear();
         self.checkpoint = None;
@@ -695,6 +784,8 @@ impl Model {
         self.playing = false;
         self.cancellation = Mutation::Idle;
         self.following = true;
+        // A run opens on its results.
+        self.inspector = Inspector::Results;
         self.live_count = 0;
         self.seen_live = 0;
         self.history = "Attaching live stream and loading history".into();
@@ -792,6 +883,29 @@ impl Model {
             memory.diff_page = inspector_page(&memory.diff, offset);
         }
     }
+    /// Asks once for an ended continuous run's final capture listing, which
+    /// the Results tab shows; the Files tab's button asks again on demand.
+    pub fn seek_final_files(&mut self) {
+        if self.final_files_sought
+            || self.final_files.is_some()
+            || self.connection != ConnectionState::Connected
+        {
+            return;
+        }
+        let Some(run) = self.run.as_ref().map(|run| &run.value) else {
+            return;
+        };
+        if run.orchestration.state != OrchestrationState::Terminal
+            || run
+                .harness
+                .as_ref()
+                .is_none_or(|harness| harness.harness.compaction.is_none())
+        {
+            return;
+        }
+        self.final_files_sought = true;
+        self.command(Action::FinalFiles(run.run_id.clone()));
+    }
     pub fn jump_live(&mut self) {
         self.location = None;
         self.finding_call = None;
@@ -863,10 +977,11 @@ impl Model {
         {
             return;
         }
+        // The final files are the run's, not an inspection's, so a later
+        // inspection doesn't discard the listing the Results tab asked for.
         if matches!(
             &reply.data,
-            Data::FinalFiles(..)
-                | Data::Checkpoint(..)
+            Data::Checkpoint(..)
                 | Data::Content(_)
                 | Data::Source(..)
                 | Data::Text(..)
@@ -1186,6 +1301,9 @@ impl Model {
                 self.command(Action::Runs(None));
             }
             Data::FinalFiles(files, complete) => {
+                // No files is no final capture, not an empty workspace.
+                self.final_listing =
+                    (!files.is_empty()).then(|| FinalListing::from_artifacts(&files, complete));
                 self.final_files = Some((files, complete));
                 self.file_page = 0;
             }
@@ -1222,7 +1340,7 @@ impl Model {
                 if window.location.is_some() {
                     self.location = window.location;
                 }
-                self.window = window;
+                self.window = *window;
                 self.prepare_trace();
                 self.history = history;
                 self.live_count = live;
@@ -1256,6 +1374,18 @@ impl Model {
                 self.checkpoints = page.items;
                 self.checkpoints_next = page.next_cursor;
                 self.checkpoint_files.extend(files);
+                // The last checkpoint published holds a memento run's final
+                // workspace, once the whole list is in hand; a continuous
+                // run's comes from its final capture.
+                if self.final_files.is_none()
+                    && self.checkpoints_next.is_none()
+                    && let Some(last) = self
+                        .checkpoints
+                        .iter()
+                        .max_by_key(|c| c.checkpoint.published_sequence)
+                {
+                    self.final_listing = Some(FinalListing::from_checkpoint(last));
+                }
             }
             Data::Checkpoint(c, memory) => {
                 if self

@@ -5,6 +5,7 @@ use crate::{
     progress,
     transcript::{
         INSPECTOR_TEXT_BYTES, PAGE_BYTES, SourcePage, TEXT_BYTES, View, WINDOW_ROWS, thousands,
+        words,
     },
 };
 use egui::{Color32, RichText, Vec2};
@@ -14,6 +15,8 @@ use playtime_protocol::api::{ContentAvailability, Enforcement, OrchestrationStat
 use std::{path::PathBuf, sync::Arc};
 
 const ACCENT: Color32 = Color32::from_rgb(96, 214, 185);
+/// A run row: recipe, state, outcome, time and ID.
+const RUN_ROW_HEIGHT: f32 = 112.0;
 #[derive(Clone, Debug, Default)]
 pub struct FrameMetrics {
     pub laid_out_rows: usize,
@@ -289,11 +292,11 @@ impl Workbench {
         let mut selected = None;
         egui::ScrollArea::vertical()
             .id_salt("runs")
-            .max_height(310.0)
-            .show_rows(ui, 96.0, self.model.runs.len(), |ui, range| {
+            .max_height(RUN_ROW_HEIGHT * 3.0)
+            .show_rows(ui, RUN_ROW_HEIGHT, self.model.runs.len(), |ui, range| {
                 for i in range {
                     ui.scope(|ui| {
-                        ui.set_min_height(96.0);
+                        ui.set_min_height(RUN_ROW_HEIGHT);
                         let run = &self.model.runs[i];
                         let recipe = self.model.recipe_name(run);
                         let response = ui
@@ -321,6 +324,10 @@ impl Workbench {
                                 .on_hover_text(format!("Archived model: {}", model.name));
                         }
                         ui.add(egui::Label::new(run_state(run)).wrap());
+                        if let Some(outcome) = run_outcome(run) {
+                            ui.add(egui::Label::new(RichText::new(&outcome).small()).truncate())
+                                .on_hover_text(outcome);
+                        }
                         ui.small(format!(
                             "{} UTC",
                             run.accepted_at
@@ -927,11 +934,7 @@ impl Workbench {
             anchor = Some((self.model.window.start + index, within));
         }
         if let Some(sequence) = jump {
-            self.model.location = None;
-            self.model.following = false;
-            self.navigation = Some((sequence, 0.0));
-            self.navigation_sent = false;
-            self.view_anchor = None;
+            self.jump_to(sequence);
             anchor = None;
         }
         if self.model.following {
@@ -1172,6 +1175,7 @@ impl Workbench {
         }
         ui.horizontal(|ui| {
             for (label, tab) in [
+                ("Results", Inspector::Results),
                 ("Details", Inspector::Details),
                 ("Memory", Inspector::Memory),
                 ("Files", Inspector::Files),
@@ -1190,7 +1194,7 @@ impl Workbench {
         });
         ui.separator();
         egui::ScrollArea::vertical().id_salt("inspector-body").show(ui, |ui| {
-            if self.model.inspector != Inspector::Details && !continuous {
+            if matches!(self.model.inspector, Inspector::Memory | Inspector::Files) && !continuous {
                 let mut selected = None;
                 egui::ComboBox::from_label("Checkpoint").selected_text(self.model.checkpoint.as_ref().map_or("Select checkpoint", |c| c.checkpoint.session_id.as_str())).show_ui(ui, |ui| {
                     for checkpoint in &self.model.checkpoints { if ui.selectable_label(self.model.checkpoint.as_ref().map(|c| &c.checkpoint.session_id) == Some(&checkpoint.checkpoint.session_id), checkpoint.checkpoint.session_id.as_str()).clicked() { selected = Some(checkpoint.checkpoint.session_id.clone()); } }
@@ -1199,6 +1203,7 @@ impl Workbench {
                 if self.model.checkpoints_next.is_some() && ui.button("More checkpoints").clicked() && let Some(run) = self.model.selected.clone() { self.model.command(Action::Checkpoints(run, self.model.checkpoints_next.clone())); }
             }
             match self.model.inspector {
+                Inspector::Results => self.results(ui, continuous),
                 Inspector::Details => {
                     if let Some(reading) = &self.model.reading {
                         let mut close = false;
@@ -1359,6 +1364,110 @@ impl Workbench {
             }
         });
     }
+    /// The run's results: the totals the index keeps, each count a link to
+    /// its first record, then the final workspace's files.
+    fn results(&mut self, ui: &mut egui::Ui, continuous: bool) {
+        use playtime_client::report::{
+            FINAL_WORKSPACE, LATEST_CHECKPOINT, LATEST_WORKSPACE, LISTING_INCOMPLETE,
+            NO_FINAL_FILE_LISTED, NO_FINAL_WORKSPACE,
+        };
+        self.model.seek_final_files();
+        let mut jump = None;
+        let results = &self.model.window.results;
+        if !results.complete {
+            ui.label("Results appear once earlier history has loaded.");
+        } else if results.sections.is_empty() {
+            ui.label("No model calls, tools or compactions recorded yet.");
+        }
+        for section in &results.sections {
+            ui.strong(section.title);
+            for line in &section.lines {
+                match line.jump {
+                    Some(sequence) => {
+                        if ui
+                            .link(brief(&line.text, 1000))
+                            .on_hover_text("Go to its first record")
+                            .clicked()
+                        {
+                            jump = Some(sequence);
+                        }
+                    }
+                    None => {
+                        ui.add(egui::Label::new(brief(&line.text, 1000)).wrap());
+                    }
+                }
+            }
+            ui.add_space(6.0);
+        }
+        let ended = self
+            .model
+            .run
+            .as_ref()
+            .is_some_and(|run| run.value.orchestration.state == OrchestrationState::Terminal);
+        let captured = results
+            .sections
+            .iter()
+            .any(|section| matches!(section.title, FINAL_WORKSPACE | LATEST_WORKSPACE));
+        let mut open = None;
+        let mut files = false;
+        if let Some(listing) = &self.model.final_listing {
+            if !captured {
+                ui.strong(if ended {
+                    FINAL_WORKSPACE
+                } else {
+                    LATEST_CHECKPOINT
+                });
+            }
+            ui.add(egui::Label::new(brief(&listing.summary, 500)).wrap());
+            if listing.incomplete {
+                ui.colored_label(Color32::YELLOW, LISTING_INCOMPLETE);
+            }
+            for image in &listing.images {
+                ui.horizontal_wrapped(|ui| {
+                    ui.push_id(image.artifact_id.as_str(), |ui| {
+                        if ui.button("Open image").clicked() {
+                            open = Some(image.artifact_id.clone());
+                        }
+                    });
+                    ui.label(brief(&image.name, 120));
+                    ui.small(&image.size);
+                });
+            }
+            if listing.more_images > 0 {
+                ui.small(format!("{} more images in Files", listing.more_images));
+            }
+            files = ui.small_button("Every file in Files").clicked();
+        } else if let Some((files, complete)) = &self.model.final_files
+            && files.is_empty()
+        {
+            ui.small(if *complete {
+                NO_FINAL_WORKSPACE
+            } else {
+                NO_FINAL_FILE_LISTED
+            });
+        } else if !continuous && self.model.checkpoints_next.is_some() {
+            ui.small("Load the remaining checkpoints in Files to see the final workspace.");
+        }
+        if let Some(sequence) = jump {
+            self.jump_to(sequence);
+        }
+        if files {
+            self.model.inspector = Inspector::Files;
+        }
+        if let Some(id) = open
+            && let Some(run) = self.model.selected.clone()
+        {
+            self.model.inspect_action(Action::Content(run, id, 0));
+        }
+    }
+    /// Goes to a record: the timeline locates it on its next frame.
+    fn jump_to(&mut self, sequence: u64) {
+        self.model.location = None;
+        self.model.following = false;
+        self.navigation = Some((sequence, 0.0));
+        self.navigation_sent = false;
+        self.view_anchor = None;
+    }
     fn image(&mut self, ui: &mut egui::Ui, enlarged: bool) {
         let pixels = self.model.content.as_ref().and_then(|c| c.image.clone());
         let Some(pixels) = pixels else {
@@ -1426,6 +1535,28 @@ impl Workbench {
             }
         }
     }
+}
+/// The row's outcome line: an ended run's stop reason, tokens charged and
+/// cleanup; a run still going says its tokens charged so far.
+fn run_outcome(run: &RunView) -> Option<String> {
+    let tokens = run
+        .usage
+        .as_ref()
+        .map(|usage| format!("{} tokens", thousands(usage.budget_charged_tokens)));
+    if run.orchestration.state != OrchestrationState::Terminal {
+        return tokens;
+    }
+    let mut parts = vec![run.outcome.as_ref().map_or_else(
+        || "no recorded outcome".to_owned(),
+        |outcome| words(&outcome.reason),
+    )];
+    parts.extend(tokens);
+    let cleanup = progress::cleanup_words(&run.cleanup);
+    let mut chars = cleanup.chars();
+    parts.push(chars.next().map_or_else(String::new, |first| {
+        first.to_lowercase().chain(chars).collect()
+    }));
+    Some(parts.join(" · "))
 }
 /// The run list is narrow; the header shows the full orchestration reason.
 fn run_state(run: &RunView) -> String {

@@ -188,7 +188,10 @@ fn trace_reads_are_bounded_and_do_not_replace_a_newer_run_or_inspector() {
             .collect(),
         ..Default::default()
     };
-    reply(&mut model, Data::Window(window, "history".into(), 0));
+    reply(
+        &mut model,
+        Data::Window(Box::new(window), "history".into(), 0),
+    );
     assert_eq!(
         model
             .commands
@@ -225,11 +228,11 @@ fn trace_reads_are_bounded_and_do_not_replace_a_newer_run_or_inspector() {
         tag: old,
         run: Some(RunId::new("simulation").unwrap()),
         data: Data::Window(
-            Window {
+            Box::new(Window {
                 total: 100,
                 location: Some((40, 3)),
                 ..Default::default()
-            },
+            }),
             "stale navigation".into(),
             10,
         ),
@@ -292,7 +295,7 @@ fn session_chooser_locates_a_cold_target_and_reconnect_uses_stable_sequence() {
     window.location = Some((80, target.row));
     reply(
         &mut h.state_mut().model,
-        Data::Window(window, "complete".into(), 0),
+        Data::Window(Box::new(window), "complete".into(), 0),
     );
     h.run_steps(30);
     let before = h.get_by_label("Inspect source 80").rect().top();
@@ -302,7 +305,7 @@ fn session_chooser_locates_a_cold_target_and_reconnect_uses_stable_sequence() {
     reply(
         &mut h.state_mut().model,
         Data::Window(
-            transcript.window(View::Readable, 5, 20),
+            Box::new(transcript.window(View::Readable, 5, 20)),
             "new session".into(),
             1,
         ),
@@ -483,7 +486,7 @@ fn a_pending_session_jump_uses_the_latest_history_window() {
         located.location = Some((300, target.row));
         reply(
             &mut h.state_mut().model,
-            Data::Window(located, "located".into(), 0),
+            Data::Window(Box::new(located), "located".into(), 0),
         );
         // Both replies are applied before the UI renders. Earlier sessions move
         // Session 30 from row 5 to row 29; the old absolute position is invalid.
@@ -496,7 +499,7 @@ fn a_pending_session_jump_uses_the_latest_history_window() {
         reply(
             &mut h.state_mut().model,
             Data::Window(
-                transcript.window(View::Readable, start, 20),
+                Box::new(transcript.window(View::Readable, start, 20)),
                 "backfilled".into(),
                 0,
             ),
@@ -516,7 +519,7 @@ fn a_pending_session_jump_uses_the_latest_history_window() {
             located.location = Some((300, target.row));
             reply(
                 &mut h.state_mut().model,
-                Data::Window(located, "relocated".into(), 0),
+                Data::Window(Box::new(located), "relocated".into(), 0),
             );
             h.run_steps(20);
         }

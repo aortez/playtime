@@ -45,6 +45,7 @@ reserved-command explanations, and local receipt listing work offline.
 | `runs list`; `runs show ID`; `runs wait ID` | One page / detailed run view / outcome-sensitive observation |
 | `runs cancel ID [--wait]` | Cancellation intent, optionally await quiescence and cleanup |
 | `runs release ID --reason TEXT` | Operator release of an interrupted or failed run; refused with what remains |
+| `runs report ID [--limit N]` | The run's records totalled, as Markdown or typed with `--format json`; see [run reports](#run-reports) |
 | `events ID [--cursor CURSOR \| --cursor-file FILE] [--limit N] [--all \| --follow]` | Fixed-frontier page by default; all keeps that frontier, follow observes later commits |
 | `checkpoints list ID`; `checkpoints show ID SESSION` | Published checkpoint metadata and content references |
 | `artifacts list ID`; `artifacts show ID ARTIFACT` | Published/frozen-content catalog and metadata |
@@ -53,8 +54,9 @@ reserved-command explanations, and local receipt listing work offline.
 All list commands support `--cursor` and `--limit` (1–1,000, default 200).
 Local receipt listing uses a key cursor; HTTP cursors remain opaque. Only events
 supports all/follow. Unsupported modes fail visibly. Reserved prepare/check/smoke,
-report, repeat/pilot, serve/worker commands explain their owning migration issues
-and exit 6. See [the command map](rust-compatibility.md#rust-cli-command-map).
+top-level report (the Python HTML report), repeat/pilot, serve/worker commands
+explain their owning migration issues and exit 6. See
+[the command map](rust-compatibility.md#rust-cli-command-map).
 
 ## Shared connection resolution
 
@@ -213,6 +215,41 @@ No local filename is derived from model-controlled metadata. Ordinary failures
 remove staging; abrupt process death may leave a `.part` file. An interrupted HTTP
 body can be a transport failure before the digest comparison is possible; it is
 still never published as a successful download.
+
+## Run reports
+
+`playtime runs report RUN_ID` totals a run's records the way the workbench's
+Results tab does, from the same accumulator (`playtime_client::report`): time
+in model requests by purpose; model calls with their median and longest
+durations, tokens and rates, and the calls with unknown usage, never
+dispatched or still open; model errors by kind with the longest parse streak;
+tool calls by name with their failures; compactions; sessions; and the final
+workspace. It reads every event page as of the frontier the first page fixes
+(`--limit` sets the page size; the service's default otherwise, since a long
+run's thousand-record pages can outlast the handler deadline), within the
+workbench's bounds (open calls, durations per purpose, error kinds, tool
+names, failure messages and compaction times are capped, with the overflow
+counted), then lists the final workspace: an ended continuous run's final
+capture from its artifact listing, or a memento run's last published
+checkpoint, counted by kind. The run has ended when the service reports it
+terminal or its archive records its end, as the workbench reads it. A run
+that hasn't ended reports its totals so far, with open calls in progress and
+its latest workspace. If the listing can't be read, the report is still
+written and the command fails with the listing's error.
+
+Text output is Markdown: a heading with the run, a line with its state,
+outcome, recipe, mode and the records counted, then a heading per section
+with a line per total. Besides control characters, the link, image and HTML
+punctuation of archive-sourced text (tool names, error kinds, failure
+messages) is escaped, so a name or message a model chose can't embed a link,
+an image or a tag. `--format json` carries the run view (`run`), the records
+counted (`records`), the typed totals (`report`: `calls` and `tools` are
+always present; `time`, `errors`, `compactions`, `sessions` and `workspace`
+once something counts toward them; the first record's sequence wherever a
+count can be located), the workspace listing (`files`) and the worded
+sections (`summary`). A rate or median is left out rather than guessed, and
+nothing reads model text as evidence. The reserved top-level `report`
+command is the Python HTML report's migration (#26), not this.
 
 ## Test bed and gates
 

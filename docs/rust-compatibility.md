@@ -1247,3 +1247,64 @@ zero and nonzero measured counts, recovery, repeated compaction and archive
 accounting. Existing healthy compaction and memento goldens do not change.
 The native capability digest includes the usage contract and new reviewed model
 lock; paired daemon/worker rebuilds are required. Recipe limits do not change.
+
+## The workbench totals a run's results (2026-11-02)
+
+After each real run the operator summed the archive by hand: time in model
+requests by purpose, calls with their durations and rates, errors by kind,
+tool failures by message, compactions and the final files. The workbench now
+keeps those totals in its transcript index, next to the progress tracker, and
+shows them on a new **Results** inspector tab, which a run opens on. Each
+count links to the first record it counts. The totals stay bounded (open
+calls, durations per purpose, error kinds, tool names, failure messages and
+compaction times each have a cap, with the overflow counted) and appear only
+once earlier history has loaded, so a partial load never reads as a total. A
+call counts when its request and its settlement are both indexed; the
+settlement's time, which the controller records with the response or error,
+bounds the call, and the time of calls settled with unknown usage is reported
+as such rather than attributed to errors. A request the controller never
+dispatched counts as such, and a memento request whose payload is retained
+elsewhere, with its handoff flag, counts on a line of its own rather than as
+work. The workspace size is the latest captured until the run has ended, and
+an ended continuous run without a final capture says so rather than listing
+an empty workspace. A rate or median is left out, never guessed.
+
+Run rows add a line under the state: an ended run's stop reason, tokens
+charged and cleanup, and a running run's tokens so far, from the run view
+alone. Rows are taller for it.
+
+No archive bytes, API or goldens change. The reviewed screenshots changed on
+every screen with a run list (the row line) and every run view (the tab); the
+three results views are new baselines.
+
+## `playtime runs report` totals a run (2026-11-02)
+
+The totals behind the workbench's Results tab moved to a shared accumulator
+in `playtime-client` (`report`), fed by the workbench from its transcript
+index and by the CLI from a run's event pages, so both word a run the same
+way. `playtime runs report RUN_ID` reads every record of the run as of the
+frontier its first page fixes, totals them within the workbench's bounds,
+then lists the final workspace: an ended continuous run's final capture from
+its artifact listing, or a memento run's last published checkpoint. Its text
+output is Markdown, a heading per section with a line per total, with the
+link, image and HTML punctuation of archive-sourced text escaped; `--format
+json` adds the typed totals (`report`), the listing (`files`), the run view
+and the records counted next to the worded sections (`summary`). The run has
+ended when the service reports it terminal or its archive records its end. A
+run that hasn't ended reports its totals so far, with open calls in progress
+and its latest workspace. The reserved top-level `report` command (#26, the
+Python HTML report) is unchanged.
+
+Reporting the Framework hour run in sequence order found a defect in the
+accumulator the Results tab shipped with: the continuous format records a
+settlement fact a few records after the observation that settles the call,
+and in sequence order that fact opened a second, phantom call, read as a
+settled call without a recorded request. The workbench loads history latest
+page first, which paired the records by luck; a run watched live from its
+start would have shown the line. The accumulator now remembers the last
+1,024 settled calls, so a late usage record adds the usage the call still
+lacks (its observation omitted by the controller log limit) or nothing.
+
+The number words both clients use (counts, sizes, durations, excerpts) live
+in `playtime-client` too (`words`). No archive bytes, API or goldens change,
+and the workbench's wording and screenshots are unchanged.

@@ -6,6 +6,7 @@ use crate::{
 use playtime_client::{
     Client,
     config::{self, Environment},
+    report::{Listing, ListingSource, Totals, Update},
     state::{LaunchReceipt, ReceiptStore},
 };
 use playtime_core::RunId;
@@ -16,6 +17,8 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 pub type Recovery = Arc<Mutex<Option<Value>>>;
+/// Artifact or checkpoint pages read for a report's workspace listing.
+const LISTING_PAGES: usize = 64;
 pub async fn blocking<T: Send + 'static>(
     task: impl FnOnce() -> Result<T, Failure> + Send + 'static,
 ) -> Result<T, Failure> {
@@ -162,6 +165,101 @@ impl Context {
         }
         self.output.emit("result", result).await?;
         Ok(exit)
+    }
+    /// Totals every record of the run, as of the frontier its first page
+    /// fixes, then lists its final workspace. The run has ended when the
+    /// service reports it terminal or its archive records its end, as the
+    /// workbench reads it.
+    async fn report(&self, id: &RunId, limit: Option<u32>) -> Result<i32, Failure> {
+        let view = self.client.run(id).await?;
+        let mut totals = Totals::default();
+        let mut records = 0u64;
+        // The service's default page keeps each read inside its handler
+        // deadline; a long run's thousand-record pages can take longer.
+        let mut query = PageQuery {
+            cursor: None,
+            limit,
+        };
+        loop {
+            let page = self.client.history(id, &query).await?;
+            for event in &page.events {
+                totals.apply(event.sequence.get(), Update::decode(event)?);
+                records += 1;
+            }
+            if !page.has_more {
+                break;
+            }
+            query.cursor = page.next_cursor;
+        }
+        let ended = view.orchestration.state == OrchestrationState::Terminal || totals.finished();
+        let report = totals.report(true, ended);
+        let mut results = report.results();
+        // The totals took the longest, so they are written before a listing
+        // failure fails the command.
+        let listing = self.listing(&view, ended).await;
+        let files = listing.as_ref().ok().cloned().flatten();
+        if let Some(listing) = &files {
+            results.list_workspace(ended, listing);
+        }
+        self.output
+            .emit(
+                "result",
+                json!({"run":view,"records":records,"report":report,"files":files,"summary":results.sections}),
+            )
+            .await?;
+        listing.map(|_| 0)
+    }
+    /// The final workspace's files: an ended continuous run's final capture,
+    /// or a memento run's last published checkpoint once its whole
+    /// checkpoint list is in hand. A continuous run still going has none.
+    async fn listing(&self, view: &RunView, ended: bool) -> Result<Option<Listing>, Failure> {
+        let continuous = view
+            .harness
+            .as_ref()
+            .is_some_and(|harness| harness.harness.compaction.is_some());
+        let mut query = PageQuery {
+            cursor: None,
+            limit: Some(200),
+        };
+        if continuous {
+            if !ended {
+                return Ok(None);
+            }
+            let mut listing = Listing::new(ListingSource::FinalCapture);
+            listing.incomplete = true;
+            for _ in 0..LISTING_PAGES {
+                let page = self.client.artifacts(&view.run_id, &query).await?;
+                for artifact in page
+                    .items
+                    .iter()
+                    .filter(|a| a.session_id.is_none() && a.kind == "file_version")
+                {
+                    listing.add(&artifact.name, Some(artifact.content.size_bytes));
+                }
+                if page.next_cursor.is_none() {
+                    listing.incomplete = false;
+                    break;
+                }
+                query.cursor = page.next_cursor;
+            }
+            return Ok(Some(listing));
+        }
+        let mut last: Option<Checkpoint> = None;
+        for _ in 0..LISTING_PAGES {
+            let page = self.client.checkpoints(&view.run_id, &query).await?;
+            for checkpoint in page.items {
+                if last.as_ref().is_none_or(|last| {
+                    checkpoint.checkpoint.published_sequence > last.checkpoint.published_sequence
+                }) {
+                    last = Some(checkpoint);
+                }
+            }
+            if page.next_cursor.is_none() {
+                return Ok(last.as_ref().map(Listing::from_checkpoint));
+            }
+            query.cursor = page.next_cursor;
+        }
+        Ok(None)
     }
     async fn events(&self, args: &Events) -> Result<i32, Failure> {
         let cwd = std::env::current_dir().map_err(|_| {
@@ -375,6 +473,7 @@ pub async fn execute(
         Command::Runs(Runs::Show { run_id }) => {
             output.emit("result", ctx.client.run(run_id).await?).await?
         }
+        Command::Runs(Runs::Report { run_id, limit }) => return ctx.report(run_id, *limit).await,
         Command::Runs(Runs::Wait { run_id }) => return ctx.wait(run_id, false).await,
         Command::Runs(Runs::Cancel { run_id, wait }) => {
             let reply = ctx.client.cancel(run_id).await?;
