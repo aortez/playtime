@@ -253,7 +253,7 @@ and [development](development.md).
 | Model adapter `--endpoint` is an Ollama endpoint | Rust `--endpoint` is the Playtime HTTP service, paired with `--token-file`; no model connection occurs in the client |
 | Browser control and worker status through `serve` | `service status`, catalog/preview, runs, events, checkpoints, and artifacts use the authenticated versioned API served by `playtimed` |
 | Stop the owned foreground experiment | SIGINT/SIGTERM only detach the Rust observer; use `runs cancel ID [--wait]` to request service cancellation |
-| Inspect local run folders/reports | Rust inspects opaque run/session/artifact IDs through the API and verifies explicit downloads; it never opens the service's run folders |
+| Inspect local run folders/reports | Rust inspects opaque run/session/artifact IDs through the API and verifies explicit downloads; it never opens the service's run folders. `runs download` saves a run's final workspace through the API, verified file by file |
 | `prepare`, `check`, `smoke` | Reserved, exit 6 with #23/#24 ownership; simulation does not prove real Docker smoke |
 | `report` | Reserved, exit 6; #26 |
 | `repeat`, `pilot-prepare`, `pilot-run` | Reserved, exit 6; #27 |
@@ -1379,3 +1379,36 @@ identity matches the existing compiled capability review. Stock-version candidat
 behavior is unchanged. A metadata-only regression covers successful registration
 and rejection after version, name, digest or definition drift; it performs no
 inference. No wire/schema, worker capability or existing golden changes.
+
+## `playtime runs download` saves a run's final workspace (2026-11-02)
+
+Collecting a run's final files took a script: page the artifact listing,
+pick the final capture's or the last checkpoint's file versions, download
+each by artifact ID to a numbered file and keep an index of which was which.
+`playtime runs download RUN_ID --output DIR [--session SESSION] [--force]`
+does that through the shared client (`playtime_client::workspace`): it
+resolves the final workspace that `runs report` lists, from the final
+capture's index (downloaded and decoded as a checkpoint's is, with each
+retained file matched to the listed artifact holding its content) or from
+the checkpoint's file list, and saves each retained file as a single
+verified download is saved: staged beside its destination, verified, then
+published.
+
+The saved names are the workspace's own, which the model chose. Until now no
+local filename came from model-controlled metadata; this command takes the
+names under a policy instead of sanitizing them: a name is a relative path
+without an empty, `.` or `..` component, a control character or a
+backslash, with components of at most 255 bytes and at most 1,024 in all,
+and any other name is refused, its content still downloadable by artifact
+ID. The directories a name lists are created private as needed and opened
+without following a link at any level, so a link planted among them, or at
+the name, is never written through, even with `--force`, and is reported as
+blocking the file, as a directory or special file at the name or a file
+where the name needs a directory is; saved files are private (0600)
+whatever the archived mode. An existing file is left alone without
+`--force`, which replaces regular files only. Content the archive didn't
+retain is listed as unavailable with its reason and isn't a failure; a
+refused name, a blocked entry, an existing file or a failed download is,
+with the first such file's exit code after every file was tried. The result
+lists each file with its status, path and verified bytes or its reason or
+error. No archive bytes, API or goldens change.

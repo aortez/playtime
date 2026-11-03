@@ -10,12 +10,13 @@ pub mod recipes;
 pub mod report;
 pub mod state;
 pub mod words;
+pub mod workspace;
 pub use events::{EventStream, Follow, Observation, ObservedRecord, RetryPolicy};
 pub use playtime_local::{Token, read_connection};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use playtime_core::{RunId, SessionId};
-use playtime_protocol::{api::*, events::decode_event, v1::ErrorResponse};
+use playtime_protocol::{api::*, archive::ContentRef, events::decode_event, v1::ErrorResponse};
 use reqwest::{
     Method, Response, Url,
     header::{self, HeaderValue},
@@ -608,7 +609,26 @@ impl Client {
         destination: &mut W,
         cancel: &CancellationToken,
     ) -> Result<u64> {
-        if artifact.content.size_bytes > self.limits.artifact_bytes {
+        self.download_content(
+            id,
+            &artifact.artifact_id,
+            &artifact.content,
+            destination,
+            cancel,
+        )
+        .await
+    }
+    /// The verified bytes of the artifact the caller knows to hold `content`:
+    /// the reply's length and digest, and the bytes', must be the reference's.
+    pub(crate) async fn download_content<W: AsyncWrite + Unpin>(
+        &self,
+        id: &RunId,
+        artifact: &ArtifactId,
+        content: &ContentRef,
+        destination: &mut W,
+        cancel: &CancellationToken,
+    ) -> Result<u64> {
+        if content.size_bytes > self.limits.artifact_bytes {
             return Err(Error::LimitExceeded);
         }
         let deadline = Instant::now() + Duration::from_secs(self.limits.handler_seconds);
@@ -616,7 +636,7 @@ impl Client {
             let mut response = self
                 .request(
                     Method::GET,
-                    &format!("runs/{id}/artifacts/{}/content", artifact.artifact_id),
+                    &format!("runs/{id}/artifacts/{artifact}/content"),
                 )
                 .send()
                 .await
@@ -625,13 +645,13 @@ impl Client {
             if !response.status().is_success() {
                 return read_json::<u64>(response, self.limits.json_bytes).await;
             }
-            let hash = artifact.content.sha256.as_str();
+            let hash = content.sha256.as_str();
             let digest_bytes: Vec<_> = (0..64)
                 .step_by(2)
                 .map(|i| u8::from_str_radix(&hash[i..i + 2], 16).unwrap())
                 .collect();
             let expected_digest = format!("sha-256=:{}:", STANDARD.encode(digest_bytes));
-            if response.content_length() != Some(artifact.content.size_bytes)
+            if response.content_length() != Some(content.size_bytes)
                 || response
                     .headers()
                     .get("x-playtime-sha256")
@@ -656,13 +676,13 @@ impl Client {
                 count = count
                     .checked_add(bytes.len() as u64)
                     .ok_or(Error::LimitExceeded)?;
-                if count > self.limits.artifact_bytes || count > artifact.content.size_bytes {
+                if count > self.limits.artifact_bytes || count > content.size_bytes {
                     return Err(Error::LimitExceeded);
                 }
                 hasher.update(&bytes);
                 destination.write_all(&bytes).await.map_err(|_| Error::Io)?;
             }
-            if count != artifact.content.size_bytes
+            if count != content.size_bytes
                 || hasher
                     .finalize()
                     .iter()

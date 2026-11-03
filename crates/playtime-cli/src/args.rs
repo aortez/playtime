@@ -172,6 +172,21 @@ pub enum Runs {
         #[arg(long, value_parser = clap::value_parser!(u32).range(1..=1000))]
         limit: Option<u32>,
     },
+    /// Save the run's final workspace, or a published checkpoint's, under a
+    /// directory: each retained file verified and written under its name.
+    Download {
+        #[arg(value_parser = run_id)]
+        run_id: RunId,
+        /// The directory to save under; created when missing.
+        #[arg(long)]
+        output: PathBuf,
+        /// A published checkpoint's files instead of the final workspace.
+        #[arg(long, value_parser = session_id)]
+        session: Option<SessionId>,
+        /// Replace existing regular files, never links or directories.
+        #[arg(long)]
+        force: bool,
+    },
     Wait {
         #[arg(value_parser = run_id)]
         run_id: RunId,
