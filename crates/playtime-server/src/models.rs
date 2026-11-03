@@ -211,7 +211,9 @@ impl ModelBrowser {
         } else if value.definition_sha256.is_none() {
             value.reason =
                 Some("Identity metadata is incomplete; candidate remains unverified".into());
-        } else if value.backend_version != playtime_ollama::Profile::VERSION {
+        } else if value.backend_version != playtime_ollama::Profile::VERSION
+            && reviewed_capabilities(&value).is_none()
+        {
             value.reason = Some("Backend version is not reviewed for execution".into());
         } else if let Some(show) = &detail.show {
             if let Some(caps) = show
