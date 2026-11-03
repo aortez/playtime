@@ -445,3 +445,77 @@ concrete next system task is preserving backend usage on parser errors, with an
 explicit failure/accounting contract and regression coverage. Separate model
 work should measure failure avoidance and summary claims against observations;
 a successful write or a model-generated summary is not artifact verification.
+
+## Parser-error usage repair, 2026-11-03
+
+The owner approved implementing the usage-reporting fix after the prior native
+acceptance failure. The patch in
+[`ollama-parser-error-usage-v1.patch`](ollama-parser-error-usage-v1.patch) applies
+to the pinned Ollama v0.32.3 source. It preserves terminal measurements through
+Harmony argument rejection and the generic stream error writer. The latter also
+previously discarded all fields except `error`. A terminal rejection remains an
+error with no assistant message or dispatchable tool calls. Nonterminal errors
+and unrelated failures receive no invented measurements.
+
+The Go binary identifies itself as `0.32.3-playtime-usage-v1`; its SHA-256 is
+`60356f8f5561bea941a1e76b3e8c4fddb80742e2e083fc836a64f7ff95222fa9`.
+It was built with Go 1.26.8, installed alongside the original binary, and uses
+the unchanged installed native Vulkan payload. A separate GPT-OSS 120B lock
+keeps the original model digest/definition and explicitly selects that backend
+version. Old locks and archived inputs are unchanged. Candidate validation uses
+a bounded transient service on Framework port 11436 and an SSH tunnel on local
+port 11437 while the idle stock service is stopped.
+
+Playtime's adapter validates the versioned terminal error envelope and passes
+measured usage separately from the failed response. The controller settles it
+once, preserves the error/retry behavior and executes no rejected tools. The
+new failure-history version 3 preserves whether that request was known or
+unknown through later compactions. CPU cases cover zero, 405 tokens, missing or
+invalid counts, identity mismatch, duplicate records, late completion,
+accounting overflow, allocation overrun, actual worker-to-archive accounting,
+and both work and summary failures across repeated compaction.
+
+Evidence is under `/home/data2/playtime/parse-usage-20261103`. The backend's
+server/Harmony tests passed, as did formatting, workspace Clippy, 648 default
+Rust tests, 90 feature-gated engine tests, 13 workspace-probe tests, and the
+frozen Python suite (101 tests, six skips). Package checks and real scripted
+service/worker-loss checks passed. `continuous-bfc04386f943` passed 15 scripted
+compactions and final capture. The stock-backend live CLI/UI gate on Framework
+also passed (`20261103T031414Z-11047334`, 493 known tokens, followed by workbench
+run `20261103T031441Z-8804d504`). This checks backward compatibility separately
+from the patched-backend inference evidence below.
+
+Both captured requests reproduced malformed arguments with the patched backend.
+Their native llama.cpp counts, outer Ollama counts and Playtime adapter counts
+agreed exactly: 526 tokens for `r190` and 1,007 for `r234`. The malformed argument
+bytes were present in the native output and independently rejected as JSON.
+The outgoing request bodies matched the stock replay byte-for-byte. Complete
+HTTP/TCP records had no gaps or dropped packets. These diagnostic replays had no
+executor; `boundary-verified.json` records the three-way count comparison.
+
+The patched Framework native gate then **passed** as
+`continuous-65731f16b03f`. It completed stage 48, two compactions, final capture
+and cleanup. Two rejected model calls (`r22`, 476 tokens; `r46`, 52 tokens)
+recovered with known usage. Total usage was 6,369 known tokens: 5,841 from
+successful responses and 528 from rejected responses, with zero unknown
+requests or reserves. `native-proof.json` verifies the event prefix against the
+captured worker receipt, error counts against raw terminal responses, no tool
+dispatch for either rejected request, retained-history references, and the
+final capture hashes and `continuity-ok` file. Native evidence is retained at
+`/home/data2/pt/pc.ZBPwC5AF/run`.
+
+After validation, the isolated service and temporary tunnel were stopped and
+the original `ollama.service` restored. Its API again reports `0.32.3`, and both
+installed binary hashes are unchanged. The candidate remains available beside
+the original installation. The next hour requires explicit selection of the
+patched backend and new lock with matching daemon/worker builds; existing saved
+definitions are not silently migrated. No new hour experiment was launched in
+this repair step. Malformed model calls and unsupported summary claims remain
+model-quality issues; this repair preserves their measured cost and evidence.
+
+A diagnostic build accidentally reused the previous investigation's mutable
+Cargo target directory and overwrote its compiled replay executable. The old
+execution hash, source, Cargo lock, inputs, raw HTTP/PCAP and result files remain;
+`pipeline-reliability-20261103/provenance-addendum-20261103.json` explicitly records
+that the old binary itself is no longer retained. Subsequent replay builds use
+the new evidence directory. No archived experiment or raw measurement changed.

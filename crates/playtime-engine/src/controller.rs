@@ -533,7 +533,10 @@ impl<I: IdSource> Controller<I> {
                 | (EffectKind::StartSession { .. }, Outcome::Started(_))
                 | (
                     EffectKind::Model(_),
-                    Outcome::Model(_) | Outcome::ModelCompleted { .. } | Outcome::ModelError(_)
+                    Outcome::Model(_)
+                        | Outcome::ModelCompleted { .. }
+                        | Outcome::ModelError(_)
+                        | Outcome::ModelParseError { .. }
                 )
                 | (EffectKind::Tool(_), Outcome::Tool(_))
                 | (EffectKind::Snapshot { .. }, Outcome::Snapshot(_))
@@ -1043,38 +1046,15 @@ impl<I: IdSource> Controller<I> {
             self.model_error(ModelFailure::Parse("invalid assistant message".into()));
             return;
         }
-        if self
-            .totals
-            .record(GenerationUsage::Known {
-                generated_tokens: tokens,
-            })
-            .is_err()
-        {
-            self.emit(
-                "model_usage_overflow",
-                json!({"reported_generated_tokens": tokens, "call": self.model_calls}),
-            );
-            self.diagnostic("server generation cannot be represented in cumulative u64 usage; allowance retained as unknown");
-            self.stop(StopReason::TokenLimitExceededByServer);
+        if !self.settle_known(tokens) {
             return;
         }
-        self.reservation = None;
-        self.account_model_time();
-        self.control(ControlFact::RequestSettled {
-            request: self.request_context.clone().unwrap(),
-            usage: GenerationUsage::Known {
-                generated_tokens: tokens,
-            },
-            totals: self.totals.into(),
-        });
         // A summary that settles can still be rejected below, and that
         // rejection counts toward the same streak as an unparseable one, so
         // only an accepted summary ends a summary streak.
         if request.purpose != RequestPurpose::Compaction {
             self.parse_streak = 0;
         }
-        self.emit("request_settled", json!({"call": self.model_calls,
-            "usage": GenerationUsage::Known { generated_tokens: tokens }, "totals": UsageSummary::from(self.totals)}));
         self.emit(
             "model_response",
             json!({"call": self.model_calls, "response": response}),
@@ -1202,10 +1182,50 @@ impl<I: IdSource> Controller<I> {
         }
     }
 
+    fn settle_known(&mut self, tokens: u64) -> bool {
+        if self
+            .totals
+            .record(GenerationUsage::Known {
+                generated_tokens: tokens,
+            })
+            .is_err()
+        {
+            self.emit(
+                "model_usage_overflow",
+                json!({"reported_generated_tokens": tokens, "call": self.model_calls}),
+            );
+            self.diagnostic("server generation cannot be represented in cumulative u64 usage; allowance retained as unknown");
+            self.stop(StopReason::TokenLimitExceededByServer);
+            return false;
+        }
+        self.reservation = None;
+        self.account_model_time();
+        self.control(ControlFact::RequestSettled {
+            request: self.request_context.clone().unwrap(),
+            usage: GenerationUsage::Known {
+                generated_tokens: tokens,
+            },
+            totals: self.totals.into(),
+        });
+        self.emit("request_settled", json!({"call": self.model_calls,
+            "usage": GenerationUsage::Known { generated_tokens: tokens }, "totals": UsageSummary::from(self.totals)}));
+        true
+    }
+
     fn model_error(&mut self, error: ModelFailure) {
+        self.model_error_with_usage(error, None);
+    }
+
+    fn model_error_with_usage(&mut self, error: ModelFailure, generated_tokens: Option<u64>) {
         self.pending = None;
-        let charge = self.reserved_tokens();
-        self.settle_unknown();
+        let charge = generated_tokens.unwrap_or_else(|| self.reserved_tokens());
+        if let Some(tokens) = generated_tokens {
+            if !self.settle_known(tokens) {
+                return;
+            }
+        } else {
+            self.settle_unknown();
+        }
         if matches!(error, ModelFailure::Parse(_)) {
             self.parse_errors += 1;
             self.session_parse_errors += 1;
@@ -1216,20 +1236,30 @@ impl<I: IdSource> Controller<I> {
         ) {
             self.parse_streak += 1;
         }
-        let decision = self.policy.recovery(
-            View {
-                config: &self.config,
-                facts: self.facts(),
-            },
-            &error,
-        );
+        let decision = if generated_tokens.is_some()
+            && self.totals.budget_charged_tokens()
+                > self.config.parameters.limits.generated_tokens.get()
+        {
+            Recovery::Stop(StopReason::TokenLimitExceededByServer)
+        } else {
+            self.policy.recovery(
+                View {
+                    config: &self.config,
+                    facts: self.facts(),
+                },
+                &error,
+            )
+        };
         let recovery = matches!(decision, Recovery::Retry { .. });
-        let sequence = self.emit(
-            "model_error",
-            json!({"error": error, "recovery_allowed": recovery,
+        let mut record = json!({"error": error, "recovery_allowed": recovery,
             "token_budget_charge": charge, "consecutive_errors": self.parse_streak,
-            "tool_parse_errors": self.parse_errors, "usage": UsageSummary::from(self.totals)}),
-        );
+            "tool_parse_errors": self.parse_errors, "usage": UsageSummary::from(self.totals)});
+        if let Some(tokens) = generated_tokens {
+            record["request_usage"] = json!(GenerationUsage::Known {
+                generated_tokens: tokens
+            });
+        }
+        let sequence = self.emit("model_error", record);
         if let (Some(sequence), Some(request)) = (sequence, self.request_context.as_ref()) {
             self.policy.model_error(
                 request,
@@ -1238,6 +1268,7 @@ impl<I: IdSource> Controller<I> {
                     sequence,
                     elapsed_ms: self.now_ms - self.started_ms,
                     reserved_tokens: charge,
+                    generated_tokens,
                     recovery_allowed: recovery,
                 },
             );
@@ -1526,6 +1557,13 @@ impl<I: IdSource> Controller<I> {
                 },
             ) => self.model_response(request, response, Some(&finish_reason)),
             (EffectKind::Model(_), Outcome::ModelError(error)) => self.model_error(error),
+            (
+                EffectKind::Model(_),
+                Outcome::ModelParseError {
+                    detail,
+                    generated_tokens,
+                },
+            ) => self.model_error_with_usage(ModelFailure::Parse(detail), Some(generated_tokens)),
             (EffectKind::Tool(_), Outcome::Tool(result)) => self.tool_result(result),
             (EffectKind::Snapshot { .. }, Outcome::Snapshot(mut snapshot)) => {
                 self.active = false;

@@ -1,0 +1,183 @@
+--- a/server/routes.go
++++ b/server/routes.go
+@@ -2102,7 +2102,7 @@
+ 		// an optional "status" field.  For errors that are streamed
+ 		// before any content, we need to set the status code and
+ 		// content type for the error.
+-		if h, ok := val.(gin.H); ok {
++		if h, ok := val.(gin.H); ok && h["playtime_error_usage"] != 1 {
+ 			if e, ok := h["error"].(string); ok {
+ 				status, ok := h["status"].(int)
+ 				if !ok {
+@@ -2419,7 +2419,11 @@
+ 					status = http.StatusInternalServerError
+ 				}
+ 
+-				c.JSON(status, gin.H{"error": msg})
++				if t["playtime_error_usage"] == 1 {
++					c.JSON(status, t)
++				} else {
++					c.JSON(status, gin.H{"error": msg})
++				}
+ 				return
+ 			default:
+ 				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
+@@ -2812,7 +2816,7 @@
+ 
+ 					content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
+ 					if err != nil {
+-						ch <- gin.H{"error": err.Error()}
++						ch <- chatParserError(err, res)
+ 						return
+ 					}
+ 
+--- /dev/null
++++ b/server/parser_error_usage.go
+@@ -0,0 +1,30 @@
++package server
++
++import (
++	"strings"
++
++	"github.com/gin-gonic/gin"
++	"github.com/ollama/ollama/api"
++)
++
++// Versioned local extension: a rejected tool call remains an error, but the
++// terminal inference's measurements are not discarded by argument parsing.
++// Nonterminal errors have no final count; in particular, do not invent zero.
++func chatParserError(err error, response api.ChatResponse) gin.H {
++	result := gin.H{"error": err.Error()}
++	if !response.Done || response.EvalCount < 0 || response.PromptEvalCount < 0 ||
++		!strings.HasPrefix(err.Error(), "error parsing tool call:") {
++		return result
++	}
++	result["playtime_error_usage"] = 1
++	result["model"] = response.Model
++	result["done"] = true
++	result["done_reason"] = response.DoneReason
++	result["eval_count"] = response.EvalCount
++	result["prompt_eval_count"] = response.PromptEvalCount
++	result["total_duration"] = response.TotalDuration
++	result["load_duration"] = response.LoadDuration
++	result["prompt_eval_duration"] = response.PromptEvalDuration
++	result["eval_duration"] = response.EvalDuration
++	return result
++}
+--- /dev/null
++++ b/server/parser_error_usage_test.go
+@@ -0,0 +1,114 @@
++package server
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/ollama/ollama/api"
++	"github.com/ollama/ollama/llm"
++	"github.com/ollama/ollama/ml"
++)
++
++func TestChatParserErrorUsage(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	for _, stream := range []bool{true, false} {
++		for _, tokens := range []int{0, 405} {
++			t.Run(fmtName(stream, tokens), func(t *testing.T) {
++				mock := mockRunner{CompletionFn: func(ctx context.Context, request llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
++					fn(llm.CompletionResponse{Content: `<|channel|>commentary to=functions.calculate<|message|>{"expression":"2+2"]`, Done: true, EvalCount: tokens, PromptEvalCount: 123})
++					return nil
++				}}
++				s := Server{
++					sched: &Scheduler{
++						pendingReqCh:    make(chan *LlmRequest, 1),
++						finishedReqCh:   make(chan *LlmRequest, 1),
++						expiredCh:       make(chan *runnerRef, 1),
++						unloadedCh:      make(chan any, 1),
++						loaded:          make(map[string]*runnerRef),
++						newServerFn:     newMockServer(&mock),
++						getGpuFn:        getGpuFn,
++						getSystemInfoFn: getSystemInfoFn,
++						waitForRecovery: 100 * time.Millisecond,
++						loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
++							req.successCh <- &runnerRef{
++								llama: &mock,
++							}
++							return false
++						},
++					},
++				}
++
++				go s.sched.Run(t.Context())
++
++				// Create a simple test model
++				_, digest := createHarmonyTestModel(t)
++
++				streamFalse := false
++				w := createRequest(t, s.CreateHandler, api.CreateRequest{
++					Model:    "harmony-test-error-usage",
++					Files:    map[string]string{"test.gguf": digest},
++					Template: `<|start|><|end|>{{ with .Tools }}{{ end }}{{ .Prompt }}`,
++					Stream:   &streamFalse,
++				})
++
++				if w.Code != 200 {
++					t.Fatalf("failed to create model: %d", w.Code)
++				}
++
++				w = createRequest(t, s.ChatHandler, api.ChatRequest{Model: "harmony-test-error-usage", Messages: []api.Message{{Role: "user", Content: "Calculate"}}, Stream: &stream, Tools: getTestTools()})
++				wantStatus := http.StatusOK
++				if !stream {
++					wantStatus = http.StatusInternalServerError
++				}
++				if w.Code != wantStatus {
++					t.Fatalf("status %d: %s", w.Code, w.Body.String())
++				}
++				var result map[string]any
++				if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
++					t.Fatal(err, w.Body.String())
++				}
++				if !strings.HasPrefix(result["error"].(string), "error parsing tool call:") || result["eval_count"] != float64(tokens) || result["prompt_eval_count"] != float64(123) || result["done"] != true || result["playtime_error_usage"] != float64(1) || result["model"] != "harmony-test-error-usage" {
++					t.Fatalf("lost terminal error usage: %#v", result)
++				}
++				if _, exists := result["message"]; exists {
++					t.Fatal("rejected tool exposed as assistant message")
++				}
++			})
++		}
++	}
++}
++
++func fmtName(stream bool, tokens int) string {
++	if stream {
++		if tokens == 0 {
++			return "stream-zero"
++		}
++		return "stream-counted"
++	}
++	if tokens == 0 {
++		return "nonstream-zero"
++	}
++	return "nonstream-counted"
++}
++
++func TestChatParserErrorWithoutFinalUsage(t *testing.T) {
++	for _, response := range []api.ChatResponse{
++		{Done: false, Metrics: api.Metrics{EvalCount: 405}},
++		{Done: true, Metrics: api.Metrics{EvalCount: -1}},
++	} {
++		result := chatParserError(errors.New("error parsing tool call: invalid JSON"), response)
++		if len(result) != 1 {
++			t.Fatalf("fabricated final usage: %#v", result)
++		}
++	}
++	result := chatParserError(errors.New("unrelated error"), api.ChatResponse{Done: true})
++	if len(result) != 1 {
++		t.Fatalf("unrelated failure given parser usage: %#v", result)
++	}
++}

@@ -28,19 +28,23 @@ use tokio::time::Instant;
 mod registered;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-fn live_model(endpoint: &str, root: &Path, name: &str) -> Result<LiveModel> {
+fn live_model(endpoint: &str, root: &Path, name: &str, backend: &str) -> Result<LiveModel> {
     // Explicit reviewed identity, not a fixture backend. The real worker checks
     // its metadata before every call. The service registration API is step C.
-    let (mut registered, thinking) = match name {
-        "qwen3:1.7b" => (
+    let (mut registered, thinking) = match (name, backend) {
+        ("qwen3:1.7b", playtime_ollama::Profile::VERSION) => (
             registered::qwen(),
             playtime_ollama::Thinking::Boolean(false),
         ),
-        "gpt-oss:120b" => (
+        ("gpt-oss:120b", playtime_ollama::Profile::VERSION) => (
             registered::from_lock(playtime_runner::docker::GPT_OSS_120B_MODEL_LOCK),
             playtime_ollama::Thinking::Level("high".into()),
         ),
-        _ => return Err("native smoke model must be qwen3:1.7b or gpt-oss:120b".into()),
+        ("gpt-oss:120b", playtime_ollama::Profile::ERROR_USAGE_VERSION) => (
+            registered::from_lock(playtime_runner::docker::GPT_OSS_120B_USAGE_MODEL_LOCK),
+            playtime_ollama::Thinking::Level("high".into()),
+        ),
+        _ => return Err("unsupported native smoke model/backend pair".into()),
     };
     registered.summary.registration_id =
         playtime_protocol::api::ModelRegistrationId::new("model-native-continuous")?;
@@ -72,9 +76,9 @@ fn live_model(endpoint: &str, root: &Path, name: &str) -> Result<LiveModel> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
-    if !(3..=5).contains(&args.len()) {
+    if !(3..=6).contains(&args.len()) {
         return Err(
-            "usage: continuous-native-e2e BUNDLE EVIDENCE_ROOT [OLLAMA_ENDPOINT [MODEL]]".into(),
+            "usage: continuous-native-e2e BUNDLE EVIDENCE_ROOT [OLLAMA_ENDPOINT [MODEL [BACKEND_VERSION]]]".into(),
         );
     }
     let root = PathBuf::from(&args[2]);
@@ -106,6 +110,8 @@ async fn main() -> Result<()> {
             endpoint,
             &runtime.join("live-model.lock"),
             args.get(4).map_or("qwen3:1.7b", String::as_str),
+            args.get(5)
+                .map_or(playtime_ollama::Profile::VERSION, String::as_str),
         )?)
     } else {
         None

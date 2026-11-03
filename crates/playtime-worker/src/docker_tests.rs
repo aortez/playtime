@@ -1215,3 +1215,69 @@ fn live_partial_output_is_committed_before_a_slow_response_finishes() {
         .1;
     assert!(committed_through < response, "{commits:?} {response}");
 }
+
+#[test]
+fn parser_error_usage_reaches_archive_without_dispatching_the_rejected_call() {
+    for measured in [None, Some(0), Some(405)] {
+        let mut one = native_replies();
+        let two = one.split_off(3);
+        let mut error = serde_json::json!({"error":"error parsing tool call: invalid JSON"});
+        if let Some(tokens) = measured {
+            error["model"] = serde_json::json!(playtime_ollama::Profile::MODEL);
+            error["done"] = serde_json::json!(true);
+            error["done_reason"] = serde_json::json!("stop");
+            error["playtime_error_usage"] = serde_json::json!(1);
+            error["eval_count"] = serde_json::json!(tokens);
+        }
+        let fake = ollama::Fake::new(
+            identity()
+                .into_iter()
+                .chain([ollama::response(200, format!("{error}\n").into_bytes())])
+                .chain(one)
+                .chain(identity())
+                .chain(two),
+        );
+        let (temp, port, report) = execute_with(FaultCase::None, None, Some(fake));
+        assert!(report.terminal_committed, "{:?}", report.diagnostics);
+        let result = report.result.unwrap();
+        assert_eq!(result.reason, playtime_core::StopReason::AgentFinished);
+        assert_eq!(
+            result.usage.known_generated_tokens,
+            160 + measured.unwrap_or(0)
+        );
+        assert_eq!(result.usage.unknown_requests, u64::from(measured.is_none()));
+        assert_eq!(result.usage.usage_complete, measured.is_some());
+        assert_eq!(port.bridges.load(Ordering::SeqCst), 5);
+        let records = records(&temp.0.join("archive"));
+        assert_eq!(
+            records
+                .iter()
+                .filter(|r| r.kind == "model_response")
+                .count(),
+            5
+        );
+        let error = records.iter().find(|r| r.kind == "model_error").unwrap();
+        assert_eq!(error.data["error"]["kind"], "parse");
+        if let Some(tokens) = measured {
+            assert_eq!(
+                error.data["request_usage"],
+                serde_json::json!({"status":"known","generated_tokens":tokens})
+            );
+            assert!(records.iter().any(|r| r.kind == "model_chunk"
+                && r.data["chunk"]["playtime_error_usage"] == 1
+                && r.data["chunk"]["eval_count"] == tokens));
+        }
+        let totals = ArchiveQueries::offline(temp.0.join("archive"), Default::default())
+            .unwrap()
+            .request_accounting()
+            .unwrap();
+        assert_eq!(
+            totals
+                .by_purpose
+                .values()
+                .map(|p| p.usage.known_generated_tokens)
+                .sum::<u64>(),
+            160 + measured.unwrap_or(0)
+        );
+    }
+}

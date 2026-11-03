@@ -1223,3 +1223,27 @@ the shell semantics. Recipe limits are unchanged. Existing saved definitions
 remain immutable and require their original matching runtime; new runs need a
 new selection and a matching rebuilt daemon/worker. The new image identity
 changes the native capability digest. No behavioral or schema goldens change.
+
+## Measured usage on rejected tool calls (2026-11-03)
+
+The owner approved fixing the observed loss of 405 generated tokens between
+llama.cpp and Ollama's parser-error response. A versioned local Ollama patch
+preserves terminal metrics through both the Harmony-error and stream-writer
+paths. Its distinct `0.32.3-playtime-usage-v1` identity is selected explicitly;
+the original model locks, runtime and native inference payload remain available.
+
+The native adapter validates the terminal error envelope and passes a typed
+`ModelParseError` outcome to the controller with its measured count. This is not
+a successful assistant response. Known errors settle once, retain parse/retry
+behavior, obey the total token allocation, and never execute rejected tools.
+The full error observation carries `request_usage`; existing unknown errors keep
+their old record shape and full reservation. Overflow, cancellation, invalid
+usage and late completions cannot fabricate a count or replace a settlement.
+
+`failure-history-v3.json` versions the notice/record contract so a parse-failure
+history can carry either known generated tokens or an unknown reservation.
+Version 2 remains historical. Regression coverage checks both request purposes,
+zero and nonzero measured counts, recovery, repeated compaction and archive
+accounting. Existing healthy compaction and memento goldens do not change.
+The native capability digest includes the usage contract and new reviewed model
+lock; paired daemon/worker rebuilds are required. Recipe limits do not change.
