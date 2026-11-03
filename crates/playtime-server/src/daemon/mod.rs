@@ -922,8 +922,8 @@ impl Application for Daemon {
                 // A fixed frontier pages the records up to its position,
                 // which the current snapshot's pass validated: no pass to it.
                 Some(cursor) => {
-                    let position = position(snapshot, &cursor.frontier)?;
-                    reader.page_within(snapshot, position, after, limit)
+                    let pinned = position(snapshot, &cursor.frontier)?;
+                    reader.page_within(snapshot, pinned, after, limit)
                 }
             }
             .map_err(projection::evidence)?;

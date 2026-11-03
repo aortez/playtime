@@ -494,9 +494,9 @@ impl ArchiveReader {
     /// A page of the records up to `position`, an exact record boundary of
     /// `covering`, as `page` reads them at a snapshot there: from
     /// `after_sequence`, at most `limit` records, with the frontier at the
-    /// position. The covering pass validated those records, and the page
-    /// checks the ones it returns against its digests, as a page of the
-    /// covering snapshot does, so it takes no pass to the position. It
+    /// position. The pass that validated those records recorded their
+    /// digests, and the page checks the ones it returns against them, as a
+    /// page of the covering snapshot does, so it takes no pass to the position. It
     /// inspects nothing: what the run had recorded by the position takes a
     /// pass to it (`sub_snapshot`).
     pub fn page_within(

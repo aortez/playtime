@@ -545,35 +545,48 @@ fn pages_within_a_covering_snapshot_equal_pages_of_the_snapshot_at_the_position(
     let last = receipts.last().unwrap();
     let covering = reader.confirmed_snapshot(last).unwrap();
     // Every boundary of the covering prefix, the frontier included, pages as
-    // the snapshot there does, with that snapshot's frontier.
-    for receipt in &receipts {
-        let there = reader
-            .sub_snapshot(&covering, receipt.prefix.clone())
-            .unwrap();
-        let end = receipt.prefix.sequence as usize;
-        for after in 0..=end {
-            for limit in [1, 3, 1000] {
-                let page = reader
-                    .page_within(&covering, receipt.prefix.clone(), after as u64, limit)
-                    .unwrap();
-                let same = reader
-                    .page(&there, &there.query(after as u64, limit))
-                    .unwrap();
-                assert_eq!(page.events, same.events);
-                assert_eq!(page.frontier, same.frontier);
-                assert_eq!(page.frontier, *there.frontier());
-                assert_eq!(
-                    (page.next_after_sequence, page.has_more),
-                    (same.next_after_sequence, same.has_more)
-                );
-                let stop = end.min(after + limit as usize);
-                assert_eq!(
-                    page.events
-                        .iter()
-                        .map(|event| event.bytes.as_slice())
-                        .collect::<Vec<_>>(),
-                    fixture.events[after..stop]
-                );
+    // the snapshot there does, with that snapshot's frontier, whether the
+    // covering snapshot is kept for reads only or was continued one record
+    // at a time.
+    let reads = covering.without_continuation();
+    let continued = receipts[1..].iter().fold(
+        reader.confirmed_snapshot(&receipts[0]).unwrap(),
+        |previous, receipt| {
+            reader
+                .confirmed_snapshot_continuing(receipt, &previous)
+                .unwrap()
+        },
+    );
+    for covering in [&covering, &reads, &continued] {
+        for receipt in &receipts {
+            let there = reader
+                .sub_snapshot(covering, receipt.prefix.clone())
+                .unwrap();
+            let end = receipt.prefix.sequence as usize;
+            for after in 0..=end {
+                for limit in [1, 3, 1000] {
+                    let page = reader
+                        .page_within(covering, receipt.prefix.clone(), after as u64, limit)
+                        .unwrap();
+                    let same = reader
+                        .page(&there, &there.query(after as u64, limit))
+                        .unwrap();
+                    assert_eq!(page.events, same.events);
+                    assert_eq!(page.frontier, same.frontier);
+                    assert_eq!(page.frontier, *there.frontier());
+                    assert_eq!(
+                        (page.next_after_sequence, page.has_more),
+                        (same.next_after_sequence, same.has_more)
+                    );
+                    let stop = end.min(after + limit as usize);
+                    assert_eq!(
+                        page.events
+                            .iter()
+                            .map(|event| event.bytes.as_slice())
+                            .collect::<Vec<_>>(),
+                        fixture.events[after..stop]
+                    );
+                }
             }
         }
     }
@@ -643,6 +656,23 @@ fn pages_within_a_covering_snapshot_equal_pages_of_the_snapshot_at_the_position(
     assert_eq!(
         reader
             .sub_snapshot(&covering, receipts[3].prefix.clone())
+            .unwrap_err()
+            .code,
+        ErrorCode::ArchiveCorrupt
+    );
+    // At an interior position too: the page after the changed record
+    // succeeds, the page that returns it fails.
+    assert_eq!(
+        reader
+            .page_within(&covering, receipts[5].prefix.clone(), 2, 1000)
+            .unwrap()
+            .events
+            .len(),
+        3
+    );
+    assert_eq!(
+        reader
+            .page_within(&covering, receipts[5].prefix.clone(), 0, 1000)
             .unwrap_err()
             .code,
         ErrorCode::ArchiveCorrupt

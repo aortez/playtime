@@ -159,10 +159,11 @@ the snapshot's prefix, by sequence, byte count and running digest, from its
 pass's records; it reads nothing. A sub-snapshot requires that check, even for
 an equal cursor, and then validates the prefix up to the position in a new
 pass. `page_within` pages the records up to such a position without one: the
-covering pass validated them, and the page checks the ones it returns against
-its digests, as a page of the covering snapshot does, so a changed record
-before the position fails only a page that returns it. It inspects nothing;
-what the run had recorded by the position takes the sub-snapshot's pass.
+pass that validated them recorded their digests, and the page checks the ones
+it returns against them, as a page of the covering snapshot does, so a changed
+record before the position fails only a page that returns it, and the content
+such records reference isn't verified again. It inspects nothing; what the
+run had recorded by the position takes the sub-snapshot's pass.
 A confirmed read that must extend an earlier position checks it during its
 own full pass, at its exact byte count, by sequence and running digest. Either
 way a position inside a record or with another history is an invalid cursor.

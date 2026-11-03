@@ -1204,17 +1204,22 @@ run) rebuilt a snapshot at the cursor's frontier with a new pass over the
 whole committed prefix, hashing every record and the content it references,
 before reading the page. Reporting the Framework hour run
 `20261102T173751Z-b2f3612b` (6,478 records, 16.9 MB of events, 27 MB of
-referenced content) took 33 such passes at the default page size and 102 at
-the workbench's. The daemon now pages the records up to the cursor's position
+referenced content) took one such pass for each page after its first, 32 at
+the default page size, and the workbench, which starts from the run view's
+history cursor, 102 at its. The daemon now pages the records up to the cursor's position
 from the published evidence, whose pass validated them, through
 `ArchiveReader::page_within`; a page still checks every record it returns
 against that pass's digest and re-reads the archive descriptor and manifest,
 as a page of the current snapshot does. What a page validates changes only
-for a record before the position that the page doesn't return: a change to
-it no longer fails that page as `invalid_cursor`; it fails the page that
-returns it (`archive_corrupt`, as at the current frontier), a historical
+for a record before the position that the page doesn't return, and for the
+content such records reference: a change to either no longer fails that page
+as `invalid_cursor`. A changed record fails the page that returns it
+(`archive_corrupt`, as at the current frontier); either fails a historical
 snapshot, which checkpoint and artifact pages at an earlier frontier still
-take, and the next full confirmation pass. A checkpoint or artifact page
+take, a download of the content, and the next full confirmation pass. A
+changed archive descriptor or manifest, or a read error, on that path is
+`archive_corrupt` too, as on a first page and when following, where the
+rebuilt snapshot answered `invalid_cursor`. A checkpoint or artifact page
 whose cursor pins the published frontier is served from the published
 evidence, not a pass and a projection.
 

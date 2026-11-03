@@ -158,8 +158,9 @@ There is one coalesced refresh lane per run, a 250 ms floor, a five-second reque
 bound and failure backoff capped at five seconds. Observers share it. Cancellation
 uses its independent control lane and publishes control metadata without waiting
 for archive hashing/download capacity. Archive read jobs have four retained
-permits, including after a caller times out. Public history and downloads verify
-their pinned bytes; RunView and paired anchors come from one published snapshot.
+permits, including after a caller times out. Public history pages verify the
+records they return, and downloads their bytes; RunView and paired anchors come
+from one published snapshot.
 They read through the reader of the run's latest verification when the port has
 one. Following history checks its cursor's position in the published snapshot
 without reading the archive, and pages check each record they return against the
