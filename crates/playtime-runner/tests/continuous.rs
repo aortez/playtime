@@ -352,6 +352,23 @@ impl playtime_runner::Effects for Effects {
                             self.queue.push_back((now + 1, Input::Cancel));
                             return Ok(());
                         }
+                        4 => {
+                            // The observed High-reasoning summary exceeds both
+                            // old smoke limits, but fits the reviewed allocation.
+                            reply.response.generated_tokens = Some(3104);
+                            self.fault = 0;
+                            self.queue.push_back((
+                                now + 85000,
+                                Input::Complete {
+                                    effect_id: effect.id,
+                                    outcome: Outcome::ModelCompleted {
+                                        response: reply.response,
+                                        finish_reason: reply.finish_reason,
+                                    },
+                                },
+                            ));
+                            return Ok(());
+                        }
                         _ => {}
                     }
                 }
@@ -504,6 +521,22 @@ fn native_profile_uses_v2_compaction_evidence_and_final_capture() {
     );
     assert_eq!(completed, 1);
 }
+#[test]
+fn reasoning_summary_can_finish_beyond_the_old_token_and_time_caps() {
+    let temp = Temp::new();
+    let report = run_native(&temp, 4, Box::new(NoWriterHooks));
+    assert!(report.terminal_committed, "{:?}", report.diagnostics);
+    let result = report.result.unwrap();
+    assert_eq!(result.reason, StopReason::AgentFinished);
+    assert!(result.last_capture.is_some());
+    let queries = ArchiveQueries::offline(temp.archive(), StorageLimits::default()).unwrap();
+    let totals = queries.request_accounting().unwrap();
+    let summaries = &totals.by_purpose[&RequestPurpose::Compaction];
+    assert!(summaries.admitted_calls >= 2);
+    assert!(summaries.usage.known_generated_tokens >= 3104);
+    assert_eq!(summaries.usage.unknown_requests, 0);
+}
+
 struct LoseCapture;
 impl WriterHooks for LoseCapture {
     fn after(&mut self, context: &CommitContext, _: &CommittedFrontier) -> ReceiptDelivery {

@@ -48,10 +48,13 @@ impl ContinuousProfile {
     ) -> Result<Self> {
         let base = Profile::freeze(selection, daemon)?;
         let mut parameters = base.scenario.parameters.common();
-        parameters.limits.wall_seconds = 300.try_into().unwrap();
-        parameters.limits.generated_tokens = 16384.try_into().unwrap();
-        parameters.limits.context_tokens = 16384.try_into().unwrap();
-        parameters.limits.model_seconds = 45.try_into().unwrap();
+        // Reasoning counts against generated tokens even when the final summary
+        // is short. Framework's High summary needed 3,104 tokens and 85 seconds.
+        parameters.limits.wall_seconds = 900.try_into().unwrap();
+        parameters.limits.generated_tokens = 32768.try_into().unwrap();
+        parameters.limits.tokens_per_call = 4096.try_into().unwrap();
+        parameters.limits.context_tokens = 32768.try_into().unwrap();
+        parameters.limits.model_seconds = 400.try_into().unwrap();
         parameters.limits.output_bytes = 2048.try_into().unwrap();
         parameters.limits.log_bytes = (16 << 20).try_into().unwrap();
         let config = CompactionConfig {
@@ -60,7 +63,10 @@ impl ContinuousProfile {
             prompt: "Repeatedly call exec with exactly these arguments: {\"command\":\"bash /work/seeds/continuous-probe.sh\",\"cwd\":\"/work\",\"timeout_seconds\":5}. The working directory is /work, never the script filename. This task requires 48 separate successful exec calls, one per response. Each call advances one stage. Continue until its output contains continuity-ok, then call finish_run alone with a short summary. Do not inspect or modify the script or other files. After compaction continue calling exec with those same arguments.".into(),
             inventory: "Bash and Python 3 are available. The probe is already installed.".into(),
             settings: CompactionSettings {
-                summary_tokens: 512.try_into().unwrap(),
+                // Leave room for the larger response reserve and retained
+                // exchanges, while still exercising multiple compactions.
+                trigger_percent: 40,
+                summary_tokens: 4096.try_into().unwrap(),
                 instructions: "Summarize the checked progress in at most 300 characters. Preserve the task, next command and any uncertainty. Return only the summary; no tools.".into(),
                 ..CompactionSettings::default()
             },

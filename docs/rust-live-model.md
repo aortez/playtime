@@ -92,6 +92,51 @@ The flags are advisory and never fail a run. On the retained clean runs, warm
 loads took 0.22–0.33 seconds and the unexplained part of each total was at most
 0.062 seconds.
 
+### Terminal parser-error usage extension
+
+The reviewed experimental backend `0.32.3-playtime-usage-v1` preserves measured
+usage when Harmony argument parsing rejects a completed inference. Its patch is
+[`experiments/ollama-parser-error-usage-v1.patch`](../experiments/ollama-parser-error-usage-v1.patch).
+It leaves the original model definition and native Vulkan payload unchanged and
+has a distinct backend version and GPT-OSS 120B lock; existing locks are not
+refreshed or treated as matching the patched runtime. Service model registration
+also accepts this exact reviewed identity. An unreviewed model name, digest,
+definition or backend version cannot use that exception to become a candidate.
+
+On the streaming HTTP 200 path, the terminal error includes
+`playtime_error_usage: 1`, the exact model name, `done: true`, `eval_count` and
+the existing timing/prompt fields. Playtime accepts a nonnegative integer count
+only after checking that complete envelope and the tool-parse classification.
+Missing, invalid, truncated or legacy error usage never becomes zero. Other
+HTTP errors remain unknown. A valid counted error settles once as known, emits
+`model_error` with `request_usage`, and follows the existing retry limits. It
+never emits a successful model response or dispatches any rejected tools.
+Cancellation/deadline winners and accounting overflow retain the existing
+unknown-settlement rules; an over-budget measured count stops further work.
+Continuous requests also enforce their admitted per-call allowance on these
+failures. Memento retry notices distinguish measured usage from an unknown
+reservation, including measured zero-token failures.
+
+The backend patch also preserves these fields in its non-streaming HTTP error
+response, but Playtime always requests streaming and does not consume that path.
+These are wire observations, not backend termination or writer authority.
+Failure-history version 3 distinguishes known counts from unknown reservations
+through compaction. The native capability digest requires matching new daemon
+and worker builds.
+
+The continuous gate can explicitly select this reviewed backend version:
+
+```sh
+PLAYTIME_LIVE_ENDPOINT=http://127.0.0.1:11437 \
+PLAYTIME_CONTINUOUS_MODEL=gpt-oss:120b \
+PLAYTIME_CONTINUOUS_BACKEND_VERSION=0.32.3-playtime-usage-v1 \
+./scripts/test-rust-continuous.sh --backend live
+```
+
+Here port 11437 must already be an operator-created tunnel to the isolated
+Framework runtime. The default remains the original backend version; unknown
+model/backend pairs are rejected.
+
 ## Profile and capabilities
 
 The live profile is `docker_live_no_seed_self_v1`, worker kind `docker_live`, run

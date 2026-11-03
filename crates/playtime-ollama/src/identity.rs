@@ -23,7 +23,7 @@ impl ExecutionModel {
         };
         let definition = self.definition.as_object();
         if self.name.is_empty() || self.name.len() > 256 || self.name.chars().any(char::is_control)
-            || self.backend_version != Profile::VERSION
+            || !Profile::supports_version(&self.backend_version)
             || !digest(&self.digest) || !digest(&self.definition_sha256)
             || !definition.is_some_and(|d| d.len() == 5 && ["template", "parameters", "model_info", "details", "capabilities"].iter().all(|k| d.contains_key(*k)))
             || !self.definition["capabilities"].as_array().is_some_and(|c| c.iter().all(Value::is_string) && ["completion", "tools"].iter().all(|required| c.iter().any(|v| v == required)))
@@ -59,6 +59,10 @@ impl ExecutionModel {
 pub struct Profile;
 impl Profile {
     pub const VERSION: &str = "0.32.3";
+    pub const ERROR_USAGE_VERSION: &str = "0.32.3-playtime-usage-v1";
+    pub fn supports_version(version: &str) -> bool {
+        matches!(version, Self::VERSION | Self::ERROR_USAGE_VERSION)
+    }
     pub const MODEL: &str = "gpt-oss:20b";
     pub const DIGEST: &str = "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7";
     pub const DEFINITION: &str = "5968b9af1d86b0583a95912df186c2c8ec6dc1a70a7e2bc612a294908402d912";

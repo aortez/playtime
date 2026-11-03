@@ -306,6 +306,15 @@ fn outcome(result: ChatResult) -> Outcome {
             },
             None => Outcome::Model(response),
         },
+        Err(failure)
+            if failure.kind == FailureKind::BackendToolParse
+                && result.error_generated_tokens.is_some() =>
+        {
+            Outcome::ModelParseError {
+                detail: failure.detail,
+                generated_tokens: result.error_generated_tokens.unwrap(),
+            }
+        }
         Err(failure) => Outcome::ModelError(match failure.kind {
             FailureKind::BackendToolParse => ModelFailure::Parse(failure.detail),
             FailureKind::Timeout => ModelFailure::Timeout(failure.detail),

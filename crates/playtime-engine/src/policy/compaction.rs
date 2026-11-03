@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use playtime_core::{RequestId, RequestPurpose, StopReason};
 use serde_json::{Value, json};
 
+use super::failures::{Failures, ModelErrorSource, ToolResultSource};
 use super::{Inference, Proposal, View, parse_retry_notice};
 use crate::{
     ModelFailure, ModelResponse, ToolRequest,
@@ -36,6 +37,7 @@ const CONTINUE_TO_LIMIT_NOTICE: &str = "Your last response did not call a tool, 
 struct Exchange {
     request_id: RequestId,
     messages: Vec<Value>,
+    failures: Failures,
 }
 
 enum Stage {
@@ -51,7 +53,13 @@ pub(crate) struct Compaction {
     stage: Stage,
     root: Vec<Value>,
     summary: Option<Value>,
+    /// Only failures from exchanges already replaced by a summary. Pending
+    /// exchanges retain their own bounded observations until that transition.
+    failures: Failures,
     exchanges: Vec<Exchange>,
+    /// Failed attempts have no response exchange. They travel with the next
+    /// successful work exchange, like retry notices, even across compaction.
+    pending_failures: Failures,
     current: Option<Exchange>,
     /// Notices for the next work request. They open its exchange.
     notices: Vec<Value>,
@@ -72,7 +80,9 @@ impl Compaction {
                 message("user", &config.prompt),
             ],
             summary: None,
+            failures: Failures::default(),
             exchanges: Vec::new(),
+            pending_failures: Failures::default(),
             current: None,
             notices: Vec::new(),
             calls: VecDeque::new(),
@@ -81,9 +91,15 @@ impl Compaction {
         }
     }
 
-    fn messages(&self, exchanges: &[Exchange], summary: Option<&Value>) -> Vec<Value> {
+    fn messages(
+        &self,
+        exchanges: &[Exchange],
+        summary: Option<&Value>,
+        failures: &Failures,
+    ) -> Vec<Value> {
         let mut messages = self.root.clone();
         messages.extend(summary.cloned());
+        messages.extend(failures.message());
         messages.extend(
             exchanges
                 .iter()
@@ -94,8 +110,13 @@ impl Compaction {
 
     /// The next work input. Pending notices belong to the next exchange, so a
     /// summary never covers them.
-    fn work_messages(&self, exchanges: &[Exchange], summary: Option<&Value>) -> Vec<Value> {
-        let mut messages = self.messages(exchanges, summary);
+    fn work_messages(
+        &self,
+        exchanges: &[Exchange],
+        summary: Option<&Value>,
+        failures: &Failures,
+    ) -> Vec<Value> {
+        let mut messages = self.messages(exchanges, summary, failures);
         messages.extend(self.notices.iter().cloned());
         messages
     }
@@ -105,13 +126,23 @@ impl Compaction {
             // Nothing bounds the bytes of the next response, which joins this
             // summary. Extending the measured work prefix lets server usage
             // bound the request instead.
-            let mut messages = self.messages(&self.exchanges[..older], self.summary.as_ref());
+            let mut messages = self.messages(
+                &self.exchanges[..older],
+                self.summary.as_ref(),
+                &self.failures,
+            );
             messages.push(message("user", &config.settings.instructions));
             return messages;
         }
-        let conversation: Vec<Value> = self.exchanges[..older]
-            .iter()
-            .flat_map(|exchange| exchange.messages.clone())
+        let conversation: Vec<Value> = self
+            .failures
+            .message()
+            .into_iter()
+            .chain(
+                self.exchanges[..older]
+                    .iter()
+                    .flat_map(|exchange| exchange.messages.clone()),
+            )
             .collect();
         summary_transcript(
             &config.prompt,
@@ -190,7 +221,7 @@ impl Compaction {
             return Proposal::Stop(StopReason::TokenLimit);
         }
         let tools = crate::compaction::tools(config.settings.allow_finish_run);
-        let messages = self.work_messages(&self.exchanges, self.summary.as_ref());
+        let messages = self.work_messages(&self.exchanges, self.summary.as_ref(), &self.failures);
         let (input, basis) = context.estimate(&messages, &tools);
         let allowance = limits
             .tokens_per_call
@@ -359,7 +390,11 @@ impl Compaction {
                     "Derived memory from earlier exchanges; retain uncertainty and verify claims:\n{summary}"
                 ),
             );
-            let after = self.work_messages(&self.exchanges[older..], Some(&candidate));
+            let mut failures = self.failures.clone();
+            for exchange in &self.exchanges[..older] {
+                failures.extend(&exchange.failures);
+            }
+            let after = self.work_messages(&self.exchanges[older..], Some(&candidate), &failures);
             let tools = crate::compaction::tools(config.settings.allow_finish_run);
             // Rewritten input cannot borrow server measurements of another
             // prefix. Progress compares before/after bytes on the same basis;
@@ -394,6 +429,7 @@ impl Compaction {
             ));
             self.exchanges.drain(..older);
             self.summary = Some(candidate);
+            self.failures = failures;
             self.stage = Stage::Ready;
         } else {
             self.calls = response.message["tool_calls"]
@@ -404,6 +440,7 @@ impl Compaction {
             self.current = Some(Exchange {
                 request_id,
                 messages: self.notices.drain(..).chain([response.message]).collect(),
+                failures: std::mem::take(&mut self.pending_failures),
             });
             self.stage = Stage::Calls;
         }
@@ -434,12 +471,18 @@ impl Compaction {
             "Tool output shortened to fit the exchange allowance.",
         )
     }
-    pub fn tool_result(&mut self, name: &str, result: &Value) {
-        self.current
-            .as_mut()
-            .unwrap()
-            .messages
-            .push(tool_message(name, result));
+    pub fn tool_result(
+        &mut self,
+        tool: &ToolRequest,
+        original: &Value,
+        result: &Value,
+        source: ToolResultSource,
+    ) {
+        let exchange = self.current.as_mut().unwrap();
+        exchange
+            .failures
+            .observe(&exchange.request_id, tool, original, source);
+        exchange.messages.push(tool_message(&tool.name, result));
     }
     /// A parse failure is retried, as in memento, for a work request or a
     /// summary. A summary answered with tool calls is retried the same way:
@@ -465,6 +508,14 @@ impl Compaction {
             self.notices
                 .push(message("user", parse_retry_notice(error)));
         }
+    }
+    pub fn model_error(
+        &mut self,
+        request: &crate::RequestContext,
+        error: &ModelFailure,
+        source: ModelErrorSource,
+    ) {
+        self.pending_failures.observe_model(request, error, source);
     }
     pub fn after_response(&mut self, view: View<'_>) {
         // A retried request left no response, so it adds no exchange.

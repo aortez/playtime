@@ -315,6 +315,12 @@ pub enum Outcome {
         finish_reason: String,
     },
     ModelError(ModelFailure),
+    /// A terminal parser rejection with measured usage. No assistant message or
+    /// tool calls are accepted. Other failures retain their existing reservation.
+    ModelParseError {
+        detail: String,
+        generated_tokens: u64,
+    },
     Tool(Value),
     Snapshot(Snapshot),
     Published,

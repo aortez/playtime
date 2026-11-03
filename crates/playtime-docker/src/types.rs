@@ -6,7 +6,7 @@ use tokio::time::Instant;
 
 pub const PYTHON: &str = "/usr/local/bin/python3.12";
 pub const BRIDGE: &str = "/opt/playtime/tool.py";
-pub const BRIDGE_SHA256: &str = "d4de00759f0e8dcfc61e4f2e54d880117e8dbac397d2394477025b6a49ee7eb8";
+pub const BRIDGE_SHA256: &str = "4e76de37f73cbaf512b22039af3850b2fbdb647d652f05a8885612079d15b311";
 pub const STOP_GRACE: Duration = Duration::from_secs(180);
 pub const CLEANUP_BOUND: Duration = Duration::from_secs(20);
 pub const TIMER: &str = "import os,signal,sys,time\ndeadline=int(sys.argv[1])\nwhile True:\n remaining=deadline-time.monotonic_ns()\n if remaining<=0: os.kill(os.getpid(),signal.SIGKILL)\n time.sleep(min(remaining/1000000000,1))\n";

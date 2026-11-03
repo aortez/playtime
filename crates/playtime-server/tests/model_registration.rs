@@ -29,6 +29,79 @@ async fn setup(root: &common::Temp, fake: &FakeOllama) -> (Ledger, Registry) {
 }
 
 #[tokio::test]
+async fn parser_usage_backend_registration_requires_the_exact_reviewed_identity() {
+    let root = common::Temp::new();
+    let fake = FakeOllama::start().await;
+    let lock: serde_json::Value =
+        serde_json::from_slice(playtime_runner::docker::GPT_OSS_120B_USAGE_MODEL_LOCK).unwrap();
+    let name = lock["name"].as_str().unwrap();
+    {
+        let mut state = fake.metadata.0.lock().unwrap();
+        state.version = lock["ollama_version"].as_str().unwrap().into();
+        state.tags = json!({"models": [{"name": name, "digest": lock["digest"]}]});
+        state.show = lock["definition"].clone();
+    }
+    let (_, registry) = setup(&root, &fake).await;
+    let review = registry.review(inspect(name)).await.unwrap();
+    assert_eq!(review.inspection.status, ModelMetadataStatus::Candidate);
+    let request = review.request.unwrap();
+    assert!(request.identity.reviewed_capabilities.is_some());
+    let accepted = registry
+        .register(key("parser-usage"), request.clone())
+        .await
+        .unwrap();
+    assert_eq!(accepted.registration.identity, request.identity);
+    assert_eq!(
+        registry
+            .get(accepted.registration.registration_id)
+            .await
+            .unwrap()
+            .definition,
+        lock["definition"]
+    );
+    for field in ["version", "digest", "definition", "name"] {
+        let selected = if field == "name" {
+            "alias:latest"
+        } else {
+            name
+        };
+        {
+            let mut state = fake.metadata.0.lock().unwrap();
+            state.version = lock["ollama_version"].as_str().unwrap().into();
+            state.tags = json!({"models": [{"name": selected, "digest": lock["digest"]}]});
+            state.show = lock["definition"].clone();
+            match field {
+                "version" => state.version = "0.32.3-playtime-usage-v2".into(),
+                "digest" => state.tags["models"][0]["digest"] = json!("b".repeat(64)),
+                "definition" => state.show["template"] = json!("changed"),
+                "name" => (),
+                _ => unreachable!(),
+            }
+        }
+        let review = registry.review(inspect(selected)).await.unwrap();
+        assert_eq!(
+            review.inspection.status,
+            ModelMetadataStatus::Unverified,
+            "{field}"
+        );
+        assert!(review.request.is_none(), "{field}");
+        assert_eq!(
+            registry
+                .register(key(field), request.clone())
+                .await
+                .unwrap_err()
+                .code(),
+            "model_metadata_changed",
+            "{field}"
+        );
+    }
+    assert_eq!(registry.list().await.unwrap().items.len(), 1);
+    assert!(fake.metadata.0.lock().unwrap().calls.iter().all(|call| {
+        call == "version" || call == "tags" || call == "ps" || call.starts_with("show:")
+    }));
+}
+
+#[tokio::test]
 async fn explicit_acceptance_deduplicates_complete_identity_and_replays_offline_after_restart() {
     let root = common::Temp::new();
     let fake = FakeOllama::start().await;

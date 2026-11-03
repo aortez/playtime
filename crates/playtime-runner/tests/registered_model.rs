@@ -104,6 +104,13 @@ fn large_model_profiles_preserve_identity_and_refuse_inherited_unsupported_reaso
             RecipeReasoning::On,
             131072,
         ),
+        (
+            GPT_OSS_120B_USAGE_MODEL_LOCK,
+            include_bytes!("../../../models/gpt-oss-120b-usage-v1.lock.json").as_slice(),
+            RecipeReasoning::High,
+            RecipeReasoning::On,
+            131072,
+        ),
     ] {
         assert_eq!(bytes, repository_lock);
         let model = registered::from_lock(bytes);

@@ -465,6 +465,69 @@ fn a_settlement_fact_after_its_observation_adds_nothing_or_the_missing_usage() {
 }
 
 #[test]
+fn counted_parse_failures_remain_errors_and_settle_once_in_reports() {
+    // The patched backend supplies usage even though it rejects the call.
+    // Error metadata and the later settlement fact must not add another call
+    // or another charge. Legacy failures still keep their unknown reservation.
+    for purpose in ["work", "compaction"] {
+        for tokens in [None, Some(0), Some(476), Some(52)] {
+            let usage = match tokens {
+                Some(tokens) => json!({"status":"known","generated_tokens":tokens}),
+                None => json!({"status":"unknown","reserved_tokens":4096}),
+            };
+            let mut error = json!({"error":{"kind":"parse","message":"error parsing tool call: invalid JSON"},"consecutive_errors":1,"recovery_allowed":true,"token_budget_charge":tokens.unwrap_or(4096)});
+            if tokens.is_some() {
+                error["request_usage"] = usage.clone();
+            }
+            let events = vec![
+                observation(
+                    1,
+                    "model_request",
+                    Some((1, purpose)),
+                    None,
+                    json!({"purpose":purpose,"request_id":"r1","call":1}),
+                ),
+                observation(
+                    2,
+                    "request_settled",
+                    Some((1, purpose)),
+                    None,
+                    json!({"call":1,"usage":usage}),
+                ),
+                observation(3, "model_error", Some((1, purpose)), None, error),
+                v2(
+                    4,
+                    json!({"kind":"request_settled","data":{"request":{"effect_id":1,"request_id":"r1","call":1,"scope":{"kind":"run"},"purpose":purpose},"usage":usage}}),
+                ),
+            ];
+            let report = totals(&events).report(true, true);
+            let mut reversed = events.clone();
+            reversed.reverse();
+            assert_eq!(totals(&reversed).report(true, true), report);
+            let typed = serde_json::to_value(&report).unwrap();
+            let calls = &typed["calls"][purpose];
+            assert_eq!(calls["calls"], 1);
+            assert_eq!(calls["known_calls"], u64::from(tokens.is_some()));
+            assert_eq!(calls["known_tokens"], tokens.unwrap_or(0));
+            assert_eq!(calls["unknown_calls"], u64::from(tokens.is_none()));
+            assert_eq!(
+                calls["reserved_tokens"],
+                if tokens.is_none() { 4096 } else { 0 }
+            );
+            assert_eq!(typed["calls"]["open"], Value::Null);
+            assert_eq!(typed["calls"]["unrequested"], Value::Null);
+            assert_eq!(typed["errors"]["total"], 1);
+            assert_eq!(typed["errors"]["kinds"][0]["kind"], "parse");
+            assert_eq!(typed["errors"]["kinds"][0]["count"], 1);
+            assert!(report.results().sections.iter().any(|section| {
+                section.title == "Model errors"
+                    && section.lines[0].text.contains("1 model error: 1 parse")
+            }));
+        }
+    }
+}
+
+#[test]
 fn a_late_usage_record_past_the_remembered_calls_is_not_a_call() {
     // 1,025 calls settle, then a usage fact for the first arrives, past the
     // bound of settled calls remembered: it opens nothing that counts as a

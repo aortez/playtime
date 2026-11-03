@@ -310,3 +310,76 @@ fn incomplete_and_limit_edges_preserve_bounded_partial_evidence() {
         FailureKind::Protocol
     );
 }
+
+fn counted_parse_error(tokens: serde_json::Value) -> serde_json::Value {
+    json!({"model":Profile::MODEL,"done":true,"done_reason":"stop",
+        "playtime_error_usage":1,"eval_count":tokens,"prompt_eval_count":100,
+        "error":"error parsing tool call: raw='{\"command\":\"true\"]', err=invalid character ']' after object key:value pair"})
+}
+
+#[test]
+fn terminal_parser_errors_keep_measured_usage_without_accepting_tools() {
+    for tokens in [0, 405, u64::MAX] {
+        let mut frame = counted_parse_error(json!(tokens));
+        // Even a valid-looking message in an error cannot become dispatchable.
+        frame["message"] = json!({"role":"assistant","tool_calls":[{"function":{"name":"exec","arguments":{"command":"never execute"}}}]});
+        let wire = format!("{frame}\n{{\"done\":true,\"eval_count\":999}}\n");
+        for split in 0..=frame.to_string().len() {
+            let (tx, _rx) = observations(&Limits::default()).unwrap();
+            let mut decoder = Decoder::new(Limits::default()).unwrap();
+            assert!(decoder.feed(&wire.as_bytes()[..split], &tx).is_none());
+            let failure = decoder
+                .feed(&wire.as_bytes()[split..], &tx)
+                .unwrap()
+                .unwrap_err();
+            assert_eq!(failure.kind, FailureKind::BackendToolParse);
+            assert_eq!(decoder.error_generated_tokens(), Some(tokens));
+            assert!(decoder.terminal_observed());
+            assert_eq!(decoder.finish_reason(), Some("stop"));
+            assert!(decoder.partial().tool_calls.is_none());
+            assert_eq!(decoder.records(), 1);
+            assert!(decoder.eof(&tx).is_none());
+        }
+    }
+}
+
+#[test]
+fn only_complete_versioned_identity_matched_error_usage_is_trusted() {
+    for invalid in [
+        json!(null),
+        json!(-1),
+        json!(1.5),
+        json!(true),
+        json!("405"),
+    ] {
+        let wire = format!("{}\n", counted_parse_error(invalid));
+        let (decoder, result, _) = decode(wire.as_bytes(), Limits::default());
+        assert_eq!(result.unwrap_err().kind, FailureKind::MissingUsage);
+        assert_eq!(decoder.error_generated_tokens(), None);
+    }
+    for (key, value, expected) in [
+        ("model", json!("another-model"), FailureKind::Identity),
+        ("model", json!(null), FailureKind::Identity),
+        ("done", json!(false), FailureKind::Protocol),
+        ("playtime_error_usage", json!(2), FailureKind::Protocol),
+        (
+            "error",
+            json!("unrelated backend failure"),
+            FailureKind::Protocol,
+        ),
+    ] {
+        let mut frame = counted_parse_error(json!(405));
+        frame[key] = value;
+        let (decoder, result, _) = decode(format!("{frame}\n").as_bytes(), Limits::default());
+        assert_eq!(result.unwrap_err().kind, expected);
+        assert_eq!(decoder.error_generated_tokens(), None);
+    }
+    let mut legacy = counted_parse_error(json!(405));
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("playtime_error_usage");
+    let (decoder, result, _) = decode(format!("{legacy}\n").as_bytes(), Limits::default());
+    assert_eq!(result.unwrap_err().kind, FailureKind::BackendToolParse);
+    assert_eq!(decoder.error_generated_tokens(), None);
+}
