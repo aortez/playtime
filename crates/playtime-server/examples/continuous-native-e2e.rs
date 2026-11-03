@@ -28,10 +28,22 @@ use tokio::time::Instant;
 mod registered;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-fn live_model(endpoint: &str, root: &Path) -> Result<LiveModel> {
+fn live_model(endpoint: &str, root: &Path, name: &str) -> Result<LiveModel> {
     // Explicit reviewed identity, not a fixture backend. The real worker checks
     // its metadata before every call. The service registration API is step C.
-    let registered = registered::qwen();
+    let (mut registered, thinking) = match name {
+        "qwen3:1.7b" => (
+            registered::qwen(),
+            playtime_ollama::Thinking::Boolean(false),
+        ),
+        "gpt-oss:120b" => (
+            registered::from_lock(playtime_runner::docker::GPT_OSS_120B_MODEL_LOCK),
+            playtime_ollama::Thinking::Level("high".into()),
+        ),
+        _ => return Err("native smoke model must be qwen3:1.7b or gpt-oss:120b".into()),
+    };
+    registered.summary.registration_id =
+        playtime_protocol::api::ModelRegistrationId::new("model-native-continuous")?;
     let id = &registered.summary.identity;
     let address = playtime_ollama::Endpoint::parse(endpoint)?;
     let host = LiveHost {
@@ -48,8 +60,8 @@ fn live_model(endpoint: &str, root: &Path) -> Result<LiveModel> {
         lock: json!({"name":id.name,"digest":id.digest,"ollama_version":id.backend_version,
             "definition_sha256":id.definition_sha256,"definition":registered.definition,"modelfile":""}),
         settings: serde_json::to_value(playtime_ollama::EffectiveSettings {
-            context_tokens: Some(16384),
-            thinking: Some(playtime_ollama::Thinking::Boolean(false)),
+            context_tokens: Some(32768),
+            thinking: Some(thinking),
             ..Default::default()
         })?,
         host,
@@ -60,8 +72,10 @@ fn live_model(endpoint: &str, root: &Path) -> Result<LiveModel> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
-    if !(3..=4).contains(&args.len()) {
-        return Err("usage: continuous-native-e2e BUNDLE EVIDENCE_ROOT [OLLAMA_ENDPOINT]".into());
+    if !(3..=5).contains(&args.len()) {
+        return Err(
+            "usage: continuous-native-e2e BUNDLE EVIDENCE_ROOT [OLLAMA_ENDPOINT [MODEL]]".into(),
+        );
     }
     let root = PathBuf::from(&args[2]);
     for directory in [
@@ -88,7 +102,11 @@ async fn main() -> Result<()> {
     let live = if let Some(endpoint) = args.get(3) {
         let runtime = PathBuf::from(std::env::var("XDG_RUNTIME_DIR")?).join("playtime");
         create_private_dir(&runtime)?;
-        Some(live_model(endpoint, &runtime.join("live-model.lock"))?)
+        Some(live_model(
+            endpoint,
+            &runtime.join("live-model.lock"),
+            args.get(4).map_or("qwen3:1.7b", String::as_str),
+        )?)
     } else {
         None
     };
@@ -314,8 +332,8 @@ async fn exercise(
     });
     if !finished || applied < 2 || run.usage.unknown_requests != 0 {
         return Err(format!(
-            "continuous outcome failed: {:?}, {applied} compactions",
-            run.outcome
+            "continuous outcome failed: {:?}, {applied} compactions, {} requests with unknown usage ({} reserved tokens)",
+            run.outcome, run.usage.unknown_requests, run.usage.unknown_reserved_tokens
         )
         .into());
     }

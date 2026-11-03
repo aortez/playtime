@@ -1224,12 +1224,24 @@ impl<I: IdSource> Controller<I> {
             &error,
         );
         let recovery = matches!(decision, Recovery::Retry { .. });
-        self.emit(
+        let sequence = self.emit(
             "model_error",
             json!({"error": error, "recovery_allowed": recovery,
             "token_budget_charge": charge, "consecutive_errors": self.parse_streak,
             "tool_parse_errors": self.parse_errors, "usage": UsageSummary::from(self.totals)}),
         );
+        if let (Some(sequence), Some(request)) = (sequence, self.request_context.as_ref()) {
+            self.policy.model_error(
+                request,
+                &error,
+                crate::policy::ModelErrorSource {
+                    sequence,
+                    elapsed_ms: self.now_ms - self.started_ms,
+                    reserved_tokens: charge,
+                    recovery_allowed: recovery,
+                },
+            );
+        }
         match decision {
             Recovery::Retry { end_session } => {
                 self.policy.retry(
@@ -1431,11 +1443,20 @@ impl<I: IdSource> Controller<I> {
             "unabridged_result": if result != original { Some(&original) } else { None }}),
             identity,
         );
+        self.policy.tool_result(
+            &tool.request,
+            &original,
+            &result,
+            crate::policy::ToolResultSource {
+                request_sequence: tool.request_sequence,
+                result_sequence: sequence,
+                elapsed_ms: self.now_ms - self.started_ms,
+            },
+        );
         if let Some(index) = tool.command {
             self.commands[index].result = Some(original);
             self.commands[index].sources.result = sequence;
         }
-        self.policy.tool_result(&tool.request.name, &result);
     }
 
     fn after_response(&mut self, complete: bool) {

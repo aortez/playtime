@@ -16,5 +16,6 @@ cargo run --locked -p xtask -- bundle-worker --output "$playtime_continuous_root
 playtime_continuous_args=("$playtime_continuous_root/bundle" "$playtime_continuous_root/run")
 if [[ $2 == live ]]; then
     playtime_continuous_args+=("${PLAYTIME_LIVE_ENDPOINT:-http://127.0.0.1:11435}")
+    playtime_continuous_args+=("${PLAYTIME_CONTINUOUS_MODEL:-qwen3:1.7b}")
 fi
 cargo run --locked -p playtime-server --example continuous-native-e2e -- "${playtime_continuous_args[@]}"

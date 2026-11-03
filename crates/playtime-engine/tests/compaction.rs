@@ -212,6 +212,246 @@ fn contract_projection(run: &Run) -> Value {
         "result":run.controller.result()})
 }
 
+/// A fabricated repair must not replace the controller's observation, even
+/// after another compaction or a later successful call. Exercise both summary
+/// request formats and match references against actual controller records.
+#[test]
+fn failed_tool_evidence_survives_false_repair_summaries_and_successful_calls() {
+    for retained in [0, 2] {
+        let mut cfg = config();
+        cfg.settings.recent_exchanges = retained;
+        let mut run = Run::new(cfg);
+        let id = run.request().request_id.clone();
+        let arguments = json!({"command":"tar -tzf output.tar.gz", "cwd":"/work"});
+        run.response(json!({"role":"assistant","tool_calls":[call("exec",arguments.clone())]}));
+        // Fitting drops the end of stderr from the ordinary result. The
+        // failure history still gets its bounded excerpt from the original.
+        let stderr = format!("{}Unexpected EOF in archive", "x".repeat(10000));
+        run.complete(Outcome::Tool(
+            json!({"exit_code":2,"stderr":stderr,"stdout":"","timed_out":false}),
+        ));
+        let result = run
+            .records
+            .iter()
+            .find(|r| r.kind == "tool_result")
+            .unwrap()
+            .clone();
+        assert!(
+            !result.data["result"]["stderr"]
+                .as_str()
+                .unwrap()
+                .contains("Unexpected EOF")
+        );
+        assert_eq!(result.data["unabridged_result"]["stderr"], stderr);
+        run.response(json!({"role":"assistant","tool_calls":[call("exec",arguments.clone())]}));
+        run.complete(Outcome::Tool(json!({"exit_code":0,"stdout":"ok"})));
+        let mut previous = None;
+        for ordinal in 0..2 {
+            run.until_summary();
+            if ordinal > 0 {
+                assert!(
+                    serde_json::to_string(&run.request().messages)
+                        .unwrap()
+                        .contains("failure_history_v2")
+                );
+            }
+            run.response(json!({"role":"assistant","content":"The archive was repaired and verified successfully."}));
+            let next = run.request();
+            assert_eq!(next.purpose, RequestPurpose::Work);
+            let message = next
+                .messages
+                .iter()
+                .find(|m| {
+                    m["content"]
+                        .as_str()
+                        .is_some_and(|s| s.starts_with("Historical failure observations"))
+                })
+                .unwrap();
+            assert!(serde_json::to_vec(message).unwrap().len() <= 4096);
+            let content = message["content"].as_str().unwrap();
+            let data: Value = serde_json::from_str(content.split_once('\n').unwrap().1).unwrap();
+            let facts = data["records"].as_array().unwrap();
+            assert_eq!(facts.len(), 1);
+            assert_eq!(facts[0]["request_id"], json!(id));
+            assert_eq!(facts[0]["tool_result_controller_sequence"], result.sequence);
+            assert_eq!(
+                facts[0]["tool_request_controller_sequence"],
+                result.data["request_sequence"]
+            );
+            assert_eq!(facts[0]["elapsed_ms"], result.elapsed_ms);
+            assert_eq!(facts[0]["result"]["exit_code"], 2);
+            assert!(
+                facts[0]["result"]["stderr"]["text"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with("Unexpected EOF in archive")
+            );
+            if let Some(before) = previous {
+                assert_eq!(message, &before);
+            }
+            previous = Some(message.clone());
+            // The fully admitted replacement, including retained failures,
+            // is exactly the message list recorded by compaction_applied.
+            let applied = run
+                .records
+                .iter()
+                .rev()
+                .find(|r| r.kind == "compaction_applied")
+                .unwrap();
+            assert_eq!(applied.data["messages"], json!(next.messages));
+            let bytes = serde_json::to_vec(&json!({"messages":next.messages,"tools":next.tools}))
+                .unwrap()
+                .len() as u64;
+            assert_eq!(applied.data["input_bytes"], bytes);
+            assert_eq!(next.context_input_bound, bytes);
+        }
+        run.response(finish(json!("done")));
+        assert_eq!(run.finalize().cleanup, CleanupOutcome::Complete);
+    }
+}
+
+/// Replay the captured backend failure without executing its malformed text.
+/// Both failed work and failed summaries must survive later accepted compaction.
+#[test]
+fn captured_parse_failure_survives_recovery_and_repeated_compaction() {
+    let fixture: Value =
+        serde_json::from_str(include_str!("fixtures/framework-parse-failure-v1.json")).unwrap();
+    let failure: ModelFailure = serde_json::from_value(fixture["error"].clone()).unwrap();
+    for retained in [0, 2] {
+        for purpose in [RequestPurpose::Work, RequestPurpose::Compaction] {
+            let mut cfg = config();
+            cfg.settings.recent_exchanges = retained;
+            let mut run = Run::new(cfg);
+            if purpose == RequestPurpose::Compaction {
+                run.until_summary();
+            }
+            let failed = run.request().clone();
+            assert_eq!(failed.purpose, purpose);
+            run.complete(Outcome::ModelError(failure.clone()));
+            assert!(
+                run.dispatches
+                    .iter()
+                    .all(|e| !matches!(e.kind, EffectKind::Tool(_)))
+            );
+            let source = run
+                .records
+                .iter()
+                .find(|r| r.kind == "model_error")
+                .unwrap()
+                .clone();
+            assert_eq!(source.data["error"], fixture["error"]);
+            assert_eq!(source.data["token_budget_charge"], failed.maximum_tokens);
+            assert_eq!(source.data["usage"]["unknown_requests"], 1);
+            if purpose == RequestPurpose::Compaction {
+                assert_eq!(run.request().messages, failed.messages);
+                run.response(json!({"role":"assistant","content":"Continue the checked work."}));
+            } else {
+                assert!(
+                    run.request().messages.last().unwrap()["content"]
+                        .as_str()
+                        .unwrap()
+                        .contains("could not be parsed")
+                );
+            }
+            // A real successful exchange follows the failed attempt. Its success
+            // does not erase the failure or turn unknown usage into zero.
+            let recovered_request = run.request().request_id.clone();
+            run.response(json!({"role":"assistant","tool_calls":[call("exec",json!({"command":"echo recovered"}))]}));
+            run.complete(Outcome::Tool(json!({"exit_code":0,"stdout":"recovered\n"})));
+            let mut previous = None;
+            let mut preserved = 0;
+            for _ in 0..4 {
+                run.until_summary();
+                if previous.is_some() {
+                    assert!(
+                        serde_json::to_string(&run.request().messages)
+                            .unwrap()
+                            .contains("model_parse_error")
+                    );
+                }
+                run.response(json!({"role":"assistant","content":"All tool calls succeeded."}));
+                let next = run.request();
+                let message = next.messages.iter().find(|m| {
+                    m["content"]
+                        .as_str()
+                        .is_some_and(|s| s.starts_with("Historical failure observations"))
+                });
+                let Some(message) = message else {
+                    // A summary error joins the next work exchange. If that
+                    // exchange remains in the suffix, promotion is still pending.
+                    assert_eq!(preserved, 0);
+                    let plan = &run
+                        .records
+                        .iter()
+                        .rev()
+                        .find(|r| r.kind == "compaction_planned")
+                        .unwrap()
+                        .data;
+                    assert!(
+                        plan["retained_requests"]
+                            .as_array()
+                            .unwrap()
+                            .contains(&json!(recovered_request))
+                    );
+                    continue;
+                };
+                assert!(serde_json::to_vec(message).unwrap().len() <= 4096);
+                let history: Value = serde_json::from_str(
+                    message["content"]
+                        .as_str()
+                        .unwrap()
+                        .split_once('\n')
+                        .unwrap()
+                        .1,
+                )
+                .unwrap();
+                assert_eq!(history["schema_version"], 2);
+                let records = history["records"].as_array().unwrap();
+                assert_eq!(records.len(), 1);
+                let record = &records[0];
+                assert_eq!(record["kind"], "model_parse_error");
+                assert_eq!(record["request_id"], json!(failed.request_id));
+                assert_eq!(record["purpose"], json!(purpose));
+                assert_eq!(record["model_error_controller_sequence"], source.sequence);
+                assert_eq!(record["elapsed_ms"], source.elapsed_ms);
+                assert_eq!(
+                    record["usage"],
+                    json!({"status":"unknown","reserved_tokens":failed.maximum_tokens})
+                );
+                assert_eq!(record["tools_executed"], false);
+                assert_eq!(record["recovery_allowed"], true);
+                assert!(record["diagnostic"]["omitted_bytes"].as_u64().unwrap() > 0);
+                assert!(
+                    record["diagnostic"]["text"]
+                        .as_str()
+                        .unwrap()
+                        .ends_with("in string literal")
+                );
+                if let Some(old) = previous {
+                    assert_eq!(message, &old);
+                }
+                previous = Some(message.clone());
+                let bytes =
+                    serde_json::to_vec(&json!({"messages":next.messages,"tools":next.tools}))
+                        .unwrap()
+                        .len() as u64;
+                assert_eq!(next.context_input_bound, bytes);
+                preserved += 1;
+                if preserved == 2 {
+                    break;
+                }
+            }
+            assert_eq!(preserved, 2);
+            run.response(finish(json!("done")));
+            let result = run.finalize();
+            assert_eq!(result.reason, StopReason::AgentFinished);
+            assert_eq!(result.usage.unknown_requests, 1);
+            assert_eq!(result.usage.unknown_reserved_tokens, failed.maximum_tokens);
+            assert!(!result.usage.usage_complete);
+        }
+    }
+}
+
 #[test]
 fn repeated_compaction_preserves_root_recent_exchanges_previous_summary_and_global_accounting() {
     let mut run = Run::new(config());
