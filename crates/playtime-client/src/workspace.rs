@@ -10,10 +10,11 @@ use playtime_protocol::{
     execution::{CaptureIndex, decode_capture_index},
 };
 use rustix::{
-    fs::{AtFlags, Mode, OFlags, mkdir, mkdirat, open, openat, statat},
+    fs::{AtFlags, FileType, Mode, OFlags, mkdir, mkdirat, open, openat, statat},
     io::Errno,
 };
 use std::{
+    collections::HashMap,
     ffi::OsString,
     fs::File,
     path::{Path, PathBuf},
@@ -76,15 +77,20 @@ impl Workspace {
         published_sequence: u64,
         artifacts: &[Artifact],
     ) -> Self {
+        // Each referenced content has one artifact, at its own archive path.
+        let listed: HashMap<&str, &Artifact> = artifacts
+            .iter()
+            .map(|artifact| (artifact.content.path.as_str(), artifact))
+            .collect();
         let files = index
             .files
             .iter()
             .filter(|file| !directory(&file.entry_type))
             .map(|file| {
                 let content = match &file.content {
-                    FileContent::Retained { content } => artifacts
-                        .iter()
-                        .find(|artifact| artifact.content == *content)
+                    FileContent::Retained { content } => listed
+                        .get(content.path.as_str())
+                        .filter(|artifact| artifact.content == *content)
                         .map_or_else(
                             || ContentAvailability::Unavailable {
                                 reason: "not_listed".into(),
@@ -126,10 +132,20 @@ pub enum Outcome {
     Unavailable { reason: String },
     /// The name can't be a path under the directory.
     Refused { reason: &'static str },
-    /// Something is at the path already and `force` was off.
+    /// An entry the download never writes through is in the way: a link,
+    /// directory or special file at the path, a link among its directories,
+    /// or a file where the name needs a directory.
+    Blocked { path: PathBuf, reason: &'static str },
+    /// A file is at the path already and `force` was off.
     Exists { path: PathBuf },
     /// The download or the write failed; nothing was published.
     Failed { path: PathBuf, error: Error },
+}
+/// Why nothing was staged at a name.
+enum Unstaged {
+    Exists,
+    Blocked(&'static str),
+    Failed(Error),
 }
 /// A workspace file and what became of it.
 #[derive(Debug)]
@@ -224,9 +240,10 @@ impl Client {
     /// `download_to_path_with_force` saves one: staged beside its
     /// destination, verified, then published, so a failed file publishes
     /// nothing. Directories in a name are created as needed and never
-    /// followed through a link; a name that can't be a path under the
+    /// followed through a link: a link, directory or special file in the
+    /// way blocks the file, and a name that can't be a path under the
     /// directory is refused. One file's failure leaves the others to be
-    /// tried; cancellation ends the download.
+    /// tried; cancellation ends the download and reports nothing.
     pub async fn download_workspace(
         &self,
         run: &RunId,
@@ -284,12 +301,12 @@ impl Client {
         let (root, name) = (root.clone(), file.name.clone());
         let staged = tokio::task::spawn_blocking(move || stage(&root, &name, force))
             .await
-            .map_err(|_| Error::Io)
-            .and_then(|staged| staged);
+            .unwrap_or(Err(Unstaged::Failed(Error::Io)));
         let (staged, file) = match staged {
-            Ok(Some(staged)) => staged,
-            Ok(None) => return Ok(Outcome::Exists { path }),
-            Err(error) => return Ok(Outcome::Failed { path, error }),
+            Ok(staged) => staged,
+            Err(Unstaged::Exists) => return Ok(Outcome::Exists { path }),
+            Err(Unstaged::Blocked(reason)) => return Ok(Outcome::Blocked { path, reason }),
+            Err(Unstaged::Failed(error)) => return Ok(Outcome::Failed { path, error }),
         };
         let mut file = tokio::fs::File::from_std(file);
         let saved = async {
@@ -362,34 +379,55 @@ fn open_root(directory: &Path) -> Result<File> {
     }
 }
 /// The directory the name's directories lead to under `root`, each opened
-/// without following a link and created private when missing.
-fn open_parent(root: &File, directories: &[&str]) -> Result<File> {
+/// without following a link and created private when missing. Under
+/// `O_DIRECTORY` a link is `ENOTDIR` like a file, before `O_NOFOLLOW`'s
+/// `ELOOP`; a stat of the entry tells them apart.
+fn open_parent(root: &File, directories: &[&str]) -> std::result::Result<File, Unstaged> {
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    let mut parent = root.try_clone().map_err(|_| Error::Io)?;
+    let mut parent = root.try_clone().map_err(failed)?;
     for component in directories.iter().copied() {
         let next = match openat(&parent, component, flags, Mode::empty()) {
             Ok(fd) => fd,
             Err(Errno::NOENT) => {
-                mkdirat(&parent, component, Mode::RWXU).map_err(|_| Error::Io)?;
-                openat(&parent, component, flags, Mode::empty()).map_err(|_| Error::Io)?
+                mkdirat(&parent, component, Mode::RWXU).map_err(failed)?;
+                openat(&parent, component, flags, Mode::empty()).map_err(failed)?
             }
-            Err(_) => return Err(Error::Io),
+            Err(Errno::NOTDIR | Errno::LOOP) => {
+                let link = statat(&parent, component, AtFlags::SYMLINK_NOFOLLOW)
+                    .is_ok_and(|stat| FileType::from_raw_mode(stat.st_mode) == FileType::Symlink);
+                return Err(Unstaged::Blocked(if link {
+                    "a link among the name's directories"
+                } else {
+                    "a file where the name needs a directory"
+                }));
+            }
+            Err(error) => return Err(failed(error)),
         };
         parent = File::from(next);
     }
     Ok(parent)
 }
-/// A download staged under `name` in `root`, in the directories it names;
-/// None when something is at the name and `force` is off.
-fn stage(root: &File, name: &str, force: bool) -> Result<Option<(Staged, File)>> {
-    let components = local_name(name).map_err(|_| Error::Io)?;
-    let (leaf, directories) = components.split_last().ok_or(Error::Io)?;
+/// A local failure of whatever kind: nothing was staged.
+fn failed<E>(_: E) -> Unstaged {
+    Unstaged::Failed(Error::Io)
+}
+/// A download staged under `name` in `root`, in the directories it names.
+fn stage(root: &File, name: &str, force: bool) -> std::result::Result<(Staged, File), Unstaged> {
+    let components = local_name(name).map_err(failed)?;
+    let (leaf, directories) = components.split_last().ok_or(Unstaged::Failed(Error::Io))?;
     let leaf = *leaf;
     let parent = open_parent(root, directories)?;
-    if !force && statat(&parent, leaf, AtFlags::SYMLINK_NOFOLLOW).is_ok() {
-        return Ok(None);
+    if let Ok(stat) = statat(&parent, leaf, AtFlags::SYMLINK_NOFOLLOW) {
+        if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+            return Err(Unstaged::Blocked(
+                "a link, directory or special file at the name",
+            ));
+        }
+        if !force {
+            return Err(Unstaged::Exists);
+        }
     }
-    Staged::in_directory(parent, OsString::from(leaf), force).map(Some)
+    Staged::in_directory(parent, OsString::from(leaf), force).map_err(Unstaged::Failed)
 }
 
 #[cfg(test)]
@@ -449,6 +487,23 @@ mod tests {
             .permissions()
             .mode()
             & 0o777
+    }
+    /// A directory under the temporary directory, removed with the test,
+    /// passed or failed.
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            Self(std::env::temp_dir().join(format!(
+                "playtime-workspace-{}-{}",
+                std::process::id(),
+                &crate::Token::generate().unwrap().expose()[..8]
+            )))
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
@@ -644,40 +699,58 @@ mod tests {
 
     #[test]
     fn staging_creates_private_directories_and_never_follows_a_link() {
-        let root = std::env::temp_dir().join(format!(
-            "playtime-workspace-{}-{}",
-            std::process::id(),
-            &crate::Token::generate().unwrap().expose()[..8]
-        ));
+        let scratch = Scratch::new();
+        let root = &scratch.0;
         // The output directory is created, private; its parents must exist.
         assert!(open_root(&root.join("missing/parent")).is_err());
-        let directory = open_root(&root).unwrap();
-        assert_eq!(mode(&root), 0o700);
-        let (staged, file) = stage(&directory, "a/b/c.txt", false).unwrap().unwrap();
+        let directory = open_root(root).unwrap();
+        assert_eq!(mode(root), 0o700);
+        let (staged, file) = stage(&directory, "a/b/c.txt", false).ok().unwrap();
         assert_eq!(mode(&root.join("a")), 0o700);
         assert_eq!(mode(&root.join("a/b")), 0o700);
         drop(file);
         staged.publish(false).unwrap();
         assert!(root.join("a/b/c.txt").is_file());
         assert_eq!(mode(&root.join("a/b/c.txt")), 0o600);
-        // A name something is at is refused without force and staged with it;
+        // A name a file is at is left alone without force and staged with it;
         // an unpublished staging leaves nothing behind.
-        assert!(stage(&directory, "a/b/c.txt", false).unwrap().is_none());
-        assert!(stage(&directory, "a/b/c.txt", true).unwrap().is_some());
+        assert!(matches!(
+            stage(&directory, "a/b/c.txt", false),
+            Err(Unstaged::Exists)
+        ));
+        assert!(stage(&directory, "a/b/c.txt", true).is_ok());
         assert_eq!(std::fs::read_dir(root.join("a/b")).unwrap().count(), 1);
-        // A link among the name's directories is never followed, nor is a
-        // file taken for a directory, nor a link at the name replaced.
+        // A link among the name's directories is never followed, a file isn't
+        // taken for a directory, and a link or directory at the name is never
+        // replaced, with force or without; each is reported as blocking.
         let elsewhere = root.join("elsewhere");
         std::fs::create_dir(&elsewhere).unwrap();
         symlink(&elsewhere, root.join("a/link")).unwrap();
-        assert!(stage(&directory, "a/link/x.txt", false).is_err());
-        assert!(stage(&directory, "a/link/x.txt", true).is_err());
-        assert!(stage(&directory, "a/b/c.txt/x.txt", true).is_err());
         symlink(&elsewhere, root.join("a/leaf")).unwrap();
-        assert!(stage(&directory, "a/leaf", false).unwrap().is_none());
-        assert!(stage(&directory, "a/leaf", true).is_err());
+        symlink(root.join("nowhere"), root.join("a/dangling")).unwrap();
+        for (name, reason) in [
+            ("a/link/x.txt", "a link among the name's directories"),
+            ("a/b/c.txt/x.txt", "a file where the name needs a directory"),
+            ("a/leaf", "a link, directory or special file at the name"),
+            (
+                "a/dangling",
+                "a link, directory or special file at the name",
+            ),
+            ("a/b", "a link, directory or special file at the name"),
+        ] {
+            for force in [false, true] {
+                assert!(
+                    matches!(stage(&directory, name, force), Err(Unstaged::Blocked(r)) if r == reason),
+                    "{name} force={force}"
+                );
+            }
+        }
         assert!(std::fs::read_dir(&elsewhere).unwrap().next().is_none());
-        assert!(stage(&directory, "../escape", true).is_err());
-        std::fs::remove_dir_all(&root).unwrap();
+        assert!(std::fs::read_link(root.join("a/leaf")).is_ok());
+        assert!(matches!(
+            stage(&directory, "../escape", true),
+            Err(Unstaged::Failed(Error::Io))
+        ));
+        assert!(!root.join("escape").exists());
     }
 }

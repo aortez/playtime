@@ -31,6 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             | "lost-launch"
             | "corrupt"
             | "conflicting-frontier"
+            | "capture"
     ) {
         return Err("unknown scenario".into());
     }

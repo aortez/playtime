@@ -1260,11 +1260,13 @@ backslash, with components of at most 255 bytes and at most 1,024 in all,
 and any other name is refused, its content still downloadable by artifact
 ID. The directories a name lists are created private as needed and opened
 without following a link at any level, so a link planted among them, or at
-the name, is never written through, even with `--force`; saved files are
-private (0600) whatever the archived mode. An existing file is left alone
-without `--force`, which replaces regular files only. Content the archive
-didn't retain is listed as unavailable with its reason and isn't a failure;
-a refused name, an existing file or a failed download is, with the first
-such file's exit code after every file was tried. The result lists each file
-with its status, path and verified bytes or its reason or error. No archive
-bytes, API or goldens change.
+the name, is never written through, even with `--force`, and is reported as
+blocking the file, as a directory or special file at the name or a file
+where the name needs a directory is; saved files are private (0600)
+whatever the archived mode. An existing file is left alone without
+`--force`, which replaces regular files only. Content the archive didn't
+retain is listed as unavailable with its reason and isn't a failure; a
+refused name, a blocked entry, an existing file or a failed download is,
+with the first such file's exit code after every file was tried. The result
+lists each file with its status, path and verified bytes or its reason or
+error. No archive bytes, API or goldens change.

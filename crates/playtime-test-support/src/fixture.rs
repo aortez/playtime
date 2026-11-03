@@ -1,8 +1,17 @@
 //! Thin scripted replies over #35's Fixture. No controller/archive implementation.
 use async_trait::async_trait;
-use playtime_core::{RunId, SessionId, StopReason};
-use playtime_protocol::{api::*, v1::UsageSummary};
-use playtime_server::{application::*, fixture::Fixture};
+use playtime_core::{ArchivePath, RunId, SessionId, StopReason};
+use playtime_protocol::{
+    api::*,
+    archive::ContentRef,
+    bridge::{FileContent, FileVersion},
+    execution::CaptureIndex,
+    v1::UsageSummary,
+};
+use playtime_server::{
+    application::*,
+    fixture::{Fixture, digest},
+};
 use std::{
     sync::{
         Arc,
@@ -49,7 +58,106 @@ impl Script {
                 intent.uncertainty = None;
             }
         }
+        if self.scenario == "capture" {
+            // A continuous run: its final workspace is a capture, not a
+            // checkpoint.
+            view.harness = Some(ArchivedHarness {
+                configuration: view.input_manifest.clone().expect("fixture manifest"),
+                harness: HarnessView::continuous(Default::default()).expect("continuous harness"),
+            });
+        }
         view
+    }
+    /// The "capture" scenario's final capture: the index of a continuous
+    /// run's stopped workspace and the files it retains, as the daemon lists
+    /// them beside the fixture's other artifacts. One retained file's artifact
+    /// is deliberately missing from the listing, and one name is not a path.
+    fn capture(run: &RunId) -> Vec<(Artifact, Vec<u8>)> {
+        let reference = |path: &str, bytes: &[u8]| ContentRef {
+            path: ArchivePath::new(path).unwrap(),
+            sha256: digest(bytes),
+            size_bytes: bytes.len() as u64,
+        };
+        let retained = |path: &str, content: ContentRef| FileVersion {
+            path: path.into(),
+            size_bytes: content.size_bytes,
+            mode: 0o644,
+            entry_type: "0".into(),
+            sha256: Some(content.sha256.clone()),
+            link: None,
+            content: FileContent::Retained { content },
+        };
+        let unavailable = |path: &str, entry_type: &str, reason: &str| FileVersion {
+            path: path.into(),
+            size_bytes: 0,
+            mode: 0o644,
+            entry_type: entry_type.into(),
+            sha256: None,
+            link: None,
+            content: FileContent::Unavailable {
+                reason: reason.into(),
+            },
+        };
+        let image = include_bytes!("../../playtime-server/tests/fixtures/pixel.png").as_slice();
+        let note = b"captured note\n".as_slice();
+        let image_ref = reference("artifacts/final/files/0", image);
+        let note_ref = reference("artifacts/final/files/1", note);
+        let index = CaptureIndex {
+            schema_version: 2,
+            run_id: run.clone(),
+            workspace: reference("artifacts/final/workspace.tar", b"synthetic workspace tar"),
+            files: vec![
+                unavailable("out", "5", "directory"),
+                retained("out/saved <image>.png", image_ref.clone()),
+                retained("notes/readme.txt", note_ref.clone()),
+                retained(
+                    "unlisted.txt",
+                    reference("artifacts/final/files/2", b"unlisted\n"),
+                ),
+                unavailable("big.bin", "0", "oversized"),
+                retained("../escape.txt", note_ref.clone()),
+            ],
+            source_map: reference("artifacts/final/source-map.json", b"{}"),
+        };
+        let index_bytes = serde_json::to_vec(&index).unwrap();
+        let artifact = |id: &str, name: &str, kind: &str, content: ContentRef| Artifact {
+            artifact_id: ArtifactId::new(id).unwrap(),
+            name: name.into(),
+            kind: kind.into(),
+            content,
+            session_id: None,
+            published_sequence: 4,
+            frozen_input: false,
+        };
+        vec![
+            (
+                artifact(
+                    "final-capture-index",
+                    "capture-index-v2.json",
+                    "final_capture_index",
+                    reference("artifacts/final/capture-index-v2.json", &index_bytes),
+                ),
+                index_bytes,
+            ),
+            (
+                artifact(
+                    "captured-image",
+                    "out/saved <image>.png",
+                    "file_version",
+                    image_ref,
+                ),
+                image.to_vec(),
+            ),
+            (
+                artifact(
+                    "captured-note",
+                    "notes/readme.txt",
+                    "file_version",
+                    note_ref,
+                ),
+                note.to_vec(),
+            ),
+        ]
     }
     fn script(&self, run: &RunId) {
         let reason = if self.scenario == "abnormal" || self.scenario == "hold" {
@@ -165,12 +273,34 @@ impl Application for Script {
         self.fixture.checkpoint(id, session).await
     }
     async fn artifacts(&self, id: RunId, q: PageQuery) -> Result<Page<Artifact>> {
-        self.fixture.artifacts(id, q).await
+        let mut page = self.fixture.artifacts(id.clone(), q).await?;
+        if self.scenario == "capture" && page.next_cursor.is_none() {
+            page.items
+                .extend(Self::capture(&id).into_iter().map(|(artifact, _)| artifact));
+        }
+        Ok(page)
     }
     async fn artifact(&self, id: RunId, a: ArtifactId) -> Result<Artifact> {
+        if self.scenario == "capture"
+            && let Some((artifact, _)) = Self::capture(&id)
+                .into_iter()
+                .find(|(artifact, _)| artifact.artifact_id == a)
+        {
+            return Ok(artifact);
+        }
         self.fixture.artifact(id, a).await
     }
     async fn download(&self, id: RunId, a: ArtifactId) -> Result<Download> {
+        if self.scenario == "capture"
+            && let Some((artifact, bytes)) = Self::capture(&id)
+                .into_iter()
+                .find(|(artifact, _)| artifact.artifact_id == a)
+        {
+            return Ok(Download {
+                artifact,
+                reader: Box::pin(std::io::Cursor::new(bytes)),
+            });
+        }
         let mut d = self.fixture.download(id, a).await?;
         if self.scenario == "corrupt" {
             d.reader = Box::pin(std::io::Cursor::new(vec![

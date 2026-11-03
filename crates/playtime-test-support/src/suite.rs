@@ -248,6 +248,13 @@ async fn cases(cli: &Path, fixture: Option<&Path>) -> Result<usize> {
                 "output schema missing"
             );
         }
+        // A checkpoint's text output is its JSON; no other result claims it.
+        let shown = h.run(&["checkpoints", "show", &run, "s1"]).await?;
+        shown.expect(0)?;
+        ensure!(
+            serde_json::from_slice::<Value>(&shown.stdout)?["checkpoint"]["session_id"] == "s1",
+            "checkpoint text output is not its JSON"
+        );
         let file = h.root.join("image.png");
         let path = file.to_str().unwrap();
         h.run(&[
@@ -960,11 +967,13 @@ async fn cases(cli: &Path, fixture: Option<&Path>) -> Result<usize> {
         symlink(&target, &saved)?;
         let linked = h.run(&args(None, true)).await?;
         linked.expect(7)?;
+        let blocked = linked.json()?["data"]["files"][0].clone();
         ensure!(
-            linked.json()?["data"]["files"][0]["status"] == "failed"
+            blocked["status"] == "blocked"
+                && blocked["reason"] == "a link, directory or special file at the name"
                 && std::fs::read(&target)? == b"target"
                 && std::fs::read_link(&saved).is_ok(),
-            "link replaced"
+            "link replaced or not reported as blocking"
         );
         ensure!(
             !std::fs::read_dir(&directory)?.any(|e| e
@@ -975,6 +984,78 @@ async fn cases(cli: &Path, fixture: Option<&Path>) -> Result<usize> {
             "failed download left temporary bytes"
         );
         h.run(&args(Some("s9"), false)).await?.expect(5)?;
+    });
+    case!("capture download", "capture", h, {
+        let run = h.launched("capture", true).await?;
+        let directory = h.root.join("capture");
+        let result = h
+            .run(&[
+                "runs",
+                "download",
+                &run,
+                "--output",
+                directory.to_str().unwrap(),
+                "--format",
+                "json",
+            ])
+            .await?;
+        // One name of the capture is not a path, so the command fails after
+        // saving the rest.
+        result.expect(7)?;
+        let data = result.json()?["data"].clone();
+        ensure!(
+            data["workspace"]["source"] == "final_capture"
+                && data["workspace"]["session_id"].is_null()
+                && data["workspace"]["published_sequence"] == 4
+                && data["saved"] == 2
+                && data["unavailable"] == 2
+                && data["not_saved"] == 1,
+            "capture totals"
+        );
+        let status = |name: &str| {
+            data["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|file| file["name"] == name)
+                .map(|file| {
+                    (
+                        file["status"].as_str().unwrap_or("").to_owned(),
+                        file["reason"].as_str().unwrap_or("").to_owned(),
+                    )
+                })
+        };
+        let is = |status: &str, reason: &str| Some((status.to_owned(), reason.to_owned()));
+        ensure!(
+            status("out/saved <image>.png") == is("saved", "")
+                && status("notes/readme.txt") == is("saved", "")
+                && status("big.bin") == is("unavailable", "oversized")
+                && status("unlisted.txt") == is("unavailable", "not_listed")
+                && status("../escape.txt") == is("refused", "name has a . or .. component")
+                && status("out").is_none(),
+            "capture file statuses"
+        );
+        ensure!(
+            std::fs::read(directory.join("out/saved <image>.png"))?
+                == include_bytes!("../../playtime-server/tests/fixtures/pixel.png")
+                && std::fs::read(directory.join("notes/readme.txt"))? == b"captured note\n"
+                && std::fs::metadata(directory.join("out"))?
+                    .permissions()
+                    .mode()
+                    & 0o777
+                    == 0o700
+                && !h.root.join("escape.txt").exists()
+                && !directory.join("escape.txt").exists(),
+            "capture files"
+        );
+        // The report lists the same workspace.
+        let report = h.run(&["runs", "report", &run, "--format", "json"]).await?;
+        report.expect(0)?;
+        let files = report.json()?["data"]["files"].clone();
+        ensure!(
+            files["source"] == "final_capture" && files["files"] == 2,
+            "report workspace differs"
+        );
     });
     case!(
         "integrity failure never publishes download",

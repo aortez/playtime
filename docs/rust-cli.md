@@ -212,7 +212,9 @@ Server error envelopes retain codes, safe details, and request IDs.
 directory, creates a private sibling staging file, streams and verifies length and
 digest, syncs bytes, then publishes atomically. By default an existing destination
 is preserved. Force permits replacing a regular file, not a symlink/device/directory.
-No local filename is derived from model-controlled metadata. Ordinary failures
+A single download's filename is the caller's, never derived from model-controlled
+metadata; a [workspace download](#workspace-downloads) takes the archive's
+names under a policy. Ordinary failures
 remove staging; abrupt process death may leave a `.part` file. An interrupted HTTP
 body can be a transport failure before the digest comparison is possible; it is
 still never published as a successful download.
@@ -238,22 +240,26 @@ with components of at most 255 bytes and at most 1,024 in all; any other is
 refused, and its content stays downloadable by artifact ID. The directories
 a name lists are created private (0700) as needed and opened without
 following a link, so a link planted among them, or at the name, is never
-written through, even with `--force`; the output directory itself is created
-when missing, but not its parents. Saved files are private (0600) regardless
-of the archived mode, so a saved script isn't executable until the reviewer
-makes it so. An existing file at a name is left alone unless `--force`,
-which replaces a regular file only. Content the archive didn't retain is
-listed as unavailable with the archive's reason and isn't a failure.
+written through, even with `--force`: such an entry, a directory or special
+file at the name, or a file where the name needs a directory, is reported as
+blocking the file. The output directory itself is created when missing, but
+not its parents. Saved files are private (0600) regardless of the archived
+mode, so a saved script isn't executable until the reviewer makes it so. An
+existing file at a name is left alone unless `--force`, which replaces a
+regular file only. Content the archive didn't retain is listed as
+unavailable with the archive's reason and isn't a failure.
 
 The result lists every file (name, kind, artifact ID and content reference
-when retained, status, path, verified bytes, or the reason or error) with the
-totals saved, unavailable and not saved, and names the workspace's source,
-session and published sequence. Every file is tried; the command then exits
-0 when nothing that could have been saved wasn't, and otherwise with the
-first such file's exit code: 7 for a refused name or an existing file, and
-the download's own classification (6 for a verification failure, 3 for
+when retained, status `saved`, `unavailable`, `refused`, `blocked`, `exists`
+or `failed`, path, verified bytes, or the reason or error) with the totals
+saved, unavailable and not saved, and names the workspace's source, session
+and published sequence. Every file is tried; the command then exits 0 when
+nothing that could have been saved wasn't, and otherwise with the first such
+file's exit code: 7 for a refused name, a blocked entry or an existing file,
+and the download's own classification (6 for a verification failure, 3 for
 transport) for a failed one. Cancellation ends the download at the current
-file.
+file and reports nothing; the files saved before it stay, and a later
+download lists them as existing.
 
 ## Run reports
 

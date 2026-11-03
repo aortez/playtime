@@ -330,6 +330,15 @@ impl Context {
                         file["status"] = json!("refused");
                         file["reason"] = json!(reason);
                     }
+                    Outcome::Blocked { path, reason } => {
+                        not_saved += 1;
+                        if exit == 0 {
+                            exit = 7;
+                        }
+                        file["status"] = json!("blocked");
+                        file["path"] = json!(path);
+                        file["reason"] = json!(reason);
+                    }
                     Outcome::Exists { path } => {
                         not_saved += 1;
                         if exit == 0 {

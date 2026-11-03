@@ -398,7 +398,9 @@ fn text(value: &Value) -> String {
                 word(&data["connection"])
             )
         }
-        "result" if data.get("workspace").is_some() && data.get("files").is_some() => {
+        // A checkpoint has a workspace and files too; the totals are the
+        // download's alone.
+        "result" if data.get("workspace").is_some() && data.get("not_saved").is_some() => {
             download_text(data)
         }
         "result" if data.get("verified_bytes").is_some() => format!(
