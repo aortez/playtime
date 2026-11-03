@@ -404,6 +404,13 @@ impl Daemon {
         let Some(frontier) = selected else {
             return Ok(current);
         };
+        // The current evidence is the evidence at its own frontier; an
+        // earlier one takes a pass to it.
+        if position(&current.snapshot, &frontier)?.sequence
+            == current.snapshot.frontier().committed_sequence
+        {
+            return Ok(current);
+        }
         let (archive, run) = (self.inner.archive.clone(), run.clone());
         self.blocking(move || {
             let reader = archive.run_reader(&run).map_err(projection::evidence)?;
@@ -902,22 +909,24 @@ impl Application for Daemon {
         let archive = self.inner.archive.clone();
         self.blocking(move || {
             let reader = archive.run_reader(&run).map_err(projection::evidence)?;
-            let mut snapshot = evidence.snapshot.clone();
-            let after = if let Some(cursor) = cursor {
+            let snapshot = &evidence.snapshot;
+            let after = cursor.as_ref().map_or(0, |cursor| cursor.after_sequence);
+            let page = match cursor {
+                None => reader.page(snapshot, &snapshot.query(0, limit)),
                 // Following reads on from the cursor within the current
                 // snapshot, so it only needs the cursor's position there.
-                if follow {
-                    position(&snapshot, &cursor.frontier)?;
-                } else {
-                    snapshot = historical(&reader, &snapshot, &cursor.frontier)?;
+                Some(cursor) if follow => {
+                    position(snapshot, &cursor.frontier)?;
+                    reader.page(snapshot, &snapshot.query(after, limit))
                 }
-                cursor.after_sequence
-            } else {
-                0
-            };
-            let page = reader
-                .page(&snapshot, &snapshot.query(after, limit))
-                .map_err(projection::evidence)?;
+                // A fixed frontier pages the records up to its position,
+                // which the current snapshot's pass validated: no pass to it.
+                Some(cursor) => {
+                    let position = position(snapshot, &cursor.frontier)?;
+                    reader.page_within(snapshot, position, after, limit)
+                }
+            }
+            .map_err(projection::evidence)?;
             let mut events = Vec::new();
             let mut bytes = 0;
             for event in page.events {
@@ -936,8 +945,8 @@ impl Application for Daemon {
             }
             let last = events.last().map_or(after, |e| e.sequence.get());
             Ok(History {
-                frontier: projection::frontier(snapshot.frontier()),
-                has_more: last < snapshot.frontier().committed_sequence,
+                frontier: projection::frontier(&page.frontier),
+                has_more: last < page.frontier.committed_sequence,
                 events,
                 after_sequence: after,
             })

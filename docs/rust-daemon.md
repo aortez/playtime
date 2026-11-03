@@ -81,6 +81,7 @@ ArchiveReader::confirmed_snapshot(&dyn ConfirmationAuthority) -> Result<Snapshot
 ArchiveReader::confirmed_snapshot_extending(&dyn ConfirmationAuthority, ReadPrefix) -> Result<Snapshot>
 ArchiveReader::confirmed_snapshot_continuing(&dyn ConfirmationAuthority, &Snapshot) -> Result<Snapshot>
 ArchiveReader::sub_snapshot(&Snapshot, ReadPrefix) -> Result<Snapshot>
+ArchiveReader::page_within(&Snapshot, ReadPrefix, u64, u32) -> Result<EventPage>
 Snapshot::check_position(&ReadPrefix) -> Result<()>
 ArchiveQueries::from_snapshot(impl Into<Arc<ArchiveReader>>, Snapshot) -> Result<ArchiveQueries>
 ```
@@ -99,8 +100,13 @@ for these operations. Its deterministic v1 marker identity describes the selecte
 prefix, without manufacturing a commit receipt. Historical positions must be
 exact record boundaries of a trusted covering snapshot, by sequence and running
 digest, as the pass that validated it recorded them; a historical snapshot then
-validates the prefix up to its position. `docs/rust-storage.md` says what a
-continued pass and a page check.
+validates the prefix up to its position. A history page at a fixed frontier
+needs no historical snapshot: it pages the records up to its position from the
+published evidence, whose pass validated them, and checks the ones it returns
+against that pass's digests. A checkpoint or artifact page whose cursor pins
+the published frontier is served from the published evidence; one at an
+earlier frontier takes the historical snapshot's pass. `docs/rust-storage.md`
+says what a continued pass and a page check.
 
 Publication order is explicit:
 

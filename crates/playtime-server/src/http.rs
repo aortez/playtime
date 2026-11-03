@@ -719,6 +719,11 @@ fn event_page(history: History, limits: &ApiLimits) -> Result<EventPage> {
             .map_err(|_| ApiError::new("archive_corrupt"))?,
     };
     let mut sequence = history.after_sequence;
+    // The page encodes as its framing, the page without its events, plus each
+    // event's encoding and a separator per event after the first. Each event
+    // is encoded once; the framing again as its cursors change, which is
+    // small, instead of the whole page again for every event added.
+    let mut event_bytes = 0;
     for event in history.events {
         if event.run_id != history.frontier.run_id
             || Some(event.sequence.get()) != sequence.checked_add(1)
@@ -726,16 +731,23 @@ fn event_page(history: History, limits: &ApiLimits) -> Result<EventPage> {
         {
             return Err(ApiError::new("archive_corrupt"));
         }
-        bounded_json(&event, limits.event_bytes)?;
+        let encoded = bounded_json(&event, limits.event_bytes)?.len();
         let previous_cursor = page.resume_cursor.clone();
         page.resume_cursor = EventCursor::new(history.frontier.clone(), event.sequence.get())
             .unwrap()
             .encode()
             .unwrap();
         page.next_cursor = Some(page.resume_cursor.clone());
-        page.events.push(event);
-        if bounded_json(&page, limits.json_bytes).is_err() {
-            page.events.pop();
+        let framing = serde_json::to_vec(&EventPage {
+            events: vec![],
+            frontier: page.frontier.clone(),
+            has_more: page.has_more,
+            next_cursor: page.next_cursor.clone(),
+            resume_cursor: page.resume_cursor.clone(),
+        })
+        .map_err(|_| ApiError::new("internal_error"))?
+        .len();
+        if framing + event_bytes + encoded + page.events.len() > limits.json_bytes {
             page.resume_cursor = previous_cursor;
             if page.events.is_empty() {
                 return Err(ApiError::new("evidence_limit_exceeded"));
@@ -743,6 +755,8 @@ fn event_page(history: History, limits: &ApiLimits) -> Result<EventPage> {
             page.has_more = true;
             break;
         }
+        event_bytes += encoded;
+        page.events.push(event);
         sequence += 1;
     }
     page.has_more |= sequence < history.frontier.prefix.sequence;

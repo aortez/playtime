@@ -225,8 +225,7 @@ durations, tokens and rates, and the calls with unknown usage, never
 dispatched or still open; model errors by kind with the longest parse streak;
 tool calls by name with their failures; compactions; sessions; and the final
 workspace. It reads every event page as of the frontier the first page fixes
-(`--limit` sets the page size; the service's default otherwise, since a long
-run's thousand-record pages can outlast the handler deadline), within the
+(`--limit` sets the page size; the service's default otherwise), within the
 workbench's bounds (open calls, durations per purpose, error kinds, tool
 names, failure messages and compaction times are capped, with the overflow
 counted), then lists the final workspace: an ended continuous run's final

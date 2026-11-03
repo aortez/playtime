@@ -1195,3 +1195,40 @@ lacks (its observation omitted by the controller log limit) or nothing.
 The number words both clients use (counts, sizes, durations, excerpts) live
 in `playtime-client` too (`words`). No archive bytes, API or goldens change,
 and the workbench's wording and screenshots are unchanged.
+
+## History pages take no pass over the prefix and are bounded once (2026-11-02)
+
+A history page read at a fixed frontier (`GET /runs/{run_id}/events` with a
+cursor, as `playtime runs report` and the workbench's history load read a
+run) rebuilt a snapshot at the cursor's frontier with a new pass over the
+whole committed prefix, hashing every record and the content it references,
+before reading the page. Reporting the Framework hour run
+`20261102T173751Z-b2f3612b` (6,478 records, 16.9 MB of events, 27 MB of
+referenced content) took 33 such passes at the default page size and 102 at
+the workbench's. The daemon now pages the records up to the cursor's position
+from the published evidence, whose pass validated them, through
+`ArchiveReader::page_within`; a page still checks every record it returns
+against that pass's digest and re-reads the archive descriptor and manifest,
+as a page of the current snapshot does. What a page validates changes only
+for a record before the position that the page doesn't return: a change to
+it no longer fails that page as `invalid_cursor`; it fails the page that
+returns it (`archive_corrupt`, as at the current frontier), a historical
+snapshot, which checkpoint and artifact pages at an earlier frontier still
+take, and the next full confirmation pass. A checkpoint or artifact page
+whose cursor pins the published frontier is served from the published
+evidence, not a pass and a projection.
+
+The HTTP layer also encoded the whole page again after each event it added,
+to check the page's byte bound, so a page's cost grew with the square of its
+size: on the hour run, through a debug daemon, 0.05 s for a 64-record page,
+0.4 s for 200 and 10 s for 1,000, which is why 1,000-record pages outran the
+30-second handler deadline. The page is now bounded from its framing and each
+event's encoding, once each, to the same encoded size.
+
+Pages are unchanged: the same events, frontier, cursors and `has_more`. On
+the hour run, through a debug daemon and CLI on a copy of its service root,
+`runs report` took 72.7 s at the default page size and 134 s at 64 records a
+page, and outran the deadline at 1,000; it now takes 5.2 s at each, the time
+the client takes to decode the records, and the reports are byte-identical. A
+first page takes 0.01 s, 0.03 s and 0.2 s at those sizes. No archive bytes,
+API or goldens change.

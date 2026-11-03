@@ -207,9 +207,10 @@ The application adapter must implement these authority boundaries:
   worker's own bounded account of an execution that ended without a normal
   outcome, taken from its verified status; it is absent when the worker gave none.
 - `history` checks both identity and the exact claimed historical prefix against
-  trusted committed evidence. `follow=false` pins that prefix. `follow=true`
-  validates the old prefix before advancing to newer writer-confirmed evidence.
-  Historical validation cannot require a superseded marker file.
+  trusted committed evidence. `follow=false` pins that prefix and pages it from
+  the current evidence, without a pass over it. `follow=true` validates the old
+  prefix before advancing to newer writer-confirmed evidence. Historical
+  validation cannot require a superseded marker file.
 - `subscribe` registers a bounded watch notification before reads begin. A
   notification is a reason to reread evidence, not evidence itself. Only the
   lifecycle owner supplies a reconciled `StreamEnd` when no commits remain.

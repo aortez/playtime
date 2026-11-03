@@ -488,8 +488,63 @@ impl ArchiveReader {
                 "snapshot frontier must stay fixed; limit must be 1..=1000",
             ));
         }
+        self.page_of(&snapshot.frontier, &snapshot.records, query)
+    }
+
+    /// A page of the records up to `position`, an exact record boundary of
+    /// `covering`, as `page` reads them at a snapshot there: from
+    /// `after_sequence`, at most `limit` records, with the frontier at the
+    /// position. The covering pass validated those records, and the page
+    /// checks the ones it returns against its digests, as a page of the
+    /// covering snapshot does, so it takes no pass to the position. It
+    /// inspects nothing: what the run had recorded by the position takes a
+    /// pass to it (`sub_snapshot`).
+    pub fn page_within(
+        &self,
+        covering: &Snapshot,
+        position: ReadPrefix,
+        after_sequence: u64,
+        limit: u32,
+    ) -> Result<EventPage> {
+        if covering.frontier.archive != self.identity {
+            return Err(StorageError::new(
+                ErrorCode::InvalidCursor,
+                "wrong covering archive",
+            ));
+        }
+        covering.check_position(&position)?;
+        if after_sequence > position.sequence {
+            return Err(StorageError::new(
+                ErrorCode::CursorAhead,
+                "cursor exceeds its position",
+            ));
+        }
+        if !(1..=1000).contains(&limit) {
+            return Err(StorageError::new(
+                ErrorCode::InvalidCursor,
+                "limit must be 1..=1000",
+            ));
+        }
+        let frontier = self.read_frontier(position)?;
+        let query = EventQuery {
+            archive: self.identity.clone(),
+            after_sequence,
+            through_sequence: frontier.committed_sequence,
+            limit,
+        };
+        self.page_of(&frontier, &covering.records, &query)
+    }
+
+    /// The page `query` asks for of the prefix at `frontier`, whose records
+    /// are the first `frontier.committed_sequence` of `records`, as the pass
+    /// that validated them recorded them. The query is within the frontier.
+    fn page_of(
+        &self,
+        frontier: &EventFrontier,
+        records: &[Record],
+        query: &EventQuery,
+    ) -> Result<EventPage> {
         self.validate_identity()?;
-        let records = &snapshot.records;
         let after = query.after_sequence as usize;
         let missing = || StorageError::corrupt("snapshot pass is missing a record");
         let page_records = records
@@ -500,7 +555,7 @@ impl ArchiveReader {
             Some(index) => records.get(index).ok_or_else(missing)?.end,
         };
         let mut file = self.directory.open_file("events.jsonl", OFlags::RDONLY)?;
-        if file.metadata()?.len() < snapshot.frontier.committed_bytes {
+        if file.metadata()?.len() < frontier.committed_bytes {
             return Err(StorageError::corrupt(
                 "commit marker points beyond event file",
             ));
@@ -540,8 +595,8 @@ impl ArchiveReader {
         Ok(EventPage {
             events,
             next_after_sequence,
-            frontier: snapshot.frontier.clone(),
-            has_more: next_after_sequence < snapshot.frontier.committed_sequence,
+            frontier: frontier.clone(),
+            has_more: next_after_sequence < frontier.committed_sequence,
         })
     }
 

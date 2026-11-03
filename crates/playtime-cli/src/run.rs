@@ -174,8 +174,7 @@ impl Context {
         let view = self.client.run(id).await?;
         let mut totals = Totals::default();
         let mut records = 0u64;
-        // The service's default page keeps each read inside its handler
-        // deadline; a long run's thousand-record pages can take longer.
+        // The service's default page size, unless the caller set one.
         let mut query = PageQuery {
             cursor: None,
             limit,
