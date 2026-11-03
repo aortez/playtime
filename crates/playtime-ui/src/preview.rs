@@ -38,18 +38,7 @@ fn short(value: &Value, pointer: &str) -> String {
         .map(|s| excerpt(s, 19))
         .unwrap_or_else(|| "unavailable".into())
 }
-pub(crate) fn bytes(bytes: u64) -> String {
-    for (unit, divisor) in [("GiB", 1u64 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)] {
-        if bytes >= divisor {
-            return if bytes.is_multiple_of(divisor) {
-                format!("{} {unit}", thousands(bytes / divisor))
-            } else {
-                format!("{:.1} {unit}", bytes as f64 / divisor as f64)
-            };
-        }
-    }
-    format!("{} {}", bytes, if bytes == 1 { "byte" } else { "bytes" })
-}
+pub(crate) use playtime_client::words::bytes;
 fn duration(seconds: u64) -> String {
     if seconds.is_multiple_of(60) {
         format!("{} min", thousands(seconds / 60))

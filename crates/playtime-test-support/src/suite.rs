@@ -319,6 +319,29 @@ async fn cases(cli: &Path, fixture: Option<&Path>) -> Result<usize> {
                 && events[1]["data"]["event"]["data"]["unknown_field"]["retained"] == true,
             "unknown event or history record lost"
         );
+        let report = h.run(&["runs", "report", &run, "--format", "json"]).await?;
+        report.expect(0)?;
+        let report = report.json()?;
+        ensure!(
+            report["data"]["records"] == 4
+                && report["data"]["report"]["complete"] == true
+                && report["data"]["report"]["ended"] == true
+                && report["data"]["files"]["source"] == "checkpoint"
+                && report["data"]["files"]["files"] == 2
+                && report["data"]["files"]["images"] == 1
+                && report["data"]["files"]["unavailable"] == 1,
+            format!("report totals lost: {report}")
+        );
+        let report = h.run(&["runs", "report", &run]).await?;
+        report.expect(0)?;
+        let text = String::from_utf8_lossy(&report.stdout);
+        ensure!(
+            text.contains("| 4 records\n")
+                && text.contains(
+                    "\n## Final workspace\n- 2 files · 68 bytes · 1 image · 1 unavailable\n"
+                ),
+            format!("report text: {text}")
+        );
         let retry = h
             .run(&["launches", "retry", "commands", "--format", "json"])
             .await?;

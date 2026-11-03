@@ -208,6 +208,45 @@ fn run_summary(view: &Value) -> String {
     }
     summary
 }
+/// A run's report as Markdown: a heading with the run, a line with its
+/// state, outcome, recipe, mode and the records counted, then each section
+/// as a heading with a line per total.
+fn report_text(data: &Value) -> String {
+    let run = &data["run"];
+    let state = if run["orchestration"]["reason"].is_null() {
+        word(&run["orchestration"]["state"])
+    } else {
+        format!(
+            "{} ({})",
+            word(&run["orchestration"]["state"]),
+            word(&run["orchestration"]["reason"])
+        )
+    };
+    let mut lines = vec![
+        format!("# Run {}", word(&run["run_id"])),
+        format!(
+            "{state} | outcome {} | recipe {} | mode {} | {} records",
+            word(&run["outcome"]["reason"]),
+            word(&run["recipe_id"]),
+            word(&run["mode"]),
+            data["records"]
+                .as_u64()
+                .map_or_else(|| word(&data["records"]), playtime_client::words::thousands)
+        ),
+    ];
+    let sections = data["summary"].as_array().map_or(&[][..], Vec::as_slice);
+    if sections.is_empty() {
+        lines.push("No model calls, tools or compactions recorded.".into());
+    }
+    for section in sections {
+        lines.push(String::new());
+        lines.push(format!("## {}", word(&section["title"])));
+        for line in section["lines"].as_array().map_or(&[][..], Vec::as_slice) {
+            lines.push(format!("- {}", word(&line["text"])));
+        }
+    }
+    lines.join("\n")
+}
 fn launch_summary(data: &Value) -> String {
     format!(
         "Accepted {} | key {} | replayed {}\nReceipt: {}",
@@ -350,6 +389,9 @@ fn text(value: &Value) -> String {
             word(&data["output"]),
             word(&data["artifact"]["artifact_id"])
         ),
+        "result" if data.get("summary").is_some() && data.get("records").is_some() => {
+            report_text(data)
+        }
         _ if data.get("run").is_some() => {
             let mut lines = Vec::new();
             if let Some(launch) = data.get("launch") {
@@ -448,6 +490,27 @@ mod tests {
         assert_eq!(
             text(&value),
             "execution_unavailable: Execution is unavailable\n  - target_required"
+        );
+    }
+    #[test]
+    fn a_report_reads_as_markdown() {
+        let value = envelope(
+            "result",
+            json!({"run":{"run_id":"r","orchestration":{"state":"terminal","reason":"wall_limit"},
+                "outcome":{"reason":"wall_limit"},"recipe_id":"hour","mode":"experiment"},
+                "records":1234,"report":{},"files":null,
+                "summary":[{"title":"Time","lines":[{"text":"1:00:01 elapsed · 98% in model requests","first_sequence":null}]},
+                    {"title":"Model errors","lines":[{"text":"12 model errors: 11 parse\u{1b}","first_sequence":40}]}]}),
+        );
+        assert_eq!(
+            text(&value),
+            "# Run r\nterminal (wall_limit) | outcome wall_limit | recipe hour | mode experiment | 1,234 records\n\n## Time\n- 1:00:01 elapsed · 98% in model requests\n\n## Model errors\n- 12 model errors: 11 parse\\u{1b}"
+        );
+        let mut empty = value;
+        empty["data"]["summary"] = json!([]);
+        assert!(
+            text(&empty)
+                .ends_with("| 1,234 records\nNo model calls, tools or compactions recorded.")
         );
     }
     #[test]

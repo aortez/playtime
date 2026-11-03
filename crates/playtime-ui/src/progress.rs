@@ -132,7 +132,7 @@ pub(crate) struct Update {
     /// failed tool result.
     pub(crate) mark: Option<Mark>,
     /// What the record adds to the run's results.
-    pub(crate) results: crate::summary::Update,
+    pub(crate) results: playtime_client::report::Update,
 }
 /// A record the timeline's jump list names.
 #[derive(Clone, Debug)]
@@ -196,7 +196,7 @@ impl Update {
         };
         let mut update = Self {
             elapsed_ms: Some(o.elapsed_ms),
-            results: crate::summary::Update::execution(o),
+            results: playtime_client::report::Update::execution(o),
             ..Default::default()
         };
         let compacting = o
@@ -326,7 +326,7 @@ impl Update {
         let mut update = Self {
             session: o.session_id.as_ref().map(|s| s.as_str().to_owned()),
             elapsed_ms: Some(o.elapsed_ms),
-            results: crate::summary::Update::observation(observation),
+            results: playtime_client::report::Update::observation(observation),
             ..Default::default()
         };
         update.activity = match observation.payload() {
@@ -428,7 +428,7 @@ impl Update {
             },
             _ => Self::default(),
         };
-        update.results = crate::summary::Update::event(event);
+        update.results = playtime_client::report::Update::event(event);
         update
     }
     /// A model request adds an entry to the latest session's turn count, a
@@ -497,7 +497,7 @@ pub(crate) struct Tracker {
     model_errors: u64,
     failed_tools: u64,
     received: Option<Instant>,
-    totals: crate::summary::Totals,
+    totals: playtime_client::report::Totals,
 }
 impl Tracker {
     /// A record without a history page arrived live.
@@ -630,9 +630,8 @@ impl Tracker {
         }
     }
     /// The run's results so far, once earlier history has loaded.
-    pub(crate) fn results(&self, complete: bool, ended: bool) -> crate::summary::Results {
-        self.totals
-            .results(&self.progress(complete), complete, ended)
+    pub(crate) fn results(&self, complete: bool, ended: bool) -> playtime_client::report::Results {
+        self.totals.results(complete, ended)
     }
     fn describe(&self, sequence: u64, activity: &Activity) -> String {
         match activity {
@@ -1053,25 +1052,5 @@ pub(crate) fn cleanup_words(cleanup: &Cleanup) -> String {
         Cleanup::Unknown => "Cleanup unknown".into(),
     }
 }
-pub(crate) fn count(value: u64, one: &str, many: &str) -> String {
-    format!(
-        "{} {}",
-        thousands(value),
-        if value == 1 { one } else { many }
-    )
-}
-/// Seconds as m:ss, or h:mm:ss from an hour.
-pub(crate) fn clock(seconds: u64) -> String {
-    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{seconds:02}")
-    } else {
-        format!("{minutes}:{seconds:02}")
-    }
-}
-pub fn capitalized(text: &str) -> String {
-    let mut chars = text.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-    })
-}
+pub use playtime_client::words::capitalized;
+pub(crate) use playtime_client::words::{clock, count};

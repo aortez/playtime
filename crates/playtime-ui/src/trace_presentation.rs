@@ -144,17 +144,7 @@ impl Display {
         }
     }
 }
-/// A call's duration: milliseconds under a second, tenths under ten seconds
-/// and whole seconds beyond.
-pub(crate) fn duration_words(ms: u64) -> String {
-    if ms < 1000 {
-        format!("{ms} ms")
-    } else if ms < 10_000 {
-        format!("{:.1} s", ms as f64 / 1000.0)
-    } else {
-        format!("{} s", thousands(ms / 1000))
-    }
-}
+pub(crate) use playtime_client::words::duration_words;
 fn push(parts: &mut Vec<Section>, label: &str, text: impl Into<String>) {
     let text = text.into();
     if !text.is_empty() {

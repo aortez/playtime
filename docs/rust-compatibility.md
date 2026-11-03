@@ -1163,3 +1163,33 @@ alone. Rows are taller for it.
 No archive bytes, API or goldens change. The reviewed screenshots changed on
 every screen with a run list (the row line) and every run view (the tab); the
 three results views are new baselines.
+
+## `playtime runs report` totals a run (2026-11-03)
+
+The totals behind the workbench's Results tab moved to a shared accumulator
+in `playtime-client` (`report`), fed by the workbench from its transcript
+index and by the CLI from a run's event pages, so both word a run the same
+way. `playtime runs report RUN_ID` reads every record of the run as of the
+frontier its first page fixes, totals them within the workbench's bounds,
+then lists the final workspace: an ended continuous run's final capture from
+its artifact listing, or a memento run's last published checkpoint. Its text
+output is Markdown, a heading per section with a line per total; `--format
+json` adds the typed totals (`report`), the listing (`files`), the run view
+and the records counted next to the worded sections (`summary`). A run that
+hasn't ended reports its totals so far, with open calls in progress and its
+latest workspace. The reserved top-level `report` command (#26, the Python
+HTML report) is unchanged.
+
+Reporting the Framework hour run in sequence order found a defect in the
+accumulator the Results tab shipped with: the continuous format records a
+settlement fact a few records after the observation that settles the call,
+and in sequence order that fact opened a second, phantom call, read as a
+settled call without a recorded request. The workbench loads history latest
+page first, which paired the records by luck; a run watched live from its
+start would have shown the line. The accumulator now remembers the last
+1,024 settled calls, so a late usage record adds the usage the call still
+lacks (its observation omitted by the controller log limit) or nothing.
+
+The number words both clients use (counts, sizes, durations, excerpts) live
+in `playtime-client` too (`words`). No archive bytes, API or goldens change,
+and the workbench's wording and screenshots are unchanged.

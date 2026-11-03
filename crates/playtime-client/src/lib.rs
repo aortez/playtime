@@ -7,7 +7,9 @@ mod models;
 pub use checkpoints::CheckpointIndexRead;
 mod events;
 pub mod recipes;
+pub mod report;
 pub mod state;
+pub mod words;
 pub use events::{EventStream, Follow, Observation, ObservedRecord, RetryPolicy};
 pub use playtime_local::{Token, read_connection};
 

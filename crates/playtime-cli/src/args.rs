@@ -163,6 +163,12 @@ pub enum Runs {
         #[arg(value_parser = run_id)]
         run_id: RunId,
     },
+    /// Total the run's records: time, model calls, errors, tools,
+    /// compactions, sessions and its final workspace.
+    Report {
+        #[arg(value_parser = run_id)]
+        run_id: RunId,
+    },
     Wait {
         #[arg(value_parser = run_id)]
         run_id: RunId,

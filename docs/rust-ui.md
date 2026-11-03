@@ -405,13 +405,16 @@ are explicitly unavailable where the current API does not project them.
   session's requests and the latest record's time and activity, so its memory
   stays bounded by one session. It also words each record's jump-list entry, if
   it has one.
-- `summary.rs` keeps the run's results from the same records and words the
-  Results tab. Calls pair their request and end by request identity in a
-  bounded set of open calls, dropped in arrival order at the bound and counted
-  as dropped; settled calls fold into per-purpose totals that keep the
-  durations of the run's first 8,192 calls each for the median. Error kinds,
-  tool names, distinct failure messages and compaction times are bounded too,
-  with the overflow counted. Nothing in it reads model text as evidence.
+- The run's results come from `playtime_client::report`, shared with the CLI's
+  `runs report`: the index feeds it the same records it indexes, and the
+  Results tab shows the sections it words. Calls pair their request and end
+  by request identity in a bounded set of open calls, dropped in arrival
+  order at the bound and counted as dropped; settled calls fold into
+  per-purpose totals that keep the durations of the run's first 8,192 calls
+  each for the median. Error kinds, tool names, distinct failure messages and
+  compaction times are bounded too, with the overflow counted. Nothing in it
+  reads model text as evidence. The number words both clients use (counts,
+  sizes, durations, excerpts) are `playtime_client::words`.
 - `ui.rs` renders prepared strings/pixels and emits intents. It virtualizes the
   timeline, caps expanded items and pages file metadata. No URL, file, HTML, SVG or
   script loader is installed. egui/eframe/egui_kittest are pinned to 0.34.3; image is
@@ -425,7 +428,7 @@ are explicitly unavailable where the current API does not project them.
 | Inspector pages: source, file, read-mode text, run JSON, memory diff | 24 KiB per page |
 | Prepared jump list | 64 entries per page; entries included in 32 MiB transcript bound |
 | Prepared session chooser | 64 entries per page; session index included in 32 MiB transcript bound |
-| Results totals | 4,096 open calls; 8,192 durations per purpose; 16 error kinds; 16 tool names; 24 failure messages; 64 compaction times; included in 32 MiB transcript bound |
+| Results totals | 4,096 open calls; 1,024 settled calls remembered for late usage records; 8,192 durations per purpose; 16 error kinds; 16 tool names; 24 failure messages; 64 compaction times; included in 32 MiB transcript bound |
 | Inline boundary previews | 64 current-window entries; ≤512 KiB; 2 reads concurrently |
 | Sparse timeline height cache | 2,048 measurements; ≤256 KiB |
 | Apply work per frame | 100 prepared rows/replies or 4 ms, with deferred replies |

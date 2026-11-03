@@ -144,97 +144,61 @@ pub struct ListedFile {
 /// Images the Results tab lists itself.
 const LISTED_IMAGES: usize = 12;
 impl FinalListing {
-    /// Each file's name and, when its content was retained, its artifact and
-    /// size.
+    /// The counted listing and each retained file's name, artifact and size,
+    /// for the images to open.
     fn new<'a>(
-        files: impl Iterator<Item = (&'a str, Option<(&'a ArtifactId, u64)>)>,
-        incomplete: bool,
+        listing: playtime_client::report::Listing,
+        files: impl Iterator<Item = (&'a str, &'a ArtifactId, u64)>,
     ) -> Self {
-        let (mut total, mut bytes, mut scripts, mut unavailable) = (0u64, 0u64, 0u64, 0u64);
-        let mut images = vec![];
-        for (name, content) in files {
-            total += 1;
-            let lower = name.to_ascii_lowercase();
-            if [
-                ".c", ".cpp", ".go", ".h", ".js", ".py", ".rb", ".rs", ".sh", ".ts",
-            ]
-            .iter()
-            .any(|suffix| lower.ends_with(suffix))
-            {
-                scripts += 1;
-            }
-            match content {
-                Some((artifact_id, size)) => {
-                    bytes = bytes.saturating_add(size);
-                    if crate::media::image_name(name) {
-                        images.push(ListedFile {
-                            name: name.to_owned(),
-                            artifact_id: artifact_id.clone(),
-                            size: crate::preview::bytes(size),
-                        });
-                    }
-                }
-                None => unavailable += 1,
-            }
-        }
+        let mut images: Vec<ListedFile> = files
+            .filter(|(name, ..)| crate::media::image_name(name))
+            .map(|(name, artifact_id, size)| ListedFile {
+                name: name.to_owned(),
+                artifact_id: artifact_id.clone(),
+                size: crate::preview::bytes(size),
+            })
+            .collect();
         images.sort_by(|a, b| a.name.cmp(&b.name));
-        let mut parts = vec![
-            crate::progress::count(total, "file", "files"),
-            crate::preview::bytes(bytes),
-        ];
-        for (n, one, many) in [
-            (images.len() as u64, "image", "images"),
-            (scripts, "script", "scripts"),
-            (unavailable, "unavailable", "unavailable"),
-        ] {
-            if n > 0 {
-                parts.push(crate::progress::count(n, one, many));
-            }
-        }
         let more_images = images.len().saturating_sub(LISTED_IMAGES);
         images.truncate(LISTED_IMAGES);
         Self {
-            summary: parts.join(" · "),
+            summary: listing.words(),
             images,
             more_images,
-            incomplete,
+            incomplete: listing.incomplete,
         }
     }
     /// A continuous run's retained final files.
     pub fn from_artifacts(files: &[Artifact], complete: bool) -> Self {
         Self::new(
+            playtime_client::report::Listing::from_artifacts(files, complete),
             files
                 .iter()
                 .filter(|artifact| artifact.kind == "file_version")
                 .map(|artifact| {
                     (
                         artifact.name.as_str(),
-                        Some((&artifact.artifact_id, artifact.content.size_bytes)),
+                        &artifact.artifact_id,
+                        artifact.content.size_bytes,
                     )
                 }),
-            !complete,
         )
     }
     /// A memento run's last published checkpoint.
     pub fn from_checkpoint(checkpoint: &Checkpoint) -> Self {
         Self::new(
+            playtime_client::report::Listing::from_checkpoint(checkpoint),
             checkpoint
                 .files
                 .iter()
                 .filter(|file| !matches!(file.kind.as_str(), "5" | "directory"))
-                .map(|file| {
-                    (
-                        file.name.as_str(),
-                        match &file.content {
-                            ContentAvailability::Available {
-                                artifact_id,
-                                content,
-                            } => Some((artifact_id, content.size_bytes)),
-                            ContentAvailability::Unavailable { .. } => None,
-                        },
-                    )
+                .filter_map(|file| match &file.content {
+                    ContentAvailability::Available {
+                        artifact_id,
+                        content,
+                    } => Some((file.name.as_str(), artifact_id, content.size_bytes)),
+                    ContentAvailability::Unavailable { .. } => None,
                 }),
-            false,
         )
     }
 }
