@@ -45,6 +45,31 @@ fn pixels(image: image::RgbaImage, notice: String) -> Result<Pixels, String> {
 /// Whether the workbench previews a file of this name as an image.
 pub use playtime_client::report::image_name;
 pub fn decode(bytes: &[u8]) -> Result<Pixels, String> {
+    let (image, notice) = decode_image(bytes)?;
+    pixels(image, notice)
+}
+/// The box a thumbnail fits in: twice the Results tab's cell, so it stays
+/// sharp on a dense display.
+pub const THUMBNAIL: [u32; 2] = [224, 168];
+/// A thumbnail of the image: decoded under the preview limits, then scaled
+/// to fit the box, keeping its aspect; a smaller image is kept as it is.
+pub fn thumbnail(bytes: &[u8]) -> Result<Pixels, String> {
+    let (image, notice) = decode_image(bytes)?;
+    let (width, height) = (image.width(), image.height());
+    let [box_width, box_height] = THUMBNAIL;
+    if width <= box_width && height <= box_height {
+        return pixels(image, notice);
+    }
+    let scale =
+        (f64::from(box_width) / f64::from(width)).min(f64::from(box_height) / f64::from(height));
+    let fitted = |side: u32| ((f64::from(side) * scale).round() as u32).max(1);
+    pixels(
+        image::imageops::thumbnail(&image, fitted(width), fitted(height)),
+        notice,
+    )
+}
+/// The decoded image, a GIF's first frame, and the notice to show with it.
+fn decode_image(bytes: &[u8]) -> Result<(image::RgbaImage, String), String> {
     if bytes.len() > ENCODED_BYTES {
         return Err("Image exceeds the 4 MiB encoded preview limit".into());
     }
@@ -57,9 +82,9 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, String> {
     }
     if format == ImageFormat::Gif {
         return Gif::new(bytes.to_vec())?
-            .next_frame()?
+            .next_image()?
             .ok_or_else(|| "GIF has no frames".into())
-            .map(|(image, _)| image);
+            .map(|(image, notice, _)| (image, notice));
     }
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     reader.limits(limits(4096));
@@ -71,7 +96,7 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, String> {
     let image = image::DynamicImage::from_decoder(decoder)
         .map_err(|e| e.to_string())?
         .into_rgba8();
-    pixels(
+    Ok((
         image,
         if matches!(format, ImageFormat::WebP | ImageFormat::Png) {
             "Still preview; animation is not played for PNG/WebP"
@@ -79,7 +104,7 @@ pub fn decode(bytes: &[u8]) -> Result<Pixels, String> {
             "Verified saved image"
         }
         .into(),
-    )
+    ))
 }
 pub struct Gif {
     frames: image::Frames<'static>,
@@ -108,6 +133,13 @@ impl Gif {
     /// One owned display frame at a time, in addition to the decoder's bounded
     /// working canvas. Never collect the animation. Replaying creates a new Gif.
     pub fn next_frame(&mut self) -> Result<Option<(Pixels, u64)>, String> {
+        let Some((image, notice, delay)) = self.next_image()? else {
+            return Ok(None);
+        };
+        Ok(Some((pixels(image, notice)?, delay)))
+    }
+    /// The next frame's buffer, the notice to show with it and its delay.
+    fn next_image(&mut self) -> Result<Option<(image::RgbaImage, String, u64)>, String> {
         if self.count >= 300 || self.duration_ms >= 60_000 {
             return Err("GIF preview limit reached; Replay is explicit".into());
         }
@@ -121,10 +153,8 @@ impl Gif {
         self.duration_ms = self.duration_ms.saturating_add(source_delay.max(1));
         self.count += 1;
         Ok(Some((
-            pixels(
-                frame.into_buffer(),
-                format!("GIF frame {} · paused unless Play is selected", self.count),
-            )?,
+            frame.into_buffer(),
+            format!("GIF frame {} · paused unless Play is selected", self.count),
             delay,
         )))
     }

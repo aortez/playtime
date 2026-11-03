@@ -1412,3 +1412,30 @@ refused name, a blocked entry, an existing file or a failed download is,
 with the first such file's exit code after every file was tried. The result
 lists each file with its status, path and verified bytes or its reason or
 error. No archive bytes, API or goldens change.
+
+## The Results tab shows thumbnails of the final images (2026-11-03)
+
+The Results tab listed a run's final images as names with an **Open image**
+button each. It shows them as thumbnails now: once the final workspace's
+listing is in hand (an ended continuous run's final capture, or a memento
+run's last published checkpoint), the workbench asks the shared client for
+each listed image's bytes, at most 12, one at a time under one of the two
+preview permits, verifies them as a single download is verified, decodes
+them under the preview limits (4 MiB encoded; a still image's 4,096 a side
+and 16 million pixels, a GIF's 1024² canvas and first frame) and scales
+them to fit 224×168 pixels, outside the render loop. Each thumbnail is a
+button, named **Open image** and the file's name, that opens the image in
+place, with the name and size written under it, in cells of one size; an
+image still loading, or without a preview (too large, unsupported or
+corrupt), says so in its place, with the reason on hover. Thumbnails follow
+the listing: a later listing keeps the ones of the content it lists again,
+under the new artifacts a memento run's next checkpoint publishes, and
+drops the rest, so no more than one listing's thumbnails are held; another
+run's selection drops them all; a reply for another run or an unlisted
+image is ignored; a newer request, another run or a new connection stops
+the request in progress; and the ones a reconnect or a full queue left
+pending are asked for again when the tab draws. The texture payload
+bound gains the thumbnails, at most 12 of 224×168 pixels. The `results` and
+`results-sessions` screenshots were re-reviewed with synthetic pictures in
+place; `results-narrow` is unchanged, since its drawer shows the tab's top.
+No archive bytes or API change.

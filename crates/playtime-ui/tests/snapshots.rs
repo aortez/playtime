@@ -5,6 +5,9 @@ mod common;
 mod continuous_scene;
 #[path = "support/model_scenes.rs"]
 mod model_scenes;
+#[path = "support/pictures.rs"]
+#[allow(dead_code)]
+mod pictures;
 #[path = "support/preview_scene.rs"]
 mod preview_scene;
 #[path = "support/registration_scenes.rs"]
@@ -416,18 +419,7 @@ async fn reviewed_workbench_screens() {
                     usage_complete: false,
                 });
                 run.cleanup = Cleanup::Complete;
-                let artifact = |name: &str, bytes: u64| {
-                    serde_json::from_value::<Artifact>(serde_json::json!({
-                        "artifact_id": format!("{:0>64}", name.len()),
-                        "name": name,
-                        "kind": "file_version",
-                        "content": {"path": format!("artifacts/final/files/{name}"), "sha256": "d".repeat(64), "size_bytes": bytes},
-                        "session_id": null,
-                        "published_sequence": 25,
-                        "frozen_input": false,
-                    }))
-                    .unwrap()
-                };
+                let artifact = pictures::artifact;
                 app.model.final_listing = Some(playtime_ui::model::FinalListing::from_artifacts(
                     &[
                         artifact("plot.png", 1_048_576),
@@ -452,6 +444,28 @@ async fn reviewed_workbench_screens() {
                 .max_by_key(|c| c.checkpoint.published_sequence)
                 .unwrap();
             app.model.final_listing = Some(playtime_ui::model::FinalListing::from_checkpoint(last));
+        }
+        if name.starts_with("results") {
+            // The listed images' thumbnails, decoded from synthetic pictures.
+            let images: Vec<_> = app
+                .model
+                .final_listing
+                .as_ref()
+                .map(|listing| {
+                    listing
+                        .images
+                        .iter()
+                        .map(|image| image.artifact_id.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            for (n, id) in images.into_iter().enumerate() {
+                let (width, height) = if n % 2 == 0 { (640, 480) } else { (300, 300) };
+                let pixels =
+                    playtime_ui::media::thumbnail(&pictures::picture(width, height, n as u8 * 90))
+                        .unwrap();
+                app.model.thumbnails.insert(id, Ok(Arc::new(pixels)));
+            }
         }
         if name.starts_with("model-register") || name == "model-registration-pending" {
             registration_scenes::prepare(&mut app, name);

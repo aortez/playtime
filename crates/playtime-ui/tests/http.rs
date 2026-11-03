@@ -138,6 +138,17 @@ async fn desktop_client_launch_observe_inspect_and_reopen_uses_only_public_http(
     ));
     until(&mut model, &mut backend, |m| m.content.is_some()).await;
     assert!(model.content.as_ref().unwrap().image.is_some());
+    // The last checkpoint's image gets its thumbnail through the same
+    // verified download, decoded in the background, once the listing is in
+    // hand.
+    until(&mut model, &mut backend, |m| {
+        m.thumbnails.values().any(|thumbnail| thumbnail.is_ok())
+    })
+    .await;
+    let thumbnail = model.thumbnails[&ArtifactId::new("saved-image").unwrap()]
+        .as_ref()
+        .unwrap();
+    assert_eq!((thumbnail.image.size, thumbnail.bytes), ([1, 1], 4));
     // The stream's end is the run's notice. A download's notice is about the
     // saved file, so it stays when the launcher opens (#104).
     until(&mut model, &mut backend, |m| {
