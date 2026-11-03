@@ -1367,3 +1367,15 @@ page, and outran the deadline at 1,000; it now takes 5.2 s at each, the time
 the client takes to decode the records, and the reports are byte-identical. A
 first page takes 0.01 s, 0.03 s and 0.2 s at those sizes. No archive bytes,
 API or goldens change.
+
+## Reviewed parser-usage backend registration, 2026-11-03
+
+The merged-hour preflight exposed a service discovery check that still required
+Ollama 0.32.3 even for the compiled, reviewed GPT-OSS 120B identity on
+`0.32.3-playtime-usage-v1`. Native worker tests could execute it, but API model
+review returned `unverified` and no registration request, blocking normal launch.
+Discovery now accepts a different backend version only when the complete model
+identity matches the existing compiled capability review. Stock-version candidate
+behavior is unchanged. A metadata-only regression covers successful registration
+and rejection after version, name, digest or definition drift; it performs no
+inference. No wire/schema, worker capability or existing golden changes.

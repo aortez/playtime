@@ -99,7 +99,9 @@ usage when Harmony argument parsing rejects a completed inference. Its patch is
 [`experiments/ollama-parser-error-usage-v1.patch`](../experiments/ollama-parser-error-usage-v1.patch).
 It leaves the original model definition and native Vulkan payload unchanged and
 has a distinct backend version and GPT-OSS 120B lock; existing locks are not
-refreshed or treated as matching the patched runtime.
+refreshed or treated as matching the patched runtime. Service model registration
+also accepts this exact reviewed identity. An unreviewed model name, digest,
+definition or backend version cannot use that exception to become a candidate.
 
 On the streaming HTTP 200 path, the terminal error includes
 `playtime_error_usage: 1`, the exact model name, `done: true`, `eval_count` and
