@@ -420,3 +420,203 @@ pub fn delayed_events() -> Vec<EventEnvelope> {
     ));
     events
 }
+/// A run for the Results tab: three work calls, one of which fails to parse
+/// and settles with unknown usage, two failed tools and a non-zero exit, a
+/// compaction applied and one deferred, then the wall limit, the final
+/// capture and the run's end. Each record's controller time is its sequence
+/// in seconds.
+pub fn results_events() -> Vec<EventEnvelope> {
+    let capture = json!({"index":{"path":"artifacts/final/capture-index-v2.json","sha256":"b".repeat(64),"size_bytes":14400},
+        "workspace":{"path":"artifacts/final/workspace.tar","sha256":"c".repeat(64),"size_bytes":13209600}});
+    let settled = |seq: u64, call: u64, purpose: &str, usage: Value, totals: Value| {
+        observation(
+            seq,
+            "request_settled",
+            Some((call, purpose)),
+            None,
+            json!({"call":call,"usage":usage,"totals":totals}),
+        )
+    };
+    vec![
+        observation(
+            1,
+            "controller_started",
+            None,
+            None,
+            json!({"parameters":{"limits":{"wall_seconds":600,"generated_tokens":16384,"context_tokens":32768}}}),
+        ),
+        observation(
+            2,
+            "compaction_configured",
+            None,
+            None,
+            json!({"harness":"continuous_compaction_v1","safety_margin":1638,"settings":{"schema_version":1,"trigger_percent":50,"recent_exchanges":1,"summary_tokens":2048,"allow_finish_run":false}}),
+        ),
+        observation(
+            3,
+            "model_request",
+            Some((1, "work")),
+            None,
+            json!({"purpose":"work","request_id":"r1","call":1,"context_input_bound":1150,"context_basis":"input_bytes","context_reserve":4096}),
+        ),
+        settled(
+            4,
+            1,
+            "work",
+            json!({"status":"known","generated_tokens":120}),
+            json!({"budget_charged_tokens":120,"known_generated_tokens":120,"unknown_requests":0,"unknown_reserved_tokens":0,"usage_complete":true}),
+        ),
+        observation(
+            5,
+            "model_response",
+            Some((1, "work")),
+            None,
+            json!({"call":1,"response":{"done":true,"prompt_tokens":900,"generated_tokens":120,"message":{"content":"Checking the seed before plotting."}}}),
+        ),
+        observation(
+            6,
+            "tool_request",
+            Some((1, "work")),
+            Some(6),
+            json!({"name":"exec","arguments":{"command":"python3 make.py","cwd":"/work"}}),
+        ),
+        observation(
+            7,
+            "tool_result",
+            Some((1, "work")),
+            Some(6),
+            json!({"name":"exec","result":{"exit_code":0,"stdout":"wrote plot.png","stderr":""}}),
+        ),
+        observation(
+            8,
+            "tool_request",
+            Some((1, "work")),
+            Some(8),
+            json!({"name":"write_file","arguments":{"path":"/work/notes.txt","content":"draft"}}),
+        ),
+        observation(
+            9,
+            "tool_result",
+            Some((1, "work")),
+            Some(8),
+            json!({"name":"write_file","result":{"error":"OSError: [Errno 28] No space left on device"}}),
+        ),
+        observation(
+            10,
+            "model_request",
+            Some((2, "work")),
+            None,
+            json!({"purpose":"work","request_id":"r2","call":2,"context_input_bound":1300,"context_basis":"server_usage_plus_new_bytes","context_reserve":4096}),
+        ),
+        observation(
+            11,
+            "model_error",
+            Some((2, "work")),
+            None,
+            json!({
+                "error":{"kind":"parse","message":"error parsing tool call: raw='{\"path\":'"},
+                "recovery_allowed":true,"token_budget_charge":4096,"consecutive_errors":1,"tool_parse_errors":1,
+                "usage":{"budget_charged_tokens":4216,"known_generated_tokens":120,"unknown_requests":1,"unknown_reserved_tokens":4096,"usage_complete":false}}),
+        ),
+        settled(
+            12,
+            2,
+            "work",
+            json!({"status":"unknown","reserved_tokens":4096}),
+            json!({"budget_charged_tokens":4216,"known_generated_tokens":120,"unknown_requests":1,"unknown_reserved_tokens":4096,"usage_complete":false}),
+        ),
+        observation(
+            13,
+            "model_request",
+            Some((3, "work")),
+            None,
+            json!({"purpose":"work","request_id":"r3","call":3,"context_input_bound":1400,"context_basis":"server_usage_plus_new_bytes","context_reserve":4096}),
+        ),
+        settled(
+            14,
+            3,
+            "work",
+            json!({"status":"known","generated_tokens":40}),
+            json!({"budget_charged_tokens":4256,"known_generated_tokens":160,"unknown_requests":1,"unknown_reserved_tokens":4096,"usage_complete":false}),
+        ),
+        observation(
+            15,
+            "model_response",
+            Some((3, "work")),
+            None,
+            json!({"call":3,"response":{"done":true,"generated_tokens":40,"message":{"content":"Listing the workshop root."}}}),
+        ),
+        observation(
+            16,
+            "tool_request",
+            Some((3, "work")),
+            Some(16),
+            json!({"name":"exec","arguments":{"command":"ls /","cwd":"/"}}),
+        ),
+        observation(
+            17,
+            "tool_result",
+            Some((3, "work")),
+            Some(16),
+            json!({"name":"exec","result":{"error":"ValueError: Writable paths and working directories must be inside /work"}}),
+        ),
+        observation(
+            18,
+            "compaction_planned",
+            None,
+            None,
+            json!({"ordinal":1,"source_requests":["r1","r2","r3"],"retained_requests":[],"previous_summary":null,"previous_summary_request":null,"before_messages":[],"input_bound":13000,"projected_tokens":14000,"estimate_basis":"input_bytes","summary_input_bound":12000,"summary_estimate_basis":"input_bytes","evidence":{"schema_version":1,"requests":[{"request_id":"r1","purpose":"work","observation":null},{"request_id":"r2","purpose":"work","observation":null},{"request_id":"r3","purpose":"work","observation":null}],"plan":null}}),
+        ),
+        observation(
+            19,
+            "model_request",
+            Some((4, "compaction")),
+            None,
+            json!({"purpose":"compaction","request_id":"r4","call":4,"context_input_bound":11800,"context_basis":"calibrated_bytes","context_reserve":4096}),
+        ),
+        settled(
+            20,
+            4,
+            "compaction",
+            json!({"status":"known","generated_tokens":36}),
+            json!({"budget_charged_tokens":4292,"known_generated_tokens":196,"unknown_requests":1,"unknown_reserved_tokens":4096,"usage_complete":false}),
+        ),
+        observation(
+            21,
+            "model_response",
+            Some((4, "compaction")),
+            None,
+            json!({"call":4,"response":{"done":true,"prompt_tokens":11800,"generated_tokens":36,"message":{"content":"plot.png is written; the disk filled while writing notes."}}}),
+        ),
+        observation(
+            22,
+            "compaction_applied",
+            Some((4, "compaction")),
+            None,
+            json!({"ordinal":1,"summary_request_id":"r4","summary":"plot.png is written; the disk filled while writing notes.","messages":[],"input_bound":4000,"projected_tokens":5000,"estimate_basis":"input_bytes","evidence":{"schema_version":1,"requests":[{"request_id":"r4","purpose":"compaction","observation":null}],"plan":null}}),
+        ),
+        observation(
+            23,
+            "compaction_deferred",
+            None,
+            None,
+            json!({"ordinal":2,"remaining_ms":20000,"expected_summary_ms":45000,"projected_tokens":24576,"estimate_basis":"server_usage_plus_new_bytes","summary_input_bound":20480,"summary_estimate_basis":"calibrated_bytes"}),
+        ),
+        observation(
+            24,
+            "controller_stop",
+            None,
+            None,
+            json!({"reason":"wall_limit"}),
+        ),
+        event(
+            25,
+            json!({"kind":"capture_published","data":{"capture":capture}}),
+        ),
+        event(
+            26,
+            json!({"kind":"run_finished","data":{"cleanup":{"status":"complete"},"last_capture":capture,"reason":"wall_limit",
+                "usage":{"budget_charged_tokens":4292,"known_generated_tokens":196,"unknown_requests":1,"unknown_reserved_tokens":4096,"usage_complete":false}}}),
+        ),
+    ]
+}

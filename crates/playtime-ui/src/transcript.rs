@@ -140,6 +140,8 @@ pub struct Window {
     pub anchor: Option<(usize, usize)>,
     /// The run's progress, for the header.
     pub progress: Progress,
+    /// The run's results, for the inspector.
+    pub results: crate::summary::Results,
     pub sessions: Sessions,
     pub jumps: Jumps,
     pub calls: Calls,
@@ -901,6 +903,10 @@ impl Transcript {
     pub fn progress(&self, complete: bool) -> Progress {
         self.progress.progress(complete)
     }
+    /// The run's results, once earlier history has loaded.
+    pub fn results(&self, complete: bool) -> crate::summary::Results {
+        self.progress.results(complete, self.ended)
+    }
     fn order(&self, view: View) -> &[usize] {
         match view {
             View::Readable => &self.readable,
@@ -1117,6 +1123,7 @@ impl Transcript {
             metrics: self.metrics.clone(),
             anchor: None,
             progress: Progress::default(),
+            results: Default::default(),
             sessions: self.sessions(0, false),
             jumps: self.jumps(0, false),
             calls: Calls {

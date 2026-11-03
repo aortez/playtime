@@ -131,6 +131,8 @@ pub(crate) struct Update {
     /// What the jump list says about a compaction record, a model error or a
     /// failed tool result.
     pub(crate) mark: Option<Mark>,
+    /// What the record adds to the run's results.
+    pub(crate) results: crate::summary::Update,
 }
 /// A record the timeline's jump list names.
 #[derive(Clone, Debug)]
@@ -194,6 +196,7 @@ impl Update {
         };
         let mut update = Self {
             elapsed_ms: Some(o.elapsed_ms),
+            results: crate::summary::Update::execution(o),
             ..Default::default()
         };
         let compacting = o
@@ -323,6 +326,7 @@ impl Update {
         let mut update = Self {
             session: o.session_id.as_ref().map(|s| s.as_str().to_owned()),
             elapsed_ms: Some(o.elapsed_ms),
+            results: crate::summary::Update::observation(observation),
             ..Default::default()
         };
         update.activity = match observation.payload() {
@@ -412,7 +416,7 @@ impl Update {
         update
     }
     pub(crate) fn event(event: &KnownEvent) -> Self {
-        match event {
+        let mut update = match event {
             KnownEvent::SessionStarted {
                 session_id,
                 ordinal,
@@ -423,13 +427,16 @@ impl Update {
                 ..Default::default()
             },
             _ => Self::default(),
-        }
+        };
+        update.results = crate::summary::Update::event(event);
+        update
     }
-    /// A model request adds an entry to the latest session's turn count, and
-    /// a mark one to the jump list.
+    /// A model request adds an entry to the latest session's turn count, a
+    /// mark one to the jump list, and the results keep their own.
     pub(crate) fn tracked_bytes(&self) -> usize {
         (if self.request.is_some() { 64 } else { 0 })
             + self.mark.as_ref().map_or(0, |mark| 96 + mark.label.len())
+            + self.results.tracked_bytes()
     }
 }
 
@@ -490,10 +497,12 @@ pub(crate) struct Tracker {
     model_errors: u64,
     failed_tools: u64,
     received: Option<Instant>,
+    totals: crate::summary::Totals,
 }
 impl Tracker {
     /// A record without a history page arrived live.
     pub(crate) fn apply(&mut self, sequence: u64, update: Update, live: bool) {
+        self.totals.apply(sequence, update.results);
         if live {
             self.received = Some(Instant::now());
         }
@@ -619,6 +628,11 @@ impl Tracker {
             failed_tools: if complete { self.failed_tools } else { 0 },
             received: self.received,
         }
+    }
+    /// The run's results so far, once earlier history has loaded.
+    pub(crate) fn results(&self, complete: bool, ended: bool) -> crate::summary::Results {
+        self.totals
+            .results(&self.progress(complete), complete, ended)
     }
     fn describe(&self, sequence: u64, activity: &Activity) -> String {
         match activity {
@@ -1023,7 +1037,7 @@ fn evidence_words(evidence: &EvidenceAvailability) -> String {
         }
     }
 }
-fn cleanup_words(cleanup: &Cleanup) -> String {
+pub(crate) fn cleanup_words(cleanup: &Cleanup) -> String {
     match cleanup {
         Cleanup::Complete => "Cleanup complete".into(),
         // The first error says what was left behind.
