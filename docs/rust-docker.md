@@ -125,6 +125,15 @@ argv. Image-file reads remain allowed and bridge writes stay inside `/work`.
 UTF-8 and response shape are validated; zero/false, output truncation, binary-read
 errors and an ordinary `timed_out: true` result are preserved.
 
+The workshop starts Bash with `pipefail`, without `errexit`. A pipeline's
+rightmost nonzero exit is therefore visible even if its final filter succeeds.
+Expected early-consumer SIGPIPE exits remain nonzero (usually 141); commands
+must handle them explicitly. Stderr alone does not imply failure. A later
+command, explicit recovery or `set +o pipefail` can still produce exit zero;
+the controller records the shell's result, not an interpretation of command text.
+The sandbox gate retains real bridge replies for these cases, including a
+truncated gzip/tar piped to `wc -l`.
+
 Transport timeout/disconnect/cancellation or malformed output fences the agent.
 The caller must invoke `quiesce` or final `cleanup`; another tool, new session or
 snapshot cannot proceed on that uncertain agent. Quiescence must be proven even

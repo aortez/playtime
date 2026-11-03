@@ -345,3 +345,103 @@ The regular Framework Ollama service remains explicitly configured for Vulkan,
 using the original binaries. `playtimed-framework-vulkan-20261102.service` remains
 the matched daemon; the completed experimental worker is gone. The hour was run from the existing `preserve-compaction-failures` checkout
 before this tested baseline was committed.
+
+## Pipeline reporting and bounded follow-up, 2026-11-03
+
+The tested failure-history baseline was committed as `271ebcf`. The next system
+fix enables Bash `pipefail` in the workshop bridge, without `errexit`. A tar
+failure followed by a successful `wc -l` now returns exit 2 and its stderr;
+successful stderr output still returns zero. Expected early-consumer SIGPIPE
+returns 141 and can be handled explicitly. Nine real Docker cases cover these
+behaviors, normal success, recovery, sequential commands and explicit opt-out.
+The model inventory describes this contract.
+
+Environment-only preparation deliberately refreshed the workshop, leaving model
+identity and packages unchanged. New image
+`sha256:b98a1e67a7170f14fb3452e59b559c17b2bf03eca597e84fdda52a8e491e68cb`
+contains bridge SHA-256
+`4e76de37f73cbaf512b22039af3850b2fbdb647d652f05a8885612079d15b311`.
+The general and compiled image locks agree; older images and archives remain.
+A new daemon/worker pair and recipe selection are required to use this image;
+the existing hour experiment's runtime and saved definition were not modified.
+
+Evidence is retained in `/home/data2/playtime/pipeline-reliability-20261103`.
+Formatting, workspace Clippy, 644 Rust tests, 89 feature-gated engine tests and
+the frozen Python suite (101 tests, six skips) passed. The real sandbox passed
+all nine pipeline cases and exact cleanup. The scripted service run-and-view
+and worker-loss checks passed, and `continuous-f243429d314f` passed 15 compactions
+and final capture. These are distinct from live-model acceptance. Initial
+readiness and worker-fixture failures during development caught the bridge hash
+that had not yet been updated; they are retained separately from the successful
+checks of the final source.
+
+The diagnostic plan freezes the two hour-run malformed requests, two replays of
+each previously repeated failure, two summary replays and two constructed
+artifact-verification probes. Within each pair, only the second trial's
+sampling seed changes in the model input.
+Work uses 8,192 tokens and summaries 4,096, on the same Framework Vulkan runtime
+and model identity. The bounded Rust replay has no tool executor: returned
+commands measure proposed actions only. Raw HTTP capture and a bounded capture
+of the selected local llama.cpp port distinguish generated output from backend
+parsing. No unknown production usage is replaced by diagnostic measurements.
+
+The live native run `continuous-48e843e65c68` completed stage 48, two compactions
+and cleanup, with 6,010 known tokens and 8,192 reserved for two malformed
+responses. **The strict gate failed**, because those requests have unknown
+usage. Independent inspection verified the event prefix against the captured
+worker receipt and checked the final archive/index hashes and `continuity-ok`
+file (`live-proof.json`). That additional evidence does not turn the gate green.
+
+### Model output versus backend error reporting
+
+Both hour requests (`r190`, `r234`) reproduced malformed JSON on the first replay.
+Their `/api/chat` streams ended with an error object and no `eval_count`. Two
+initial packet-capture setup attempts failed before useful capture (remote file
+permission and transient-service stdio setup); their logs remain. A bounded
+capture streamed over SSH then recorded both requests and responses completely,
+with no TCP gaps, conflicting retransmissions or kernel-dropped packets.
+
+On that captured pass, `r190` again failed. The exact arguments in Ollama's error
+appear verbatim in the underlying llama.cpp output, including the extra `]`
+after the command string. An independent JSON decoder rejects those bytes.
+This establishes a generated malformed call, rather than JSON damaged by
+Playtime or introduced by Ollama's parser. The same internal response contains
+`tokens_predicted: 405`, but the outer response contains only the parser error.
+Ollama 0.32.3's Harmony parser defers argument decoding until completion; the
+server's parser-error branch emits the error instead of the response carrying
+metrics. This is a separate backend reporting defect. Playtime has no trustworthy
+count on that API path and correctly retains an unknown request and its reserve.
+Diagnostic counts do not replace any archived production accounting.
+
+The captured `r234` replay instead returned a valid call, with 368 tokens at both
+boundaries. The outgoing HTTP bodies for both captured replays were byte-identical
+to their first-pass counterparts. The error is not deterministic, and this
+capture directly attributes the malformed output only for `r190`.
+`boundary-attribution.json`, `boundary-proof.json`, raw HTTP records and the PCAP
+retain the comparison. The capture process was stopped after these two requests.
+No runtime binary, GPU selection or model identity was changed.
+
+### Focused model observations
+
+These are small first-action/summary checks, not a general success-rate estimate:
+
+- With the actual retained failure history, one of two `r204` replays again
+  proposed `cwd: "/"`, which the earlier result explicitly rejected. The other
+  used `/work`. Retention makes evidence available; it does not ensure adherence.
+- Neither of two `r142` replays repeated the missing `file` executable. One
+  proposed removing the partial archive and extracted directory; the other
+  proposed listing the archive. These commands were never executed.
+- Both summary replays completed within 4,096 tokens (2,923 and 2,060). They
+  continued treating inherited display claims as verified. The second introduced
+  a 2023 date absent from the input and asserted that the GIF had been opened
+  locally, without a corresponding observation. A larger budget solves the
+  observed truncation problem, not factual fidelity.
+- Both constructed artifact probes began by listing `/work`. That is an
+  inspection step, not proof of link, image or archive verification. The replay
+  has no executor, so it does not establish completed artifact quality.
+
+The next hour-long experiment is held after the live acceptance failure. The
+concrete next system task is preserving backend usage on parser errors, with an
+explicit failure/accounting contract and regression coverage. Separate model
+work should measure failure avoidance and summary claims against observations;
+a successful write or a model-generated summary is not artifact verification.

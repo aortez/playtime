@@ -73,7 +73,76 @@ fn success(reply: ToolReply) -> GateResult<String> {
         other => Err(format!("synthetic command failed: {other:?}").into()),
     }
 }
-async fn sandbox_checks(sandbox: &mut Sandbox) -> GateResult<()> {
+async fn pipeline_checks(
+    sandbox: &mut Sandbox,
+    evidence: &mut Vec<serde_json::Value>,
+) -> GateResult<()> {
+    // Every command goes through the real uid-1000 bridge. In particular, the
+    // archive case used to report success because wc was the last pipeline stage.
+    let cases = [
+        ("successful", "printf 'one\\ntwo\\n' | wc -l", 0, "2", ""),
+        ("upstream_failure", "false | cat", 1, "", ""),
+        (
+            "truncated_archive",
+            "python3 -I -c 'import gzip; open(\"/work/truncated.tar.gz\", \"wb\").write(gzip.compress(b\"x\" * 4096)[:20])' && tar -tzf /work/truncated.tar.gz | wc -l",
+            2,
+            "0",
+            "unexpected end of file",
+        ),
+        (
+            "stderr_is_not_failure",
+            "printf warning >&2",
+            0,
+            "",
+            "warning",
+        ),
+        ("early_consumer", "yes | head -n 1", 141, "y", ""),
+        (
+            "handled_sigpipe",
+            "yes | head -n 1; status=$?; test \"$status\" -eq 141",
+            0,
+            "y",
+            "",
+        ),
+        (
+            "explicit_recovery",
+            "false | cat || printf recovered",
+            0,
+            "recovered",
+            "",
+        ),
+        ("no_errexit", "false; printf continued", 0, "continued", ""),
+        (
+            "explicit_opt_out",
+            "set +o pipefail; false | cat",
+            0,
+            "",
+            "",
+        ),
+    ];
+    for (name, command, expected_exit, expected_stdout, expected_stderr) in cases {
+        let reply = exec(sandbox, command).await?;
+        evidence.push(serde_json::json!({"case":name,"command":command,"reply":reply}));
+        match reply {
+            ToolReply::Exec {
+                exit_code,
+                stdout,
+                stderr,
+                timed_out: false,
+                output_truncated: false,
+                ..
+            } if exit_code == expected_exit
+                && stdout.trim() == expected_stdout
+                && stderr.contains(expected_stderr) => {}
+            other => return Err(format!("pipeline case {name} failed: {other:?}").into()),
+        }
+    }
+    Ok(())
+}
+async fn sandbox_checks(
+    sandbox: &mut Sandbox,
+    pipeline_evidence: &mut Vec<serde_json::Value>,
+) -> GateResult<()> {
     sandbox
         .initialize(
             Instant::now() + Duration::from_secs(20),
@@ -87,6 +156,7 @@ async fn sandbox_checks(sandbox: &mut Sandbox) -> GateResult<()> {
             CancellationToken::new(),
         )
         .await?;
+    pipeline_checks(sandbox, pipeline_evidence).await?;
     let output = success(
         exec(
             sandbox,
@@ -407,7 +477,8 @@ async fn run(root: &Path, cli: &Path, socket: &Path, lock: &Path) -> GateResult<
         WorkDeadline::after(Duration::from_secs(120))?,
         journal.clone(),
     )?;
-    let result = sandbox_checks(&mut sandbox).await;
+    let mut pipeline_evidence = Vec::new();
+    let result = sandbox_checks(&mut sandbox, &mut pipeline_evidence).await;
     let cleanup = sandbox
         .cleanup(
             Instant::now() + Duration::from_secs(20),
@@ -417,7 +488,7 @@ async fn run(root: &Path, cli: &Path, socket: &Path, lock: &Path) -> GateResult<
     std::fs::write(
         root.join("sandbox-evidence.json"),
         serde_json::to_vec_pretty(
-            &serde_json::json!({"mode":"real Docker; scripted tool calls; no model","selection":transport.selection(),"daemon":engine.identity(),"proposals":sandbox.proposals(),"check":result.as_ref().map(|_|"passed").map_err(|e|e.to_string()),"operations":sandbox.observations(),"cleanup":cleanup}),
+            &serde_json::json!({"mode":"real Docker; scripted tool calls; no model","selection":transport.selection(),"daemon":engine.identity(),"proposals":sandbox.proposals(),"check":result.as_ref().map(|_|"passed").map_err(|e|e.to_string()),"pipelines":pipeline_evidence,"operations":sandbox.observations(),"cleanup":cleanup}),
         )?,
     )?;
     expect(

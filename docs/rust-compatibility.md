@@ -1204,3 +1204,22 @@ requiring matching daemon and worker builds. The strict native gate now states
 its unknown-request and reserved-token counts when it fails; its acceptance
 conditions are unchanged. This does not invent missing backend token usage or
 establish that the model interprets retained evidence correctly.
+
+## Workshop pipeline status (2026-11-03)
+
+The owner approved fixing a masked failure from the Vulkan hour: `tar -tzf ... |
+wc -l` returned zero while tar reported a truncated archive. The bridge now starts
+Bash with `pipefail`, without enabling `errexit`. Expected early-consumer SIGPIPE
+statuses are visible too; explicit handling and normal sequential-command
+semantics remain available. Successful stderr output is not reclassified.
+The existing controller failure history consumes the resulting nonzero status.
+
+The workshop was deliberately prepared with refresh through the existing
+environment-only preparation helper; this does not refresh the model lock or run
+a Python experiment. The general and embedded native image locks identify the
+new image; prior image archives and run inputs remain intact. New continuous
+selections use `continuous-inventory-v2.txt`, and the catalog inventory describes
+the shell semantics. Recipe limits are unchanged. Existing saved definitions
+remain immutable and require their original matching runtime; new runs need a
+new selection and a matching rebuilt daemon/worker. The new image identity
+changes the native capability digest. No behavioral or schema goldens change.
