@@ -43,12 +43,7 @@ fn pixels(image: image::RgbaImage, notice: String) -> Result<Pixels, String> {
     })
 }
 /// Whether the workbench previews a file of this name as an image.
-pub fn image_name(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    [".png", ".jpg", ".jpeg", ".webp", ".gif"]
-        .iter()
-        .any(|suffix| lower.ends_with(suffix))
-}
+pub use playtime_client::report::image_name;
 pub fn decode(bytes: &[u8]) -> Result<Pixels, String> {
     if bytes.len() > ENCODED_BYTES {
         return Err("Image exceeds the 4 MiB encoded preview limit".into());

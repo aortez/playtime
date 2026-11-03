@@ -5,12 +5,12 @@
 #[allow(dead_code)]
 mod scene;
 use egui_kittest::{Harness, kittest::Queryable};
+use playtime_client::report::{Line, Results};
 use playtime_core::{RunId, StopReason};
 use playtime_protocol::{api::*, events::EventEnvelope, v1::UsageSummary};
 use playtime_ui::{
     backend::prepare_run,
     model::*,
-    summary::{Line, Results},
     transcript::{Transcript, View},
     ui::Workbench,
 };
@@ -275,7 +275,40 @@ fn calls_never_dispatched_and_omitted_settlements_still_count() {
     ];
     let expected = ["1 work call · median 2.0 s · longest 2.0 s · 50 tokens · 25 tokens/s"];
     assert_eq!(call_lines(&indexed(events.clone()).results(true)), expected);
-    let mut reversed = events;
+    let mut reversed = events.clone();
+    reversed.reverse();
+    assert_eq!(call_lines(&indexed(reversed).results(true)), expected);
+
+    // The archive records the settlement fact after the observation that
+    // settles the call, and before an omission of it; whichever side of the
+    // end it lands on, the fact adds the usage the call still lacks, never
+    // a second call.
+    let mut late = vec![events[0].clone(), events[2].clone(), events[1].clone()];
+    late[1].sequence = std::num::NonZeroU64::new(2).unwrap();
+    late[2].sequence = std::num::NonZeroU64::new(3).unwrap();
+    assert_eq!(call_lines(&indexed(late.clone()).results(true)), expected);
+    late.reverse();
+    assert_eq!(call_lines(&indexed(late).results(true)), expected);
+    let settled = vec![
+        events[0].clone(),
+        v2(
+            2,
+            "request_settled",
+            1,
+            json!({"call":1,"usage":{"status":"known","generated_tokens":50}}),
+        ),
+        {
+            let mut fact = events[1].clone();
+            fact.sequence = std::num::NonZeroU64::new(3).unwrap();
+            fact
+        },
+    ];
+    let expected = ["1 work call · median 1.0 s · longest 1.0 s · 50 tokens · 50 tokens/s"];
+    assert_eq!(
+        call_lines(&indexed(settled.clone()).results(true)),
+        expected
+    );
+    let mut reversed = settled;
     reversed.reverse();
     assert_eq!(call_lines(&indexed(reversed).results(true)), expected);
 }

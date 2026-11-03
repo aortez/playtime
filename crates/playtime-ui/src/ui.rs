@@ -1367,6 +1367,10 @@ impl Workbench {
     /// The run's results: the totals the index keeps, each count a link to
     /// its first record, then the final workspace's files.
     fn results(&mut self, ui: &mut egui::Ui, continuous: bool) {
+        use playtime_client::report::{
+            FINAL_WORKSPACE, LATEST_CHECKPOINT, LATEST_WORKSPACE, LISTING_INCOMPLETE,
+            NO_FINAL_FILE_LISTED, NO_FINAL_WORKSPACE,
+        };
         self.model.seek_final_files();
         let mut jump = None;
         let results = &self.model.window.results;
@@ -1403,23 +1407,20 @@ impl Workbench {
         let captured = results
             .sections
             .iter()
-            .any(|section| matches!(section.title, "Final workspace" | "Latest workspace"));
+            .any(|section| matches!(section.title, FINAL_WORKSPACE | LATEST_WORKSPACE));
         let mut open = None;
         let mut files = false;
         if let Some(listing) = &self.model.final_listing {
             if !captured {
                 ui.strong(if ended {
-                    "Final workspace"
+                    FINAL_WORKSPACE
                 } else {
-                    "Latest checkpoint"
+                    LATEST_CHECKPOINT
                 });
             }
             ui.add(egui::Label::new(brief(&listing.summary, 500)).wrap());
             if listing.incomplete {
-                ui.colored_label(
-                    Color32::YELLOW,
-                    "Listing limit reached; this listing is incomplete.",
-                );
+                ui.colored_label(Color32::YELLOW, LISTING_INCOMPLETE);
             }
             for image in &listing.images {
                 ui.horizontal_wrapped(|ui| {
@@ -1440,9 +1441,9 @@ impl Workbench {
             && files.is_empty()
         {
             ui.small(if *complete {
-                "No final workspace publication was found."
+                NO_FINAL_WORKSPACE
             } else {
-                "Listing limit reached before any final workspace file."
+                NO_FINAL_FILE_LISTED
             });
         } else if !continuous && self.model.checkpoints_next.is_some() {
             ui.small("Load the remaining checkpoints in Files to see the final workspace.");
