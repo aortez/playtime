@@ -39,9 +39,11 @@ configurations. Preview and launch still require those execution capabilities.
 The model can correct its own tool-call mistakes. A batch with an invalid
 ordinary call runs none of its calls and returns each call's error to the model.
 When the server can't parse a response's tool call, the request is retried, up to
-five times in a row, and the failed attempt is charged its full allowance as
-unknown usage. A work request is retried with a notice. A summary request is
-planned again and sent unchanged. A summary answered with tool calls, which
+five times in a row. The failed attempt is charged its measured usage when the
+backend supplies a validated [terminal parser-error envelope](rust-live-model.md#terminal-parser-error-usage-extension);
+otherwise its full allowance remains charged as unknown usage. A work request
+is retried with a notice. A summary request is planned again and sent unchanged.
+A summary answered with tool calls, which
 summary requests never offer, is retried the same way within the same five,
 charged its actual usage; gpt-oss has answered summary requests with calls to
 `exec` and to a `container.exec` tool that exists nowhere in Playtime, after

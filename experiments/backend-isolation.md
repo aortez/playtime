@@ -519,3 +519,26 @@ execution hash, source, Cargo lock, inputs, raw HTTP/PCAP and result files remai
 `pipeline-reliability-20261103/provenance-addendum-20261103.json` explicitly records
 that the old binary itself is no longer retained. Subsequent replay builds use
 the new evidence directory. No archived experiment or raw measurement changed.
+
+### Integration with run reports
+
+Before PR, the branch incorporated `main` through `43dad7c` (CLI/UI run reports).
+The only merge conflict was the compatibility log; both sets of entries remain.
+A shared-client regression checks measured and unknown parser failures for work
+and compaction, including zero-token usage and the later settlement fact, in
+forward and reverse event order. Errors remain errors and usage is counted once.
+
+An offline diagnostic also fed the captured Framework run's 929 events through
+the actual shared report accumulator, after verifying the captured worker receipt's
+byte bound and hash. Both orders produced identical reports: 52 work calls with
+5,085 known tokens, two compaction calls with 1,284 known tokens, two parse errors,
+zero unknown usage, and no unrequested or open calls. This verifies report
+integration against retained native evidence; it is not a new inference run.
+
+Post-merge checks passed: formatting, workspace and feature Clippy, 668 workspace
+tests, 90 feature-gated engine tests, 13 workspace-probe tests, 12 CLI fixture
+cases, two UI fixture cases, and the frozen Python suite (101 tests, six skips).
+Evidence, diagnostic source and lock file, and `native-report-v2.json` are under
+`/home/data2/playtime/pr-integration-20261103`. The earlier Docker/backend/native
+checks above precede this report integration; no native execution code changed
+during the merge or integration follow-up.

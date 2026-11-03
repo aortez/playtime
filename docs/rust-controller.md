@@ -204,7 +204,7 @@ all work reserves. Rewritten context cannot reuse a server measurement for a
 different prefix. A summary response the server can't parse is retried as below;
 any other failure stops explicitly.
 
-Replacement also retains controller-generated `failure_history_v2` evidence
+Replacement also retains controller-generated `failure_history_v3` evidence
 from the exchanges it removes. A non-null, non-false `error`, or an `exec`
 result with a nonzero exit code or `timed_out: true`, creates an observation from
 the original result before output fitting. Each records the model request ID,
@@ -215,8 +215,10 @@ controller observations, not archive records or writer receipts.
 
 A recorded model parse failure contributes a separate `model_parse_error` fact:
 failed request ID/purpose, the `model_error` controller sequence, elapsed time,
-bounded parser diagnostic, recovery decision and unknown-usage reservation. No
-tools from that response executed. This records the failure without attributing
+bounded parser diagnostic, recovery decision and either measured generated tokens
+or an unknown-usage reservation. Measured counts require the validated terminal
+parser-error envelope described in [live models](rust-live-model.md#terminal-parser-error-usage-extension).
+No tools from that response executed. This records the failure without attributing
 it to model generation or backend parsing. Failed attempts have no successful
 response exchange, so their bounded facts join the next completed work exchange,
 alongside retry notices. Pending facts survive intervening compactions; summary
