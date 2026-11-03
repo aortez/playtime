@@ -1,7 +1,7 @@
 //! Pure presentation state and explicit user intents. No execution authority.
 use crate::transcript::{SourcePage, TextRef, View, Window, inspector_page};
 use playtime_client::{config::Options, state::LaunchReceipt};
-use playtime_core::{RunId, RunMode, SessionId};
+use playtime_core::{RunId, RunMode, SessionId, Sha256Digest};
 use playtime_protocol::api::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -140,22 +140,34 @@ pub struct ListedFile {
     pub name: String,
     pub artifact_id: ArtifactId,
     pub size: String,
+    /// The content's digest, which a later listing of the same content
+    /// under another artifact shares.
+    pub digest: Sha256Digest,
 }
 /// Images the Results tab lists itself, with their thumbnails.
 pub const LISTED_IMAGES: usize = 12;
+/// The actions the view may queue ahead of the client.
+const QUEUED_COMMANDS: usize = 64;
 impl FinalListing {
-    /// The counted listing and each retained file's name, artifact and size,
-    /// for the images to open.
+    /// The counted listing and each retained file's name, artifact and
+    /// content, for the images to open.
     fn new<'a>(
         listing: playtime_client::report::Listing,
-        files: impl Iterator<Item = (&'a str, &'a ArtifactId, u64)>,
+        files: impl Iterator<
+            Item = (
+                &'a str,
+                &'a ArtifactId,
+                &'a playtime_protocol::archive::ContentRef,
+            ),
+        >,
     ) -> Self {
         let mut images: Vec<ListedFile> = files
             .filter(|(name, ..)| crate::media::image_name(name))
-            .map(|(name, artifact_id, size)| ListedFile {
+            .map(|(name, artifact_id, content)| ListedFile {
                 name: name.to_owned(),
                 artifact_id: artifact_id.clone(),
-                size: crate::preview::bytes(size),
+                size: crate::preview::bytes(content.size_bytes),
+                digest: content.sha256.clone(),
             })
             .collect();
         images.sort_by(|a, b| a.name.cmp(&b.name));
@@ -179,7 +191,7 @@ impl FinalListing {
                     (
                         artifact.name.as_str(),
                         &artifact.artifact_id,
-                        artifact.content.size_bytes,
+                        &artifact.content,
                     )
                 }),
         )
@@ -196,7 +208,7 @@ impl FinalListing {
                     ContentAvailability::Available {
                         artifact_id,
                         content,
-                    } => Some((file.name.as_str(), artifact_id, content.size_bytes)),
+                    } => Some((file.name.as_str(), artifact_id, content)),
                     ContentAvailability::Unavailable { .. } => None,
                 }),
         )
@@ -560,7 +572,7 @@ impl Model {
         }
     }
     pub fn command(&mut self, action: Action) {
-        if self.commands.len() >= 64 {
+        if self.commands.len() >= QUEUED_COMMANDS {
             self.notify(
                 "Client work queue is full; retry this action after current work finishes",
                 None,
@@ -676,6 +688,13 @@ impl Model {
         self.tag.connection += 1;
         self.archive_waiting = false;
         self.tag.selection += 1;
+        // The new tags drop the replies to the open run's final listing and
+        // thumbnails still loading, so the Results tab asks for them again.
+        if self.final_files.is_none() {
+            self.final_files_sought = false;
+        }
+        self.thumbnails_sought
+            .retain(|id| self.thumbnails.contains_key(id));
         self.tag.preview += 1;
         self.connection = ConnectionState::Connecting;
         self.stale = true;
@@ -919,10 +938,12 @@ impl Model {
         self.final_files_sought = true;
         self.command(Action::FinalFiles(run.run_id.clone()));
     }
-    /// Asks once for each listed image's thumbnail, in listing order, once a
-    /// listing is in hand.
-    fn seek_thumbnails(&mut self) {
-        if self.connection != ConnectionState::Connected {
+    /// Asks for the listed images' thumbnails not asked for yet, in listing
+    /// order: all of them when a listing arrives, and the ones a full queue,
+    /// a lost connection or a reconnect left pending when the Results tab
+    /// draws, until each is asked for.
+    pub(crate) fn seek_thumbnails(&mut self) {
+        if self.connection != ConnectionState::Connected || self.commands.len() >= QUEUED_COMMANDS {
             return;
         }
         let Some(run) = self.selected.clone() else {
@@ -945,6 +966,32 @@ impl Model {
         }
         self.thumbnails_sought.extend(ids.iter().cloned());
         self.command(Action::Thumbnails(run, ids));
+    }
+    /// Installs the final workspace's listing. Its images keep the
+    /// thumbnails they have, under the new artifacts a later checkpoint
+    /// publishes the same content as; the rest, and any still loading, are
+    /// dropped, so no more than one listing's thumbnails are ever held. The
+    /// backend stops the request in progress for the newer one, which asks
+    /// for everything missing.
+    fn install_listing(&mut self, listing: Option<FinalListing>) {
+        let previous = std::mem::replace(&mut self.final_listing, listing);
+        let mut kept = BTreeMap::new();
+        for image in self.final_listing.iter().flat_map(|l| &l.images) {
+            let thumbnail = self.thumbnails.remove(&image.artifact_id).or_else(|| {
+                let same = previous
+                    .as_ref()?
+                    .images
+                    .iter()
+                    .find(|old| old.digest == image.digest)?;
+                self.thumbnails.remove(&same.artifact_id)
+            });
+            if let Some(thumbnail) = thumbnail {
+                kept.insert(image.artifact_id.clone(), thumbnail);
+            }
+        }
+        self.thumbnails = kept;
+        self.thumbnails_sought = self.thumbnails.keys().cloned().collect();
+        self.seek_thumbnails();
     }
     pub fn jump_live(&mut self) {
         self.location = None;
@@ -1342,14 +1389,16 @@ impl Model {
             }
             Data::FinalFiles(files, complete) => {
                 // No files is no final capture, not an empty workspace.
-                self.final_listing =
+                let listing =
                     (!files.is_empty()).then(|| FinalListing::from_artifacts(&files, complete));
                 self.final_files = Some((files, complete));
                 self.file_page = 0;
-                self.seek_thumbnails();
+                self.install_listing(listing);
             }
             Data::Thumbnail(id, thumbnail) => {
-                // Only listed images were asked for, so the map stays small.
+                // Only the listing's images are asked for, and a new listing
+                // forgets the ones no longer listed, so the map never holds
+                // more than one listing's thumbnails.
                 if self.thumbnails_sought.contains(&id) {
                     self.thumbnails.insert(id, thumbnail);
                 }
@@ -1431,9 +1480,9 @@ impl Model {
                         .iter()
                         .max_by_key(|c| c.checkpoint.published_sequence)
                 {
-                    self.final_listing = Some(FinalListing::from_checkpoint(last));
+                    let listing = FinalListing::from_checkpoint(last);
+                    self.install_listing(Some(listing));
                 }
-                self.seek_thumbnails();
             }
             Data::Checkpoint(c, memory) => {
                 if self

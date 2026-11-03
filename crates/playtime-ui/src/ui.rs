@@ -19,8 +19,12 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 const ACCENT: Color32 = Color32::from_rgb(96, 214, 185);
 /// A run row: recipe, state, outcome, time and ID.
 const RUN_ROW_HEIGHT: f32 = 112.0;
-/// A thumbnail's cell in the Results tab, half the decoded thumbnail box.
-const THUMBNAIL_CELL: Vec2 = Vec2::new(112.0, 84.0);
+/// A thumbnail's box in the Results tab, half the decoded thumbnail, so it
+/// stays sharp on a dense display; its cell adds the button's padding.
+const THUMBNAIL_CELL: Vec2 = Vec2::new(
+    crate::media::THUMBNAIL[0] as f32 / 2.0,
+    crate::media::THUMBNAIL[1] as f32 / 2.0,
+);
 #[derive(Clone, Debug, Default)]
 pub struct FrameMetrics {
     pub laid_out_rows: usize,
@@ -92,9 +96,7 @@ impl Workbench {
         {
             self.texture = None;
         }
-        if self.model.thumbnails.is_empty() {
-            self.thumbnails.clear();
-        }
+        self.sync_thumbnails(ui);
         let old_widths = (
             self.model.preferences.left_width,
             self.model.preferences.right_width,
@@ -202,6 +204,14 @@ impl Workbench {
                 .show(ui.ctx(), |ui| self.image(ui, true));
             self.model.enlarged = open;
         }
+        // The frame's texture payload: the opened image, drawn wherever it
+        // is, once, and the thumbnails.
+        self.metrics.texture_bytes = self.texture.as_ref().map_or(0, |(pixels, _)| pixels.bytes)
+            + self
+                .thumbnails
+                .values()
+                .map(|(pixels, _)| pixels.bytes)
+                .sum::<usize>();
         if old_widths
             != (
                 self.model.preferences.left_width,
@@ -1381,7 +1391,7 @@ impl Workbench {
             NO_FINAL_FILE_LISTED, NO_FINAL_WORKSPACE,
         };
         self.model.seek_final_files();
-        self.sync_thumbnails(ui);
+        self.model.seek_thumbnails();
         let mut jump = None;
         let results = &self.model.window.results;
         if !results.complete {
@@ -1434,17 +1444,21 @@ impl Workbench {
             }
             // The listed images as thumbnails, each a button to open it in
             // place, with its name and size under it, in rows of as many
-            // cells as the pane is wide.
+            // cells as the pane is wide. Every cell is the same size, the
+            // thumbnail box plus the button's padding, with the image in
+            // its middle, and the rows meet at the top so a name on two
+            // lines moves nothing beside it.
             let spacing = ui.spacing().item_spacing.x;
-            let columns = ((ui.available_width() + spacing) / (THUMBNAIL_CELL.x + spacing))
+            let cell = THUMBNAIL_CELL + 2.0 * ui.spacing().button_padding;
+            let columns = ((ui.available_width() + spacing) / (cell.x + spacing))
                 .floor()
                 .max(1.0) as usize;
             for row in listing.images.chunks(columns) {
-                ui.horizontal(|ui| {
+                ui.horizontal_top(|ui| {
                     for image in row {
                         ui.push_id(image.artifact_id.as_str(), |ui| {
                             ui.vertical(|ui| {
-                                ui.set_max_width(THUMBNAIL_CELL.x);
+                                ui.set_max_width(cell.x);
                                 let response = match (
                                     self.model.thumbnails.get(&image.artifact_id),
                                     self.thumbnails.get(&image.artifact_id),
@@ -1454,12 +1468,15 @@ impl Workbench {
                                         let scale = (THUMBNAIL_CELL.x / size.x)
                                             .min(THUMBNAIL_CELL.y / size.y)
                                             .min(4.0);
-                                        ui.add(egui::Button::image((texture.id(), size * scale)))
+                                        ui.add_sized(
+                                            cell,
+                                            egui::Button::image((texture.id(), size * scale)),
+                                        )
                                     }
                                     (Some(Err(notice)), _) => ui
-                                        .add_sized(THUMBNAIL_CELL, egui::Button::new("No preview"))
+                                        .add_sized(cell, egui::Button::new("No preview"))
                                         .on_hover_text(notice),
-                                    _ => ui.add_sized(THUMBNAIL_CELL, egui::Button::new("Loading")),
+                                    _ => ui.add_sized(cell, egui::Button::new("Loading")),
                                 };
                                 response.widget_info(|| {
                                     egui::WidgetInfo::labeled(
@@ -1472,8 +1489,10 @@ impl Workbench {
                                     open = Some(image.artifact_id.clone());
                                 }
                                 ui.add(
-                                    egui::Label::new(RichText::new(brief(&image.name, 60)).small())
-                                        .wrap(),
+                                    egui::Label::new(
+                                        RichText::new(shortened(&image.name, 60)).small(),
+                                    )
+                                    .wrap(),
                                 );
                                 ui.small(&image.size);
                             });
@@ -1508,33 +1527,35 @@ impl Workbench {
             self.model.inspect_action(Action::Content(run, id, 0));
         }
     }
-    /// Thumbnail textures follow the model's thumbnails: dropped with them,
-    /// created once each when the pixels arrive. Their bytes count toward
-    /// the frame's texture payload.
+    /// Thumbnail textures follow the model's thumbnails: created once each
+    /// when the pixels arrive, kept by a thumbnail carried to another
+    /// artifact, dropped with the rest.
     fn sync_thumbnails(&mut self, ui: &mut egui::Ui) {
-        let current = &self.model.thumbnails;
-        self.thumbnails.retain(|id, (pixels, _)| {
-            matches!(current.get(id), Some(Ok(latest)) if Arc::ptr_eq(latest, pixels))
-        });
-        for (id, pixels) in current
+        let mut previous = std::mem::take(&mut self.thumbnails);
+        for (id, pixels) in self
+            .model
+            .thumbnails
             .iter()
             .filter_map(|(id, thumbnail)| Some((id, thumbnail.as_ref().ok()?)))
         {
-            if !self.thumbnails.contains_key(id) {
+            let kept = match previous.remove(id) {
+                Some(entry) if Arc::ptr_eq(&entry.0, pixels) => Some(entry),
+                _ => previous
+                    .iter()
+                    .find(|(_, (old, _))| Arc::ptr_eq(old, pixels))
+                    .map(|(old, _)| old.clone())
+                    .and_then(|old| previous.remove(&old)),
+            };
+            let entry = kept.unwrap_or_else(|| {
                 let texture = ui.ctx().load_texture(
                     format!("thumbnail-{id}"),
                     egui::ImageData::Color(pixels.image.clone()),
                     egui::TextureOptions::LINEAR,
                 );
-                self.thumbnails
-                    .insert(id.clone(), (pixels.clone(), texture));
-            }
+                (pixels.clone(), texture)
+            });
+            self.thumbnails.insert(id.clone(), entry);
         }
-        self.metrics.texture_bytes += self
-            .thumbnails
-            .values()
-            .map(|(pixels, _)| pixels.bytes)
-            .sum::<usize>();
     }
     /// Goes to a record: the timeline locates it on its next frame.
     fn jump_to(&mut self, sequence: u64) {
@@ -1563,7 +1584,6 @@ impl Workbench {
             );
             self.texture = Some((pixels.clone(), texture));
         }
-        self.metrics.texture_bytes += pixels.bytes;
         if self.model.content.as_ref().is_some_and(|c| c.animated) {
             if self.model.playing {
                 if ui.button("Pause GIF").clicked() {
@@ -1661,6 +1681,14 @@ fn brief(text: &str, max: usize) -> &str {
         end -= 1;
     }
     &text[..end]
+}
+/// The text, cut to `max` bytes with an ellipsis if it is longer.
+fn shortened(text: &str, max: usize) -> std::borrow::Cow<'_, str> {
+    if text.len() <= max {
+        std::borrow::Cow::Borrowed(text)
+    } else {
+        std::borrow::Cow::Owned(format!("{}…", brief(text, max)))
+    }
 }
 /// Prose as the fonts show it. gpt-oss writes a narrow no-break space between
 /// a number and its unit, which the proportional font lacks and the fallback

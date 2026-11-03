@@ -1,11 +1,17 @@
 //! The Results tab totals a run's time, calls, errors, tools, compactions,
 //! sessions and final workspace from the records the index keeps, and the run
 //! rows say how each run ended.
+#[path = "support/pictures.rs"]
+mod pictures;
 #[path = "support/continuous_scene.rs"]
 #[allow(dead_code)]
 mod scene;
 use egui_kittest::{Harness, kittest::Queryable};
-use playtime_client::report::{Line, Results};
+use pictures::{artifact, artifact_id, picture};
+use playtime_client::{
+    config::Options,
+    report::{Line, Results},
+};
 use playtime_core::{RunId, StopReason};
 use playtime_protocol::{api::*, events::EventEnvelope, v1::UsageSummary};
 use playtime_ui::{
@@ -16,27 +22,6 @@ use playtime_ui::{
 };
 use serde_json::json;
 use std::sync::Arc;
-
-/// A distinct opaque ID for a named file.
-fn artifact_id(name: &str) -> ArtifactId {
-    ArtifactId::new(format!(
-        "{:0>64}",
-        name.bytes()
-            .fold(7u64, |h, b| h.wrapping_mul(31).wrapping_add(u64::from(b)))
-    ))
-    .unwrap()
-}
-/// A PNG of a gradient, to decode as a thumbnail.
-fn picture(width: u32, height: u32, seed: u8) -> Vec<u8> {
-    let image = image::RgbaImage::from_fn(width, height, |x, y| {
-        image::Rgba([(x * 255 / width) as u8, (y * 255 / height) as u8, seed, 255])
-    });
-    let mut bytes = std::io::Cursor::new(vec![]);
-    image::DynamicImage::ImageRgba8(image)
-        .write_to(&mut bytes, image::ImageFormat::Png)
-        .unwrap();
-    bytes.into_inner()
-}
 
 fn indexed(events: Vec<EventEnvelope>) -> Transcript {
     let mut transcript = Transcript::default();
@@ -566,18 +551,6 @@ fn the_results_tab_opens_first_links_each_count_and_asks_for_the_final_files() {
     );
 
     // The listing counts the files and lists the images to open.
-    let artifact = |name: &str, bytes: u64| {
-        serde_json::from_value::<Artifact>(json!({
-            "artifact_id": artifact_id(name),
-            "name": name,
-            "kind": "file_version",
-            "content": {"path": format!("artifacts/final/files/{name}"), "sha256": "d".repeat(64), "size_bytes": bytes},
-            "session_id": null,
-            "published_sequence": 25,
-            "frozen_input": false,
-        }))
-        .unwrap()
-    };
     let listing = FinalListing::from_artifacts(
         &[
             artifact("zoom.gif", 204_800),
@@ -671,11 +644,124 @@ fn the_results_tab_opens_first_links_each_count_and_asks_for_the_final_files() {
     h.get_by_label("Every file in Files").click();
     h.run();
     assert_eq!(h.state().model.inspector, Inspector::Files);
+    // Back on the Results tab, which asks for the thumbnails left pending.
+    h.state_mut().model.inspector = Inspector::Results;
+    // A later listing of the same content under new artifacts, as a later
+    // checkpoint publishes it, keeps the thumbnails it has and drops the
+    // rest; only the images without one are asked for, in one request.
+    let asks = |model: &Model| -> Vec<Vec<ArtifactId>> {
+        model
+            .commands
+            .iter()
+            .filter_map(|c| match &c.action {
+                Action::Thumbnails(id, ids) if *id == run => Some(ids.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let later = |name: &str, bytes: u64, publication: u8| {
+        let mut later = artifact(name, bytes);
+        later.artifact_id = artifact_id(&format!("{name}@{publication}"));
+        later
+    };
+    let model = &mut h.state_mut().model;
+    let plot = model.thumbnails[&artifact_id("plot.png")].clone().unwrap();
+    model.apply(Reply {
+        tag,
+        run: Some(run.clone()),
+        data: Data::FinalFiles(
+            vec![
+                later("plot.png", 1_048_576, 2),
+                later("make.py", 2_048, 2),
+                later("new.png", 4_096, 2),
+            ],
+            true,
+        ),
+    });
+    assert_eq!(
+        model.thumbnails.keys().cloned().collect::<Vec<_>>(),
+        [artifact_id("plot.png@2")]
+    );
+    assert!(matches!(
+        &model.thumbnails[&artifact_id("plot.png@2")],
+        Ok(kept) if Arc::ptr_eq(kept, &plot)
+    ));
+    assert_eq!(asks(model).last(), Some(&vec![artifact_id("new.png@2")]));
+    // A reconnect drops the reply still in flight, so the tab asks for that
+    // thumbnail again once the service is back, and only for it.
+    model.connect(Options::default());
+    h.run();
+    assert_eq!(asks(&h.state().model).len(), 2);
+    h.state_mut().model.connection = ConnectionState::Connected;
+    h.run();
+    assert_eq!(
+        asks(&h.state().model)[1..],
+        [
+            vec![artifact_id("new.png@2")],
+            vec![artifact_id("new.png@2")]
+        ]
+    );
+    // A full queue defers the ask to a later frame rather than dropping it.
+    let model = &mut h.state_mut().model;
+    while model.commands.len() < 64 {
+        model.command(Action::Targets);
+    }
+    model.apply(Reply {
+        tag: model.tag,
+        run: Some(run.clone()),
+        data: Data::FinalFiles(
+            vec![later("plot.png", 1_048_576, 3), later("sky.png", 4_096, 3)],
+            true,
+        ),
+    });
+    assert_eq!(asks(model).len(), 3);
+    model.commands.clear();
+    h.run();
+    assert_eq!(asks(&h.state().model), [vec![artifact_id("sky.png@3")]]);
     // Another run's selection drops them.
     h.state_mut()
         .model
         .select_run(RunId::new("another").unwrap());
     assert!(h.state().model.thumbnails.is_empty());
+}
+
+#[test]
+fn thumbnail_rows_fit_the_pane() {
+    // A row holds as many cells as the pane is wide, counting the button's
+    // padding around each thumbnail: at 380 pixels three cells would run
+    // past the pane's edge, so they go two to a row.
+    let mut app = workbench(ended_continuous());
+    app.model.preferences.right_width = 380.0;
+    let run = app.model.selected.clone().unwrap();
+    let names = ["a.png", "b.png", "c.png", "d.png", "e.png"];
+    app.model.apply(Reply {
+        tag: app.model.tag,
+        run: Some(run),
+        data: Data::FinalFiles(
+            names.iter().map(|name| artifact(name, 4_096)).collect(),
+            true,
+        ),
+    });
+    let pixels = Arc::new(playtime_ui::media::thumbnail(&picture(640, 480, 0)).unwrap());
+    for name in names {
+        app.model
+            .thumbnails
+            .insert(artifact_id(name), Ok(pixels.clone()));
+    }
+    let mut h = Harness::builder()
+        .with_size([1440.0, 1400.0])
+        .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
+    h.run();
+    let cells: Vec<_> = names
+        .iter()
+        .map(|name| h.get_by_label(&format!("Open image {name}")).rect())
+        .collect();
+    for cell in &cells {
+        assert!(cell.min.x >= 1060.0 && cell.max.x <= 1440.0, "{cell:?}");
+    }
+    assert_eq!(cells[0].min.y, cells[1].min.y);
+    assert!(cells[2].min.y > cells[0].max.y);
+    assert!((cells[2].min.x - cells[0].min.x).abs() < 0.5);
 }
 
 #[test]

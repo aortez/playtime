@@ -5,6 +5,9 @@ mod common;
 mod continuous_scene;
 #[path = "support/model_scenes.rs"]
 mod model_scenes;
+#[path = "support/pictures.rs"]
+#[allow(dead_code)]
+mod pictures;
 #[path = "support/preview_scene.rs"]
 mod preview_scene;
 #[path = "support/registration_scenes.rs"]
@@ -82,17 +85,6 @@ fn progress_screen(app: &mut Workbench, ended: bool) {
     app.model.window.sessions = transcript.sessions(0, true);
     app.model.window.jumps = transcript.jumps(0, true);
     app.model.window.calls.complete = true;
-}
-/// A PNG of a gradient, to decode as a thumbnail.
-fn picture(width: u32, height: u32, seed: u8) -> Vec<u8> {
-    let image = image::RgbaImage::from_fn(width, height, |x, y| {
-        image::Rgba([(x * 255 / width) as u8, (y * 255 / height) as u8, seed, 255])
-    });
-    let mut bytes = std::io::Cursor::new(vec![]);
-    image::DynamicImage::ImageRgba8(image)
-        .write_to(&mut bytes, image::ImageFormat::Png)
-        .unwrap();
-    bytes.into_inner()
 }
 /// A long data file the model wrote, opened in the Files inspector.
 fn text_file(app: &mut Workbench) {
@@ -427,18 +419,7 @@ async fn reviewed_workbench_screens() {
                     usage_complete: false,
                 });
                 run.cleanup = Cleanup::Complete;
-                let artifact = |name: &str, bytes: u64| {
-                    serde_json::from_value::<Artifact>(serde_json::json!({
-                        "artifact_id": format!("{:0>64}", name.bytes().fold(7u64, |h, b| h.wrapping_mul(31).wrapping_add(u64::from(b)))),
-                        "name": name,
-                        "kind": "file_version",
-                        "content": {"path": format!("artifacts/final/files/{name}"), "sha256": "d".repeat(64), "size_bytes": bytes},
-                        "session_id": null,
-                        "published_sequence": 25,
-                        "frozen_input": false,
-                    }))
-                    .unwrap()
-                };
+                let artifact = pictures::artifact;
                 app.model.final_listing = Some(playtime_ui::model::FinalListing::from_artifacts(
                     &[
                         artifact("plot.png", 1_048_576),
@@ -481,7 +462,8 @@ async fn reviewed_workbench_screens() {
             for (n, id) in images.into_iter().enumerate() {
                 let (width, height) = if n % 2 == 0 { (640, 480) } else { (300, 300) };
                 let pixels =
-                    playtime_ui::media::thumbnail(&picture(width, height, n as u8 * 90)).unwrap();
+                    playtime_ui::media::thumbnail(&pictures::picture(width, height, n as u8 * 90))
+                        .unwrap();
                 app.model.thumbnails.insert(id, Ok(Arc::new(pixels)));
             }
         }

@@ -343,12 +343,18 @@ run opens, or from a memento run's last published checkpoint once the whole
 checkpoint list is in hand (its latest checkpoint, named so, while the run
 goes on), with its images shown as thumbnails and **Every file in Files**
 for the rest; an ended run without a final capture says so rather than
-listing an empty workspace. The thumbnails are asked for once per listing,
-at most 12, decoded one at a time in the background from each image's
-verified bytes under the preview limits and scaled to fit 224×168 pixels;
-one still loading, or without a preview, says so in its place. Each
+listing an empty workspace. The thumbnails, at most 12, are asked for when
+a listing arrives, and again, each time the tab draws, for any that a full
+queue or a reconnect left pending; they are decoded one at a time in the
+background from each image's verified bytes under the preview limits and
+scaled to fit 224×168 pixels, and a newer request, another run or a new
+connection stops the one in progress. A later listing keeps the thumbnails
+of the content it lists again, under the new artifacts a memento run's next
+checkpoint publishes, and drops the rest, so no more than one listing's are
+held. One still loading, or without a preview, says so in its place. Each
 thumbnail is a button, named **Open image** and the file's name, that opens
-the image in place, with the name and size written under it. Reviewed views:
+the image in place, with the name and size written under it, in cells of
+one size. Reviewed views:
 [continuous](../crates/playtime-ui/tests/snapshots/results.png),
 [narrow](../crates/playtime-ui/tests/snapshots/results-narrow.png) and
 [memento](../crates/playtime-ui/tests/snapshots/results-sessions.png); they

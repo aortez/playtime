@@ -327,6 +327,10 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
     // A newer archived-model read supersedes the last one, whose reply the view
     // would discard, so the old read stops holding a preview permit.
     let mut run_model_job: Option<tokio::task::JoinHandle<()>> = None;
+    // A newer thumbnails request supersedes the last one, whose replies the
+    // view would discard (another listing, run or connection), so the old
+    // request stops downloading and holding a preview permit.
+    let mut thumbnails_job: Option<tokio::task::JoinHandle<()>> = None;
     let mut observer: Option<(
         CancellationToken,
         mpsc::Sender<Command>,
@@ -356,6 +360,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     && let Some(token) = animation.take() { token.cancel(); }
                 if matches!(command.action,Action::Connect(_)|Action::StopModelDiscovery|Action::ModelInventory|Action::InspectModel(_)) && let Some(job)=model_job.take() {job.abort();let _=job.await;}
                 if matches!(command.action,Action::Connect(_)|Action::RunModel(..)) && let Some(job)=run_model_job.take() {job.abort();let _=job.await;}
+                if matches!(command.action,Action::Connect(_)|Action::StopObservation|Action::Observe(_)|Action::Thumbnails(..)) && let Some(job)=thumbnails_job.take() {job.abort();let _=job.await;}
                 if matches!(command.action,Action::StopModelDiscovery) {continue;}
                 if let Action::Connect(options) = command.action {
                     if jobs.len() >= 16 { out.send(tag, None, Data::Connection(ConnectionState::Error("Client work limit reached; retry Reconnect after current work finishes".into()))).await; continue; }
@@ -402,6 +407,11 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     run_model_job=Some(tokio::spawn(async move {let action=command.action.clone();if let Err(error)=perform(&session,&out,command,previews).await {out.send(tag,run,action_error(&action,error)).await;}}));
                     continue;
                 }
+                if let Action::Thumbnails(run, _) = &command.action {
+                    let run=Some(run.clone());let session=s.clone();let out=out.clone();let previews=previews.clone();
+                    thumbnails_job=Some(tokio::spawn(async move {let action=command.action.clone();if let Err(error)=perform(&session,&out,command,previews).await {out.send(tag,run,action_error(&action,error)).await;}}));
+                    continue;
+                }
                 if jobs.len() >= 16 { out.send(tag, None, action_error(&command.action, "Client work limit reached; retry the explicit action".into())).await; continue; }
                 // Reserve before spawning: reconnect receipt scans must not race
                 // a mutation that has not yet written its durable local receipt.
@@ -420,7 +430,7 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
                     // A download reports on the saved file, not the open run, so
                     // its result still arrives and stays after another run opens.
                     let run = match &command.action {
-                        Action::FinalFiles(run) | Action::Thumbnails(run, _) | Action::Trace(run, ..) | Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
+                        Action::FinalFiles(run) | Action::Trace(run, ..) | Action::Cancel(run) | Action::Checkpoints(run, _) | Action::Checkpoint(run, _) | Action::Content(run, _, _) | Action::Retained(run, _) => Some(run.clone()), _ => None,
                     };
                     let action = command.action.clone();
                     let result = perform(&session, &out, command, previews).await;
@@ -434,7 +444,10 @@ async fn actor(mut rx: mpsc::Receiver<Command>, out: Out, stop: CancellationToke
         cancel.cancel();
         let _ = handle.await;
     }
-    for job in [model_job, run_model_job].into_iter().flatten() {
+    for job in [model_job, run_model_job, thumbnails_job]
+        .into_iter()
+        .flatten()
+    {
         job.abort();
         let _ = job.await;
     }
@@ -1163,7 +1176,8 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
         }
         Action::Thumbnails(run, ids) => {
             // One image at a time under one preview permit; each thumbnail
-            // arrives as soon as it is decoded.
+            // arrives as soon as it is decoded. The actor stops this request
+            // for a newer one, another run or a new connection.
             let _permit = previews.acquire_owned().await.map_err(|e| e.to_string())?;
             for id in ids.into_iter().take(LISTED_IMAGES) {
                 let thumbnail = thumbnail(client, &run, &id).await.map(Arc::new);
