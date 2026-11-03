@@ -535,3 +535,155 @@ fn a_position_is_checked_against_the_records_its_pass_validated() {
     std::fs::write(temp.archive().join("events.jsonl"), b"").unwrap();
     covering.check_position(middle).unwrap();
 }
+
+#[test]
+fn pages_within_a_covering_snapshot_equal_pages_of_the_snapshot_at_the_position() {
+    let temp = Temp::new();
+    let receipts = one_record_receipts(&temp);
+    let reader = reader(&temp);
+    let fixture = fixture::two_session().unwrap();
+    let last = receipts.last().unwrap();
+    let covering = reader.confirmed_snapshot(last).unwrap();
+    // Every boundary of the covering prefix, the frontier included, pages as
+    // the snapshot there does, with that snapshot's frontier, whether the
+    // covering snapshot is kept for reads only or was continued one record
+    // at a time.
+    let reads = covering.without_continuation();
+    let continued = receipts[1..].iter().fold(
+        reader.confirmed_snapshot(&receipts[0]).unwrap(),
+        |previous, receipt| {
+            reader
+                .confirmed_snapshot_continuing(receipt, &previous)
+                .unwrap()
+        },
+    );
+    for covering in [&covering, &reads, &continued] {
+        for receipt in &receipts {
+            let there = reader
+                .sub_snapshot(covering, receipt.prefix.clone())
+                .unwrap();
+            let end = receipt.prefix.sequence as usize;
+            for after in 0..=end {
+                for limit in [1, 3, 1000] {
+                    let page = reader
+                        .page_within(covering, receipt.prefix.clone(), after as u64, limit)
+                        .unwrap();
+                    let same = reader
+                        .page(&there, &there.query(after as u64, limit))
+                        .unwrap();
+                    assert_eq!(page.events, same.events);
+                    assert_eq!(page.frontier, same.frontier);
+                    assert_eq!(page.frontier, *there.frontier());
+                    assert_eq!(
+                        (page.next_after_sequence, page.has_more),
+                        (same.next_after_sequence, same.has_more)
+                    );
+                    let stop = end.min(after + limit as usize);
+                    assert_eq!(
+                        page.events
+                            .iter()
+                            .map(|event| event.bytes.as_slice())
+                            .collect::<Vec<_>>(),
+                        fixture.events[after..stop]
+                    );
+                }
+            }
+        }
+    }
+
+    // A position inside a record, with another history or with the wrong
+    // sequence is refused; one beyond the covering snapshot is ahead, as is a
+    // cursor beyond the position; the limit is bounded.
+    let first = &receipts[1];
+    let mut inside = first.prefix.clone();
+    inside.bytes -= 1;
+    let mut forged = first.prefix.clone();
+    forged.sha256 = last.prefix.sha256.clone();
+    let mut wrong = first.prefix.clone();
+    wrong.sequence += 1;
+    for position in [inside, forged, wrong] {
+        assert_eq!(
+            reader
+                .page_within(&covering, position, 0, 1000)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidCursor
+        );
+    }
+    let older = reader.confirmed_snapshot(first).unwrap();
+    assert_eq!(
+        reader
+            .page_within(&older, last.prefix.clone(), 0, 1000)
+            .unwrap_err()
+            .code,
+        ErrorCode::CursorAhead
+    );
+    assert_eq!(
+        reader
+            .page_within(&covering, first.prefix.clone(), 2, 1000)
+            .unwrap_err()
+            .code,
+        ErrorCode::CursorAhead
+    );
+    for limit in [0, 1001] {
+        assert_eq!(
+            reader
+                .page_within(&covering, first.prefix.clone(), 0, limit)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidCursor
+        );
+    }
+
+    // No pass reads the records before the position: a changed one fails the
+    // page that returns it and a sub-snapshot's pass, not a page after it.
+    let restore = tamper(temp.archive().join("events.jsonl"), time("02"));
+    assert_eq!(
+        reader
+            .page_within(&covering, last.prefix.clone(), 2, 1000)
+            .unwrap()
+            .events
+            .len(),
+        fixture.events.len() - 2
+    );
+    assert_eq!(
+        reader
+            .page_within(&covering, last.prefix.clone(), 0, 1000)
+            .unwrap_err()
+            .code,
+        ErrorCode::ArchiveCorrupt
+    );
+    assert_eq!(
+        reader
+            .sub_snapshot(&covering, receipts[3].prefix.clone())
+            .unwrap_err()
+            .code,
+        ErrorCode::ArchiveCorrupt
+    );
+    // At an interior position too: the page after the changed record
+    // succeeds, the page that returns it fails.
+    assert_eq!(
+        reader
+            .page_within(&covering, receipts[5].prefix.clone(), 2, 1000)
+            .unwrap()
+            .events
+            .len(),
+        3
+    );
+    assert_eq!(
+        reader
+            .page_within(&covering, receipts[5].prefix.clone(), 0, 1000)
+            .unwrap_err()
+            .code,
+        ErrorCode::ArchiveCorrupt
+    );
+    restore();
+    assert_eq!(
+        reader
+            .page_within(&covering, last.prefix.clone(), 0, 1000)
+            .unwrap()
+            .events
+            .len(),
+        fixture.events.len()
+    );
+}
