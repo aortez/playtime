@@ -36,6 +36,10 @@ fn live_model(endpoint: &str, root: &Path, name: &str, backend: &str) -> Result<
             registered::qwen(),
             playtime_ollama::Thinking::Boolean(false),
         ),
+        ("gpt-oss:20b", playtime_ollama::Profile::VERSION) => (
+            registered::from_lock(playtime_runner::docker::MODEL_LOCK),
+            playtime_ollama::Thinking::Level("high".into()),
+        ),
         ("gpt-oss:120b", playtime_ollama::Profile::VERSION) => (
             registered::from_lock(playtime_runner::docker::GPT_OSS_120B_MODEL_LOCK),
             playtime_ollama::Thinking::Level("high".into()),
@@ -108,7 +112,9 @@ async fn main() -> Result<()> {
         create_private_dir(&runtime)?;
         Some(live_model(
             endpoint,
-            &runtime.join("live-model.lock"),
+            &std::env::var_os("PLAYTIME_CONTINUOUS_LIVE_LOCK")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| runtime.join("live-model.lock")),
             args.get(4).map_or("qwen3:1.7b", String::as_str),
             args.get(5)
                 .map_or(playtime_ollama::Profile::VERSION, String::as_str),

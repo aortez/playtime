@@ -61,6 +61,7 @@ pub(crate) struct Compaction {
     /// successful work exchange, like retry notices, even across compaction.
     pending_failures: Failures,
     current: Option<Exchange>,
+    retry_attempt: Option<Value>,
     /// Notices for the next work request. They open its exchange.
     notices: Vec<Value>,
     calls: VecDeque<Value>,
@@ -84,6 +85,7 @@ impl Compaction {
             exchanges: Vec::new(),
             pending_failures: Failures::default(),
             current: None,
+            retry_attempt: None,
             notices: Vec::new(),
             calls: VecDeque::new(),
             ordinal: 0,
@@ -496,8 +498,8 @@ impl Compaction {
         };
         recoverable && view.facts.parse_streak <= crate::compaction::TOOL_PARSE_RETRIES
     }
-    /// The parse retry notice is memento's without its budget sentence:
-    /// continuous requests carry no budget.
+    /// Work retries include bounded rejected-attempt data. Summary retries
+    /// preserve their tool-free input and compaction ordinal.
     pub fn retry(&mut self, error: &ModelFailure) {
         if let Stage::Summary { .. } = self.stage {
             // The compaction is planned again, so its checks see the failed
@@ -505,8 +507,11 @@ impl Compaction {
             // describe a response the next exchange never had.
             self.ordinal -= 1;
         } else {
-            self.notices
-                .push(message("user", parse_retry_notice(error)));
+            self.notices.push(
+                self.retry_attempt
+                    .take()
+                    .unwrap_or_else(|| message("user", parse_retry_notice(error))),
+            );
         }
     }
     pub fn model_error(
@@ -516,6 +521,9 @@ impl Compaction {
         source: ModelErrorSource,
     ) {
         self.pending_failures.observe_model(request, error, source);
+        if request.purpose == RequestPurpose::Work {
+            self.retry_attempt = super::retry_attempt::message(request, error);
+        }
     }
     pub fn after_response(&mut self, view: View<'_>) {
         // A retried request left no response, so it adds no exchange.

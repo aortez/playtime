@@ -1439,3 +1439,32 @@ bound gains the thumbnails, at most 12 of 224×168 pixels. The `results` and
 `results-sessions` screenshots were re-reviewed with synthetic pictures in
 place; `results-narrow` is unchanged, since its drawer shows the tab's top.
 No archive bytes or API change.
+
+## Continuous retry attempt preservation (2026-11-04)
+
+The controller appends a `schema_version: 1` rejected-attempt record
+only to continuous work parse retries. It includes the failed request ID and
+verbatim raw arguments when the known diagnostic envelope is complete; otherwise
+it retains the diagnostic as incomplete evidence. No arguments are repaired or
+executed. The entire retry message is bounded to 8 KiB after JSON escaping;
+additional omissions are counted, and upstream omissions never claim complete
+arguments. A fitting complete candidate is checked before truncation, preserving
+Unicode at its midpoint and messages exactly at the encoded limit. Context
+admission accounts for the message normally. Summary retries,
+memento, usage accounting, retry limits and compacted failure history are
+unchanged. The native capability digest gains `continuous_retry_attempt: 1`.
+The native gate also accepts the existing locked 20B model and an explicit
+`PLAYTIME_CONTINUOUS_LIVE_LOCK` for a separate backend host.
+
+The owner-authorized 600-second Bird RTX 4090 run exercised one parse retry:
+the next valid call preserved its exact command, which then failed because the
+command was unavailable. This establishes neither successful task execution nor
+a causal efficiency gain. Results and costs are retained in
+`experiments/retry-preservation/live-10min-results.json`. The retry message grew
+from 237 to 1,774 encoded bytes, and its appendix appeared in 16 work requests
+and three summary attempts before compaction removed it. The bound is per notice,
+not per run; multiple failed attempts can retain multiple notices. No additional
+model request is introduced, but retained input can advance compaction and alter
+generation length. Exact marginal token/runtime and electricity costs were not
+measured. Stock Ollama's missing parse-failure token count stayed explicitly
+unknown, with its existing 8,192-token reservation.
