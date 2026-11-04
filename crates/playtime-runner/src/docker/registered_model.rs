@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 pub const QWEN_MODEL_LOCK: &[u8] = include_bytes!("qwen3-1.7b-lock.json");
 pub const QWEN_CODER_NEXT_MODEL_LOCK: &[u8] = include_bytes!("qwen3-coder-next-lock.json");
 pub const GPT_OSS_120B_MODEL_LOCK: &[u8] = include_bytes!("gpt-oss-120b-lock.json");
+pub const ORNITH_35B_GPU_MODEL_LOCK: &[u8] = include_bytes!("ornith-1.5-35b-gpu-lock.json");
 
 pub const GPT_OSS_120B_USAGE_MODEL_LOCK: &[u8] = include_bytes!("gpt-oss-120b-usage-v1-lock.json");
 
@@ -22,6 +23,7 @@ pub fn reviewed_identity_capabilities(
         QWEN_CODER_NEXT_MODEL_LOCK,
         GPT_OSS_120B_MODEL_LOCK,
         GPT_OSS_120B_USAGE_MODEL_LOCK,
+        ORNITH_35B_GPU_MODEL_LOCK,
     ] {
         let lock: Value = serde_json::from_slice(bytes).ok()?;
         if lock["name"].as_str() != Some(name)
@@ -43,6 +45,16 @@ pub fn reviewed_identity_capabilities(
                     RecipeReasoning::Off,
                 ],
                 None,
+            )
+        } else if bytes == ORNITH_35B_GPU_MODEL_LOCK {
+            (
+                "reviewed-ornith-1.5-35b-gpu-ollama-0.32.3-v1; boolean thinking and tools checked on RTX 4090; locked num_gpu=99; context ceiling from locked model_info",
+                vec![
+                    RecipeReasoning::ModelDefault,
+                    RecipeReasoning::On,
+                    RecipeReasoning::Off,
+                ],
+                Some(RecipeReasoning::On),
             )
         } else if bytes == QWEN_CODER_NEXT_MODEL_LOCK {
             (

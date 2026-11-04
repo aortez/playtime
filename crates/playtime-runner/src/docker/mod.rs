@@ -21,8 +21,8 @@ mod registered_model;
 pub use definition::{CompactionDefinition, FrozenRecipe};
 pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
 pub use registered_model::{
-    GPT_OSS_120B_MODEL_LOCK, GPT_OSS_120B_USAGE_MODEL_LOCK, QWEN_CODER_NEXT_MODEL_LOCK,
-    QWEN_MODEL_LOCK, reviewed_identity_capabilities,
+    GPT_OSS_120B_MODEL_LOCK, GPT_OSS_120B_USAGE_MODEL_LOCK, ORNITH_35B_GPU_MODEL_LOCK,
+    QWEN_CODER_NEXT_MODEL_LOCK, QWEN_MODEL_LOCK, reviewed_identity_capabilities,
 };
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
@@ -81,6 +81,7 @@ pub fn digest() -> Result<Sha256Digest> {
         serde_json::from_slice(QWEN_CODER_NEXT_MODEL_LOCK)?,
         serde_json::from_slice(GPT_OSS_120B_MODEL_LOCK)?,
         serde_json::from_slice(GPT_OSS_120B_USAGE_MODEL_LOCK)?,
+        serde_json::from_slice(ORNITH_35B_GPU_MODEL_LOCK)?,
         serde_json::to_value(CompactionDefinition::new(&Recipe::reference()?))?,
     ];
     Ok(playtime_storage::sha256(&serde_json::to_vec(&templates)?))

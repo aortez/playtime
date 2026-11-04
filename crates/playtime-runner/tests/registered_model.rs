@@ -91,6 +91,13 @@ fn selected_execution_projects_the_exact_lock_without_rewriting_base_provenance(
 fn large_model_profiles_preserve_identity_and_refuse_inherited_unsupported_reasoning() {
     for (bytes, repository_lock, allowed, rejected, ceiling) in [
         (
+            ORNITH_35B_GPU_MODEL_LOCK,
+            include_bytes!("../../../models/ornith-1.5-35b-gpu.lock.json").as_slice(),
+            RecipeReasoning::On,
+            RecipeReasoning::High,
+            262144,
+        ),
+        (
             QWEN_CODER_NEXT_MODEL_LOCK,
             include_bytes!("../../../models/qwen3-coder-next.lock.json").as_slice(),
             RecipeReasoning::Off,
@@ -207,6 +214,32 @@ fn coherent_stored_claims_cannot_approve_a_model_or_change_the_execution_project
                 .is_err(),
             "{pointer}"
         );
+    }
+}
+
+#[test]
+fn ornith_gpu_placement_is_part_of_the_reviewed_definition() {
+    let model = registered::from_lock(ORNITH_35B_GPU_MODEL_LOCK);
+    assert_eq!(
+        model.definition["parameters"],
+        "num_gpu                        99"
+    );
+    for reasoning in [RecipeReasoning::On, RecipeReasoning::Off] {
+        let mut selected = definition();
+        selected.select_registered_model(model.clone()).unwrap();
+        let mut settings = selected.model_settings().unwrap();
+        settings.reasoning = reasoning;
+        settings.context_tokens = 98304;
+        selected.apply_model_settings(&settings).unwrap();
+        selected.executable().unwrap();
+        let frozen = profile(selected.clone());
+        assert_eq!(
+            frozen.model.unwrap().lock["definition"]["parameters"],
+            model.definition["parameters"]
+        );
+        selected.model_registration.as_mut().unwrap().definition["parameters"] =
+            json!("num_gpu                        0");
+        assert!(selected.executable().is_err());
     }
 }
 
