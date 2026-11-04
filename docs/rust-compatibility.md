@@ -22,6 +22,17 @@ and the Docker capture helpers and their reference tar. Python is frozen, so a
 deliberate Rust change that would break one of those tests adds a new versioned
 file instead of editing the shared one.
 
+## Ornith 35B GPU identity (2026-11-04)
+
+The reviewed catalog adds `ornith-1.5-playtime:35b-gpu` on Ollama 0.32.3,
+derived from Ornith 1.5 35B Q4_K_M with `num_gpu=99` in the locked model
+parameters. Boolean On/Off and model-default omission are supported; GPT-OSS
+reasoning levels remain unsupported for this identity. The lock enters the
+Docker capability digest, requiring matching rebuilt daemon and worker bundles.
+No request/API schema, controller policy, existing model lock or golden changes.
+Native probes on Bird's RTX 4090 verified tools and 96K allocation; the metadata
+context ceiling of 262,144 is not a claim that this GPU fits that context.
+
 ## Framework large-model identities (2026-10-27)
 
 The reviewed identity catalog adds Qwen3-Coder-Next Q4_K_M and GPT-OSS 120B

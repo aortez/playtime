@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "run_id": "20261104T063346Z-10a5a535",
+  "smoke_run_id": "20261104T063307Z-3ff76451",
+  "evidence_root": "/home/data2/playtime/ornith35-live-20261104",
+  "archive": "/home/data2/pt/ornith35-1104/runs/20261104T063346Z-10a5a535",
+  "target": "Bird RTX 4090",
+  "model": "ornith-1.5-playtime:35b-gpu",
+  "model_digest": "8c7dc16bfa23a8d03e909529ab80121b286db6ee49127d7c1888ae9eccef8419",
+  "model_definition_sha256": "dfdd2c1ff745d4a35460018b4f2234a829517487346d2195e150e1ff93332f0d",
+  "backend_version": "0.32.3",
+  "settings": {
+    "reasoning": "on",
+    "temperature": 0.8,
+    "context_tokens": 98304,
+    "tokens_per_call": 8192,
+    "handoff_tokens": 8192,
+    "top_p": 0.95,
+    "top_k": 40,
+    "repeat_penalty": 1,
+    "sampling_seed": 1042
+  },
+  "compaction": {
+    "allow_finish_run": false,
+    "instructions": "Summarize the older conversation for continued work. Preserve goals, decisions, useful file paths, verified results, failures, unresolved questions, and a concrete next action. Distinguish observations from assumptions. Incorporate still-relevant facts from the previous summary. Return only the summary, without tools.",
+    "recent_exchanges": 1,
+    "schema_version": 1,
+    "summary_tokens": 4096,
+    "trigger_percent": 33
+  },
+  "wall_seconds": 600,
+  "outcome": {
+    "reason": "wall_limit",
+    "event_sequence": 1143
+  },
+  "cleanup": {
+    "status": "complete"
+  },
+  "usage": {
+    "known_generated_tokens": 43166,
+    "unknown_reserved_tokens": 0,
+    "unknown_requests": 0,
+    "budget_charged_tokens": 43166,
+    "usage_complete": true
+  },
+  "counts": {
+    "controller_started": 1,
+    "compaction_configured": 1,
+    "workspace_started": 1,
+    "phase_changed": 4,
+    "model_request": 66,
+    "model_chunk": 408,
+    "request_settled": 66,
+    "model_response": 66,
+    "model_completion": 66,
+    "tool_request": 64,
+    "tool_dispatch": 64,
+    "tool_result": 63,
+    "compaction_planned": 2,
+    "compaction_applied": 2,
+    "controller_stop": 1,
+    "workspace_captured": 1,
+    "controller_finished": 1
+  },
+  "model_errors": [],
+  "performance": {
+    "elapsed_ms": 600962,
+    "completed_native_responses": 66,
+    "known_native_generated_tokens": 43166,
+    "generation_seconds": 228.128785998,
+    "generation_tokens_per_second": 189.21768163171848,
+    "prompt_eval_seconds": 22.937009,
+    "max_prompt_tokens": 23518,
+    "median_prompt_tokens": 14864.5,
+    "gpu_samples": 121,
+    "min_gpu_used_mib": 23451,
+    "max_gpu_used_mib": 23451
+  },
+  "files": {
+    "bytes": 351325,
+    "files": 13,
+    "images": 7,
+    "incomplete": false,
+    "scripts": 3,
+    "source": "final_capture",
+    "unavailable": 0
+  },
+  "download": {
+    "saved": 13,
+    "not_saved": 0,
+    "unavailable": 0
+  },
+  "validation": {
+    "fmt": "passed",
+    "clippy": "passed",
+    "rust_workspace": "passed",
+    "python": "101 tests, 6 skipped",
+    "registered_model": "6 passed",
+    "native_scripted": "passed: /tmp/playtime-service.RYpQfPlW",
+    "native_live_regression": "passed: /tmp/playtime-service.fQFztcFX",
+    "ornith_smoke": "agent_finished; verified persistence-ok; one cwd error recovered"
+  },
+  "limitations": [
+    "Single exploratory trajectory, no controlled comparison or quality ranking",
+    "96K capacity; actual prompt lengths are reported separately",
+    "Generated programs were not executed on the host",
+    "Vision capability was not exercised"
+  ],
+  "finished_at": "2026-11-04T06:44:04.206Z",
+  "model_findings": [
+    {
+      "kind": "repeated_program_errors",
+      "requests": [
+        "r12",
+        "r20",
+        "r32",
+        "r33",
+        "r34",
+        "r35"
+      ],
+      "evidence": "Repeated nonexistent class method, module import and array shape failures; subsequent fixes did not prevent new implementation errors."
+    },
+    {
+      "kind": "persistent_seed_reset_bug",
+      "files": [
+        "rd/gray_scott.py",
+        "rd/gallery.py"
+      ],
+      "evidence": "GrayScott.run defaults seed_pattern=True, replacing u/v with the default central seed. gallery.py sets a rectangular seed then calls run(steps), erasing that setup. Its grid mode is also ignored by seed_into. Later exploratory commands use seed_pattern=False, but the final gallery code remains unchanged."
+    },
+    {
+      "kind": "summary_inaccuracy",
+      "request": "r27",
+      "evidence": "First summary names the class GrayScalar instead of GrayScott and describes ddiff=0.2 as a 5:1 diffusion ratio; implementation uses Du=diff and Dv=diff-ddiff, giving 1:0.8 at diff=1. The second summary corrects the class name."
+    },
+    {
+      "kind": "incomplete_scientific_goal",
+      "evidence": "Gallery labels include stripes, worms and mitosis, but visual review shows single rings/disks. Second summary explicitly acknowledges that splitting is unconfirmed; later blob checks still report one colony."
+    },
+    {
+      "kind": "ephemeral_artifacts",
+      "evidence": "Later analysis scripts and images, including /tmp/mitosis.gif and /tmp/state_512.png, were saved outside /work and are absent from the final captured workspace."
+    }
+  ],
+  "system_observations": {
+    "frontier_and_download_hashes_verified": true,
+    "tool_nonzero_exits": 14,
+    "tool_timeouts": 1,
+    "malformed_tool_calls": 0,
+    "model_transport_errors": 0,
+    "successful_compactions": 2,
+    "summary_generated_tokens": 3523,
+    "summary_rejections": 0,
+    "all_model_usage_known": true,
+    "final_tool_request": "r66",
+    "final_tool_result": "absent: stopped at wall limit",
+    "deadline_and_cleanup": "verified",
+    "gpu_layers": "42/42 verified for pinned 96K configuration",
+    "framework_access": false
+  },
+  "tool_failure_counts": {
+    "nonzero_exits": 14,
+    "timeouts": 1,
+    "total": 15
+  },
+  "artifacts": {
+    "retained_files": 13,
+    "seed_files": 4,
+    "generated_scripts": 2,
+    "pngs": 6,
+    "gifs": 1,
+    "gif_frames": 60,
+    "gif_distinct_frames": 60,
+    "all_file_hashes_verified": true,
+    "python_syntax_checked_without_execution": true
+  }
+}

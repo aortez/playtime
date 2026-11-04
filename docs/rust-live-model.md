@@ -165,6 +165,47 @@ A small [local Ollama development host](local-ollama-development.md) can exercis
 registered-model API/workbench execution while oldman-bird is unavailable. Its
 Qwen smoke is additional evidence and does not replace the GPT-OSS gate below.
 
+### Ornith 1.5 35B on Bird
+
+The reviewed `ornith-1.5-playtime:35b-gpu` identity derives from
+`ornith-1.5:35b` Q4_K_M on Ollama 0.32.3. Its model parameters fix `num_gpu=99`;
+the existing request encoder leaves that parameter omitted and the model's
+locked default applies. This avoids an unarchived service-wide override or a
+new request-setting schema. Both the manifest and canonical definition are
+checked before dispatch, including those parameters. See
+[`models/ornith-1.5-35b-gpu.lock.json`](../models/ornith-1.5-35b-gpu.lock.json).
+
+Use explicit boolean On or Off, or model-default omission. GPT-OSS Low/Medium/High
+are refused. The metadata context ceiling is 262,144; tested GPU allocation is
+98,304 tokens, using the existing CUDA backend, flash attention and q8_0 KV cache.
+At 96K the automatic placement used 41/42 GPU layers; explicit full placement
+used 42/42 and 23,451 MiB of the 24,564 MiB device. An 88,056-token synthetic
+prompt completed without truncation and recovered a receipt from its beginning.
+This is allocation and basic retrieval evidence, not general long-context quality
+or vision validation. Raw probe evidence is retained outside Git at
+`/home/data2/playtime/ornith35-4090-20261104`,
+`/home/data2/playtime/ornith35-96k-20261104`, and
+`/home/data2/playtime/ornith35-live-20261104`.
+
+The 600-second continuous curiosity experiment completed with two compactions,
+66 model calls and 43,166 known generated tokens. Native generation averaged
+189.2 tokens/second; model-request wall time was 285.9 seconds, with the remainder
+mostly tools and controller work. Actual prompts reached 23,518 tokens, so this
+was not a filled-96K workload. All sampled VRAM readings were 23,451 MiB.
+There were no malformed tool calls or model transport failures. Fourteen commands
+exited nonzero and one timed out; the last tool was stopped at the wall limit.
+Capture and cleanup completed, and all 13 retained files were downloaded and
+hash-verified. The two-session persistence smoke also completed, recovering one
+incorrect working directory.
+
+The generated Gray–Scott gallery remained scientifically incomplete: its seed
+setup was overwritten by the solver's default reset, and the labeled patterns
+visually remained single rings or disks. Later exploratory scripts corrected
+some calls but were mostly left under `/tmp`, outside final capture. Summaries
+retained useful failure evidence but also introduced incorrect implementation
+claims. This single trajectory establishes usable integration, not a model-quality
+ranking. See the [experiment record](../experiments/ornith-35b/live-10min-results.json).
+
 ## Evidence
 
 ```sh
