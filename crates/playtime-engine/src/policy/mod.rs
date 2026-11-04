@@ -10,6 +10,7 @@ mod memento;
 pub(crate) mod memento_contract;
 #[cfg(feature = "test-harness")]
 mod probe;
+mod retry_attempt;
 
 use playtime_core::{RequestPurpose, StopReason};
 use serde_json::Value;

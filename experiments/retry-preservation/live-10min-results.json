@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "run_id": "20261104T040854Z-456a3060",
+  "date_local": "2026-11-03",
+  "evidence_root": "/home/data2/playtime/retry-live-10min-20261103",
+  "archive": "/home/data2/pt/retry10-20261103/runs/20261104T040854Z-456a3060",
+  "question": "Observe bounded rejected-argument preservation in one 10-minute native run; no comparison arm.",
+  "target": "Bird RTX 4090",
+  "endpoint": "http://192.168.1.136:11434/",
+  "model": "gpt-oss:20b",
+  "reasoning": "high",
+  "context_tokens": 98304,
+  "work_tokens": 8192,
+  "summary_tokens": 4096,
+  "wall_seconds": 600,
+  "allow_finish_run": false,
+  "intervention": {
+    "schema_version": 1,
+    "encoded_retry_message_limit_bytes": 8192,
+    "preserves_raw_arguments_when_complete": true,
+    "fallback": "Bounded diagnostic marked incomplete; additional omissions counted.",
+    "scope": "Continuous work parse retries only; summary retry contract unchanged."
+  },
+  "outcome": {
+    "reason": "wall_limit",
+    "event_sequence": 2592
+  },
+  "cleanup": {
+    "status": "complete"
+  },
+  "elapsed_including_cleanup_ms": 601215,
+  "model_calls": 164,
+  "successful_compactions": 4,
+  "usage": {
+    "known_generated_tokens": 76540,
+    "unknown_reserved_tokens": 8192,
+    "unknown_requests": 1,
+    "budget_charged_tokens": 84732,
+    "usage_complete": false
+  },
+  "retry_observation": {
+    "failed_request": "r77",
+    "retry_request": "r78",
+    "failure_elapsed_ms": 262008,
+    "retry_tool_elapsed_ms": 267367,
+    "payload_exact_and_complete": true,
+    "prior_input_unchanged": true,
+    "same_command_byte_for_byte": true,
+    "valid_json_retry": true,
+    "tool_execution_exit_code": 127,
+    "execution_failure": "apply_patch command not found",
+    "failed_attempt_executed": false,
+    "known_parse_failure_duration_ms": 4049,
+    "parse_failure_generated_tokens": null,
+    "unknown_usage_reserved_tokens": 8192
+  },
+  "model_findings": [
+    {
+      "kind": "summary_overstatement",
+      "request": "r27",
+      "evidence": "Summary calls life.py manually executed; only py_compile ran. It also calls snake.py and clock.py working without either being executed."
+    },
+    {
+      "kind": "consecutive_summary_tool_calls",
+      "requests": [
+        "r94",
+        "r95"
+      ],
+      "recovery_request": "r96",
+      "inputs_identical": true,
+      "tools_executed": false
+    },
+    {
+      "kind": "unavailable_tool_repetition",
+      "tool": "apply_patch",
+      "direct_tool_calls": 3,
+      "shell_attempts": 1,
+      "reported_explicitly": true
+    },
+    {
+      "kind": "implementation_and_test_errors",
+      "evidence": "Interactive-input EOFs, launcher syntax error, regex escaping errors. Later confirmed tool output reports 10 tests passing.",
+      "last_successful_test_request": "r154"
+    }
+  ],
+  "system_observations": {
+    "tool_failures_reported": 16,
+    "nonzero_exit_results": 9,
+    "tool_error_results": 7,
+    "parse_failure_usage_explicitly_unknown": true,
+    "summary_tools_blocked": true,
+    "wall_limit_enforced": true,
+    "final_capture_verified": true,
+    "files_downloaded_and_verified": 31,
+    "final_file_bytes": 133651,
+    "no_framework_access": true,
+    "all_effects_inside_workshop": true
+  },
+  "limitations": [
+    "One parse-error opportunity; no controlled comparison or causal improvement claim.",
+    "Valid JSON and preserved intent did not imply a successful patch.",
+    "Stock Ollama provides no token count for its parse failure.",
+    "Generated summaries still exaggerated verification.",
+    "Final pending tool was stopped at the wall limit; 149 tool intents and 148 results."
+  ],
+  "validation": [
+    "cargo fmt --all -- --check",
+    "cargo clippy --workspace --all-targets --locked -- -D warnings",
+    "cargo test --workspace --locked",
+    "cargo test -p playtime-engine --features test-harness --locked",
+    "python3 -m unittest discover -s tests -v: 101 tests, 6 skipped",
+    "continuous Docker scripted gate passed",
+    "continuous live gate on Bird 20B passed: 3 compactions, final capture verified",
+    "worker package-e2e against frozen experiment bundle passed"
+  ],
+  "setup_note": "CLI initially refused its group-writable evidence parent before any launch. Made that newly-created parent private, verified no run existed, then retried the same idempotency key.",
+  "cost": {
+    "schema_version": 1,
+    "source_run": "20261104T040854Z-456a3060",
+    "measurement": "Encoded-byte difference after removing only the exact controller-added appendix from archived request messages; not a counterfactual runtime estimate.",
+    "old_retry_message_bytes": 237,
+    "new_retry_message_bytes": 1774,
+    "added_retry_message_bytes": 1537,
+    "requests_carrying_exact_appendix": [
+      {
+        "request_id": "r78",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r79",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r80",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r81",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r82",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r83",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r84",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r85",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r86",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r87",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r88",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r89",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r90",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r91",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r92",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r93",
+        "purpose": "work",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r94",
+        "purpose": "compaction",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r95",
+        "purpose": "compaction",
+        "added_serialized_bytes": 1537
+      },
+      {
+        "request_id": "r96",
+        "purpose": "compaction",
+        "added_serialized_bytes": 1537
+      }
+    ],
+    "total_added_serialized_message_bytes": 29203,
+    "max_encoded_retry_message_bytes": 8192,
+    "token_delta": null,
+    "runtime_delta": null,
+    "electricity_cost": null,
+    "earlier_replay": {
+      "trials_per_arm": 10,
+      "baseline_output_tokens": 16754,
+      "preservation_output_tokens": 39202,
+      "baseline_request_seconds": 113.701,
+      "preservation_request_seconds": 235.27,
+      "output_token_ratio": 2.3398591381162706,
+      "request_time_ratio": 2.0691990395862834,
+      "caveat": "Different generated actions, including much longer same-write retries; not equal completed work or an isolated prompt-overhead benchmark.",
+      "baseline_same_write_proposals": 0,
+      "preservation_same_write_proposals": 8,
+      "evidence_root": "/home/data2/playtime/retry-preservation-4090-20261103"
+    },
+    "dedicated_repair_model_calls_introduced": 0
+  }
+}

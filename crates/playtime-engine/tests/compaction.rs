@@ -1606,6 +1606,11 @@ fn invalid_tool_batches_return_errors_without_running_any_call() {
 fn notice() -> Value {
     json!({"role":"user","content":"The server rejected your last response because a tool call could not be parsed: invalid character ']' after object key:value pair. None of that response's tools ran. Try again with valid JSON object arguments."})
 }
+fn is_retry_notice(value: &Value) -> bool {
+    value["content"]
+        .as_str()
+        .is_some_and(|s| s.starts_with(notice()["content"].as_str().unwrap()))
+}
 fn continue_notice() -> Value {
     json!({"role":"user","content":"Your last response did not call a tool, so the run continues. Continue independently, or call finish_run alone if the task is finished; ordinary prose does not finish the run."})
 }
@@ -1644,7 +1649,28 @@ fn work_parse_failures_retry_with_a_notice_until_the_consecutive_limit() {
     run.complete(parse_failure());
     let retry = run.request().clone();
     assert_eq!(retry.purpose, RequestPurpose::Work);
-    assert_eq!(retry.messages, [root.clone(), vec![notice()]].concat());
+    assert_eq!(retry.messages[..root.len()], root);
+    let retry_notice = retry.messages.last().unwrap();
+    assert!(is_retry_notice(retry_notice));
+    let record: Value = serde_json::from_str(
+        retry_notice["content"]
+            .as_str()
+            .unwrap()
+            .rsplit_once('\n')
+            .unwrap()
+            .1,
+    )
+    .unwrap();
+    assert_eq!(
+        record,
+        json!({"schema_version":1,"failed_request_id":"r1","tools_executed":false,
+        "complete_raw_arguments":true,"additional_omitted_bytes":0,"raw_arguments":"{\"command\":\"echo ok\"]"})
+    );
+    assert!(
+        run.dispatches
+            .iter()
+            .all(|e| !matches!(e.kind, EffectKind::Tool(_)))
+    );
     // The notice opens the exchange of the response that follows it.
     let prose = json!({"role":"assistant","content":"Retrying with valid arguments."});
     run.response(prose.clone());
@@ -1657,7 +1683,7 @@ fn work_parse_failures_retry_with_a_notice_until_the_consecutive_limit() {
     for n in 1..=compaction::TOOL_PARSE_RETRIES + 1 {
         run.complete(parse_failure());
         if n <= compaction::TOOL_PARSE_RETRIES {
-            let notices = run.request().messages.iter().filter(|m| **m == notice());
+            let notices = run.request().messages.iter().filter(|m| is_retry_notice(m));
             assert_eq!(notices.count() as u32, n + 1);
         }
     }
@@ -1772,10 +1798,13 @@ fn a_pending_retry_notice_stays_out_of_the_summary_and_opens_the_next_exchange()
         .unwrap()
         .data
         .clone();
-    assert_eq!(
-        plan["before_messages"].as_array().unwrap().last(),
-        Some(&notice())
-    );
+    let pending_notice = plan["before_messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert!(is_retry_notice(&pending_notice));
     run.response(json!({"role":"assistant","content":"Summary: checked results."}));
     let applied = &run
         .records
@@ -1787,11 +1816,11 @@ fn a_pending_retry_notice_stays_out_of_the_summary_and_opens_the_next_exchange()
     assert_eq!(applied["ordinal"], plan["ordinal"]);
     assert_eq!(
         applied["messages"].as_array().unwrap().last(),
-        Some(&notice())
+        Some(&pending_notice)
     );
     let work = run.request().clone();
     assert_eq!(work.purpose, RequestPurpose::Work);
-    assert_eq!(work.messages.last(), Some(&notice()));
+    assert_eq!(work.messages.last(), Some(&pending_notice));
     run.response(json!({"role":"assistant","content":"Retried after compaction."}));
     assert_eq!(
         run.request().messages[..work.messages.len()],
@@ -1840,7 +1869,7 @@ fn summary_parse_failures_plan_the_same_compaction_again_until_the_consecutive_l
     assert_eq!(applied["ordinal"], first["ordinal"]);
     let work = run.request();
     assert_eq!(work.purpose, RequestPurpose::Work);
-    assert!(!work.messages.contains(&notice()));
+    assert!(!work.messages.iter().any(is_retry_notice));
 
     // Summaries stop after as many consecutive failures as work requests.
     let mut run = Run::new(config());
@@ -2212,7 +2241,7 @@ fn tool_call_summaries_plan_the_same_compaction_again_until_the_consecutive_limi
     assert_eq!(applied["ordinal"], first["ordinal"]);
     let work = run.request();
     assert_eq!(work.purpose, RequestPurpose::Work);
-    assert!(!work.messages.contains(&notice()));
+    assert!(!work.messages.iter().any(is_retry_notice));
     // An accepted summary ends the streak: a work request's parse failure
     // right after it, and the next compaction's failure, each open a new one.
     run.complete(parse_failure());
