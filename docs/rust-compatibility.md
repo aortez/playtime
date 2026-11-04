@@ -1448,7 +1448,9 @@ verbatim raw arguments when the known diagnostic envelope is complete; otherwise
 it retains the diagnostic as incomplete evidence. No arguments are repaired or
 executed. The entire retry message is bounded to 8 KiB after JSON escaping;
 additional omissions are counted, and upstream omissions never claim complete
-arguments. Context admission accounts for the message normally. Summary retries,
+arguments. A fitting complete candidate is checked before truncation, preserving
+Unicode at its midpoint and messages exactly at the encoded limit. Context
+admission accounts for the message normally. Summary retries,
 memento, usage accounting, retry limits and compacted failure history are
 unchanged. The native capability digest gains `continuous_retry_attempt: 1`.
 The native gate also accepts the existing locked 20B model and an explicit

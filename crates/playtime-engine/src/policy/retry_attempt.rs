@@ -28,8 +28,18 @@ fn build(request_id: &str, error: &ModelFailure, diagnostic: &str) -> Value {
         "diagnostic"
     };
     let render = |keep: usize| {
-        let mut head = keep.div_ceil(2);
-        let mut tail = text.len() - keep / 2;
+        // Do not split a complete candidate: its midpoint may be inside a
+        // UTF-8 character, even though no truncation is needed.
+        let mut head = if keep == text.len() {
+            keep
+        } else {
+            keep.div_ceil(2)
+        };
+        let mut tail = if keep == text.len() {
+            keep
+        } else {
+            text.len() - keep / 2
+        };
         while !text.is_char_boundary(head) {
             head -= 1;
         }
@@ -62,6 +72,13 @@ fn build(request_id: &str, error: &ModelFailure, diagnostic: &str) -> Value {
     // Binary search counts the encoded message envelope and both escaping layers.
     let mut low = 0;
     let mut high = text.len().min(MAX_BYTES as usize);
+    // A complete candidate can fit when a slightly shorter excerpt does not:
+    // truncation adds an ellipsis and omission metadata. Check it first. The
+    // byte cap also bounds allocation for oversized incoming diagnostics.
+    let candidate = render(high);
+    if context::encoded_size(&candidate) <= MAX_BYTES {
+        return candidate;
+    }
     while low < high {
         let middle = low + (high - low).div_ceil(2);
         if context::encoded_size(&render(middle)) <= MAX_BYTES {
@@ -95,6 +112,68 @@ mod tests {
         assert_eq!(record["failed_request_id"], "r50");
         assert_eq!(record["tools_executed"], false);
         assert_eq!(record["complete_raw_arguments"], true);
+    }
+
+    #[test]
+    fn a_fitting_unicode_attempt_is_preserved_completely() {
+        let raw = r#"{"x":"🦀"]}"#;
+        let diagnostic = format!("error parsing tool call: raw='{raw}', err=bad");
+        let value = build("r1", &ModelFailure::Parse(diagnostic.clone()), &diagnostic);
+        let record: Value = serde_json::from_str(
+            value["content"]
+                .as_str()
+                .unwrap()
+                .rsplit_once('\n')
+                .unwrap()
+                .1,
+        )
+        .unwrap();
+        assert_eq!(record["raw_arguments"], raw);
+        assert_eq!(record["additional_omitted_bytes"], 0);
+        assert_eq!(record["complete_raw_arguments"], true);
+    }
+
+    #[test]
+    fn a_complete_attempt_at_the_limit_is_not_shortened() {
+        let diagnostic = "error parsing tool call: raw='', err=bad";
+        let overhead = context::encoded_size(&build(
+            "r1",
+            &ModelFailure::Parse(diagnostic.into()),
+            diagnostic,
+        ));
+        // Quoting/backslashes exercise both JSON escaping layers while the
+        // incoming diagnostic is still below the native adapter's 4,000 bytes.
+        for unit in ["a", "\"", "\\"] {
+            let diagnostic = format!("error parsing tool call: raw='{unit}', err=bad");
+            let encoded_unit = context::encoded_size(&build(
+                "r1",
+                &ModelFailure::Parse(diagnostic.clone()),
+                &diagnostic,
+            )) - overhead;
+            let available = MAX_BYTES - overhead;
+            let raw = format!(
+                "{}{}",
+                unit.repeat((available / encoded_unit) as usize),
+                "a".repeat((available % encoded_unit) as usize)
+            );
+            let diagnostic = format!("error parsing tool call: raw='{raw}', err=bad");
+            if unit != "a" {
+                assert!(diagnostic.len() < 4000);
+            }
+            let value = build("r1", &ModelFailure::Parse(diagnostic.clone()), &diagnostic);
+            let record: Value = serde_json::from_str(
+                value["content"]
+                    .as_str()
+                    .unwrap()
+                    .rsplit_once('\n')
+                    .unwrap()
+                    .1,
+            )
+            .unwrap();
+            assert_eq!(record["raw_arguments"], raw);
+            assert_eq!(record["complete_raw_arguments"], true);
+            assert_eq!(context::encoded_size(&value), MAX_BYTES);
+        }
     }
 
     #[test]
