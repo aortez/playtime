@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "assortment-01",
+  "name": "Workshop assortment",
+  "description": "Optional synthetic signals, colors, and a cellular automaton for open exploration.",
+  "revision": 1,
+  "files": "seeds/assortment-01",
+  "provenance": "Original Playtime workshop assortment; see the files' Git history.",
+  "assessment": null
+}

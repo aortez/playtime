@@ -1479,3 +1479,11 @@ model request is introduced, but retained input can advance compaction and alter
 generation length. Exact marginal token/runtime and electricity costs were not
 measured. Stock Ollama's missing parse-failure token count stayed explicitly
 unknown, with its existing 8,192-token reservation.
+
+## Seed bundle authoring and repair recipe (2026-11-04)
+
+The reviewed file-backed recipe catalog adds `simulation-repair`, with a
+600-second allocation and two frozen model-visible seed files. Independent
+assessment code stays outside that seed directory. This adds catalog content,
+offline authoring/checking helpers, and a catalog regression test; it changes no
+runtime policy, API schema, existing recipe allocation, model default, or golden.

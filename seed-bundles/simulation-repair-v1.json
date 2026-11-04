@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "simulation-repair-v1",
+  "name": "Repair a diffusion simulator",
+  "description": "Repair deterministic state evolution, preserve custom initial conditions, and assess each requirement with evidence.",
+  "revision": 1,
+  "files": "seeds/simulation-repair-v1",
+  "provenance": "Authored for Playtime after the Ornith 35B exploration exposed overwritten initial conditions. Synthetic task, not copied model output.",
+  "assessment": "assessments/simulation-repair-v1"
+}

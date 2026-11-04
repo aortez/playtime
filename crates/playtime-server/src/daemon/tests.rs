@@ -436,9 +436,8 @@ fn repository() -> std::path::PathBuf {
 #[test]
 fn the_reviewed_catalog_loads_the_owner_confirmed_curiosity_recipe() {
     let recipes = super::catalog::load(&repository().join("recipes")).unwrap();
-    assert_eq!(recipes.len(), 1);
-    let recipe = &recipes[0];
-    assert_eq!(recipe.id, "curiosity");
+    assert_eq!(recipes.len(), 2);
+    let recipe = recipes.iter().find(|r| r.id == "curiosity").unwrap();
     let (limits, workshop) = (&recipe.parameters.limits, &recipe.parameters.workshop);
     assert_eq!(
         (
@@ -503,6 +502,32 @@ fn the_reviewed_catalog_loads_the_owner_confirmed_curiosity_recipe() {
         "\nYour workspace /work holds 16 MiB and 900 files and directories, and persists \
          between sessions; /tmp holds 1 GiB and is cleared.\n"
     ));
+}
+#[test]
+fn the_repair_recipe_freezes_only_model_visible_seed_materials() {
+    let recipes = super::catalog::load(&repository().join("recipes")).unwrap();
+    let recipe = recipes
+        .iter()
+        .find(|r| r.id == "simulation-repair")
+        .unwrap();
+    assert_eq!(recipe.parameters.limits.wall_seconds.get(), 600);
+    assert_eq!(
+        recipe.seeds.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["TASK.md", "diffusion.py"]
+    );
+    let directory = repository().join("seeds/simulation-repair-v1");
+    for (name, content) in &recipe.seeds {
+        assert_eq!(
+            content.as_bytes(),
+            std::fs::read(directory.join(name)).unwrap()
+        );
+    }
+    assert!(recipe.seeds["TASK.md"].contains("SELF_ASSESSMENT.json"));
+    assert!(
+        repository()
+            .join("assessments/simulation-repair-v1/check.py")
+            .is_file()
+    );
 }
 #[test]
 fn invalid_catalogs_fail_before_launch_with_the_file_and_reason() {

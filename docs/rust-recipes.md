@@ -71,6 +71,11 @@ other at startup.
 
 ## Seeds
 
+The [seed bundle catalog and authoring helper](../seed-bundles/README.md) provides
+file-based create, clone, list, and validate operations. A recipe selects the
+bundle's `seeds/<id>` directory; its optional independent assessment is not sent
+to the model. The workbench still inherits these files rather than editing them.
+
 A recipe's seed directory is read at daemon startup and frozen into the recipe:
 at most 16 regular UTF-8 files, each at most 131,072 bytes (128 KiB), and 512 KiB
 in total. Seeds must also fit within half the workspace. Links, special files and

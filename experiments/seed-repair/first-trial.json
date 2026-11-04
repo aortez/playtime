@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "run_id": "20261104T071903Z-7a6108f4",
+  "evidence_root": "/home/data2/playtime/seed-repair-20261104",
+  "archive": "/home/data2/pt/seed-repair-1104/runs/20261104T071903Z-7a6108f4",
+  "seed_bundle": {
+    "id": "simulation-repair-v1",
+    "revision": 1,
+    "bundle_sha256": "d6bbe604f3e8f627d194d49a3929f4a2ae91854c849ef94c47ff168a7692c77c",
+    "seed_bytes": 3177,
+    "minimum_workspace_bytes": 6354,
+    "minimum_workspace_entries": 6,
+    "files": [
+      {
+        "path": "TASK.md",
+        "size_bytes": 2406,
+        "sha256": "f8dd03e9a509e12d7c3151370b18e88c89a4627f0dc4754fb984b5544be73995"
+      },
+      {
+        "path": "diffusion.py",
+        "size_bytes": 771,
+        "sha256": "a92f78ba74c89937466d559a74aba2026e589e654cb816523c46c8d55001e237"
+      }
+    ]
+  },
+  "independent_assessment_sha256": {
+    "check.py": "2941796f95d9deffb5eba5802ecf3c74e8335eb0d22bf105f7c1a85c0f798a67",
+    "reference/diffusion.py": "da1c430ba46c18e1bf3d62401c5722e159a9c0e3e6dde3be720d9f7d5ba902fa"
+  },
+  "target": "Bird RTX 4090",
+  "model": "ornith-1.5-playtime:35b-gpu",
+  "model_digest": "8c7dc16bfa23a8d03e909529ab80121b286db6ee49127d7c1888ae9eccef8419",
+  "settings": {
+    "reasoning": "on",
+    "temperature": 0.8,
+    "context_tokens": 65536,
+    "tokens_per_call": 8192,
+    "handoff_tokens": 8192,
+    "top_p": 0.95,
+    "top_k": 40,
+    "repeat_penalty": 1,
+    "sampling_seed": 1042
+  },
+  "compaction": {
+    "allow_finish_run": false,
+    "instructions": "Summarize the older conversation for continued work. Preserve goals, decisions, useful file paths, verified results, failures, unresolved questions, and a concrete next action. Distinguish observations from assumptions. Incorporate still-relevant facts from the previous summary. Return only the summary, without tools.",
+    "recent_exchanges": 1,
+    "schema_version": 1,
+    "summary_tokens": 4096,
+    "trigger_percent": 33
+  },
+  "requested_wall_seconds": 600,
+  "actual_elapsed_ms_including_cleanup": 157391,
+  "outcome": {
+    "reason": "compaction_failed",
+    "event_sequence": 590
+  },
+  "cleanup": {
+    "status": "complete"
+  },
+  "usage": {
+    "known_generated_tokens": 24622,
+    "unknown_reserved_tokens": 0,
+    "unknown_requests": 0,
+    "budget_charged_tokens": 24622,
+    "usage_complete": true
+  },
+  "counts": {
+    "controller_started": 1,
+    "compaction_configured": 1,
+    "workspace_started": 1,
+    "phase_changed": 4,
+    "model_request": 33,
+    "model_chunk": 226,
+    "request_settled": 33,
+    "model_response": 33,
+    "model_completion": 33,
+    "tool_request": 30,
+    "tool_dispatch": 30,
+    "tool_result": 30,
+    "compaction_planned": 2,
+    "compaction_applied": 1,
+    "controller_stop": 1,
+    "workspace_captured": 1,
+    "controller_finished": 1
+  },
+  "calls": {
+    "compaction": {
+      "calls": 2,
+      "known_calls": 2,
+      "known_ms": 32357,
+      "known_tokens": 5381,
+      "longest_ms": 23331,
+      "median_ms": 23331,
+      "median_of": null,
+      "reserved_tokens": 0,
+      "tokens_per_second": 166.30095497110364,
+      "unknown_calls": 0,
+      "unknown_ms": 0
+    },
+    "dropped": 0,
+    "handoff": null,
+    "never_dispatched": null,
+    "open": null,
+    "retained": null,
+    "unknown_usage": null,
+    "unrequested": null,
+    "work": {
+      "calls": 31,
+      "known_calls": 31,
+      "known_ms": 117883,
+      "known_tokens": 19241,
+      "longest_ms": 15246,
+      "median_ms": 1907,
+      "median_of": null,
+      "reserved_tokens": 0,
+      "tokens_per_second": 163.22115996369283,
+      "unknown_calls": 0,
+      "unknown_ms": 0
+    }
+  },
+  "independent_assessment": {
+    "schema_version": 1,
+    "requirements": [
+      {
+        "id": "R1",
+        "verdict": "passed"
+      },
+      {
+        "id": "R2",
+        "verdict": "passed"
+      },
+      {
+        "id": "R3",
+        "verdict": "passed"
+      },
+      {
+        "id": "R4",
+        "verdict": "passed"
+      },
+      {
+        "id": "R5",
+        "verdict": "passed"
+      }
+    ]
+  },
+  "self_assessment": {
+    "schema_valid": false,
+    "error": "Uses a verdicts object instead of the required requirements array.",
+    "reported_verdicts_manual_inspection": {
+      "R1": "passed",
+      "R2": "passed",
+      "R3": "passed",
+      "R4": "passed",
+      "R5": "passed"
+    },
+    "interpretation": "All five claims agree with independent checks, but the original report is retained as a schema failure. No automatic normalization or replacement."
+  },
+  "compaction_failure": {
+    "request_id": "r33",
+    "ordinal": 2,
+    "finish_reason": "length",
+    "generated_tokens": 4096,
+    "visible_summary_characters": 0,
+    "thinking_characters": 14501,
+    "diagnostics": [
+      "summary requires explicit normal completion"
+    ],
+    "interpretation": "The model spent the summary output budget on reasoning. Existing controller policy requires explicit normal completion and stopped without applying an incomplete summary."
+  },
+  "model_findings": [
+    {
+      "kind": "file_overwrite",
+      "request_ids": [
+        "r8",
+        "r9"
+      ],
+      "evidence": "Wrote an 8686-byte test file, then supplied a 411-byte replacement. Both write_file results confirmed those lengths. A subsequent Python invocation exited zero without executing a test runner."
+    },
+    {
+      "kind": "incorrect_cause_in_summary",
+      "request_id": "r20",
+      "evidence": "Summary said the earlier test file got truncated and called it a harness/writing artifact. Archived requests instead show the model supplied the replacement."
+    },
+    {
+      "kind": "recovery",
+      "request_ids": [
+        "r15",
+        "r16",
+        "r19",
+        "r23",
+        "r25",
+        "r29"
+      ],
+      "evidence": "Four nonzero test commands were visible. Model reconstructed its file and fixed faulty tests; final full model-authored run reported 19 passed, 0 failed."
+    },
+    {
+      "kind": "self_assessment_format",
+      "request_ids": [
+        "r27",
+        "r28"
+      ],
+      "evidence": "Produced valid JSON and checked its own verdicts object, but did not follow the requested requirements-array schema."
+    },
+    {
+      "kind": "incorrect_extra_checks",
+      "request_id": "r31",
+      "evidence": "Printed failures for behavior explicitly outside the task domain. Its advance(0) independence check compared a whole state list to scalar 1.0, producing a false failure. Command exited zero."
+    }
+  ],
+  "system_findings": [
+    "Tool replacement and nonzero results were correctly recorded; no evidence that the bridge truncated the test file.",
+    "Summary budgeting with thinking enabled can exhaust all 4096 output tokens before visible summary text, ending a run early.",
+    "The controller reported compaction_failed, preserved known token usage, captured final files, and completed cleanup. Independent task correctness must remain separate from terminal outcome."
+  ],
+  "artifacts": [
+    {
+      "name": "SELF_ASSESSMENT.json",
+      "sha256": "316b09d9b789b3a4aef74dc98f21728dcaead7ce714360a1fae330da2bfe8c7d",
+      "size_bytes": 1774
+    },
+    {
+      "name": "diffusion.py",
+      "sha256": "d90452bbbef1086ffe05133e2128ec273d26ac59f724d2b672d4a06852af7ff8",
+      "size_bytes": 2437
+    },
+    {
+      "name": "seeds/TASK.md",
+      "sha256": "f8dd03e9a509e12d7c3151370b18e88c89a4627f0dc4754fb984b5544be73995",
+      "size_bytes": 2406
+    },
+    {
+      "name": "seeds/diffusion.py",
+      "sha256": "a92f78ba74c89937466d559a74aba2026e589e654cb816523c46c8d55001e237",
+      "size_bytes": 771
+    },
+    {
+      "name": "test_diffusion.py",
+      "sha256": "ea1d61ec5c8fe87c1815a7d3eabfbf3230f5dce52ffceaafe9b6ea208614717a",
+      "size_bytes": 8780
+    }
+  ],
+  "verification": {
+    "writer_confirmed_frontier_verified": true,
+    "downloaded_files_verified": true,
+    "frozen_checker_hashes_verified": true,
+    "starter_control": "R1 passed; R2-R5 failed",
+    "reference_control": "R1-R5 passed",
+    "authoring_and_comparison_tests": "9 passed",
+    "rust_fmt": "passed",
+    "rust_clippy": "passed",
+    "rust_workspace": "passed",
+    "frozen_python_suite": "101 tests; 6 skipped"
+  },
+  "limitations": [
+    "Single trial; no comparative model ranking",
+    "Finite behavioral cases do not prove universal correctness",
+    "Task may be too easy to expose mistaken self-assessment",
+    "Compaction is observed if it occurs, not guaranteed",
+    "Checker is not a security boundary against adversarial grading evasion",
+    "Trial ended after approximately 157 seconds; this is not a completed ten-minute run.",
+    "GPU time series started after the early stop; a separate during-run observation showed 23015 MiB and 94% utilization."
+  ],
+  "next_question": "Review purpose-specific summary reasoning settings/budgets before another ten-minute run; do not change acceptance checks after seeing the candidate."
+}
