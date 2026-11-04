@@ -134,6 +134,12 @@ because this fixed-duration recipe disables early finish. These findings support
 keeping task correctness, self-assessment, and execution outcome separate; they
 do not show that a larger summary allowance changes task quality in general.
 
+PR review extended the checker to accept candidate-local helper modules and to
+check snapshot independence after zero updates as well as positive step counts.
+The [review validation](../experiments/seed-repair/review-validation.json) records
+positive/negative controls and unchanged results on both verified trial captures.
+Original trial records retain their original checker identities.
+
 ## Validation
 
 ```sh
@@ -143,6 +149,16 @@ python3 scripts/seed-bundle.py validate
 ```
 
 These are offline helper tests, not Python-controller experiments. Validate
-checker changes in the locked Docker image as above. For task changes, update
+checker changes with the additional Docker controls:
+
+```sh
+python3 scripts/test-seed-assessment-docker.py -v
+```
+
+This gate requires the existing locked image and checks the broken starter,
+correct reference, valid local-module imports, and zero-step snapshot aliasing.
+It never executes candidate code on the host and fails when prerequisites are
+missing. CI runs the offline helper tests and catalog validation; the Docker
+controls run locally where the locked image is available. For task changes, update
 the requirement/checker correspondence and retain both positive and negative
 controls before collecting a new model trial.

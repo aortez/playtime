@@ -49,6 +49,14 @@ For documentation-only edits, check the diff, relative links and anchors, and an
 commands or behavior claims against the implementation. Runtime gates are needed
 when behavior changes, not merely because a guide mentions them.
 
+For [seed bundle authoring and assessment](../seed-bundles/README.md), run
+`python3 scripts/test-seed-bundles.py -v`,
+`python3 scripts/test-seed-assessment.py -v`, and
+`python3 scripts/seed-bundle.py validate`. CI includes these offline checks.
+Checker changes also run `python3 scripts/test-seed-assessment-docker.py -v`
+against the existing locked local image; this exercises positive and negative
+controls without running a model or executing candidate code on the host.
+
 ## Choose the additional gate by the changed boundary
 
 These gates test different properties. Passing a fixture gate does not establish

@@ -19,6 +19,17 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def read_bounded(path, limit):
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    require(len(data) <= limit, f"file exceeds {limit} bytes: {path}")
+    return data
+
+
+def traversal_error(error):
+    raise error
+
+
 def plain_directory(root, relative):
     require(isinstance(relative, str), "directory must be a relative string")
     parts = relative.split("/")
@@ -35,8 +46,7 @@ def validate(root, bundle_id):
     catalog = plain_directory(root, "seed-bundles")
     path = catalog / f"{bundle_id}.json"
     require(not path.is_symlink() and path.is_file(), "manifest must be a regular file")
-    require(path.stat().st_size <= 16384, "manifest exceeds 16 KiB")
-    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest = json.loads(read_bounded(path, 16384).decode("utf-8"))
     require(isinstance(manifest, dict) and set(manifest) == FIELDS, "manifest fields do not match schema 1")
     require(type(manifest["schema_version"]) is int and manifest["schema_version"] == 1, "unsupported schema")
     require(manifest["id"] == bundle_id, "manifest id must match filename")
@@ -50,7 +60,7 @@ def validate(root, bundle_id):
         plain_directory(root, manifest["assessment"])
     files = {}
     entries = 1
-    for parent, dirs, names in os.walk(directory, followlinks=False):
+    for parent, dirs, names in os.walk(directory, followlinks=False, onerror=traversal_error):
         entries += len(dirs) + len(names)
         for name in dirs + names:
             item = Path(parent) / name
@@ -60,8 +70,8 @@ def validate(root, bundle_id):
             require(len(rel.encode("utf-8")) <= 200 and not any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in rel), "invalid seed path")
         for name in sorted(names):
             item = Path(parent) / name
-            require(item.stat().st_size <= 131072, f"file exceeds 128 KiB: {item}")
-            data = item.read_bytes()
+            require(len(files) < 16, "more than 16 seed files")
+            data = read_bounded(item, 131072)
             content = data.decode("utf-8")
             require(len(json.dumps(content, ensure_ascii=False).encode("utf-8")) <= 196608, f"encoded seed too large: {item}")
             files[item.relative_to(directory).as_posix()] = data
@@ -95,6 +105,8 @@ def create(root, bundle_id, name, source=None):
     # requirements may no longer apply. Add/review one explicitly if needed.
     manifest = dict(schema_version=1, id=bundle_id, name=name, description=description,
                     revision=1, files=f"seeds/{bundle_id}", provenance=provenance, assessment=None)
+    encoded_manifest = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+    require(len(encoded_manifest.encode("utf-8")) <= 16384, "manifest exceeds 16 KiB")
     for parent in ("seeds", "seed-bundles"):
         (root / parent).mkdir(exist_ok=True)
         plain_directory(root, parent)
@@ -106,7 +118,7 @@ def create(root, bundle_id, name, source=None):
         with target.open("xb") as stream:
             stream.write(data)
     with (root / "seed-bundles" / f"{bundle_id}.json").open("x", encoding="utf-8") as stream:
-        stream.write(json.dumps(manifest, indent=2) + "\n")
+        stream.write(encoded_manifest)
     return validate(root, bundle_id)[2]
 
 

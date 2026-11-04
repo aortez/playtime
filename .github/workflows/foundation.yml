@@ -27,6 +27,12 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - name: Check seed authoring and assessment helpers
+        run: |
+          python3 scripts/test-seed-bundles.py -v
+          python3 scripts/test-seed-assessment.py -v
+          python3 scripts/seed-bundle.py validate
+          bash -n scripts/check-simulation-repair.sh
       - name: Install the pinned Rust toolchain
         run: |
           playtime_toolchain="$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')"

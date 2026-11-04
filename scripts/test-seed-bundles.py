@@ -1,6 +1,7 @@
 """Offline tests of the seed authoring helper; never run an experiment."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -72,6 +73,36 @@ class SeedBundles(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bundles.create(self.root, bundle_id, "Bad")
         self.assertEqual(before, bundles.validate(self.root, "original")[2])
+
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses directory read permissions")
+    def test_unreadable_subtree_is_not_silently_dropped(self):
+        directory = self.root / "seeds/original/private"
+        directory.mkdir()
+        (directory / "important.txt").write_text("must be copied or refused")
+        directory.chmod(0)
+        try:
+            with self.assertRaises(PermissionError):
+                bundles.validate(self.root, "original")
+            with self.assertRaises(PermissionError):
+                bundles.create(self.root, "copy", "Copy", "original")
+            self.assertFalse((self.root / "seeds/copy").exists())
+        finally:
+            directory.chmod(0o700)
+
+    def test_oversized_manifest_is_refused_before_writing(self):
+        with self.assertRaises(ValueError):
+            bundles.create(self.root, "oversized", "x" * 17000)
+        self.assertFalse((self.root / "seeds/oversized").exists())
+        self.assertFalse((self.root / "seed-bundles/oversized.json").exists())
+
+    def test_clone_keeps_valid_unicode_metadata_within_byte_bound(self):
+        path = self.root / "seed-bundles/original.json"
+        manifest = json.loads(path.read_text())
+        manifest["description"] = "é" * 4000
+        path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        bundles.validate(self.root, "original")
+        bundles.create(self.root, "copy", "Copy", "original")
+        self.assertEqual(bundles.validate(self.root, "copy")[0]["description"], manifest["description"])
 
 
 if __name__ == "__main__":

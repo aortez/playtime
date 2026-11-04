@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import math
+import os
 import sys
 
 
@@ -65,20 +66,21 @@ def step_count(Simulation):
 
 
 def independent_snapshots(Simulation):
-    sim = Simulation([1.0, 0.0, 2.0, 0.0])
-    states = sim.advance(4)
-    assert len(states) >= 2, "need multiple snapshots"
-    saved = [list(s) for s in states]
-    current = list(sim.values())
-    states[0][0] = 10000
-    for state, expected in zip(states[1:], saved[1:]):
-        close(state, expected)
-    close(sim.values(), current)
-    states[-1][1] = 10000
-    close(sim.values(), current)
-    sim.advance(1)
-    for state, expected in zip(states[1:-1], saved[1:-1]):
-        close(state, expected)
+    for count in (0, 1, 4):
+        sim = Simulation([1.0, 0.0, 2.0, 0.0])
+        states = sim.advance(count)
+        assert len(states) == count + 1, "expected entry and each update"
+        saved = [list(s) for s in states]
+        current = list(sim.values())
+        states[0][0] = 10000
+        for state, expected in zip(states[1:], saved[1:]):
+            close(state, expected)
+        close(sim.values(), current)
+        states[-1][1] = 10000
+        close(sim.values(), current)
+        sim.advance(1)
+        for state, expected in zip(states[1:-1], saved[1:-1]):
+            close(state, expected)
 
 
 def continuation(Simulation):
@@ -95,6 +97,10 @@ def continuation(Simulation):
 
 
 def main():
+    # -I excludes host/user import paths. Explicitly permit the read-only
+    # candidate directory: factoring a solution into local modules is valid.
+    candidate = os.path.abspath(sys.argv[1])
+    sys.path.insert(0, os.path.dirname(candidate))
     cases = dict(zip(("R1", "R2", "R3", "R4", "R5"), (
         initial_conditions, update_rule, step_count,
         independent_snapshots, continuation,
@@ -105,9 +111,9 @@ def main():
     for requirement, check in cases.items():
         try:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                spec = importlib.util.spec_from_file_location("candidate", sys.argv[1])
+                spec = importlib.util.spec_from_file_location("diffusion", candidate)
                 module = importlib.util.module_from_spec(spec)
-                sys.modules["candidate"] = module
+                sys.modules["diffusion"] = module
                 spec.loader.exec_module(module)
                 check(module.Simulation)
             results.append({"id": requirement, "verdict": "passed"})
