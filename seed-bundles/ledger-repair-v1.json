@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "ledger-repair-v1",
+  "name": "Repair a CSV ledger",
+  "description": "Exact integer money, validation, deduplication and deterministic reports.",
+  "revision": 1,
+  "files": "seeds/ledger-repair-v1",
+  "provenance": "Synthetic task authored for the November 5, 2026 Ornith/Qwen Codex CLI comparison. Original task and starter bytes preserved; see assessments/ledger-repair-v1/provenance.json.",
+  "assessment": "assessments/ledger-repair-v1"
+}

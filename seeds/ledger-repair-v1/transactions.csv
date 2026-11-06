@@ -1,0 +1,7 @@
+transaction_id,customer,amount,status
+t1,Ada,10.01,settled
+t2,Bea,3.00,settled
+t1,Ada,10.01,settled
+t3,Ada,-4.00,settled
+t4,Bea,99.00,void
+t5,Ada,1.001,settled

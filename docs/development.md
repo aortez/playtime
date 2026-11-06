@@ -57,6 +57,13 @@ Checker changes also run `python3 scripts/test-seed-assessment-docker.py -v`
 against the existing locked local image; this exercises positive and negative
 controls without running a model or executing candidate code on the host.
 
+The [coding-repair assessments](../assessments/coding-repair-v1/README.md) also run
+`python3 scripts/test-coding-repair.py -v` (offline, included in CI) and
+`python3 scripts/test-coding-repair-docker.py -v` (the locked local image).
+The latter checks all three starters/references, local helper modules, noisy
+candidate imports, partial-workspace outcomes and deadline/cancellation cleanup.
+Neither helper invokes the frozen Python experiment controller or a live model.
+
 ## Choose the additional gate by the changed boundary
 
 These gates test different properties. Passing a fixture gate does not establish

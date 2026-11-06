@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "source_experiment": "framework-qwen-20261105",
+  "original_harness": "Codex CLI 0.160.0",
+  "task_revision": 1,
+  "assessment_revision": 2,
+  "historical_checker_sha256": "77994b37baeefd065265a3c6fac325862c291884e8fad3bb3e2ccf84bdc03f07",
+  "original_seed_files": {
+    "TASK.md": "5f2b5a4aa7e8c5084eaed2c177329a4356671badccf5f60ba9d5404bfa15cac8",
+    "planner.py": "b1c91336d7f37af825e674fdff14bf75d2f5eb6e116a71d4f95b55914c01c8b8",
+    "tasks.json": "aed65b24cc65f0635daa861d0c121a4203ffcd02b91b032e19e07a8104dba3d2"
+  },
+  "reference_files": {
+    "README.md": "c12e8740300adc9bc8a34ac520d04e90d4775c163e8ee87d9a69943bd7c06d50",
+    "plan.json": "b14a3793e0568483d7e5de59c4214a049190c5628f73d89d8d8e339badec89a0",
+    "planner.py": "8b71a3a16d0a0557cf914d14462228e15f9564e4b167a2fcb2cd707b9dfd2fb0"
+  },
+  "controls": {
+    "reference_passed": 24,
+    "starter_passed": 9,
+    "total": 24
+  },
+  "adaptation": "Same acceptance cases. Adds candidate-local imports and clean report transport; import errors remain failed candidate checks. Execution outcome is separate from assessment. README size checks establish presence, not documentation quality."
+}

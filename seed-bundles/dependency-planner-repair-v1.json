@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "dependency-planner-repair-v1",
+  "name": "Repair a dependency planner",
+  "description": "Deterministic execution waves, graph validation, cycles and deep chains.",
+  "revision": 1,
+  "files": "seeds/dependency-planner-repair-v1",
+  "provenance": "Synthetic task authored for the November 5, 2026 Ornith/Qwen Codex CLI comparison. Original task and starter bytes preserved; see assessments/dependency-planner-repair-v1/provenance.json.",
+  "assessment": "assessments/dependency-planner-repair-v1"
+}

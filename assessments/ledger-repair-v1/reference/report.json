@@ -1,0 +1,17 @@
+{
+  "accepted_rows": 3,
+  "voided_rows": 1,
+  "duplicate_rows": 1,
+  "rejected_rows": 1,
+  "total_cents": 901,
+  "customers": [
+    {
+      "customer": "Ada",
+      "total_cents": 601
+    },
+    {
+      "customer": "Bea",
+      "total_cents": 300
+    }
+  ]
+}

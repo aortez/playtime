@@ -66,6 +66,18 @@ can add saved bundle revisions and selection using the existing recipe model.
   step counts, snapshot independence, and continuation. The recipe
   `simulation-repair` provides a ten-minute source allocation. Select the desired
   registered model and harness in a saved revision before launching.
+- **ledger-repair-v1:** repair exact integer money calculations, row validation,
+  duplicate handling and a deterministic CSV report; 10 acceptance checks.
+- **dependency-planner-repair-v1:** repair execution waves, validation and cycle
+  reporting without mutating input; 24 acceptance checks.
+- **byte-range-repair-v1:** repair exact range parsing/normalization and CLI
+  validation; 37 acceptance checks.
+
+The three coding bundles preserve the November 2026 Ornith/Qwen trial's task
+inputs. Their [assessment guide](../assessments/coding-repair-v1/README.md)
+explains recipe use, the reusable Docker checker, reference/starter controls,
+versioned provenance and the distinction between passing checks and finishing
+a run. Their checkers and reference solutions stay outside the supplied seeds.
 
 ## Assessing the repair task
 
