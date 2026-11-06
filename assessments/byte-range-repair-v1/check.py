@@ -1,14 +1,16 @@
 from assessment_support import emit_report, UnavailableModule
-import importlib.util,json,subprocess
+import importlib.util,json,subprocess,sys
 from pathlib import Path
 results=[]
 def check(name,fn):
     try:fn();results.append({'case':name,'passed':True})
     except BaseException as e:results.append({'case':name,'passed':False,'error':str(e)[:1500]})
 def equal(a,b):assert a==b,(a,b)
-spec=importlib.util.spec_from_file_location('candidate','/candidate/ranges.py');module=importlib.util.module_from_spec(spec)
+spec=importlib.util.spec_from_file_location('ranges','/candidate/ranges.py');module=importlib.util.module_from_spec(spec)
+sys.modules[spec.name]=module
 try:spec.loader.exec_module(module)
 except BaseException as e:
+    sys.modules.pop(spec.name,None)
     module=UnavailableModule(e)
 
 def run(header,size,status,ranges):

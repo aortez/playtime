@@ -1,5 +1,5 @@
 from assessment_support import emit_report, UnavailableModule
-import copy,importlib.util,json,subprocess,tempfile
+import copy,importlib.util,json,subprocess,sys,tempfile
 from pathlib import Path
 results=[]
 def check(name,fn):
@@ -7,9 +7,11 @@ def check(name,fn):
     except BaseException as e:results.append({'case':name,'passed':False,'error':str(e)[:1500]})
 def equal(a,b):
     assert a==b,(a,b)
-spec=importlib.util.spec_from_file_location('candidate','/candidate/planner.py');module=importlib.util.module_from_spec(spec)
+spec=importlib.util.spec_from_file_location('planner','/candidate/planner.py');module=importlib.util.module_from_spec(spec)
+sys.modules[spec.name]=module
 try:spec.loader.exec_module(module)
 except BaseException as e:
+    sys.modules.pop(spec.name,None)
     module=UnavailableModule(e)
 
 def task(i,deps=()):return {'id':i,'deps':list(deps)}

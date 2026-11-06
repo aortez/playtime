@@ -103,6 +103,39 @@ class CodingRepairContract(unittest.TestCase):
             with patch.object(checker, "MAX_WORKSPACE", 4), self.assertRaises(ValueError):
                 checker.freeze_candidate(source, root / "oversized")
 
+    def test_empty_directories_change_snapshot_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "helper.py").write_text("# identical file contents\n")
+            before = checker.freeze_candidate(source, root / "before")
+            (source / "empty" / "nested").mkdir(parents=True)
+            after = checker.freeze_candidate(source, root / "after")
+            self.assertNotEqual(before["sha256"], after["sha256"])
+            self.assertEqual(before["size_bytes"], after["size_bytes"])
+            self.assertTrue((root / "after" / "empty" / "nested").is_dir())
+            self.assertEqual(before["files"], after["files"])
+            self.assertEqual(after["directories"], ["empty", "empty/nested"])
+
+    def test_executable_state_is_preserved_and_hashed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            helper = source / "helper.py"
+            helper.write_text("# identical file contents\n")
+            helper.chmod(0o600)
+            before = checker.freeze_candidate(source, root / "before")
+            helper.chmod(0o700)
+            after = checker.freeze_candidate(source, root / "after")
+            self.assertNotEqual(before["sha256"], after["sha256"])
+            self.assertEqual(before["files"][0]["sha256"], after["files"][0]["sha256"])
+            self.assertEqual(before["files"][0]["mode"], "0644")
+            self.assertEqual(after["files"][0]["mode"], "0755")
+            self.assertEqual((root / "before" / "helper.py").stat().st_mode & 0o7777, 0o644)
+            self.assertEqual((root / "after" / "helper.py").stat().st_mode & 0o7777, 0o755)
+
     def test_unavailable_docker_is_incomplete_not_zero_passed(self):
         with patch.object(checker, "command", side_effect=FileNotFoundError("docker unavailable")):
             report, code = checker.assess("ledger-repair-v1", ROOT / "seeds/ledger-repair-v1")

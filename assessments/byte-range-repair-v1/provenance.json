@@ -19,5 +19,5 @@
     "starter_passed": 6,
     "total": 37
   },
-  "adaptation": "Same acceptance cases. Adds candidate-local imports and clean report transport; import errors remain failed candidate checks. Execution outcome is separate from assessment. README size checks establish presence, not documentation quality."
+  "adaptation": "Same acceptance cases. Adds normal Python module imports, candidate-local modules and executable helpers, and clean report transport; import errors remain failed candidate checks. Execution outcome is separate from assessment. README size checks establish presence, not documentation quality."
 }

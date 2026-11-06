@@ -85,7 +85,10 @@ The helper freezes bounded copies of the candidate and checker before execution
 and records their SHA-256 identities, task/assessment revisions and the locked
 workshop image. The original workspace is not modified. Candidate files are
 limited to the Rust capture bounds of 4,096 entries and 48 MiB; symlinks and
-special files are refused. Candidate-local Python modules are supported.
+special files are refused. The fingerprint includes empty directories and each
+file's effective permissions: executable files become mode 0755 and other files
+0644, without special permission bits. Candidate-local Python modules and
+executable helpers are supported, including dataclasses with postponed annotations.
 
 ## Read the result
 
@@ -131,9 +134,10 @@ as uid 1000, with read-only candidate/checker mounts, no network, one CPU,
 256 MiB memory with no extra swap, 32 PIDs and a 32 MiB temporary filesystem.
 The default assessment deadline is 30 seconds (`--assessment-timeout` accepts
 1–120); this is separate from the model's task budget. The owned container is
-removed on completion, timeout or CLI cancellation (SIGINT/SIGTERM). There is no
-host import/execution of candidate programs, Docker socket mount, or implicit
-image pull.
+removed on completion, timeout or CLI cancellation (SIGINT/SIGTERM), before the
+scratch snapshots are deleted. Cancellation during removal is recorded and
+reported after bounded cleanup finishes. There is no host import/execution of
+candidate programs, Docker socket mount, or implicit image pull.
 
 Candidate prints and low-level stdout/stderr writes are suppressed while the
 checker runs; only its structured report is emitted. This prevents ordinary
@@ -142,9 +146,10 @@ boundary against a program deliberately trying to evade the checks; container
 isolation and assessment correctness serve different purposes.
 
 Task revision **1** preserves the original task/starter bytes. Assessment
-revision **2** retains the same acceptance cases while adding helper-module
-support, clean report transport and explicit failure handling. Each task's
-`historical-check.py` is the original checker, with its digest and original seed
+revision **2** retains the same acceptance cases while adding normal module
+imports, local executable helpers, clean report transport and explicit failure
+handling. Each task's `historical-check.py` is the original checker, with its
+digest and original seed
 digests in `provenance.json`. Historical model scores retain their original
 checker identity. Do not silently replace old scores when changing assessment
 semantics; increment the assessment revision and retain the earlier evidence.
@@ -159,10 +164,11 @@ python3 scripts/test-coding-repair-docker.py -v
 The first command validates frozen identities, report completeness/counts,
 snapshot behavior, skipped outcomes and unavailable infrastructure without
 executing candidates. CI runs it alongside seed-bundle validation. The Docker
-gate runs all six positive/negative controls, local-helper and noisy-output
-cases, missing programs, partial-workspace outcomes and deadline/cancellation
-cleanup. It requires the existing locked image and fails if prerequisites are
-absent.
+gate runs all six positive/negative controls, local modules/executables,
+dataclasses with postponed annotations, noisy output, missing programs,
+partial-workspace outcomes and deadline/cancellation cleanup (including signals
+during removal). It requires the existing locked image and fails if prerequisites
+are absent.
 
 Expected control scores are **10/10, 24/24, 37/37** for the references, and
 **1/10, 9/24, 6/37** for the unrepaired starters. The reference artifacts are

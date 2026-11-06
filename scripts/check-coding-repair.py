@@ -25,12 +25,16 @@ class AssessmentInterrupted(Exception):
     pass
 
 
-def interrupt(signum, frame):
-    # Service the first cancellation through bounded owned-container cleanup.
-    # Further signals must not interrupt that cleanup.
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    raise AssessmentInterrupted()
+class Cancellation:
+    def __init__(self):
+        self.requested = False
+        self.cleaning_up = False
+
+    def __call__(self, signum, frame):
+        self.requested = True
+        # Cancellation must not abort owned-container removal or scratch cleanup.
+        if not self.cleaning_up:
+            raise AssessmentInterrupted()
 
 
 def digest(data):
@@ -68,6 +72,7 @@ def freeze_candidate(source, destination):
     destination.mkdir(mode=0o755)
     destination.chmod(0o755)
     inventory = []
+    directory_paths = []
     total = entries = 0
 
     def traversal_error(error):
@@ -87,6 +92,7 @@ def freeze_candidate(source, destination):
             if stat.S_ISDIR(mode):
                 target.mkdir(mode=0o755)
                 target.chmod(0o755)
+                directory_paths.append(relative.as_posix())
             elif stat.S_ISREG(mode):
                 with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
                     if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
@@ -96,14 +102,17 @@ def freeze_candidate(source, destination):
                 if total > MAX_WORKSPACE:
                     raise ValueError("candidate exceeds 48 MiB")
                 target.write_bytes(data)
-                target.chmod(0o644)
+                copied_mode = 0o755 if mode & 0o111 else 0o644
+                target.chmod(copied_mode)
                 inventory.append({"path": relative.as_posix(), "size_bytes": len(data),
-                                  "sha256": digest(data)})
+                                  "sha256": digest(data), "mode": f"{copied_mode:04o}"})
             else:
                 raise ValueError("candidate contains a link or special file")
     inventory.sort(key=lambda item: item["path"])
-    return {"files": inventory, "size_bytes": total,
-            "sha256": digest(json.dumps(inventory, sort_keys=True).encode())}
+    directory_paths.sort()
+    identity = {"files": inventory, "directories": directory_paths}
+    return {**identity, "size_bytes": total,
+            "sha256": digest(json.dumps(identity, sort_keys=True).encode())}
 
 
 def freeze_checker(task_id, destination, identity):
@@ -148,12 +157,14 @@ def validate_result(task, raw, exit_code):
     return result
 
 
-def command(args, timeout=15):
+def command(args, timeout=15, *, start_new_session=False):
     return subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True,
-                          text=True, timeout=timeout, check=True)
+                          text=True, timeout=timeout, check=True,
+                          start_new_session=start_new_session)
 
 
-def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30):
+def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30, cancellation=None):
+    cancellation = cancellation or Cancellation()
     task = load_task(task_id)
     lock_path = ROOT / "environments/general.lock.json"
     lock_bytes = lock_path.read_bytes()
@@ -173,51 +184,57 @@ def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30):
     cleanup_error = None
     try:
         with tempfile.TemporaryDirectory(prefix="playtime-coding-check-") as temporary:
-            temp = Path(temporary)
-            snapshot = temp / "candidate"
-            report["candidate"] = freeze_candidate(candidate, snapshot)
-            checker_snapshot = temp / "checker"
-            freeze_checker(task_id, checker_snapshot, report["checker"])
-            command(["docker", "image", "inspect", image])
-            args = ["docker", "create", "--name", name, "--pull", "never",
-                    "--label", "playtime.assessment=coding-repair-v1",
-                    "--network", "none", "--read-only", "--user", "1000:1000",
-                    "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-                    "--pids-limit", "32", "--cpus", "1", "--memory", "256m",
-                    "--memory-swap", "256m", "--log-driver", "none",
-                    "--tmpfs", "/tmp:rw,uid=1000,gid=1000,size=32m,nosuid,nodev",
-                    "--workdir", "/candidate", "--mount",
-                    f"type=bind,src={snapshot},dst=/candidate,readonly",
-                    "--mount", f"type=bind,src={checker_snapshot},dst=/assessment,readonly",
-                    "--entrypoint", "python3", image, "-I", "/assessment/driver.py"]
-            # Record the owned name before create; cleanup also covers a timed-out
-            # create whose container was created but whose response was lost.
-            created = True
-            command(args)
-            with (temp / "stdout").open("wb") as output, (temp / "stderr").open("wb") as errors:
-                attached = subprocess.run(["docker", "start", "--attach", name],
-                                          stdin=subprocess.DEVNULL, stdout=output,
-                                          stderr=errors, timeout=timeout)
-            state = json.loads(command(["docker", "inspect", "--format", "{{json .State}}", name]).stdout)
-            if state["Running"] or state["OOMKilled"] or attached.returncode not in (0, 1):
-                raise ValueError("assessment container did not finish normally")
-            raw = json.loads(bounded_read(temp / "stdout", MAX_REPORT))
-            report["assessment"] = validate_result(task, raw, state["ExitCode"])
+            try:
+                temp = Path(temporary)
+                snapshot = temp / "candidate"
+                report["candidate"] = freeze_candidate(candidate, snapshot)
+                checker_snapshot = temp / "checker"
+                freeze_checker(task_id, checker_snapshot, report["checker"])
+                command(["docker", "image", "inspect", image])
+                args = ["docker", "create", "--name", name, "--pull", "never",
+                        "--label", "playtime.assessment=coding-repair-v1",
+                        "--network", "none", "--read-only", "--user", "1000:1000",
+                        "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                        "--pids-limit", "32", "--cpus", "1", "--memory", "256m",
+                        "--memory-swap", "256m", "--log-driver", "none",
+                        "--tmpfs", "/tmp:rw,uid=1000,gid=1000,size=32m,nosuid,nodev",
+                        "--workdir", "/candidate", "--mount",
+                        f"type=bind,src={snapshot},dst=/candidate,readonly",
+                        "--mount", f"type=bind,src={checker_snapshot},dst=/assessment,readonly",
+                        "--entrypoint", "python3", image, "-I", "/assessment/driver.py"]
+                # Record the owned name before create; cleanup also covers a timed-out
+                # create whose container was created but whose response was lost.
+                created = True
+                command(args)
+                with (temp / "stdout").open("wb") as output, (temp / "stderr").open("wb") as errors:
+                    attached = subprocess.run(["docker", "start", "--attach", name],
+                                              stdin=subprocess.DEVNULL, stdout=output,
+                                              stderr=errors, timeout=timeout)
+                state = json.loads(command(["docker", "inspect", "--format", "{{json .State}}", name]).stdout)
+                if state["Running"] or state["OOMKilled"] or attached.returncode not in (0, 1):
+                    raise ValueError("assessment container did not finish normally")
+                raw = json.loads(bounded_read(temp / "stdout", MAX_REPORT))
+                report["assessment"] = validate_result(task, raw, state["ExitCode"])
+            finally:
+                cancellation.cleaning_up = True
+                if created:
+                    try:
+                        # Terminal Ctrl-C reaches the parent's process group.
+                        # Keep the bounded cleanup client outside that group.
+                        command(["docker", "rm", "--force", name], start_new_session=True)
+                    except (OSError, subprocess.SubprocessError) as error:
+                        cleanup_error = str(error)[:2000]
+                        report["cleanup"] = {"status": "failed", "container": name, "error": cleanup_error}
+                    else:
+                        report["cleanup"] = {"status": "completed"}
     except subprocess.TimeoutExpired:
         report["assessment"] = {"status": "incomplete", "reason": "assessment_timeout"}
     except AssessmentInterrupted:
         report["assessment"] = {"status": "incomplete", "reason": "assessment_interrupted"}
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         report["assessment"] = {"status": "incomplete", "reason": str(error)[:2000]}
-    finally:
-        if created:
-            try:
-                command(["docker", "rm", "--force", name])
-            except (OSError, subprocess.SubprocessError) as error:
-                cleanup_error = str(error)[:2000]
-                report["cleanup"] = {"status": "failed", "container": name, "error": cleanup_error}
-            else:
-                report["cleanup"] = {"status": "completed"}
+    if cancellation.requested:
+        report["assessment"] = {"status": "incomplete", "reason": "assessment_interrupted"}
     if cleanup_error:
         report["assessment"] = {"status": "incomplete", "reason": "container_cleanup_failed"}
     assessment = report["assessment"]
@@ -245,15 +262,21 @@ def main():
         metadata = json.loads(bounded_read(args.metadata, 65536))
         if not isinstance(metadata, dict):
             raise ValueError("metadata must be an object")
-    report, exit_code = assess(args.task, args.candidate, outcome=args.outcome,
-                               metadata=metadata, timeout=args.assessment_timeout)
-    print(json.dumps(report, indent=2))
-    return exit_code
+    cancellation = Cancellation()
+    previous_handlers = {sig: signal.signal(sig, cancellation)
+                         for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        report, exit_code = assess(args.task, args.candidate, outcome=args.outcome,
+                                   metadata=metadata, timeout=args.assessment_timeout,
+                                   cancellation=cancellation)
+        print(json.dumps(report, indent=2))
+        return exit_code
+    finally:
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, interrupt)
-    signal.signal(signal.SIGINT, interrupt)
     try:
         raise SystemExit(main())
     except (OSError, ValueError, AssessmentInterrupted) as error:

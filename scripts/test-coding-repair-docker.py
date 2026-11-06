@@ -1,6 +1,7 @@
 """Real assessment controls. All candidate execution stays inside Docker."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import signal
@@ -74,6 +75,40 @@ class CodingRepairDocker(unittest.TestCase):
                                "    os.write(1, b'direct stdout noise')\n")
             self.assertTrue(self.assess(task, path)["assessment"]["all_checks_passed"])
 
+    def test_imported_modules_support_dataclasses_and_self_import(self):
+        for task in ("dependency-planner-repair-v1", "byte-range-repair-v1"):
+            with self.subTest(task=task), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "candidate"
+                shutil.copytree(ROOT / "assessments" / task / "reference", path)
+                program = path / TASKS[task]
+                program.write_text(
+                    "from __future__ import annotations\n"
+                    "from dataclasses import dataclass\n"
+                    "@dataclass\n"
+                    "class Marker:\n"
+                    "    value: int\n"
+                    "if __name__ != '__main__':\n"
+                    "    import importlib, sys\n"
+                    "    assert importlib.import_module(__name__) is sys.modules[__name__]\n"
+                    + program.read_text())
+                self.assertTrue(self.assess(task, path)["assessment"]["all_checks_passed"])
+
+    def test_executable_local_helper_is_preserved(self):
+        task = "ledger-repair-v1"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "candidate"
+            shutil.copytree(ROOT / "assessments" / task / "reference", path)
+            program = path / "report.py"
+            helper = path / "implementation.py"
+            helper.write_text("#!/usr/bin/env python3\n" + program.read_text())
+            helper.chmod(0o755)
+            program.write_text(
+                "import subprocess, sys\n"
+                "from pathlib import Path\n"
+                "raise SystemExit(subprocess.call([str(Path(__file__).with_name('implementation.py')),\n"
+                "                                  *sys.argv[1:]]))\n")
+            self.assertTrue(self.assess(task, path)["assessment"]["all_checks_passed"])
+
     def test_missing_program_is_candidate_failure_with_complete_cases(self):
         for task in TASKS:
             with self.subTest(task=task), tempfile.TemporaryDirectory() as temporary:
@@ -135,6 +170,77 @@ class CodingRepairDocker(unittest.TestCase):
                 if process.poll() is None:
                     process.send_signal(signal.SIGTERM)
                     process.communicate(timeout=25)
+
+    def test_cancellation_during_removal_finishes_cleanup_before_scratch_removal(self):
+        docker = shutil.which("docker")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            candidate.mkdir()
+            (candidate / "planner.py").write_text("while True:\n    pass\n")
+            shim = root / "bin"
+            shim.mkdir()
+            marker, release = root / "removing", root / "release"
+            # Trusted transport fixture: pause only the cleanup client. Candidate
+            # code still executes in the actual locked Docker container.
+            wrapper = shim / "docker"
+            wrapper.write_text(
+                f"#!{sys.executable}\n"
+                "import os, sys, time\n"
+                "from pathlib import Path\n"
+                "if sys.argv[1:3] == ['rm', '--force']:\n"
+                f"    Path({str(marker)!r}).write_text(sys.argv[-1])\n"
+                "    deadline = time.monotonic() + 10\n"
+                f"    while not Path({str(release)!r}).exists() and time.monotonic() < deadline:\n"
+                "        time.sleep(0.02)\n"
+                f"os.execv({docker!r}, [{docker!r}, *sys.argv[1:]])\n")
+            wrapper.chmod(0o755)
+            process = subprocess.Popen(
+                [sys.executable, str(ROOT / "scripts/check-coding-repair.py"),
+                 "dependency-planner-repair-v1", str(candidate), "--assessment-timeout", "1"],
+                env={**os.environ, "PATH": str(shim) + os.pathsep + os.environ["PATH"]},
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                start_new_session=True)
+            name = None
+            try:
+                deadline = time.monotonic() + 20
+                while not marker.exists() or not marker.read_text():
+                    self.assertIsNone(process.poll(), "assessment exited before cleanup")
+                    self.assertLess(time.monotonic(), deadline, "cleanup did not start")
+                    time.sleep(0.02)
+                name = marker.read_text()
+                state = json.loads(subprocess.check_output(
+                    [docker, "inspect", name], text=True, timeout=15))[0]
+                self.assertTrue(state["State"]["Running"])
+                for mount in state["Mounts"]:
+                    if mount["Destination"] in ("/candidate", "/assessment"):
+                        self.assertTrue(Path(mount["Source"]).is_dir(), "snapshot removed before container")
+                os.killpg(process.pid, signal.SIGTERM)
+                time.sleep(0.05)
+                os.killpg(process.pid, signal.SIGINT)
+                release.touch()
+                output, errors = process.communicate(timeout=25)
+                self.assertEqual(process.returncode, 2, errors)
+                report = json.loads(output)
+                self.assertEqual(report["assessment"], {
+                    "status": "incomplete", "reason": "assessment_interrupted"})
+                self.assertEqual(report["cleanup"]["status"], "completed")
+                remaining = subprocess.check_output(
+                    [docker, "ps", "-aq", "--filter", f"name=^/{name}$"], text=True, timeout=15)
+                self.assertEqual(remaining.strip(), "")
+                for mount in state["Mounts"]:
+                    if mount["Destination"] in ("/candidate", "/assessment"):
+                        self.assertFalse(Path(mount["Source"]).exists())
+            finally:
+                release.touch()
+                if process.poll() is None:
+                    process.send_signal(signal.SIGTERM)
+                    process.communicate(timeout=25)
+                if name is None and marker.exists():
+                    name = marker.read_text()
+                if name:
+                    subprocess.run([docker, "rm", "--force", name], timeout=15,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":
