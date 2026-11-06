@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 
 pub const QWEN_MODEL_LOCK: &[u8] = include_bytes!("qwen3-1.7b-lock.json");
 pub const QWEN_CODER_NEXT_MODEL_LOCK: &[u8] = include_bytes!("qwen3-coder-next-lock.json");
+pub const QWEN_38_27B_BF16_MODEL_LOCK: &[u8] = include_bytes!("qwen3.8-27b-bf16-lock.json");
+pub const QWEN_36_35B_A3B_BF16_MODEL_LOCK: &[u8] = include_bytes!("qwen3.6-35b-a3b-bf16-lock.json");
 pub const GPT_OSS_120B_MODEL_LOCK: &[u8] = include_bytes!("gpt-oss-120b-lock.json");
 pub const ORNITH_35B_GPU_MODEL_LOCK: &[u8] = include_bytes!("ornith-1.5-35b-gpu-lock.json");
 
@@ -21,6 +23,8 @@ pub fn reviewed_identity_capabilities(
         MODEL_LOCK,
         QWEN_MODEL_LOCK,
         QWEN_CODER_NEXT_MODEL_LOCK,
+        QWEN_38_27B_BF16_MODEL_LOCK,
+        QWEN_36_35B_A3B_BF16_MODEL_LOCK,
         GPT_OSS_120B_MODEL_LOCK,
         GPT_OSS_120B_USAGE_MODEL_LOCK,
         ORNITH_35B_GPU_MODEL_LOCK,
@@ -61,6 +65,20 @@ pub fn reviewed_identity_capabilities(
                 "reviewed-qwen3-coder-next-q4-k-m-ollama-0.32.3-v1; non-thinking tools checked on Framework; context ceiling from locked model_info",
                 vec![RecipeReasoning::ModelDefault, RecipeReasoning::Off],
                 Some(RecipeReasoning::Off),
+            )
+        } else if bytes == QWEN_38_27B_BF16_MODEL_LOCK || bytes == QWEN_36_35B_A3B_BF16_MODEL_LOCK {
+            (
+                if bytes == QWEN_38_27B_BF16_MODEL_LOCK {
+                    "reviewed-qwen3.8-27b-bf16-ollama-0.40.14-v1; default/on/off thinking and native tools checked on Framework at 98304 context; ceiling from locked model_info"
+                } else {
+                    "reviewed-qwen3.6-35b-a3b-bf16-ollama-0.40.14-v1; default/on/off thinking and native tools checked on Framework at 98304 context; ceiling from locked model_info"
+                },
+                vec![
+                    RecipeReasoning::ModelDefault,
+                    RecipeReasoning::On,
+                    RecipeReasoning::Off,
+                ],
+                None,
             )
         } else {
             (

@@ -299,12 +299,24 @@ first, then refresh the recipe's choices. Selecting a registration changes only
 the draft. Its ID, digest and capability provenance remain visible; equal names
 can refer to different immutable registrations.
 
-Selection preserves the prompt, seed files, numeric sampling seed, every numeric
-setting and all run budgets. Unsupported settings remain invalid. For example,
-High stays High when selecting a model supporting only Model default / On / Off;
-choose an explicit supported value before saving. A smaller reviewed context
-ceiling may require a separate capacity change. The service checks completion and
-tool support, reviewed reasoning/context capabilities, numeric bounds and initial
+Selecting a different registration defaults context capacity to its reviewed
+window, capped at Playtime's 131,072-token recipe limit. For example, a reviewed
+98,304-token model selects 98,304 instead of inheriting curiosity's 65,536.
+The context field remains editable for a smaller allocation; choosing the same
+registration again preserves that edit. Model capacity is not measured GPU memory
+fit. Choose a smaller allocation when the inference host requires it.
+
+The API applies the same default for a different explicit `model_registration`
+when `model_settings` is omitted. Explicit model settings win. Omitting model
+selection or re-selecting the saved registration preserves the source allocation.
+The resulting numeric capacity is frozen on save and sent to Ollama as `num_ctx`;
+existing revisions, accepted saves and archived runs are never re-sized.
+
+Selection preserves the prompt, seed files, numeric sampling seed, all other
+settings and all whole-run budgets. Unsupported settings remain invalid. For
+example, High stays High when selecting a model supporting only Model default /
+On / Off; choose an explicit supported value before saving. The service checks
+completion and tool support, reviewed reasoning/context capabilities, numeric bounds and initial
 context fit on every save, including when settings are inherited. Unknown
 capabilities block selection saves rather than becoming guessed defaults.
 

@@ -99,8 +99,8 @@ async fn chat(
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if !(args.len() == 5 || ((args.len() == 6 || args.len() == 7) && args[5] == "--live")) {
-        return Err("usage: review_model ENDPOINT MODEL EXPECTED_DIGEST REASONING NEW_EVIDENCE_DIR [--live [MAX_TOKENS]] (reasoning: default, off, on, low, medium, high; tokens: 1..8192, default 512)".into());
+    if !(args.len() == 5 || ((6..=8).contains(&args.len()) && args[5] == "--live")) {
+        return Err("usage: review_model ENDPOINT MODEL EXPECTED_DIGEST REASONING NEW_EVIDENCE_DIR [--live [MAX_TOKENS [CONTEXT_TOKENS]]] (reasoning: default, off, on, low, medium, high; tokens: 1..8192, default 512; context: 8192..131072, default 65536)".into());
     }
     let maximum_tokens = args
         .get(6)
@@ -109,6 +109,14 @@ async fn main() -> Result<()> {
         .unwrap_or(512);
     if !(1..=8192).contains(&maximum_tokens) {
         return Err("probe token allowance must be 1..8192".into());
+    }
+    let context_tokens = args
+        .get(7)
+        .map(|s| s.parse::<u64>())
+        .transpose()?
+        .unwrap_or(65536);
+    if !(8192..=131072).contains(&context_tokens) {
+        return Err("probe context must be 8192..131072".into());
     }
     let thinking = match args[3].as_str() {
         "default" => None,
@@ -162,7 +170,7 @@ async fn main() -> Result<()> {
     }
     let mut adapter = Adapter::with_model(transport()?, model, limits.clone())?;
     let settings = EffectiveSettings {
-        context_tokens: Some(65536),
+        context_tokens: Some(context_tokens),
         thinking,
         temperature: Some(0.0),
         ..Default::default()
@@ -223,7 +231,7 @@ async fn main() -> Result<()> {
     )?;
     chat(&mut adapter, &request, &settings, evidence, true).await?;
     println!(
-        "Identity, 64K streaming/tool round trip, known completed usage and client cancellation checked; backend stop requires separate observation."
+        "Identity, {context_tokens}-token context streaming/tool round trip, known completed usage and client cancellation checked; backend stop requires separate observation."
     );
     Ok(())
 }

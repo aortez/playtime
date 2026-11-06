@@ -33,8 +33,16 @@ impl Draft {
             == CONTINUOUS_COMPACTION_V1
     }
     pub fn select_model(&mut self, model: ModelRegistrationSummary) {
+        if self
+            .model_registration
+            .as_ref()
+            .is_some_and(|previous| previous.registration_id == model.registration_id)
+        {
+            return;
+        }
         if let Some(settings) = &mut self.settings {
             settings.select_model(Some(&model));
+            settings.use_model_context();
         }
         self.model_registration = Some(model);
     }

@@ -8,7 +8,7 @@ use playtime_server::{
 };
 use playtime_test_support::{
     TestRoot,
-    recipe_models::{boolean_model, retain},
+    recipe_models::{boolean_model, model_with_context, retain},
 };
 use std::{path::Path, sync::Arc};
 
@@ -45,6 +45,142 @@ fn revise(source: &RecipeDefinition) -> RecipeMutation {
             model_registration: None,
         },
     }
+}
+
+#[tokio::test]
+async fn model_selection_defaults_context_but_explicit_and_saved_allocations_stay_frozen() {
+    let root = TestRoot::new().unwrap();
+    let ledger = Ledger::open(&root.0).await.unwrap();
+    let catalog = Catalog::new(
+        ledger.clone(),
+        load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../recipes")).unwrap(),
+    )
+    .unwrap();
+    let source = catalog
+        .definition(&RecipeId::new("curiosity").unwrap())
+        .await
+        .unwrap();
+    let original = catalog
+        .model_settings(&source.execution_recipe_id)
+        .await
+        .unwrap()
+        .settings;
+    assert_eq!(original.context_tokens, 65_536);
+    let mut saved_override = None;
+    for (window, expected) in [(98_304, 98_304), (131_072, 131_072), (262_144, 131_072)] {
+        let model = model_with_context(window);
+        retain(&root.0, &model);
+        let key = |label| IdempotencyKey::new(format!("context-{window}-{label}")).unwrap();
+        let mut request = clone(&source, model.summary.registration_id.clone(), None);
+        let RecipeMutation::Clone { request: body } = &mut request else {
+            panic!()
+        };
+        // This task cannot start at the inherited 64K allocation.
+        body.prompt = "x".repeat(24_000);
+        let mut too_small = request.clone();
+        let RecipeMutation::Clone { request: body } = &mut too_small else {
+            panic!()
+        };
+        body.model_settings = Some(original.clone());
+        assert_eq!(
+            catalog
+                .save(key("explicit-too-small"), too_small)
+                .await
+                .unwrap_err()
+                .code(),
+            "invalid_parameters"
+        );
+        let saved = catalog.save(key("default"), request.clone()).await.unwrap();
+        let settings = catalog
+            .model_settings(&saved.definition.execution_recipe_id)
+            .await
+            .unwrap()
+            .settings;
+        let mut expected_settings = original.clone();
+        expected_settings.context_tokens = expected;
+        assert_eq!(settings, expected_settings);
+        assert_eq!(
+            catalog
+                .save(key("default"), request)
+                .await
+                .unwrap()
+                .definition,
+            saved.definition
+        );
+
+        let mut override_settings = original.clone();
+        override_settings.context_tokens = 81_920;
+        let overridden = catalog
+            .save(
+                key("explicit"),
+                clone(
+                    &source,
+                    model.summary.registration_id.clone(),
+                    Some(override_settings.clone()),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            catalog
+                .model_settings(&overridden.definition.execution_recipe_id)
+                .await
+                .unwrap()
+                .settings,
+            override_settings
+        );
+        // Re-selecting the same identity without settings is an edit, not a new default.
+        let mut edit = revise(&overridden.definition);
+        let RecipeMutation::Revise { request, .. } = &mut edit else {
+            panic!()
+        };
+        request.model_registration = Some(model.summary.registration_id);
+        let edited = catalog.save(key("same-model"), edit).await.unwrap();
+        assert_eq!(
+            catalog
+                .model_settings(&edited.definition.execution_recipe_id)
+                .await
+                .unwrap()
+                .settings,
+            override_settings
+        );
+        saved_override = Some(edited.definition);
+    }
+    assert_eq!(
+        catalog
+            .definition(&source.execution_recipe_id)
+            .await
+            .unwrap(),
+        source
+    );
+    let saved = saved_override.unwrap();
+    drop(catalog);
+    drop(ledger);
+    let catalog = Catalog::new(Ledger::open(&root.0).await.unwrap(), vec![]).unwrap();
+    assert_eq!(
+        catalog
+            .definition(&saved.execution_recipe_id)
+            .await
+            .unwrap(),
+        saved
+    );
+    let revised = catalog
+        .save(
+            IdempotencyKey::new("context-offline-edit").unwrap(),
+            revise(&saved),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog
+            .model_settings(&revised.definition.execution_recipe_id)
+            .await
+            .unwrap()
+            .settings
+            .context_tokens,
+        81_920
+    );
+    catalog.check().await.unwrap();
 }
 #[tokio::test]
 async fn choose_correct_save_and_recover_an_immutable_model_without_execution_or_fallback() {

@@ -128,6 +128,15 @@ impl SettingsDraft {
         *self = Self::new(self.original.clone());
         self.continuous = continuous;
     }
+    pub fn use_model_context(&mut self) {
+        if let Some(context) = self
+            .capabilities
+            .as_ref()
+            .and_then(RecipeModelCapabilities::default_context_tokens)
+        {
+            self.fields[1].text = context.to_string();
+        }
+    }
     /// The owner resets model selection together with settings when this returns true.
     pub fn draw(&mut self, ui: &mut egui::Ui) -> bool {
         let mut reset = false;

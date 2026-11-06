@@ -362,6 +362,10 @@ fn save_recipe(
         RecipeMutation::Clone { request } => &request.model_registration,
         RecipeMutation::Revise { request, .. } => &request.model_registration,
     };
+    let settings = match &request {
+        RecipeMutation::Clone { request } => &request.model_settings,
+        RecipeMutation::Revise { request, .. } => &request.model_settings,
+    };
     if let Some(id) = selected {
         let model = crate::registrations::retained(&tx, id).map_err(|error| {
             if error.code() == "not_found" {
@@ -370,14 +374,25 @@ fn save_recipe(
                 error
             } else { error }
         })?;
+        if settings.is_none()
+            && definition
+                .model_registration
+                .as_ref()
+                .is_none_or(|previous| previous.summary.registration_id != *id)
+            && let Some(context) = model
+                .summary
+                .identity
+                .reviewed_capabilities
+                .as_ref()
+                .and_then(RecipeModelCapabilities::default_context_tokens)
+        {
+            definition.recipe.parameters.limits.context_tokens =
+                std::num::NonZeroU64::new(context).unwrap();
+        }
         definition
             .select_registered_model(model)
             .map_err(settings_error)?;
     }
-    let settings = match &request {
-        RecipeMutation::Clone { request } => &request.model_settings,
-        RecipeMutation::Revise { request, .. } => &request.model_settings,
-    };
     if let Some(settings) = settings {
         definition
             .apply_model_settings(settings)

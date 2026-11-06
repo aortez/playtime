@@ -86,7 +86,7 @@ pub fn draw(
             .map(|m| m.identity.name.as_str())
             .unwrap_or(original);
         ui.label(format!("Model changed from {original} to {current}"));
-        ui.small("Reasoning and numeric settings are preserved. Correct any unsupported values before saving.");
+        ui.small("Context defaults to this model's reviewed window (up to 131,072 tokens); you can lower it in Model settings. Other settings are preserved.");
     }
     if ui
         .add_enabled(!busy, egui::Button::new("Reset model"))

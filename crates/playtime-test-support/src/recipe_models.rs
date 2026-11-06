@@ -47,6 +47,26 @@ pub fn boolean_model() -> RegisteredModel {
         definition,
     }
 }
+
+/// Synthetic High-capable model for context-selection tests; never execute it.
+pub fn model_with_context(context: u64) -> RegisteredModel {
+    let mut model = boolean_model();
+    model.summary.registration_id =
+        ModelRegistrationId::new(format!("model-synthetic-{context}")).unwrap();
+    model.summary.identity.name = format!("synthetic-{context}:fixture");
+    let capabilities = model
+        .summary
+        .identity
+        .reviewed_capabilities
+        .as_mut()
+        .unwrap();
+    capabilities.context_ceiling = Some(context);
+    capabilities.reasoning.push(RecipeReasoning::High);
+    model.definition["model_info"]["synthetic.context_length"] = value!(context);
+    model.summary.identity.definition_sha256 =
+        json::hash(&json::canonical(&model.definition, MODEL_DEFINITION_BYTES).unwrap());
+    model
+}
 /// Seed an isolated fixture database with a historical reviewed capability record.
 /// This deliberately bypasses live registration: no second native profile is approved here.
 pub fn retain(root: &Path, model: &RegisteredModel) {
