@@ -31,6 +31,7 @@ jobs:
         run: |
           python3 scripts/test-seed-bundles.py -v
           python3 scripts/test-seed-assessment.py -v
+          python3 scripts/test-coding-repair.py -v
           python3 scripts/seed-bundle.py validate
           bash -n scripts/check-simulation-repair.sh
       - name: Install the pinned Rust toolchain

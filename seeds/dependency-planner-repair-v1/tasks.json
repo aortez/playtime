@@ -1,0 +1,1 @@
+[{"id":"ship","deps":["test","docs"]},{"id":"test","deps":["build"]},{"id":"docs","deps":[]},{"id":"build","deps":[]}]

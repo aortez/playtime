@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "source_experiment": "framework-qwen-20261105",
+  "original_harness": "Codex CLI 0.160.0",
+  "task_revision": 1,
+  "assessment_revision": 2,
+  "historical_checker_sha256": "8b7b83bb8ee1f54a8556d0cffd4a2fd20c7b05f58258d05bae880b81dc59386f",
+  "original_seed_files": {
+    "TASK.md": "a6c0e60bdda73e589df956fdff2d8fd81c1f72ec9de1ca7050659fae383216fd",
+    "ranges.py": "a04229a50fe96c8f0201e39eb17a0e58b679d74ad1ca9017f25c7a0299d8b118"
+  },
+  "reference_files": {
+    "README.md": "c12e8740300adc9bc8a34ac520d04e90d4775c163e8ee87d9a69943bd7c06d50",
+    "example.json": "3df013281faf85c8f0b7951449c9418beb885c224914ec81515b1b19b96b9532",
+    "ranges.py": "83cef5a476025f8c51d9f8f88182b70dc2de16bc8aa79dd00ee69f576f28596d"
+  },
+  "controls": {
+    "reference_passed": 37,
+    "starter_passed": 6,
+    "total": 37
+  },
+  "adaptation": "Same acceptance cases. Adds normal Python module imports, candidate-local modules and executable helpers, and clean report transport; import errors remain failed candidate checks. Execution outcome is separate from assessment. README size checks establish presence, not documentation quality."
+}
