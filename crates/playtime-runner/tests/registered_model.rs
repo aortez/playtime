@@ -91,6 +91,20 @@ fn selected_execution_projects_the_exact_lock_without_rewriting_base_provenance(
 fn large_model_profiles_preserve_identity_and_refuse_inherited_unsupported_reasoning() {
     for (bytes, repository_lock, allowed, rejected, ceiling) in [
         (
+            ORNITH_35B_Q8_MODEL_LOCK,
+            include_bytes!("../../../models/ornith-1.5-35b-q8-codex-128k.lock.json").as_slice(),
+            RecipeReasoning::On,
+            RecipeReasoning::High,
+            262144,
+        ),
+        (
+            QWEN_36_35B_Q8_MODEL_LOCK,
+            include_bytes!("../../../models/qwen3.6-35b-q8-codex-128k.lock.json").as_slice(),
+            RecipeReasoning::Off,
+            RecipeReasoning::High,
+            262144,
+        ),
+        (
             ORNITH_35B_GPU_MODEL_LOCK,
             include_bytes!("../../../models/ornith-1.5-35b-gpu.lock.json").as_slice(),
             RecipeReasoning::On,

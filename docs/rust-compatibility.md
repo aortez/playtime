@@ -1,5 +1,15 @@
 # Rust compatibility and goldens
 
+## Framework Q8 coding models and recipes (2026-11-06)
+
+Two additional compiled registrations bind the exact 128K coding aliases for
+Ornith 1.5 35B Q8 and Qwen3.6 35B Q8 to Ollama 0.40.14. Native probes passed
+with omitted, On and Off thinking, tool-result receipts, and cancellation at
+131,072 context. Their locks enter the worker capability digest, so daemon and
+worker must be rebuilt together. The three coding-repair recipe sources use the
+owner-approved 900-second task budget; existing recipe limits and controller
+bounds are unchanged. See the [study record](../experiments/framework-q8-repeatability.md).
+
 ## BF16 Qwen identities (2026-11-03)
 
 The native adapter explicitly supports Ollama 0.40.14 alongside the existing

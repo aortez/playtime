@@ -29,8 +29,11 @@ python3 scripts/seed-bundle.py validate
 
 A file-backed Rust recipe selects `seeds/<id>`. Follow the existing
 [recipe authoring workflow](../../docs/rust-recipes.md); these bundles do not
-change the recipe catalog or its reviewed limits. For example, copy an existing
-recipe to a new file, change its `id` to match that filename, and set:
+change controller bounds. The catalog includes `ledger-repair`,
+`dependency-planner-repair`, and `byte-range-repair`, each with a 900-second task
+budget. Select a registered model, context and harness in a saved revision before
+launching. For a new task, copy an existing recipe to a new file, change its `id`
+to match that filename, and set:
 
 ```toml
 name = "CSV ledger repair"
