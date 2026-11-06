@@ -1,5 +1,31 @@
 # Rust compatibility and goldens
 
+## BF16 Qwen identities (2026-11-03)
+
+The native adapter explicitly supports Ollama 0.40.14 alongside the existing
+exact versions. New Qwen3.8-27B BF16 and Qwen3.6-35B-A3B BF16 locks and compiled
+capabilities bind that version to their manifest and canonical definition
+digests. Model-default omission and boolean On/Off passed native streaming,
+tool-result and cancellation probes at 98,304 context on Framework. Existing
+locks still require their original backend versions; no version range or
+implicit upgrade is accepted. The new locks enter the worker capability digest,
+requiring matching daemon and worker builds. No archive or API schema changes.
+The standalone review example can now request an explicit context allocation.
+See [the retained hardware evidence](rust-framework-models.md#bf16-qwen-candidates-2026-11-03).
+
+## Model context defaults (2026-11-03)
+
+Choosing a different registered model now defaults context capacity to the exact
+identity's reviewed window, capped at the existing 131,072-token recipe maximum.
+The workbench shows the resulting editable value. API saves without explicit
+model settings use the same default; explicit settings, edits retaining the same
+registration, saved-receipt replay and existing revisions preserve their frozen
+capacity. Reasoning, sampling, response/handoff allowances and whole-run budgets
+are unchanged. Unknown capabilities still fail validation. No model locks,
+controller policies, archive formats or wire fields change. The OpenAPI golden's
+two selection descriptions and the recipe model screenshots intentionally reflect
+the new default and explanatory text.
+
 2026-10-27: The UI displays model identity and settings from the verified archived
 configuration separately from inherited recipe titles. New `archived-model`
 wide/narrow screenshots cover the distinction. This adds a bounded background

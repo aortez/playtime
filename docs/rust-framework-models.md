@@ -6,6 +6,64 @@ the original GPT-OSS 20B lock or recipe. The candidates are
 using Ollama 0.32.3. Model files and experimental archives stay outside Git.
 Exact identity locks and reviewed capability profiles belong in the repository.
 
+## BF16 Qwen candidates, 2026-11-03
+
+The owner selected Qwen3.8-27B BF16 and Qwen3.6-35B-A3B BF16 for the
+[Codex-prompt pilot](../experiments/codex-default-prompt.md). Evidence is retained
+at `/home/data2/playtime/qwen-bf16-20261104`. The original Ollama 0.32.3 service
+refused Qwen3.8's pull as requiring a newer runtime. Official Ollama 0.40.14 Linux
+and ROCm release archives were verified against their published SHA-256 hashes
+and installed under `/opt/playtime/ollama-0.40.14`, separately from the original
+installation. A bounded transient service uses its own model store and a
+loopback listener, reached through an owned SSH tunnel. Existing model locks,
+kernel memory settings and the installed original runtime are preserved.
+
+Both exact identities passed the native three-request probe with omitted
+thinking, On and Off at 98,304 context, using the existing `q8_0` KV-cache and
+Flash Attention settings. Completed responses report known usage; cancellation
+remains explicitly unknown. After each cancellation, the server journal recorded
+the cancelled task's release and all slots idle before another probe began.
+
+| BF16 model | Manifest SHA-256 | Canonical definition SHA-256 |
+| --- | --- | --- |
+| Qwen3.8-27B | `1aa85dae8b2db4a2721ec3501ecbafc54f89f89e33ecb27f719becea4bd2fd01` | `8e2811ef61bc02bf48c2930fe7c8a9e089e74269cce3a3f1e91e5dfd90dafd4d` |
+| Qwen3.6-35B-A3B | `7205d1bdb4c28636e7dd25598dee939b1965c9c0e9ae277b9fc88b34226624ca` | `344991a81cfb2f4354412c59842638d81890ed1286957a5afd1be24d75f0971e` |
+
+The 27B load reported 66/66 layers offloaded and 55,702,569,614 bytes of GPU
+allocation through `/api/ps`. Its first two completed probe responses generated
+at 3.77 and 3.76 tokens/second, excluding load and prompt evaluation. The 35B load
+reported 41/42 layers offloaded with additional CPU tensor placement; `/api/ps`
+reported 71,640,190,807 total bytes and 65,020,792,666 GPU bytes. Its first two
+responses generated at 19.89 and 18.48 tokens/second. These short synthetic
+requests establish compatibility and observed allocation, not coding quality,
+sustained throughput or reliable recall across a nearly full 96K window.
+
+Both metadata context ceilings are 262,144; Playtime's common authoring ceiling
+remains 131,072 and the pilot explicitly uses 98,304. Vision is advertised by
+these models but was not exercised or added to Playtime's text tool interface.
+
+The owner parked 27B BF16 because roughly 3.8 generated tokens/second was too
+slow. Its first coding attempt timed out; its second prompt arm was skipped.
+The completed 35B pair sustained roughly 19–21 generated tokens/second in the
+backend observations, but neither output met every coding requirement. The
+[pilot results](../experiments/codex-default-prompt.md#completed-35b-bf16-pilot)
+separate generated tokens, repeated input tokens and independent correctness
+checks. The isolated runtime and tunnel were stopped afterward and the original
+0.32.3 service restored idle. At the end of this pilot, the new weights and
+separate runtime were retained and the normal service had not been upgraded.
+
+On November 4, the owner subsequently uninstalled the slow 27B BF16 weights.
+Its identity locks and experiment records remain as historical evidence. The
+35B weights remain installed; the separate Codex profile setup is recorded in
+the notes repository's `framework/README.md` and under
+`/home/data2/playtime/codex-qwen36-20261104`.
+
+Later trials promoted Framework's normal service to 0.40.14/ROCm and compared
+Qwen Q8 and Ornith profiles. Those operational changes are recorded in the notes
+repository; they do not change this pilot's frozen locks or approve other model
+identities for Playtime execution. Future coding runs can use the shared
+[coding-repair benchmarks](../assessments/coding-repair-v1/README.md).
+
 ## Candidate review
 
 The metadata-only `review_model` example takes an exact expected manifest digest
@@ -25,7 +83,10 @@ retains exact requests and observed responses. No model command is executed.
 Supported probe reasoning arguments are `default`, `off`, `on`, `low`, `medium`
 and `high`; a probe argument is a candidate for validation, not a capability claim.
 The default request allowance is 512 tokens. `--live MAX_TOKENS` explicitly
-selects 1–8,192 tokens while retaining the 180-second request deadline. Keep a
+selects 1–8,192 tokens while retaining the 180-second request deadline.
+`--live MAX_TOKENS CONTEXT_TOKENS` explicitly selects an 8,192–131,072-token
+allocation; the default remains 65,536. The exact setting is retained with each
+request. A short probe checks allocation, not recall at a nearly full window. Keep a
 failed smaller-budget probe when testing a larger allowance; this does not
 change any controller recipe limits.
 

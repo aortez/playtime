@@ -50,7 +50,7 @@ async fn inspection_is_exactly_allowlisted_and_keeps_optional_diagnostics() {
 }
 #[tokio::test]
 async fn identity_changes_fail_before_any_inference() {
-    for case in 0..12 {
+    for case in 0..13 {
         let mut values = metadata();
         match case {
             0 => values[0] = json!({}),
@@ -69,7 +69,8 @@ async fn identity_changes_fail_before_any_inference() {
                 values[2].as_object_mut().unwrap().remove("parameters");
             }
             10 => values[1]["models"][0]["name"] = json!("other"),
-            _ => values[2]["remote_host"] = Value::Null,
+            11 => values[2]["remote_host"] = Value::Null,
+            _ => values[0]["version"] = json!(Profile::QWEN_VERSION),
         }
         let transport = Fake::new(
             values
@@ -103,6 +104,34 @@ async fn identity_changes_fail_before_any_inference() {
                 .any(|r| r.operation == Operation::Chat)
         );
     }
+}
+
+#[tokio::test]
+async fn additional_native_profile_requires_an_explicit_exact_backend_identity() {
+    // Synthetic metadata checks version binding; it is not native Qwen evidence.
+    for version in [Profile::QWEN_VERSION, "0.40.15", Profile::VERSION] {
+        let mut model = ExecutionModel::locked(&lock()).unwrap();
+        model.backend_version = Profile::QWEN_VERSION.into();
+        let mut values = metadata();
+        values[0]["version"] = json!(version);
+        let transport = Fake::new(
+            values
+                .into_iter()
+                .map(|v| response(200, serde_json::to_vec(&v).unwrap())),
+        );
+        let mut adapter = Adapter::with_model(transport, model, Limits::default()).unwrap();
+        let result = adapter
+            .inspect(false, deadline(), &CancellationToken::new())
+            .await;
+        if version == Profile::QWEN_VERSION {
+            assert_eq!(result.unwrap().version["version"], version);
+        } else {
+            assert_eq!(result.unwrap_err().kind, FailureKind::Identity);
+        }
+    }
+    let mut model = ExecutionModel::locked(&lock()).unwrap();
+    model.backend_version = "0.40.15".into();
+    assert_eq!(model.validate().unwrap_err().kind, FailureKind::Identity);
 }
 #[tokio::test]
 async fn inspection_http_encoding_size_and_json_failures_never_chat() {

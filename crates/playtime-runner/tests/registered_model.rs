@@ -105,6 +105,20 @@ fn large_model_profiles_preserve_identity_and_refuse_inherited_unsupported_reaso
             262144,
         ),
         (
+            QWEN_38_27B_BF16_MODEL_LOCK,
+            include_bytes!("../../../models/qwen3.8-27b-bf16.lock.json").as_slice(),
+            RecipeReasoning::On,
+            RecipeReasoning::High,
+            262144,
+        ),
+        (
+            QWEN_36_35B_A3B_BF16_MODEL_LOCK,
+            include_bytes!("../../../models/qwen3.6-35b-a3b-bf16.lock.json").as_slice(),
+            RecipeReasoning::Off,
+            RecipeReasoning::High,
+            262144,
+        ),
+        (
             GPT_OSS_120B_MODEL_LOCK,
             include_bytes!("../../../models/gpt-oss-120b.lock.json").as_slice(),
             RecipeReasoning::High,

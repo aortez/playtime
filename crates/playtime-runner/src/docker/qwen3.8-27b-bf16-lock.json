@@ -1,0 +1,77 @@
+{
+  "definition": {
+    "capabilities": [
+      "completion",
+      "vision",
+      "tools",
+      "thinking"
+    ],
+    "details": {
+      "families": [
+        "qwen35"
+      ],
+      "family": "qwen35",
+      "format": "gguf",
+      "parameter_size": "27.3B",
+      "parent_model": "",
+      "quantization_level": "BF16"
+    },
+    "model_info": {
+      "general.architecture": "qwen35",
+      "general.basename": "Qwen3.8",
+      "general.file_type": 32,
+      "general.license": "apache-2.0",
+      "general.parameter_count": 27320697856,
+      "general.quantization_version": 2,
+      "general.sampling.temp": 1,
+      "general.sampling.top_k": 20,
+      "general.sampling.top_p": 0.95,
+      "general.size_label": "27B",
+      "general.tags": [
+        "image-text-to-text"
+      ],
+      "general.type": "model",
+      "general.version": "0814",
+      "qwen35.attention.head_count": 24,
+      "qwen35.attention.head_count_kv": 4,
+      "qwen35.attention.key_length": 256,
+      "qwen35.attention.layer_norm_rms_epsilon": 1e-6,
+      "qwen35.attention.value_length": 256,
+      "qwen35.block_count": 65,
+      "qwen35.context_length": 262144,
+      "qwen35.embedding_length": 5120,
+      "qwen35.feed_forward_length": 17408,
+      "qwen35.full_attention_interval": 4,
+      "qwen35.nextn_predict_layers": 1,
+      "qwen35.rope.dimension_count": 64,
+      "qwen35.rope.dimension_sections": [
+        11,
+        11,
+        10,
+        0
+      ],
+      "qwen35.rope.freq_base": 10000000,
+      "qwen35.ssm.conv_kernel": 4,
+      "qwen35.ssm.group_count": 16,
+      "qwen35.ssm.inner_size": 6144,
+      "qwen35.ssm.state_size": 128,
+      "qwen35.ssm.time_step_rank": 48,
+      "tokenizer.ggml.add_bos_token": false,
+      "tokenizer.ggml.bos_token_id": 248044,
+      "tokenizer.ggml.eos_token_id": 248046,
+      "tokenizer.ggml.merges": [],
+      "tokenizer.ggml.model": "gpt2",
+      "tokenizer.ggml.padding_token_id": 248044,
+      "tokenizer.ggml.pre": "qwen35",
+      "tokenizer.ggml.token_type": [],
+      "tokenizer.ggml.tokens": []
+    },
+    "parameters": "top_p                          0.95\nmin_p                          0\npresence_penalty               0\nrepeat_penalty                 1\ntemperature                    1\ntop_k                          20",
+    "template": "{{ .Prompt }}"
+  },
+  "definition_sha256": "8e2811ef61bc02bf48c2930fe7c8a9e089e74269cce3a3f1e91e5dfd90dafd4d",
+  "digest": "1aa85dae8b2db4a2721ec3501ecbafc54f89f89e33ecb27f719becea4bd2fd01",
+  "modelfile": "",
+  "name": "qwen3.8:27b-bf16",
+  "ollama_version": "0.40.14"
+}

@@ -8,7 +8,7 @@ use playtime_server::{
 };
 use playtime_test_support::{
     TestRoot,
-    recipe_models::{boolean_model, retain},
+    recipe_models::{boolean_model, model_with_context, retain},
 };
 use playtime_ui::{backend::Backend, model::*, ui::Workbench};
 use std::{path::Path, sync::Arc, time::Duration};
@@ -55,6 +55,8 @@ async fn widgets_preserve_invalid_settings_reset_distinctly_and_save_the_selecte
     let registry = Registry::new(ledger, None);
     let boolean = boolean_model();
     retain(&root.0, &boolean);
+    let large = model_with_context(98_304);
+    retain(&root.0, &large);
     let fixture = Arc::new(
         Fixture::with_catalog(service.clone(), catalog.clone())
             .with_model_registry(registry.clone()),
@@ -93,7 +95,7 @@ async fn widgets_preserve_invalid_settings_reset_distinctly_and_save_the_selecte
     })
     .await;
     app.model.edit_recipe(true);
-    until(&mut app.model, &mut b, |m| m.registrations.items.len() == 1).await;
+    until(&mut app.model, &mut b, |m| m.registrations.items.len() == 2).await;
     let original = app
         .model
         .authoring
@@ -111,6 +113,40 @@ async fn widgets_preserve_invalid_settings_reset_distinctly_and_save_the_selecte
         .build_ui_state(|ui, app: &mut Workbench| app.draw(ui), app);
     h.run();
     field(&mut h, "Temperature", "0.25");
+    choose(&mut h, &large.summary.registration_id);
+    let selected = h
+        .state()
+        .model
+        .authoring
+        .draft
+        .as_ref()
+        .unwrap()
+        .settings
+        .as_ref()
+        .unwrap()
+        .value()
+        .unwrap();
+    let mut expected_large = original.clone();
+    expected_large.context_tokens = 98_304;
+    expected_large.temperature = 0.25;
+    assert_eq!(selected, expected_large);
+    field(&mut h, "Context capacity (tokens)", "81920");
+    choose(&mut h, &large.summary.registration_id);
+    assert_eq!(
+        h.state()
+            .model
+            .authoring
+            .draft
+            .as_ref()
+            .unwrap()
+            .settings
+            .as_ref()
+            .unwrap()
+            .value()
+            .unwrap()
+            .context_tokens,
+        81_920
+    );
     choose(&mut h, &boolean.summary.registration_id);
     assert!(!h.state().model.authoring.draft.as_ref().unwrap().valid());
     assert!(
@@ -128,7 +164,7 @@ async fn widgets_preserve_invalid_settings_reset_distinctly_and_save_the_selecte
     h.run();
     h.get_by_label("On").click();
     h.run();
-    assert!(!h.state().model.authoring.draft.as_ref().unwrap().valid());
+    assert!(h.state().model.authoring.draft.as_ref().unwrap().valid());
     field(&mut h, "Context capacity (tokens)", "49152");
     let corrected = h
         .state()
@@ -288,7 +324,7 @@ async fn widgets_preserve_invalid_settings_reset_distinctly_and_save_the_selecte
             .unwrap(),
         saved
     );
-    assert_eq!(registry.list().await.unwrap().items.len(), 1);
+    assert_eq!(registry.list().await.unwrap().items.len(), 2);
     drop(b);
     server.stop().await.unwrap();
 }

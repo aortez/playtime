@@ -60,8 +60,14 @@ pub struct Profile;
 impl Profile {
     pub const VERSION: &str = "0.32.3";
     pub const ERROR_USAGE_VERSION: &str = "0.32.3-playtime-usage-v1";
+    /// Native chat profile for the separately installed BF16 Qwen runtime.
+    /// Exact model approval remains at the registered-model boundary.
+    pub const QWEN_VERSION: &str = "0.40.14";
     pub fn supports_version(version: &str) -> bool {
-        matches!(version, Self::VERSION | Self::ERROR_USAGE_VERSION)
+        matches!(
+            version,
+            Self::VERSION | Self::ERROR_USAGE_VERSION | Self::QWEN_VERSION
+        )
     }
     pub const MODEL: &str = "gpt-oss:20b";
     pub const DIGEST: &str = "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7";

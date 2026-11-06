@@ -638,7 +638,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ModelRegistrationId",
-                "description": "Omission inherits the source revision’s model. Selection never changes settings."
+                "description": "Omission inherits the source revision's model. Selecting a different registration defaults context to its reviewed window unless model_settings is supplied; other settings are inherited."
               },
               {
                 "type": "null"
@@ -2963,7 +2963,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ModelRegistrationId",
-                "description": "Omission inherits the source revision’s model. Selection never changes settings."
+                "description": "Omission inherits the source revision's model. Selecting a different registration defaults context to its reviewed window unless model_settings is supplied; other settings are inherited."
               },
               {
                 "type": "null"

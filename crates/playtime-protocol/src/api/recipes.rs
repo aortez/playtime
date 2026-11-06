@@ -9,6 +9,8 @@ pub const MODEL_SETTINGS: &str = "recipe_model_settings_v1";
 
 pub const RECIPE_AUTHORING: &str = "recipe_authoring_v1";
 
+pub const RECIPE_CONTEXT_CEILING: u64 = 131_072;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecipeSource {
@@ -68,7 +70,7 @@ pub struct CloneRecipeRequest {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_settings: Option<RecipeModelSettings>,
-    /// Omission inherits the source revision’s model. Selection never changes settings.
+    /// Omission inherits the source revision's model. Selecting a different registration defaults context to its reviewed window unless model_settings is supplied; other settings are inherited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_registration: Option<ModelRegistrationId>,
 }
@@ -88,7 +90,7 @@ pub struct ReviseRecipeRequest {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_settings: Option<RecipeModelSettings>,
-    /// Omission inherits the source revision’s model. Selection never changes settings.
+    /// Omission inherits the source revision's model. Selecting a different registration defaults context to its reviewed window unless model_settings is supplied; other settings are inherited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_registration: Option<ModelRegistrationId>,
 }
@@ -161,7 +163,7 @@ impl RecipeModelSettings {
         if self.sampling_seed > 2147483647 {
             return Some("Sampling seed must be between 0 and 2,147,483,647.");
         }
-        if !(1..=131072).contains(&self.context_tokens) {
+        if !(1..=RECIPE_CONTEXT_CEILING).contains(&self.context_tokens) {
             return Some("Context capacity must be between 1 and 131,072 tokens.");
         }
         if !(1..=16384).contains(&self.tokens_per_call)
@@ -183,6 +185,16 @@ pub struct RecipeModelCapabilities {
     pub reasoning: Vec<RecipeReasoning>,
     pub default_reasoning: Option<RecipeReasoning>,
     pub context_ceiling: Option<u64>,
+}
+
+impl RecipeModelCapabilities {
+    /// A new selection's default allocation, bounded by the recipe API limit.
+    /// This is reviewed model capacity, not a measurement of host memory fit.
+    pub fn default_context_tokens(&self) -> Option<u64> {
+        self.context_ceiling
+            .filter(|&tokens| tokens > 0)
+            .map(|tokens| tokens.min(RECIPE_CONTEXT_CEILING))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
