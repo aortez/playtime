@@ -217,6 +217,19 @@ Rust formatting, workspace Clippy and tests, the frozen Python suite, scripted
 Docker run-and-view, and the original-model live run-and-view checks passed.
 These checks do not establish production restart/recovery behavior.
 
+## Reusing the coding tests
+
+New runs should use the versioned [coding-repair benchmarks](../assessments/coding-repair-v1/README.md):
+ledger, dependency planner and byte ranges. Their independent Docker assessment
+works with captured Codex or Rust Playtime workspaces and keeps task completion
+separate from check results. Supply only each bundle's seed files to the model.
+
+The `bf16-ledger-v1` files here remain unchanged historical inputs for this
+pilot. They use Playtime-specific paths and completion instructions; the later
+`ledger-repair-v1` bundle has its own frozen task and checker identities. Do not
+silently substitute it when replaying this pilot or overwrite the original
+scores with a newer assessment. No second assessment runner is needed here.
+
 ## Later behavioral study
 
 For curiosity, also record whether the agent inspects seeds before choosing a

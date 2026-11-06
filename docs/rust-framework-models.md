@@ -49,14 +49,20 @@ backend observations, but neither output met every coding requirement. The
 [pilot results](../experiments/codex-default-prompt.md#completed-35b-bf16-pilot)
 separate generated tokens, repeated input tokens and independent correctness
 checks. The isolated runtime and tunnel were stopped afterward and the original
-0.32.3 service restored idle. New weights and the separate runtime are retained;
-the normal service has not been upgraded.
+0.32.3 service restored idle. At the end of this pilot, the new weights and
+separate runtime were retained and the normal service had not been upgraded.
 
 On November 4, the owner subsequently uninstalled the slow 27B BF16 weights.
 Its identity locks and experiment records remain as historical evidence. The
 35B weights remain installed; the separate Codex profile setup is recorded in
 the notes repository's `framework/README.md` and under
 `/home/data2/playtime/codex-qwen36-20261104`.
+
+Later trials promoted Framework's normal service to 0.40.14/ROCm and compared
+Qwen Q8 and Ornith profiles. Those operational changes are recorded in the notes
+repository; they do not change this pilot's frozen locks or approve other model
+identities for Playtime execution. Future coding runs can use the shared
+[coding-repair benchmarks](../assessments/coding-repair-v1/README.md).
 
 ## Candidate review
 
