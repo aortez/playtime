@@ -17,6 +17,41 @@ fn source_recipe() -> RunRecipe {
         .find(|r| r.id == "curiosity")
         .unwrap()
 }
+
+#[test]
+fn coding_sources_load_their_task_inputs_and_admit_continuous_execution() {
+    use playtime_runner::docker::FrozenRecipe;
+    let recipes = load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../recipes")).unwrap();
+    for (id, expected_files) in [
+        (
+            "ledger-repair",
+            vec!["TASK.md", "report.py", "transactions.csv"],
+        ),
+        (
+            "dependency-planner-repair",
+            vec!["TASK.md", "planner.py", "tasks.json"],
+        ),
+        ("byte-range-repair", vec!["TASK.md", "ranges.py"]),
+    ] {
+        let recipe = recipes
+            .iter()
+            .find(|recipe| recipe.id == id)
+            .unwrap()
+            .clone();
+        assert_eq!(
+            recipe.seeds.keys().map(String::as_str).collect::<Vec<_>>(),
+            expected_files
+        );
+        let mut definition = FrozenRecipe::current(recipe).unwrap();
+        definition
+            .select_harness(&HarnessId::new(CONTINUOUS_COMPACTION_V1).unwrap())
+            .unwrap();
+        let mut settings = definition.model_settings().unwrap();
+        settings.context_tokens = 131_072;
+        definition.apply_model_settings(&settings).unwrap();
+        definition.executable().unwrap();
+    }
+}
 fn clone_request(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Clone {
         request: CloneRecipeRequest {

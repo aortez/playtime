@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "study": "framework-q8-repeatability-v1",
+  "approved_on": "2026-11-06",
+  "evidence_root": "/home/data2/playtime/framework-q8-repeatability-20261106",
+  "models": {
+    "ornith": {
+      "lock_file": "models/ornith-1.5-35b-q8-codex-128k.lock.json",
+      "lock_sha256": "8ed8d3190eba48b2246fa64dabcb585b9d68a851ca76f1e55ef24c83bb73c8b2",
+      "name": "ornith-1.5:35b-q8-codex-128k",
+      "digest": "e16d49bcb069bf4775e562b320bf7b1378e2c87af118e2e46c034870721389a6",
+      "definition_sha256": "0855d5ac1163cfbed3d01fbc97057f864e73bf7c94cbcf8699534bbf2dc5c0ba"
+    },
+    "qwen": {
+      "lock_file": "models/qwen3.6-35b-q8-codex-128k.lock.json",
+      "lock_sha256": "5e85cf0bc2b8abf18d493e7bb298d3e204fd3b21833dde5cae0b6c5eb824fae7",
+      "name": "qwen36-q8:codex-128k",
+      "digest": "bcad7fafcadb408fdcf791adbb1d88a47b8e3bbcf9fa40ad16c6c0a15a679552",
+      "definition_sha256": "1517020bbc0f3fdeaf677399327974ae8dcfcf1eceb0bfde4c55998da4bccb95"
+    }
+  },
+  "inputs": {
+    "ledger-repair": {
+      "recipes/ledger-repair.toml": "81f819ab0ef7991889f70013dc6704e94f7efca725d4196577e73643c3a0c154",
+      "seeds/ledger-repair-v1/TASK.md": "2a4c9514324379fc763dfe70368c712a2c98a725605b7d4a5b2337356e9aec5e",
+      "seeds/ledger-repair-v1/report.py": "653afd29440b8be359165ab6023d0cfe59f777ebf13c71296533b78a915e8643",
+      "seeds/ledger-repair-v1/transactions.csv": "942d229b3518191d62546f3d2a3ffecdbfbeec25d04fec924045c1a465610e90"
+    },
+    "dependency-planner-repair": {
+      "recipes/dependency-planner-repair.toml": "650eac6972e5b17c963d11faf5ada4272e4bf592b4834129c3694dae3eaa0ce7",
+      "seeds/dependency-planner-repair-v1/TASK.md": "5f2b5a4aa7e8c5084eaed2c177329a4356671badccf5f60ba9d5404bfa15cac8",
+      "seeds/dependency-planner-repair-v1/planner.py": "b1c91336d7f37af825e674fdff14bf75d2f5eb6e116a71d4f95b55914c01c8b8",
+      "seeds/dependency-planner-repair-v1/tasks.json": "aed65b24cc65f0635daa861d0c121a4203ffcd02b91b032e19e07a8104dba3d2"
+    },
+    "byte-range-repair": {
+      "recipes/byte-range-repair.toml": "e961aba5a8b30e4d8a5f911a69e00a874ffd9aebb216e59fd2b66f07af059c74",
+      "seeds/byte-range-repair-v1/TASK.md": "a6c0e60bdda73e589df956fdff2d8fd81c1f72ec9de1ca7050659fae383216fd",
+      "seeds/byte-range-repair-v1/ranges.py": "a04229a50fe96c8f0201e39eb17a0e58b679d74ad1ca9017f25c7a0299d8b118"
+    }
+  },
+  "harness": "continuous_compaction_v1",
+  "model_settings": {
+    "reasoning": "on",
+    "temperature": 0.6,
+    "context_tokens": 131072,
+    "tokens_per_call": 8192,
+    "handoff_tokens": 8192,
+    "top_p": 0.95,
+    "top_k": 20,
+    "repeat_penalty": 1.0
+  },
+  "compaction": {
+    "trigger_percent": 75,
+    "recent_exchanges": 2,
+    "summary_tokens": 2048,
+    "allow_finish_run": true
+  },
+  "wall_seconds": 900,
+  "model_seconds": 400,
+  "fresh_workspace": true,
+  "unload_between_attempts": true,
+  "stop_after_first_timeout_per_model": true,
+  "automatic_retries": false,
+  "schedule": [
+    {
+      "label": "r1-ledger-repair-ornith",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "ledger-repair",
+      "model": "ornith"
+    },
+    {
+      "label": "r1-ledger-repair-qwen",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "ledger-repair",
+      "model": "qwen"
+    },
+    {
+      "label": "r1-dependency-planner-repair-qwen",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "dependency-planner-repair",
+      "model": "qwen"
+    },
+    {
+      "label": "r1-dependency-planner-repair-ornith",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "dependency-planner-repair",
+      "model": "ornith"
+    },
+    {
+      "label": "r1-byte-range-repair-ornith",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "byte-range-repair",
+      "model": "ornith"
+    },
+    {
+      "label": "r1-byte-range-repair-qwen",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "byte-range-repair",
+      "model": "qwen"
+    },
+    {
+      "label": "r2-ledger-repair-qwen",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "ledger-repair",
+      "model": "qwen"
+    },
+    {
+      "label": "r2-ledger-repair-ornith",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "ledger-repair",
+      "model": "ornith"
+    },
+    {
+      "label": "r2-dependency-planner-repair-ornith",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "dependency-planner-repair",
+      "model": "ornith"
+    },
+    {
+      "label": "r2-dependency-planner-repair-qwen",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "dependency-planner-repair",
+      "model": "qwen"
+    },
+    {
+      "label": "r2-byte-range-repair-qwen",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "byte-range-repair",
+      "model": "qwen"
+    },
+    {
+      "label": "r2-byte-range-repair-ornith",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "byte-range-repair",
+      "model": "ornith"
+    },
+    {
+      "label": "r3-ledger-repair-ornith",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "ledger-repair",
+      "model": "ornith"
+    },
+    {
+      "label": "r3-ledger-repair-qwen",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "ledger-repair",
+      "model": "qwen"
+    },
+    {
+      "label": "r3-dependency-planner-repair-qwen",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "dependency-planner-repair",
+      "model": "qwen"
+    },
+    {
+      "label": "r3-dependency-planner-repair-ornith",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "dependency-planner-repair",
+      "model": "ornith"
+    },
+    {
+      "label": "r3-byte-range-repair-ornith",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "byte-range-repair",
+      "model": "ornith"
+    },
+    {
+      "label": "r3-byte-range-repair-qwen",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "byte-range-repair",
+      "model": "qwen"
+    }
+  ],
+  "assessments": {
+    "ledger-repair-v1": {
+      "files": {
+        "assessments/coding-repair-v1/catalog.json": "11903ec17cb91297841af6b3c104f69cd9d9512f30468c328b443c851f662411",
+        "assessments/coding-repair-v1/driver.py": "5525b27867e5df9ad1b7d31124c17c29dc1ed09733ae466c9360ea77affe6fcb",
+        "assessments/coding-repair-v1/assessment_support.py": "6be17274491699d1ebd35f2867ecc8030ec10debb1dabaf5a5c924ff69c3c05c",
+        "assessments/ledger-repair-v1/check.py": "3e51c807b2a5e11389e8b1db78cd447da5d1a3e78e0c8974372fd1a6aa587be6",
+        "scripts/check-coding-repair.py": "869b7f158875c20748db73d3832360e6b0e020e55cb4e5099964abb52e117956"
+      },
+      "sha256": "870ee5ad1c7064c1be73aaead7877bf7a365dedcf65454653f09194f426c4192"
+    },
+    "dependency-planner-repair-v1": {
+      "files": {
+        "assessments/coding-repair-v1/catalog.json": "11903ec17cb91297841af6b3c104f69cd9d9512f30468c328b443c851f662411",
+        "assessments/coding-repair-v1/driver.py": "5525b27867e5df9ad1b7d31124c17c29dc1ed09733ae466c9360ea77affe6fcb",
+        "assessments/coding-repair-v1/assessment_support.py": "6be17274491699d1ebd35f2867ecc8030ec10debb1dabaf5a5c924ff69c3c05c",
+        "assessments/dependency-planner-repair-v1/check.py": "cdcaf44c07678b2c8cbf21b2d83fe748d2702cc1ed60f26110fee2c603caa9a8",
+        "scripts/check-coding-repair.py": "869b7f158875c20748db73d3832360e6b0e020e55cb4e5099964abb52e117956"
+      },
+      "sha256": "a08f91475f8107b3f6424edbf40e6abf0dfa76a599527ebf54d6be73a6f18ad9"
+    },
+    "byte-range-repair-v1": {
+      "files": {
+        "assessments/coding-repair-v1/catalog.json": "11903ec17cb91297841af6b3c104f69cd9d9512f30468c328b443c851f662411",
+        "assessments/coding-repair-v1/driver.py": "5525b27867e5df9ad1b7d31124c17c29dc1ed09733ae466c9360ea77affe6fcb",
+        "assessments/coding-repair-v1/assessment_support.py": "6be17274491699d1ebd35f2867ecc8030ec10debb1dabaf5a5c924ff69c3c05c",
+        "assessments/byte-range-repair-v1/check.py": "061be5fc416e57098556e73ee4f912f8285da770dbc8a73d1572d32751cdecc8",
+        "scripts/check-coding-repair.py": "869b7f158875c20748db73d3832360e6b0e020e55cb4e5099964abb52e117956"
+      },
+      "sha256": "2c3162fede6f2284050fd78db1ac8ad1b79c8b002d6835d31b674be833312601"
+    }
+  }
+}

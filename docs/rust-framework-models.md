@@ -6,6 +6,18 @@ the original GPT-OSS 20B lock or recipe. The candidates are
 using Ollama 0.32.3. Model files and experimental archives stay outside Git.
 Exact identity locks and reviewed capability profiles belong in the repository.
 
+## Framework Q8 coding registrations, 2026-11-06
+
+The `ornith-1.5:35b-q8-codex-128k` and `qwen36-q8:codex-128k` aliases now have
+exact Ollama 0.40.14 registrations. Both passed native tool/receipt, streaming
+and cancellation probes at 131,072 context with omitted, On and Off thinking.
+The [repeatability study](../experiments/framework-q8-repeatability.md) records
+their locks, allocation evidence and comparison design. Choose one in a saved
+revision of `ledger-repair`, `dependency-planner-repair` or `byte-range-repair`.
+Use explicit On reasoning for that comparison; named Low/Medium/High levels are
+unsupported by these boolean-thinking profiles. Rebuild the daemon and worker
+together to include the new registrations.
+
 ## BF16 Qwen candidates, 2026-11-03
 
 The owner selected Qwen3.8-27B BF16 and Qwen3.6-35B-A3B BF16 for the

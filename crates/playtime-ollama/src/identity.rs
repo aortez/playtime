@@ -60,7 +60,7 @@ pub struct Profile;
 impl Profile {
     pub const VERSION: &str = "0.32.3";
     pub const ERROR_USAGE_VERSION: &str = "0.32.3-playtime-usage-v1";
-    /// Native chat profile for the separately installed BF16 Qwen runtime.
+    /// Native chat profile for reviewed Ollama 0.40.14 model identities.
     /// Exact model approval remains at the registered-model boundary.
     pub const QWEN_VERSION: &str = "0.40.14";
     pub fn supports_version(version: &str) -> bool {
