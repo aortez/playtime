@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "streaming-jsonlines-v1",
+  "name": "Streaming JSON Lines",
+  "description": "Incremental UTF-8 and JSON Lines parsing, bounded allocation and terminal error states.",
+  "revision": 1,
+  "files": "seeds/streaming-jsonlines-v1",
+  "provenance": "Imported unchanged from notes bird-screen-v2, adapted from Reddit Brutal Model Test Q21. See assessments/streaming-jsonlines-v1/provenance.json for source and historical hashes.",
+  "assessment": "assessments/streaming-jsonlines-v1"
+}

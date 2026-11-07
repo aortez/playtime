@@ -1,7 +1,9 @@
 # Coding-repair benchmarks
 
-Three versioned, synthetic Python repair tasks from the November 5, 2026
-Ornith/Qwen Codex CLI comparison. These are seed bundles plus independent
+Six versioned Python coding tasks: the original three repairs from the November
+5, 2026 Ornith/Qwen comparison, plus three adaptations of Q20–Q22 of the
+[Reddit model test](https://www.reddit.com/r/LocalLLM/comments/1xnikyz/please_test_your_models_before_spending_money_on/).
+These are seed bundles plus independent
 assessments, usable with captured output from Codex CLI or the Rust Playtime
 runner. They do not add an experiment controller or run a model.
 
@@ -10,13 +12,23 @@ runner. They do not add an experiment controller or run a model.
 | `ledger-repair-v1` | 8 | 2 | 10 |
 | `dependency-planner-repair-v1` | 22 | 2 | 24 |
 | `byte-range-repair-v1` | 35 | 2 | 37 |
+| `async-singleflight-v1` | 10 | 1 | 11 |
+| `streaming-jsonlines-v1` | 20 | 1 | 21 |
+| `shortest-walk-v1` | 16 | 1 | 17 |
 
 Each bundle has `TASK.md`, a deliberately broken program and any sample inputs
 under `seeds/<id>`. Its independent checker, known-good reference with example
 outputs, historical checker and provenance are under `assessments/<id>`. Only
 the seed directory is supplied to the model. The checks cover exact arithmetic,
 malformed and Unicode numeric inputs, graph cycles/deep chains, mutation,
-sorting, CLI failures, and the required example files.
+sorting, CLI failures, and the required example files. The imported tasks add
+waiter cancellation and cleanup races, streaming UTF-8/JSON parsing with bounded
+allocation, and exact shortest walks with target-relevant negative cycles.
+
+Playtime is the canonical home for all six tasks and their graders. The Reddit
+adaptations preserve the task IDs, seed bytes, reference files and acceptance
+cases from notes' `bird-screen-v2`. The notes copy is a historical archive for
+reproducing old receipts, not a second catalog to extend.
 
 ## Use a task in a future run
 
@@ -31,8 +43,10 @@ A file-backed Rust recipe selects `seeds/<id>`. Follow the existing
 [recipe authoring workflow](../../docs/rust-recipes.md); these bundles do not
 change controller bounds. The catalog includes `ledger-repair`,
 `dependency-planner-repair`, and `byte-range-repair`, each with a 900-second task
-budget. Select a registered model, context and harness in a saved revision before
-launching. For a new task, copy an existing recipe to a new file, change its `id`
+budget. `async-singleflight`, `streaming-jsonlines` and `shortest-walk` each retain
+the bounded screen's **240-second** budget. Select a registered model, context
+and harness in a saved revision before launching. For a new task, copy an
+existing recipe to a new file, change its `id`
 to match that filename, and set:
 
 ```toml
@@ -47,15 +61,17 @@ the changes and checks you actually performed.
 ```
 
 Review the remaining model, harness, early-finish and budget settings before
-loading that recipe. The original Codex trials used a 900-second maximum per
-task. Their later stop-after-first-timeout rule was a batch scheduling policy;
+loading that recipe. The original three-task Codex trials used a 900-second
+maximum per task; the later Bird screen used 240 seconds. The original trials'
+stop-after-first-timeout rule was a batch scheduling policy;
 this assessment command neither schedules tasks nor retries them. Preserve
 skipped tasks as skipped. A new Playtime-native run has a different harness and
 prompt envelope even when its task files are identical; record it accordingly.
 
 After the run stops, download and verify the final workspace through the Rust
 CLI, or retain the stopped Codex workspace and its original run record. Point
-the checker at the directory containing `report.py`, `planner.py` or `ranges.py`
+the checker at the directory containing the task's program (`report.py`,
+`planner.py`, `ranges.py`, `singleflight.py`, `jsonlines.py` or `shortestwalk.py`)
 and the requested example/README files. Do not assess a workspace still being
 edited.
 
@@ -123,9 +139,11 @@ python3 scripts/check-coding-repair.py ledger-repair-v1 \
   /absolute/timed-out-workspace --outcome timed_out
 ```
 
-The two deliverable checks per task inspect the requested example and README
-presence. Revision 3 requires a **regular file of more than 50 bytes**; it does not
-verify the quality or truth of the documentation. Individual cases can exercise
+The original three tasks have two deliverable checks for the example and README;
+revision 3 and later require **regular files of more than 50 bytes**. The three
+Reddit-derived tasks retain their original single deliverable check: `README.md`
+must be a regular file, with no minimum size. These checks do not verify the
+quality or truth of the documentation. Individual cases can exercise
 several inputs, so 70/71 is a case tally, not a calibrated accuracy percentage.
 Finite examples are not a proof of correctness. Keep assessment feedback away
 from the model until its final output has been captured.
@@ -157,7 +175,7 @@ digests in `provenance.json`. Historical model scores retain their original
 checker identity. Do not silently replace old scores when changing assessment
 semantics; increment the assessment revision and retain the earlier evidence.
 
-Assessment revision **3**, now the default, fixes the planner and byte-range
+Assessment revision **3** fixes the planner and byte-range
 README checks: a directory named `README.md` no longer earns deliverable credit.
 Ledger already required a regular file and keeps the same rules. Case IDs,
 task inputs and positive/negative control scores are unchanged. The revision-2
@@ -165,6 +183,16 @@ task inputs and positive/negative control scores are unchanged. The revision-2
 two `check-v3.py` files select the new rules. To reproduce the old acceptance
 semantics, pass `--assessment-revision 2`. The report still identifies the
 current helper bytes, so it is a new assessment, not the original receipt.
+
+Assessment revision **4**, now the default, adds the three Reddit-derived tasks
+in `catalog-v4.json`. Their checkers gain normal registered module imports and
+the shared private report transport; `driver-v4.py` preloads their standard-library
+dependencies. Acceptance cases and README rules are preserved. The original
+three tasks keep revision 3's checks. Revisions 2 and 3 retain their catalogs,
+driver and checkers; `--assessment-revision 3` selects the preceding three-task
+catalog. New tasks are unavailable under those older revisions. This import
+does not establish a quality ranking or make every task discriminating for every
+model; retain per-task results, functional/deliverable counts and matched budgets.
 
 ## Validate without running models
 
@@ -176,18 +204,28 @@ python3 scripts/test-coding-repair-docker.py -v
 The first command validates frozen identities, report completeness/counts,
 snapshot behavior, skipped outcomes and unavailable infrastructure without
 executing candidates. CI runs it alongside seed-bundle validation. The Docker
-gate runs all six positive/negative controls, local modules/executables,
+gate runs reference and starter controls for all six tasks, ten targeted faults
+in the imported tasks, local modules/executables,
 dataclasses with postponed annotations, noisy output, missing programs,
-README directories under both assessment revisions,
+README directories under historical and current assessment revisions,
 partial-workspace outcomes and deadline/cancellation cleanup (including signals
 during removal). It requires the existing locked image and fails if prerequisites
 are absent.
 
 Expected control scores are **10/10, 24/24, 37/37** for the references, and
-**1/10, 9/24, 6/37** for the unrepaired starters. The reference artifacts are
+**1/10, 9/24, 6/37** for the unrepaired starters. The imported tasks' references
+score **11/11, 21/21, 17/17**, with **0** passing checks for their starters.
+The reference artifacts are
 assessment fixtures and are never included in a model's seed bundle.
 
 The [migration validation](../../experiments/coding-repair/assessment-migration-2026-11-06.json)
 reassessed 23 retained Codex workspaces from the Qwen trial. All 517 individual
 case verdicts matched their original receipts. It records the assessed workspace
 and checker identities and preserves timeouts as timeouts; no model was rerun.
+
+The [Reddit-task migration validation](../../experiments/coding-repair/reddit-migration-2026-11-07.json)
+reassessed ten retained Bird screen and Strata IQ2/IQ3 workspaces. All **162**
+named case verdicts matched the original receipts, including the **26 failures**;
+all five timed-out executions remain timed out. Candidate file hashes were
+verified against the original receipts before assessment. These are migrated
+measurements, not new model trials or evidence of a quality improvement.

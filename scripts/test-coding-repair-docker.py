@@ -16,7 +16,8 @@ spec = importlib.util.spec_from_file_location("coding_repair", ROOT / "scripts/c
 checker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checker)
 TASKS = {"ledger-repair-v1": "report.py", "dependency-planner-repair-v1": "planner.py",
-         "byte-range-repair-v1": "ranges.py"}
+         "byte-range-repair-v1": "ranges.py", "async-singleflight-v1": "singleflight.py",
+         "streaming-jsonlines-v1": "jsonlines.py", "shortest-walk-v1": "shortestwalk.py"}
 
 
 class CodingRepairDocker(unittest.TestCase):
@@ -61,6 +62,31 @@ class CodingRepairDocker(unittest.TestCase):
                 report = self.assess(task, path)
                 self.assertTrue(report["assessment"]["all_checks_passed"], report)
 
+    def test_imported_graders_reject_targeted_behavioral_faults(self):
+        mutations = [
+            ("async-singleflight-v1", "return await asyncio.shield(task)", "return await task", "one_cancel"),
+            ("async-singleflight-v1", "task is None or task.done()", "task is None", "completion_cleanup_race"),
+            ("async-singleflight-v1", "done.exception()", "pass", "orphan_error"),
+            ("async-singleflight-v1", "if self._tasks.get(key) is done:", "if key in self._tasks:", "completion_cleanup_race"),
+            ("streaming-jsonlines-v1", ", parse_constant=bad_constant", "", "nan"),
+            ("streaming-jsonlines-v1", "self.closed = True\n            self.pending.clear()", "self.closed = False\n            self.pending.clear()", "bad_json"),
+            ("streaming-jsonlines-v1", "out = []", "unbounded_copy = bytes(bytearray(chunk))\n            out = []", "bounded_allocation"),
+            ("streaming-jsonlines-v1", "> self.limit:", "> self.limit + 1:", "exact_limits"),
+            ("shortest-walk-v1", "if target in affected else", "if affected else", "cycle_cannot_reach_target"),
+            ("shortest-walk-v1", "else distance[target]", "else (float(distance[target]) if distance[target] is not None else None)", "above_float_precision"),
+        ]
+        for task, before, after, failed_case in mutations:
+            with self.subTest(task=task, case=failed_case), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "candidate"
+                shutil.copytree(ROOT / "assessments" / task / "reference", path)
+                program = path / TASKS[task]
+                source = program.read_text()
+                self.assertEqual(source.count(before), 1)
+                program.write_text(source.replace(before, after))
+                report = self.assess(task, path)
+                failed = [row["case"] for row in report["assessment"]["results"] if not row["passed"]]
+                self.assertIn(failed_case, failed)
+
     def test_readme_directory_is_rejected_without_rewriting_historical_checks(self):
         for task in ("dependency-planner-repair-v1", "byte-range-repair-v1"):
             with self.subTest(task=task), tempfile.TemporaryDirectory() as temporary:
@@ -76,7 +102,7 @@ class CodingRepairDocker(unittest.TestCase):
                 current = self.assess(task, path)
                 self.assertEqual(old["task"]["assessment_revision"], 2)
                 self.assertTrue(old["assessment"]["all_checks_passed"])
-                self.assertEqual(current["task"]["assessment_revision"], 3)
+                self.assertEqual(current["task"]["assessment_revision"], checker.CURRENT_REVISION)
                 self.assertEqual([row["case"] for row in current["assessment"]["results"]
                                   if not row["passed"]], ["readme"])
                 self.assertEqual(current["assessment"]["functional"], old["assessment"]["functional"])

@@ -436,7 +436,7 @@ fn repository() -> std::path::PathBuf {
 #[test]
 fn the_reviewed_catalog_loads_the_owner_confirmed_curiosity_recipe() {
     let recipes = super::catalog::load(&repository().join("recipes")).unwrap();
-    assert_eq!(recipes.len(), 5);
+    assert_eq!(recipes.len(), 8);
     let recipe = recipes.iter().find(|r| r.id == "curiosity").unwrap();
     let (limits, workshop) = (&recipe.parameters.limits, &recipe.parameters.workshop);
     assert_eq!(

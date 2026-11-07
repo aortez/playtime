@@ -32,6 +32,9 @@ fn coding_sources_load_their_task_inputs_and_admit_continuous_execution() {
             vec!["TASK.md", "planner.py", "tasks.json"],
         ),
         ("byte-range-repair", vec!["TASK.md", "ranges.py"]),
+        ("async-singleflight", vec!["TASK.md", "singleflight.py"]),
+        ("streaming-jsonlines", vec!["TASK.md", "jsonlines.py"]),
+        ("shortest-walk", vec!["TASK.md", "shortestwalk.py"]),
     ] {
         let recipe = recipes
             .iter()

@@ -72,9 +72,17 @@ can add saved bundle revisions and selection using the existing recipe model.
   reporting without mutating input; 24 acceptance checks.
 - **byte-range-repair-v1:** repair exact range parsing/normalization and CLI
   validation; 37 acceptance checks.
+- **async-singleflight-v1:** implement shared async work with independent waiter
+  cancellation and race-safe cleanup; 11 acceptance checks, four-minute recipe.
+- **streaming-jsonlines-v1:** implement incremental UTF-8/JSON Lines parsing with
+  bounded buffering and terminal error states; 21 checks, four-minute recipe.
+- **shortest-walk-v1:** implement exact shortest walks with target-relevant
+  negative cycles; 17 checks, four-minute recipe.
 
-The three coding bundles preserve the November 2026 Ornith/Qwen trial's task
-inputs. Their [assessment guide](../assessments/coding-repair-v1/README.md)
+The six coding bundles preserve the November 2026 Ornith/Qwen trial's repair
+inputs and the Bird screen's three Reddit-derived problems. Playtime is their
+canonical catalog; notes retains historical copies and results. Their
+[assessment guide](../assessments/coding-repair-v1/README.md)
 explains recipe use, the reusable Docker checker, reference/starter controls,
 versioned provenance and the distinction between passing checks and finishing
 a run. Their checkers and reference solutions stay outside the supplied seeds.
