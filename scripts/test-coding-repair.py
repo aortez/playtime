@@ -16,6 +16,25 @@ CATALOG = json.loads((checker.SUPPORT / "catalog.json").read_text())["tasks"]
 
 
 class CodingRepairContract(unittest.TestCase):
+    def test_revision_selection_freezes_the_selected_checker_and_catalog(self):
+        for task_id in CATALOG:
+            with self.subTest(task=task_id), tempfile.TemporaryDirectory() as temporary:
+                for revision in checker.ASSESSMENT_REVISIONS:
+                    task = checker.load_task(task_id, revision)
+                    self.assertEqual(task["assessment_revision"], revision)
+                    self.assertEqual(task["cases"], CATALOG[task_id]["cases"])
+                    identity = checker.checker_identity(task_id, revision)
+                    destination = Path(temporary) / str(revision)
+                    checker.freeze_checker(task_id, destination, identity, revision)
+                    source = checker.checker_sources(task_id, revision)[-1]
+                    self.assertEqual((destination / "check.py").read_bytes(), source.read_bytes())
+                    self.assertIn(checker.catalog_path(revision).relative_to(ROOT).as_posix(),
+                                  identity["files"])
+                self.assertNotEqual(checker.checker_identity(task_id, 2)["sha256"],
+                                    checker.checker_identity(task_id, 3)["sha256"])
+        with self.assertRaises(ValueError):
+            checker.load_task("ledger-repair-v1", 4)
+
     def test_frozen_inputs_and_original_checkers_match_provenance(self):
         for task_id, task in CATALOG.items():
             with self.subTest(task=task_id):

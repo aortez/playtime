@@ -289,6 +289,7 @@ impl Policy {
             _ => Recovery::Stop(match error {
                 ModelFailure::Parse(_) => StopReason::ToolParseRetryLimit,
                 ModelFailure::SummaryTools(_) => StopReason::CompactionFailed,
+                ModelFailure::ToolBatchLimit(_) => StopReason::TooManyToolsInOneResponse,
                 ModelFailure::Connection(_) => StopReason::ModelConnectionError,
                 ModelFailure::Incomplete(_) => StopReason::IncompleteModelResponse,
                 ModelFailure::MissingUsage(_) => StopReason::MissingTokenUsage,
@@ -389,15 +390,19 @@ impl Policy {
 /// The bytes of the server's reason that a parse retry notice keeps.
 const REASON_BYTES: usize = 512;
 
-/// The retry notice for a response the server couldn't parse, naming the
+/// Batch-limit recovery names the controller's bound. Parse recovery names the
 /// server's reason: the text after the last `, err=` of a message in Ollama's
 /// form, which puts its reason after the raw call, or else the whole message,
 /// its start within `REASON_BYTES`. The worker keeps the end of a message it
 /// cuts, so Ollama's reason survives unless the reason itself is longer than
 /// that end. Memento adds its budget sentence.
 pub(crate) fn parse_retry_notice(error: &ModelFailure) -> String {
-    // Only a parse failure is retried with a notice. Another kind, which the
-    // policies never pass here, leaves the sentence as it was.
+    if let ModelFailure::ToolBatchLimit(message) = error {
+        return format!(
+            "The controller rejected your last tool batch. None of that response's tools ran. {message}"
+        );
+    }
+    // Summary retries have no notice and preserve their original input.
     let message = match error {
         ModelFailure::Parse(message) => message.as_str(),
         _ => "",

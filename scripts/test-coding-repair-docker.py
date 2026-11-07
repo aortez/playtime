@@ -61,6 +61,26 @@ class CodingRepairDocker(unittest.TestCase):
                 report = self.assess(task, path)
                 self.assertTrue(report["assessment"]["all_checks_passed"], report)
 
+    def test_readme_directory_is_rejected_without_rewriting_historical_checks(self):
+        for task in ("dependency-planner-repair-v1", "byte-range-repair-v1"):
+            with self.subTest(task=task), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "candidate"
+                shutil.copytree(ROOT / "assessments" / task / "reference", path)
+                readme = path / "README.md"
+                readme.unlink()
+                readme.mkdir()
+                for number in range(8):
+                    (readme / f"placeholder-{number}").touch()
+                self.assertGreater(readme.stat().st_size, 50)
+                old = self.assess(task, path, assessment_revision=2)
+                current = self.assess(task, path)
+                self.assertEqual(old["task"]["assessment_revision"], 2)
+                self.assertTrue(old["assessment"]["all_checks_passed"])
+                self.assertEqual(current["task"]["assessment_revision"], 3)
+                self.assertEqual([row["case"] for row in current["assessment"]["results"]
+                                  if not row["passed"]], ["readme"])
+                self.assertEqual(current["assessment"]["functional"], old["assessment"]["functional"])
+
     def test_import_noise_cannot_corrupt_the_report(self):
         task = "dependency-planner-repair-v1"
         with tempfile.TemporaryDirectory() as temporary:

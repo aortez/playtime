@@ -91,11 +91,13 @@ impl Failures {
         error: &ModelFailure,
         source: ModelErrorSource,
     ) {
-        let ModelFailure::Parse(diagnostic) = error else {
-            return;
+        let (kind, diagnostic) = match error {
+            ModelFailure::Parse(diagnostic) => ("model_parse_error", diagnostic),
+            ModelFailure::ToolBatchLimit(diagnostic) => ("model_tool_batch_error", diagnostic),
+            _ => return,
         };
         self.push(json!({
-            "kind": "model_parse_error",
+            "kind": kind,
             "request_id": request.request_id,
             "purpose": request.purpose,
             "model_error_controller_sequence": source.sequence,

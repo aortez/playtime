@@ -16,7 +16,7 @@ use crate::{
 pub const HARNESS: &str = "continuous_compaction_v1";
 pub const FINISH_SUMMARY_BYTES: usize = 8192;
 pub const DEFAULT_INSTRUCTIONS: &str = playtime_protocol::api::DEFAULT_COMPACTION_INSTRUCTIONS;
-/// Consecutive parse failures of work or summary requests that are retried;
+/// Consecutive parse or batch-limit failures that are retried;
 /// one more stops the run.
 pub const TOOL_PARSE_RETRIES: u32 = 5;
 pub(crate) const MIN_TOOL_RESULT_BYTES: u64 = 512;
@@ -209,6 +209,8 @@ pub(crate) enum Batch {
     Valid(Option<String>),
     /// An ordinary call is invalid, so no call runs and each gets an error result.
     Rejected,
+    /// No call may run; the model can retry within the existing retry budget.
+    TooLarge { received: usize, limit: usize },
 }
 
 pub(crate) fn validate_tools(
@@ -232,11 +234,12 @@ pub(crate) fn validate_tools(
             "finish_run requires a normally completed response containing only that call".into(),
         ));
     }
-    if !has_finish && calls.len() as u64 * MIN_TOOL_RESULT_BYTES > result_allowance {
-        return Err((
-            StopReason::ContextLimit,
-            "tool batch exceeds the aggregate result allowance".into(),
-        ));
+    let limit = (result_allowance / MIN_TOOL_RESULT_BYTES).min(8) as usize;
+    if !has_finish && calls.len() > limit {
+        return Ok(Batch::TooLarge {
+            received: calls.len(),
+            limit,
+        });
     }
     for call in calls {
         let name = call["function"]["name"].as_str().unwrap_or("");

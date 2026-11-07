@@ -259,6 +259,9 @@ pub enum ModelFailure {
     /// tools. The response settled with known usage; the policy decides
     /// whether the compaction is planned again.
     SummaryTools(String),
+    /// A completed work response whose tool batch exceeds the controller's
+    /// count or aggregate-result bound. No call in the batch was admitted.
+    ToolBatchLimit(String),
     Connection(String),
     Incomplete(String),
     MissingUsage(String),

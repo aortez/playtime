@@ -124,7 +124,7 @@ python3 scripts/check-coding-repair.py ledger-repair-v1 \
 ```
 
 The two deliverable checks per task inspect the requested example and README
-presence. The historical README rule is only **more than 50 bytes**; it does not
+presence. Revision 3 requires a **regular file of more than 50 bytes**; it does not
 verify the quality or truth of the documentation. Individual cases can exercise
 several inputs, so 70/71 is a case tally, not a calibrated accuracy percentage.
 Finite examples are not a proof of correctness. Keep assessment feedback away
@@ -157,6 +157,15 @@ digests in `provenance.json`. Historical model scores retain their original
 checker identity. Do not silently replace old scores when changing assessment
 semantics; increment the assessment revision and retain the earlier evidence.
 
+Assessment revision **3**, now the default, fixes the planner and byte-range
+README checks: a directory named `README.md` no longer earns deliverable credit.
+Ledger already required a regular file and keeps the same rules. Case IDs,
+task inputs and positive/negative control scores are unchanged. The revision-2
+`catalog.json` and each `check.py` remain untouched; `catalog-v3.json` and the
+two `check-v3.py` files select the new rules. To reproduce the old acceptance
+semantics, pass `--assessment-revision 2`. The report still identifies the
+current helper bytes, so it is a new assessment, not the original receipt.
+
 ## Validate without running models
 
 ```sh
@@ -169,6 +178,7 @@ snapshot behavior, skipped outcomes and unavailable infrastructure without
 executing candidates. CI runs it alongside seed-bundle validation. The Docker
 gate runs all six positive/negative controls, local modules/executables,
 dataclasses with postponed annotations, noisy output, missing programs,
+README directories under both assessment revisions,
 partial-workspace outcomes and deadline/cancellation cleanup (including signals
 during removal). It requires the existing locked image and fails if prerequisites
 are absent.

@@ -151,6 +151,7 @@ impl Memento {
             ModelFailure::Parse(_) => StopReason::ToolParseRetryLimit,
             // Memento sends no summary requests, so this never arises here.
             ModelFailure::SummaryTools(_) => StopReason::InfrastructureFailure,
+            ModelFailure::ToolBatchLimit(_) => StopReason::TooManyToolsInOneResponse,
             ModelFailure::Connection(_) => StopReason::ModelConnectionError,
             ModelFailure::Incomplete(_) => StopReason::IncompleteModelResponse,
             ModelFailure::MissingUsage(_) => StopReason::MissingTokenUsage,

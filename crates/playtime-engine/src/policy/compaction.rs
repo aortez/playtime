@@ -494,6 +494,7 @@ impl Compaction {
         let recoverable = match error {
             ModelFailure::Parse(_) => matches!(self.stage, Stage::Ready | Stage::Summary { .. }),
             ModelFailure::SummaryTools(_) => matches!(self.stage, Stage::Summary { .. }),
+            ModelFailure::ToolBatchLimit(_) => matches!(self.stage, Stage::Ready),
             _ => false,
         };
         recoverable && view.facts.parse_streak <= crate::compaction::TOOL_PARSE_RETRIES

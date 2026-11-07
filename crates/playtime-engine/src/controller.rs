@@ -1049,10 +1049,19 @@ impl<I: IdSource> Controller<I> {
         if !self.settle_known(tokens) {
             return;
         }
-        // A summary that settles can still be rejected below, and that
-        // rejection counts toward the same streak as an unparseable one, so
-        // only an accepted summary ends a summary streak.
-        if request.purpose != RequestPurpose::Compaction {
+        let batch = self.config.compaction.as_ref().map(|config| {
+            crate::compaction::validate_tools(
+                &response.message,
+                finish_reason,
+                self.config.parameters.limits.output_bytes.get(),
+                config.settings.allow_finish_run,
+            )
+        });
+        let oversized_batch = matches!(batch, Some(Ok(crate::compaction::Batch::TooLarge { .. })));
+        // A settled summary or oversized work batch can still be rejected.
+        // Those failures share the parse streak; only accepted work or an
+        // accepted summary resets it.
+        if request.purpose != RequestPurpose::Compaction && !oversized_batch {
             self.parse_streak = 0;
         }
         self.emit(
@@ -1070,7 +1079,8 @@ impl<I: IdSource> Controller<I> {
         // proposal against this verified prefix. A summary answered with tool
         // calls is planned again unchanged, like one the server can't parse,
         // so that attempt leaves the measurement alone and the retry keeps
-        // the basis the first attempt had.
+        // the basis the first attempt had. Oversized work batches also stay
+        // out of active history; their full response remains in observations.
         let summary_tools = self.config.compaction.is_some()
             && request.purpose == RequestPurpose::Compaction
             && response.message["tool_calls"]
@@ -1080,7 +1090,7 @@ impl<I: IdSource> Controller<I> {
         // with the prefix afterwards, so it always calibrates the byte estimates.
         self.context
             .calibrate(&request.messages, &request.tools, response.prompt_tokens);
-        if !summary_tools {
+        if !summary_tools && !oversized_batch {
             let mut observed_messages = request.messages;
             observed_messages.push(response.message.clone());
             self.context.observe(
@@ -1092,12 +1102,7 @@ impl<I: IdSource> Controller<I> {
                 &request.context_basis,
             );
         }
-        if let Some(allow_finish_run) = self
-            .config
-            .compaction
-            .as_ref()
-            .map(|c| c.settings.allow_finish_run)
-        {
+        if let Some(batch) = batch {
             self.emit(
                 "model_completion",
                 json!({"call":request.call,"finish_reason":finish_reason}),
@@ -1123,18 +1128,31 @@ impl<I: IdSource> Controller<I> {
             if request.purpose == RequestPurpose::Compaction {
                 self.parse_streak = 0;
             }
-            match crate::compaction::validate_tools(
-                &response.message,
-                finish_reason,
-                self.config.parameters.limits.output_bytes.get(),
-                allow_finish_run,
-            ) {
+            match batch {
                 Err((reason, error)) => {
                     self.emit(
                         "tool_batch_rejected",
                         json!({"reason":reason,"error":error}),
                     );
                     self.stop(reason);
+                    return;
+                }
+                Ok(crate::compaction::Batch::TooLarge { received, limit }) => {
+                    let error = format!(
+                        "The response contained {received} tool calls. Retry with at most {limit} tool calls per response."
+                    );
+                    self.emit(
+                        "tool_batch_rejected",
+                        json!({"reason":StopReason::TooManyToolsInOneResponse,"error":error}),
+                    );
+                    // The complete response already settled its measured usage.
+                    // Recovery must not settle it again or invent unknown usage.
+                    self.recover_model_error(
+                        ModelFailure::ToolBatchLimit(error),
+                        tokens,
+                        Some(tokens),
+                        false,
+                    );
                     return;
                 }
                 Ok(crate::compaction::Batch::Valid(Some(summary)))
@@ -1227,21 +1245,34 @@ impl<I: IdSource> Controller<I> {
         } else {
             self.settle_unknown();
         }
+        let over_budget = generated_tokens.is_some_and(|tokens| {
+            (self.config.compaction.is_some() && tokens > maximum_tokens)
+                || self.totals.budget_charged_tokens()
+                    > self.config.parameters.limits.generated_tokens.get()
+        });
+        self.recover_model_error(error, charge, generated_tokens, over_budget);
+    }
+
+    fn recover_model_error(
+        &mut self,
+        error: ModelFailure,
+        charge: u64,
+        generated_tokens: Option<u64>,
+        over_budget: bool,
+    ) {
         if matches!(error, ModelFailure::Parse(_)) {
             self.parse_errors += 1;
             self.session_parse_errors += 1;
         }
         if matches!(
             error,
-            ModelFailure::Parse(_) | ModelFailure::SummaryTools(_)
+            ModelFailure::Parse(_)
+                | ModelFailure::SummaryTools(_)
+                | ModelFailure::ToolBatchLimit(_)
         ) {
             self.parse_streak += 1;
         }
-        let decision = if generated_tokens.is_some_and(|tokens| {
-            (self.config.compaction.is_some() && tokens > maximum_tokens)
-                || self.totals.budget_charged_tokens()
-                    > self.config.parameters.limits.generated_tokens.get()
-        }) {
+        let decision = if over_budget {
             Recovery::Stop(StopReason::TokenLimitExceededByServer)
         } else {
             self.policy.recovery(
