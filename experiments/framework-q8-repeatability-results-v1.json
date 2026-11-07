@@ -1,0 +1,2112 @@
+{
+  "schema_version": 1,
+  "study": "framework-q8-repeatability-v1",
+  "plan_sha256": "af3d3e375f2f7452f274d652e87fbb1a2006e922dc672d869385f10f2d8775e8",
+  "source_revision": "a3d373f147d29b99f193ebe9af54996339106cd3",
+  "planned": 18,
+  "recorded": 18,
+  "groups": [
+    {
+      "model": "ornith",
+      "task": "ledger-repair",
+      "attempted": 1,
+      "completed": 1,
+      "completed_all_checks_passed": 1,
+      "checks_passed": 10,
+      "checks_total": 10,
+      "elapsed_seconds_median": 549.889,
+      "elapsed_seconds_min": 549.889,
+      "elapsed_seconds_max": 549.889,
+      "generation_tokens_per_second_median": 42.20091726978433
+    },
+    {
+      "model": "ornith",
+      "task": "dependency-planner-repair",
+      "attempted": 1,
+      "completed": 0,
+      "completed_all_checks_passed": 0,
+      "checks_passed": 23,
+      "checks_total": 24,
+      "elapsed_seconds_median": 900.866,
+      "elapsed_seconds_min": 900.866,
+      "elapsed_seconds_max": 900.866,
+      "generation_tokens_per_second_median": 42.97068603134261
+    },
+    {
+      "model": "qwen",
+      "task": "ledger-repair",
+      "attempted": 3,
+      "completed": 2,
+      "completed_all_checks_passed": 0,
+      "checks_passed": 26,
+      "checks_total": 30,
+      "elapsed_seconds_median": 244.448,
+      "elapsed_seconds_min": 99.597,
+      "elapsed_seconds_max": 288.847,
+      "generation_tokens_per_second_median": 42.173492529918995
+    },
+    {
+      "model": "qwen",
+      "task": "dependency-planner-repair",
+      "attempted": 3,
+      "completed": 3,
+      "completed_all_checks_passed": 2,
+      "checks_passed": 71,
+      "checks_total": 72,
+      "elapsed_seconds_median": 340.164,
+      "elapsed_seconds_min": 305.921,
+      "elapsed_seconds_max": 437.501,
+      "generation_tokens_per_second_median": 41.59711548101738
+    },
+    {
+      "model": "qwen",
+      "task": "byte-range-repair",
+      "attempted": 3,
+      "completed": 3,
+      "completed_all_checks_passed": 2,
+      "checks_passed": 99,
+      "checks_total": 111,
+      "elapsed_seconds_median": 341.513,
+      "elapsed_seconds_min": 226.828,
+      "elapsed_seconds_max": 401.587,
+      "generation_tokens_per_second_median": 41.16715100478543
+    }
+  ],
+  "runs": [
+    {
+      "label": "r1-ledger-repair-ornith",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "ledger-repair",
+      "model": "ornith",
+      "execution_recipe_id": "saved-f1b64d94131de991f5a827d53c40373e",
+      "definition_digest": "797dd9009bf90140039255d72c7192c0df526a8f65b094f96a960f78fa156425",
+      "status": "completed",
+      "run_id": "20261106T221959Z-91587e53",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 867,
+        "reason": "agent_finished"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 21404,
+        "known_generated_tokens": 21404,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 27,
+            "known_calls": 27,
+            "known_ms": 540027,
+            "known_tokens": 21404,
+            "longest_ms": 167192,
+            "median_ms": 7662,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 39.63505528427282,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 549889,
+          "handoff_ms": 0,
+          "model_ms": 540027,
+          "other_ms": 9862,
+          "retained_ms": 0,
+          "work_ms": 540027
+        },
+        "tools": {
+          "calls": 27,
+          "exited_non_zero": 2,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 17,
+              "name": "exec"
+            },
+            {
+              "calls": 5,
+              "name": "read_file"
+            },
+            {
+              "calls": 5,
+              "name": "write_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 20480,
+          "sequence": 867
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 10,
+        "total": 10,
+        "all_checks_passed": true,
+        "functional": {
+          "passed": 8,
+          "total": 8
+        },
+        "deliverable": {
+          "passed": 2,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1426,
+          "first_output_ms": 13622,
+          "first_non_thinking_ms": 14034,
+          "backend": {
+            "eval_count": 42,
+            "eval_duration": 897522000,
+            "load_duration": 10421734664,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1132365000,
+            "total_duration": 12466928642
+          },
+          "ended_ms": 14034,
+          "generated_tokens": 42,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12196,
+          "first_non_thinking_latency_ms": 12608,
+          "generation_tokens_per_second": 46.795510305039876
+        },
+        "first_tool_latency_ms": 12608,
+        "reported_input_tokens_completed_calls": 247857,
+        "peak_reported_input_tokens_completed_calls": 18595,
+        "reported_uncached_prompt_tokens": 18699,
+        "backend_generation_tokens_per_second": 42.20091726978433,
+        "backend_prompt_seconds": 18.671993998,
+        "backend_load_seconds": 10.58745647,
+        "backend_measured_calls": 27,
+        "completed_response_count": 27
+      },
+      "evidence_sha256": {
+        "run.jsonl": "b08b385c64abdd092528d17c49250e7a54d6c15a73f2a60c7bde6b20b819315d",
+        "report.jsonl": "6d6f76f6d1b10ec290329387e0a429cdfc92cfca744620eda4173cf650a691af",
+        "events.jsonl": "f2de510252801684d83cc2e9b96faab8d4cca55eb24f80e636357b4017d80f9e",
+        "assessment.jsonl": "64933c75fc6d2fc7b70487f90601291891a9d3ac99d8ff23ee902d47d191641f",
+        "capture-index.json": "cdfc71606814c8bf46ded1da058e9519d928d619baa3f767e4971f22103f515b",
+        "workspace.tar": "971e86a3c0b26414871a08337c0cda7b5a516c754841896be8f2874ae6aeb13e"
+      },
+      "failed_cases": []
+    },
+    {
+      "label": "r1-ledger-repair-qwen",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "ledger-repair",
+      "model": "qwen",
+      "execution_recipe_id": "saved-008d14ae639a58ce3a25eb08af747a3b",
+      "definition_digest": "5d9981cc8d2ad87b4a9c702fb33a07801fbf619b94be6522b1f5cef6d50045b8",
+      "status": "completed",
+      "run_id": "20261106T222915Z-6d0744ed",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 334,
+        "reason": "agent_finished"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 9278,
+        "known_generated_tokens": 9278,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 16,
+            "known_calls": 16,
+            "known_ms": 238266,
+            "known_tokens": 9278,
+            "longest_ms": 58865,
+            "median_ms": 12780,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 38.939672466906735,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 244448,
+          "handoff_ms": 0,
+          "model_ms": 238266,
+          "other_ms": 6182,
+          "retained_ms": 0,
+          "work_ms": 238266
+        },
+        "tools": {
+          "calls": 16,
+          "exited_non_zero": 1,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 9,
+              "name": "exec"
+            },
+            {
+              "calls": 4,
+              "name": "read_file"
+            },
+            {
+              "calls": 3,
+              "name": "write_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 20480,
+          "sequence": 334
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 9,
+        "total": 10,
+        "all_checks_passed": false,
+        "functional": {
+          "passed": 7,
+          "total": 8
+        },
+        "deliverable": {
+          "passed": 2,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1320,
+          "first_output_ms": 13541,
+          "first_non_thinking_ms": 14100,
+          "backend": {
+            "eval_count": 50,
+            "eval_duration": 1078845000,
+            "load_duration": 10443961399,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1073802000,
+            "total_duration": 12605784056
+          },
+          "ended_ms": 14100,
+          "generated_tokens": 50,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12221,
+          "first_non_thinking_latency_ms": 12780,
+          "generation_tokens_per_second": 46.345860619458776
+        },
+        "first_tool_latency_ms": 12780,
+        "reported_input_tokens_completed_calls": 118041,
+        "peak_reported_input_tokens_completed_calls": 13687,
+        "reported_uncached_prompt_tokens": 6354,
+        "backend_generation_tokens_per_second": 42.173492529918995,
+        "backend_prompt_seconds": 6.453365,
+        "backend_load_seconds": 10.493410394,
+        "backend_measured_calls": 16,
+        "completed_response_count": 16
+      },
+      "evidence_sha256": {
+        "run.jsonl": "ce391f7eaf3a5a9aa04d25739f304cf5dc6d5e78aa86e285491a60a6328fe58c",
+        "report.jsonl": "1e9519094243e652c2a1eab7838d9017b921d8748e28182976439cd26cd5cded",
+        "events.jsonl": "f50a6dbfdf7a4cdaecb4f4ab883a891b25f04572cfb4930db59499d824ec57e8",
+        "assessment.jsonl": "db29e4fafaae86483f396b7884c15346140bf34712ec8700b7307e90913bdc0d",
+        "capture-index.json": "997abe68a81f19b3418ed88218b5a88064d41f0ca0480a9c2dcb3e450f58fa3b",
+        "workspace.tar": "1e77860fdd5ca28abff0346fd5ef648902b1da8c7447a5992da58cad03abe55a"
+      },
+      "failed_cases": [
+        {
+          "case": "invalid_rows",
+          "passed": false,
+          "exit_code": 2,
+          "actual": null,
+          "expected": {
+            "accepted_rows": 0,
+            "voided_rows": 0,
+            "duplicate_rows": 0,
+            "rejected_rows": 14,
+            "total_cents": 0,
+            "customers": []
+          },
+          "stderr": "Error processing CSV: 'list' object has no attribute 'strip'\n",
+          "kind": "functional"
+        }
+      ]
+    },
+    {
+      "label": "r1-dependency-planner-repair-qwen",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "dependency-planner-repair",
+      "model": "qwen",
+      "execution_recipe_id": "saved-80825917d0bd0eb1536edb56ede8ffbf",
+      "definition_digest": "dc126daf4a696aa6055f488f454ec02a471af34639c63da10502f20eec5b46ab",
+      "status": "completed",
+      "run_id": "20261106T223324Z-3e0232a7",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 471,
+        "reason": "agent_finished"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 16575,
+        "known_generated_tokens": 16575,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 24,
+            "known_calls": 24,
+            "known_ms": 429413,
+            "known_tokens": 16575,
+            "longest_ms": 113279,
+            "median_ms": 6099,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 38.59920402968704,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 437501,
+          "handoff_ms": 0,
+          "model_ms": 429413,
+          "other_ms": 8088,
+          "retained_ms": 0,
+          "work_ms": 429413
+        },
+        "tools": {
+          "calls": 24,
+          "exited_non_zero": 4,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 15,
+              "name": "exec"
+            },
+            {
+              "calls": 6,
+              "name": "write_file"
+            },
+            {
+              "calls": 3,
+              "name": "read_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 40960,
+          "sequence": 471
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 23,
+        "total": 24,
+        "all_checks_passed": false,
+        "functional": {
+          "passed": 21,
+          "total": 22
+        },
+        "deliverable": {
+          "passed": 2,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1421,
+          "first_output_ms": 13634,
+          "first_non_thinking_ms": 14199,
+          "backend": {
+            "eval_count": 50,
+            "eval_duration": 1082906000,
+            "load_duration": 10472459204,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1076130000,
+            "total_duration": 12641622968
+          },
+          "ended_ms": 14199,
+          "generated_tokens": 50,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12213,
+          "first_non_thinking_latency_ms": 12778,
+          "generation_tokens_per_second": 46.172059255373966
+        },
+        "first_tool_latency_ms": 12778,
+        "reported_input_tokens_completed_calls": 292686,
+        "peak_reported_input_tokens_completed_calls": 22609,
+        "reported_uncached_prompt_tokens": 8444,
+        "backend_generation_tokens_per_second": 40.72895696920635,
+        "backend_prompt_seconds": 9.628827,
+        "backend_load_seconds": 10.59613785,
+        "backend_measured_calls": 24,
+        "completed_response_count": 24
+      },
+      "evidence_sha256": {
+        "run.jsonl": "0d5c7d8d1d73757b38075249b4b0f9fb653cb1890c8a1c60545d119a96a2a155",
+        "report.jsonl": "cb5f74258467d8932b3065d0d9720f16a127fedb901f54532e4983d9720457ed",
+        "events.jsonl": "6e6aedc5cfb05d196fa7959150f7938d3903b2fdd5386996651b78f3cf3ab386",
+        "assessment.jsonl": "e8f1de7d95eeb6e701091e8e263e17d66bf3b9caca79a483a99d1118aa4f1232",
+        "capture-index.json": "25c9353a41be0e6eb859e7143edcda17af567b80c6cc5445094d167e4df2c730",
+        "workspace.tar": "89cd659665b1136a8dec88213efa64da1021deecea1273b85fbe9a148f5da783"
+      },
+      "failed_cases": [
+        {
+          "case": "invalid_item",
+          "passed": false,
+          "error": "'NoneType' object is not iterable",
+          "kind": "functional"
+        }
+      ]
+    },
+    {
+      "label": "r1-dependency-planner-repair-ornith",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "dependency-planner-repair",
+      "model": "ornith",
+      "execution_recipe_id": "saved-c8f0988813bef934a1937c8dc6150e69",
+      "definition_digest": "f0a4f6f20eaa2951517c460dd11a78a5509d876c1f0a99729cb25416fe32247d",
+      "status": "timed_out",
+      "run_id": "20261106T224046Z-46b04900",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 1624,
+        "reason": "wall_limit"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 44924,
+        "known_generated_tokens": 36732,
+        "unknown_requests": 1,
+        "unknown_reserved_tokens": 8192,
+        "usage_complete": false
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": {
+            "calls": 1,
+            "ms": 16819,
+            "reserved_tokens": 8192
+          },
+          "unrequested": null,
+          "work": {
+            "calls": 18,
+            "known_calls": 17,
+            "known_ms": 877844,
+            "known_tokens": 36732,
+            "longest_ms": 191617,
+            "median_ms": 13041,
+            "median_of": null,
+            "reserved_tokens": 8192,
+            "tokens_per_second": 41.84342548334328,
+            "unknown_calls": 1,
+            "unknown_ms": 16819
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 900866,
+          "handoff_ms": 0,
+          "model_ms": 894663,
+          "other_ms": 6203,
+          "retained_ms": 0,
+          "work_ms": 894663
+        },
+        "tools": {
+          "calls": 16,
+          "exited_non_zero": 1,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 10,
+              "name": "exec"
+            },
+            {
+              "calls": 3,
+              "name": "read_file"
+            },
+            {
+              "calls": 3,
+              "name": "write_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 30720,
+          "sequence": 1624
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 23,
+        "total": 24,
+        "all_checks_passed": false,
+        "functional": {
+          "passed": 22,
+          "total": 22
+        },
+        "deliverable": {
+          "passed": 1,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [
+          4,
+          6
+        ],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1425,
+          "first_output_ms": 13693,
+          "first_non_thinking_ms": 13693,
+          "backend": {
+            "eval_count": 59,
+            "eval_duration": 1271167000,
+            "load_duration": 10460850161,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1138027000,
+            "total_duration": 12884472414
+          },
+          "ended_ms": 14466,
+          "generated_tokens": 59,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12268,
+          "first_non_thinking_latency_ms": 12268,
+          "generation_tokens_per_second": 46.41404315876671
+        },
+        "first_tool_latency_ms": 13041,
+        "reported_input_tokens_completed_calls": 90880,
+        "peak_reported_input_tokens_completed_calls": 10078,
+        "reported_uncached_prompt_tokens": 10142,
+        "backend_generation_tokens_per_second": 42.97068603134261,
+        "backend_prompt_seconds": 9.769053999,
+        "backend_load_seconds": 10.611647252,
+        "backend_measured_calls": 17,
+        "completed_response_count": 17
+      },
+      "evidence_sha256": {
+        "run.jsonl": "b196271299c6b7cb5e6f6b42e7783e7b4baec13a3df9cb7781b25b8c79999f12",
+        "report.jsonl": "99206b149cf0333308ff2c21d850cb41af168589ded886b365da951d9588c6c1",
+        "events.jsonl": "aeb0920c6e6137c5dc2a0affe7414b3929226c6d525365123cb6e9c3dc71ecac",
+        "assessment.jsonl": "244545424bedbe47baca943237df2189cb945b5881fa51773cafe2ac6ac9d02b",
+        "capture-index.json": "f2fb90c947089a8548b1b5e1a1fc3ee94f124aae9030be5cbef365a7ee7ff2d8",
+        "workspace.tar": "67960ed166997ca4b07e46dfdf0087500501c88f009564b26c85c83c0a9772d1"
+      },
+      "failed_cases": [
+        {
+          "case": "readme",
+          "passed": false,
+          "error": "[Errno 2] No such file or directory: '/candidate/README.md'",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    {
+      "label": "r1-byte-range-repair-ornith",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "byte-range-repair",
+      "model": "ornith",
+      "execution_recipe_id": "saved-df410aff1f061ff32feb260f9f2065dc",
+      "definition_digest": "de7e9a42b042fed50c6cd8666ad0c4f69a96324ee90de9f328fc8b2ad7b78e8b",
+      "status": "skipped",
+      "reason": "earlier_timeout_for_model"
+    },
+    {
+      "label": "r1-byte-range-repair-qwen",
+      "round": 1,
+      "sampling_seed": 1042,
+      "task": "byte-range-repair",
+      "model": "qwen",
+      "execution_recipe_id": "saved-bd760ac37ece034731b726b77a12b5ec",
+      "definition_digest": "c643bc9f97e3c1f94dfdf0befa515d305badd1559bddc44e052b02f7f6dbb5b6",
+      "status": "completed",
+      "run_id": "20261106T225554Z-14e656e5",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 358,
+        "reason": "agent_finished"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 12871,
+        "known_generated_tokens": 12871,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 18,
+            "known_calls": 18,
+            "known_ms": 335432,
+            "known_tokens": 12871,
+            "longest_ms": 61143,
+            "median_ms": 12669,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 38.37141358009969,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 341513,
+          "handoff_ms": 0,
+          "model_ms": 335432,
+          "other_ms": 6081,
+          "retained_ms": 0,
+          "work_ms": 335432
+        },
+        "tools": {
+          "calls": 17,
+          "exited_non_zero": 1,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 11,
+              "name": "exec"
+            },
+            {
+              "calls": 3,
+              "name": "read_file"
+            },
+            {
+              "calls": 3,
+              "name": "write_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 30720,
+          "sequence": 358
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 37,
+        "total": 37,
+        "all_checks_passed": true,
+        "functional": {
+          "passed": 35,
+          "total": 35
+        },
+        "deliverable": {
+          "passed": 2,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1284,
+          "first_output_ms": 13387,
+          "first_non_thinking_ms": 13952,
+          "backend": {
+            "eval_count": 50,
+            "eval_duration": 1079292000,
+            "load_duration": 10432010630,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1066901000,
+            "total_duration": 12587581282
+          },
+          "ended_ms": 13953,
+          "generated_tokens": 50,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12103,
+          "first_non_thinking_latency_ms": 12668,
+          "generation_tokens_per_second": 46.32666599956268
+        },
+        "first_tool_latency_ms": 12669,
+        "reported_input_tokens_completed_calls": 184340,
+        "peak_reported_input_tokens_completed_calls": 20737,
+        "reported_uncached_prompt_tokens": 10331,
+        "backend_generation_tokens_per_second": 41.16715100478543,
+        "backend_prompt_seconds": 10.463766999,
+        "backend_load_seconds": 10.539254643,
+        "backend_measured_calls": 18,
+        "completed_response_count": 18
+      },
+      "evidence_sha256": {
+        "run.jsonl": "9eabca0bcbe55671ad8c6d87beb2bf71c8cd126ef60bf9f1a49c1c3368f6e704",
+        "report.jsonl": "db7a320f559936d3002bcf52c2ea8c054407ce2594461efafa9c8d87a68ed807",
+        "events.jsonl": "04f7d516322505c619c26fff84f8d1f247c8634d62c06b7813b6cfe7de44c0be",
+        "assessment.jsonl": "4862d503d3ae12003ee31fa377f353844b5635adbff3c3d1295a3b7bffdf4aa5",
+        "capture-index.json": "6ae8794fcf9daadcf93114c91dff222be36fcd46cb7a4ddd16ef4d65f1ffc722",
+        "workspace.tar": "82486da749002a8d22e0ab9670c907993352b848604edfeb35c0e13090bc4559"
+      },
+      "failed_cases": []
+    },
+    {
+      "label": "r2-ledger-repair-qwen",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "ledger-repair",
+      "model": "qwen",
+      "execution_recipe_id": "saved-2e5471518a9fe636914f0c659894fdb3",
+      "definition_digest": "39e62b0f87aae517bca65dbb392022d7da53e46f6909333f5d882d4998fbc213",
+      "status": "completed",
+      "run_id": "20261106T230140Z-56d329a0",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 435,
+        "reason": "agent_finished"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 10857,
+        "known_generated_tokens": 10857,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 22,
+            "known_calls": 22,
+            "known_ms": 279749,
+            "known_tokens": 10857,
+            "longest_ms": 74627,
+            "median_ms": 3223,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 38.80979020479072,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 288847,
+          "handoff_ms": 0,
+          "model_ms": 279749,
+          "other_ms": 9098,
+          "retained_ms": 0,
+          "work_ms": 279749
+        },
+        "tools": {
+          "calls": 22,
+          "exited_non_zero": 2,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 15,
+              "name": "exec"
+            },
+            {
+              "calls": 4,
+              "name": "write_file"
+            },
+            {
+              "calls": 3,
+              "name": "read_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 30720,
+          "sequence": 435
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 9,
+        "total": 10,
+        "all_checks_passed": false,
+        "functional": {
+          "passed": 7,
+          "total": 8
+        },
+        "deliverable": {
+          "passed": 2,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1355,
+          "first_output_ms": 13576,
+          "first_non_thinking_ms": 14131,
+          "backend": {
+            "eval_count": 50,
+            "eval_duration": 1074062000,
+            "load_duration": 10467993088,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1073087000,
+            "total_duration": 12623499686
+          },
+          "ended_ms": 14131,
+          "generated_tokens": 50,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12221,
+          "first_non_thinking_latency_ms": 12776,
+          "generation_tokens_per_second": 46.552247449402365
+        },
+        "first_tool_latency_ms": 12776,
+        "reported_input_tokens_completed_calls": 205290,
+        "peak_reported_input_tokens_completed_calls": 15790,
+        "reported_uncached_prompt_tokens": 7506,
+        "backend_generation_tokens_per_second": 41.965861704979616,
+        "backend_prompt_seconds": 8.264654,
+        "backend_load_seconds": 10.572305118,
+        "backend_measured_calls": 22,
+        "completed_response_count": 22
+      },
+      "evidence_sha256": {
+        "run.jsonl": "9e152ff0d96ed6117a87eace1e2dfdffc845b8fc2e073dc1ee5cd8f87413d59d",
+        "report.jsonl": "23aeb534bd63b4c64df0668a7586dda4188fd292d62f29e7eae5a93a679caafe",
+        "events.jsonl": "f5f340f2c7db6a3f34bdb4acae05f39768deadf3a70e5808a719bc41555d235a",
+        "assessment.jsonl": "1d412081e52a230fd4a974fffc46675097f7f2312042039bafe48ba80540a07e",
+        "capture-index.json": "32a021bf871f30cab7f497f7a2cc55c563a0e4467945096007d51560253484e4",
+        "workspace.tar": "3ae1aa1453bf6e712d9c9f335e882d3ffb4a878505bd0907b3aa33cc4791366d"
+      },
+      "failed_cases": [
+        {
+          "case": "invalid_rows",
+          "passed": false,
+          "exit_code": 0,
+          "actual": {
+            "accepted_rows": 1,
+            "voided_rows": 0,
+            "duplicate_rows": 0,
+            "rejected_rows": 13,
+            "total_cents": 1200,
+            "customers": [
+              {
+                "customer": "A",
+                "total_cents": 1200
+              }
+            ]
+          },
+          "expected": {
+            "accepted_rows": 0,
+            "voided_rows": 0,
+            "duplicate_rows": 0,
+            "rejected_rows": 14,
+            "total_cents": 0,
+            "customers": []
+          },
+          "stderr": "",
+          "kind": "functional"
+        }
+      ]
+    },
+    {
+      "label": "r2-ledger-repair-ornith",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "ledger-repair",
+      "model": "ornith",
+      "execution_recipe_id": "saved-cf1f5ef7fbdf948d3cc740863e0b707d",
+      "definition_digest": "f0be1b3f34f3cfd0c21255d5716fb76480a21557cbeda6e07e24d4b01bac897c",
+      "status": "skipped",
+      "reason": "earlier_timeout_for_model"
+    },
+    {
+      "label": "r2-dependency-planner-repair-ornith",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "dependency-planner-repair",
+      "model": "ornith",
+      "execution_recipe_id": "saved-a018056874ab7a5cb194f6f055f3292c",
+      "definition_digest": "390293ff2b1840814de36d7b81714056441c583d7102999e4ddbeacc72f7e942",
+      "status": "skipped",
+      "reason": "earlier_timeout_for_model"
+    },
+    {
+      "label": "r2-dependency-planner-repair-qwen",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "dependency-planner-repair",
+      "model": "qwen",
+      "execution_recipe_id": "saved-52da6cb41c34a0c7b474091c89730afb",
+      "definition_digest": "c53d6c8733304bf2fa3313883df8e085f1f26551380c927154d02a0a1375d04b",
+      "status": "completed",
+      "run_id": "20261106T230634Z-b9f5cb1d",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 271,
+        "reason": "agent_finished"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 11832,
+        "known_generated_tokens": 11832,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 15,
+            "known_calls": 15,
+            "known_ms": 299570,
+            "known_tokens": 11832,
+            "longest_ms": 88456,
+            "median_ms": 8150,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 39.49661181026138,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 305921,
+          "handoff_ms": 0,
+          "model_ms": 299570,
+          "other_ms": 6351,
+          "retained_ms": 0,
+          "work_ms": 299570
+        },
+        "tools": {
+          "calls": 15,
+          "exited_non_zero": 1,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 8,
+              "name": "exec"
+            },
+            {
+              "calls": 4,
+              "name": "write_file"
+            },
+            {
+              "calls": 3,
+              "name": "read_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 40960,
+          "sequence": 271
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 24,
+        "total": 24,
+        "all_checks_passed": true,
+        "functional": {
+          "passed": 22,
+          "total": 22
+        },
+        "deliverable": {
+          "passed": 2,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1340,
+          "first_output_ms": 13482,
+          "first_non_thinking_ms": 14036,
+          "backend": {
+            "eval_count": 50,
+            "eval_duration": 1071367000,
+            "load_duration": 10447371594,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1065371000,
+            "total_duration": 12593063467
+          },
+          "ended_ms": 14037,
+          "generated_tokens": 50,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12142,
+          "first_non_thinking_latency_ms": 12696,
+          "generation_tokens_per_second": 46.66934859856613
+        },
+        "first_tool_latency_ms": 12697,
+        "reported_input_tokens_completed_calls": 125209,
+        "peak_reported_input_tokens_completed_calls": 16197,
+        "reported_uncached_prompt_tokens": 6444,
+        "backend_generation_tokens_per_second": 42.073100091386216,
+        "backend_prompt_seconds": 6.52346,
+        "backend_load_seconds": 10.506252366,
+        "backend_measured_calls": 15,
+        "completed_response_count": 15
+      },
+      "evidence_sha256": {
+        "run.jsonl": "4ff8b65eebd455f4115f0dd3a9f0b8bc802f727fdb6801b4d2296c8ebe12cf45",
+        "report.jsonl": "30edcdccd3eb1c29657498a46a96ba7974144cc43875a887daada76cdfc8c017",
+        "events.jsonl": "d84c7763974b8d81a8544f31d4a99cf3778352897a52ac52049ec4c84076d889",
+        "assessment.jsonl": "7b09726251d68c8efd27753b4efb07ce5f808a3b4162fc50e5cdd1909f9dfc9e",
+        "capture-index.json": "618d99a5f47541b7607bd34655704ad088529707c81642092a1334817bdf71e8",
+        "workspace.tar": "dc9582817742f9325fabb03707494b8f7553c115723658f8a5210c8e496b9070"
+      },
+      "failed_cases": []
+    },
+    {
+      "label": "r2-byte-range-repair-qwen",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "byte-range-repair",
+      "model": "qwen",
+      "execution_recipe_id": "saved-27bb851c4288cc80f3b8b52bff67f16f",
+      "definition_digest": "90c20c8458fc0a6567c78613585f6a7730ac420e10cc75355d8c794082d6a44b",
+      "status": "completed",
+      "run_id": "20261106T231144Z-31884c10",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 342,
+        "reason": "agent_finished"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 15287,
+        "known_generated_tokens": 15287,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 17,
+            "known_calls": 17,
+            "known_ms": 395807,
+            "known_tokens": 15287,
+            "longest_ms": 97178,
+            "median_ms": 3999,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 38.62235887692739,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 401587,
+          "handoff_ms": 0,
+          "model_ms": 395807,
+          "other_ms": 5780,
+          "retained_ms": 0,
+          "work_ms": 395807
+        },
+        "tools": {
+          "calls": 16,
+          "exited_non_zero": 1,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 9,
+              "name": "exec"
+            },
+            {
+              "calls": 5,
+              "name": "write_file"
+            },
+            {
+              "calls": 2,
+              "name": "read_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 30720,
+          "sequence": 342
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 25,
+        "total": 37,
+        "all_checks_passed": false,
+        "functional": {
+          "passed": 23,
+          "total": 35
+        },
+        "deliverable": {
+          "passed": 2,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1233,
+          "first_output_ms": 13362,
+          "first_non_thinking_ms": 13918,
+          "backend": {
+            "eval_count": 50,
+            "eval_duration": 1080334000,
+            "load_duration": 10431019296,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1069778000,
+            "total_duration": 12591589627
+          },
+          "ended_ms": 13918,
+          "generated_tokens": 50,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12129,
+          "first_non_thinking_latency_ms": 12685,
+          "generation_tokens_per_second": 46.28198316446581
+        },
+        "first_tool_latency_ms": 12685,
+        "reported_input_tokens_completed_calls": 170347,
+        "peak_reported_input_tokens_completed_calls": 21683,
+        "reported_uncached_prompt_tokens": 9150,
+        "backend_generation_tokens_per_second": 40.85091349157549,
+        "backend_prompt_seconds": 9.573726998,
+        "backend_load_seconds": 10.505694566,
+        "backend_measured_calls": 17,
+        "completed_response_count": 17
+      },
+      "evidence_sha256": {
+        "run.jsonl": "ac1355a1c8414d93d66923a0c702e3b6d6dac32cd3e4407c1fa82ccb4825ff53",
+        "report.jsonl": "efc836342b74b6c08612a1aa9269f7ead0423ff4b3e2437d0b130c0350a64763",
+        "events.jsonl": "219f5aaa311a3c4d0c6dcb961c8c2e717adf1f5c05fc3a67edc7412bb895f009",
+        "assessment.jsonl": "341bc5d9762d849409c881ee297a8d8dfc8c7d644c9b1e743c60a120561e4740",
+        "capture-index.json": "12cc2c14091208951d424516d5fdf981fe2d09132f17da284b5d264e665b4fbf",
+        "workspace.tar": "69798b21df80571faffca91df38b5dbb7ff3fe29f2426ffef5ff5fe38b7009b9"
+      },
+      "failed_cases": [
+        {
+          "case": "none",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "empty",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "unknown_unit",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "reversed",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "internal_space",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "separator_space",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "unicode_digits",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "empty_member",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "extra_hyphen",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "plus",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "bad_member_invalidates_all",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        },
+        {
+          "case": "limit33",
+          "passed": false,
+          "error": "({'status': 200, 'ranges': [0, 9]}, {'status': 200, 'ranges': [[0, 9]]})",
+          "kind": "functional"
+        }
+      ]
+    },
+    {
+      "label": "r2-byte-range-repair-ornith",
+      "round": 2,
+      "sampling_seed": 1043,
+      "task": "byte-range-repair",
+      "model": "ornith",
+      "execution_recipe_id": "saved-8f46a138ed96f477c392e0a8c89a649b",
+      "definition_digest": "0e71d616bb4a5fb1a5104692f907ca0324cb898ea5cce215ec11713dac42ec12",
+      "status": "skipped",
+      "reason": "earlier_timeout_for_model"
+    },
+    {
+      "label": "r3-ledger-repair-ornith",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "ledger-repair",
+      "model": "ornith",
+      "execution_recipe_id": "saved-b183e28cb0916f40f1b27694445c9986",
+      "definition_digest": "b756481355f838918aa35455085bf86a66767826ac13a2dc72dd4311112af0db",
+      "status": "skipped",
+      "reason": "earlier_timeout_for_model"
+    },
+    {
+      "label": "r3-ledger-repair-qwen",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "ledger-repair",
+      "model": "qwen",
+      "execution_recipe_id": "saved-bdee9d0868bcae2f33021e16d9327269",
+      "definition_digest": "b8bfe0096f792c3012126e653176f1e48a72828a7844ab38c116453556270858",
+      "status": "failed",
+      "run_id": "20261106T231830Z-d9a003fb",
+      "cli_exit_code": 10,
+      "outcome": {
+        "event_sequence": 195,
+        "reason": "too_many_tools_in_one_response"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 3556,
+        "known_generated_tokens": 3556,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 8,
+            "known_calls": 8,
+            "known_ms": 95912,
+            "known_tokens": 3556,
+            "longest_ms": 52055,
+            "median_ms": 3396,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 37.07565268162482,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 99597,
+          "handoff_ms": 0,
+          "model_ms": 95912,
+          "other_ms": 3685,
+          "retained_ms": 0,
+          "work_ms": 95912
+        },
+        "tools": {
+          "calls": 8,
+          "exited_non_zero": 0,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 4,
+              "name": "exec"
+            },
+            {
+              "calls": 3,
+              "name": "read_file"
+            },
+            {
+              "calls": 1,
+              "name": "write_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 20480,
+          "sequence": 195
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 8,
+        "total": 10,
+        "all_checks_passed": false,
+        "functional": {
+          "passed": 7,
+          "total": 8
+        },
+        "deliverable": {
+          "passed": 1,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1325,
+          "first_output_ms": 13480,
+          "first_non_thinking_ms": 14060,
+          "backend": {
+            "eval_count": 50,
+            "eval_duration": 1084146000,
+            "load_duration": 10465906503,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1076763000,
+            "total_duration": 12637401927
+          },
+          "ended_ms": 14060,
+          "generated_tokens": 50,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12155,
+          "first_non_thinking_latency_ms": 12735,
+          "generation_tokens_per_second": 46.11924962136096
+        },
+        "first_tool_latency_ms": 12735,
+        "reported_input_tokens_completed_calls": 29719,
+        "peak_reported_input_tokens_completed_calls": 5544,
+        "reported_uncached_prompt_tokens": 5133,
+        "backend_generation_tokens_per_second": 44.2381671953165,
+        "backend_prompt_seconds": 4.484046,
+        "backend_load_seconds": 10.484538649,
+        "backend_measured_calls": 8,
+        "completed_response_count": 8
+      },
+      "evidence_sha256": {
+        "run.jsonl": "e8f5b7c634703ba4a14ebe8f177197353acd7c5049e42d39a04f62646d797191",
+        "report.jsonl": "45b46ed3bf0b3f45a5df98bed83d23f7927ddddd4d34b7ac7575e4c54f135c0c",
+        "events.jsonl": "02ba86378b8bd2a483dc8702925b9c166e725779a49e429bb6876349e1c3f873",
+        "assessment.jsonl": "1051dda03b98730fabcdf2537cad0c41eb276099f3ae82edd1fc76d77645e4d2",
+        "capture-index.json": "4fa9dd58deebdd07767c811470fa507a116a5e156ec688e8d29b99a9f6276c91",
+        "workspace.tar": "5cdfc9991873713dfb82289d8ec75bd5698520b9522523485eba1f3a9a196dfb"
+      },
+      "failed_cases": [
+        {
+          "case": "invalid_rows",
+          "passed": false,
+          "exit_code": 0,
+          "actual": {
+            "accepted_rows": 1,
+            "voided_rows": 0,
+            "duplicate_rows": 0,
+            "rejected_rows": 13,
+            "total_cents": 1200,
+            "customers": [
+              {
+                "customer": "A",
+                "total_cents": 1200
+              }
+            ]
+          },
+          "expected": {
+            "accepted_rows": 0,
+            "voided_rows": 0,
+            "duplicate_rows": 0,
+            "rejected_rows": 14,
+            "total_cents": 0,
+            "customers": []
+          },
+          "stderr": "",
+          "kind": "functional"
+        },
+        {
+          "case": "usage_and_validation_notes_present",
+          "passed": false,
+          "kind": "deliverable"
+        }
+      ]
+    },
+    {
+      "label": "r3-dependency-planner-repair-qwen",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "dependency-planner-repair",
+      "model": "qwen",
+      "execution_recipe_id": "saved-bf4926c0625902502eebbb9127d6a7f2",
+      "definition_digest": "3ccd847ebf793a48b2a35816236329691c0bdf346a35a502f3102d5d668b2fa5",
+      "status": "completed",
+      "run_id": "20261106T235130Z-e4757519",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 390,
+        "reason": "agent_finished"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 12945,
+        "known_generated_tokens": 12945,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 21,
+            "known_calls": 21,
+            "known_ms": 332811,
+            "known_tokens": 12945,
+            "longest_ms": 90805,
+            "median_ms": 5363,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 38.89594995357726,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 340164,
+          "handoff_ms": 0,
+          "model_ms": 332811,
+          "other_ms": 7353,
+          "retained_ms": 0,
+          "work_ms": 332811
+        },
+        "tools": {
+          "calls": 21,
+          "exited_non_zero": 2,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 13,
+              "name": "exec"
+            },
+            {
+              "calls": 4,
+              "name": "read_file"
+            },
+            {
+              "calls": 4,
+              "name": "write_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 40960,
+          "sequence": 390
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 24,
+        "total": 24,
+        "all_checks_passed": true,
+        "functional": {
+          "passed": 22,
+          "total": 22
+        },
+        "deliverable": {
+          "passed": 2,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1405,
+          "first_output_ms": 13587,
+          "first_non_thinking_ms": 14151,
+          "backend": {
+            "eval_count": 50,
+            "eval_duration": 1086204000,
+            "load_duration": 10451574150,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1075168000,
+            "total_duration": 12622489046
+          },
+          "ended_ms": 14152,
+          "generated_tokens": 50,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12182,
+          "first_non_thinking_latency_ms": 12746,
+          "generation_tokens_per_second": 46.03186878339612
+        },
+        "first_tool_latency_ms": 12747,
+        "reported_input_tokens_completed_calls": 225606,
+        "peak_reported_input_tokens_completed_calls": 18907,
+        "reported_uncached_prompt_tokens": 8328,
+        "backend_generation_tokens_per_second": 41.59711548101738,
+        "backend_prompt_seconds": 8.967055,
+        "backend_load_seconds": 10.565579451,
+        "backend_measured_calls": 21,
+        "completed_response_count": 21
+      },
+      "evidence_sha256": {
+        "run.jsonl": "51e6fec410a6f546fd3c3198a01636cade971ca3584769ec5cbc57e50d69755a",
+        "report.jsonl": "1245a6e9c90a62e97e22776fc367b20763bcf992d7b8282b60a2db2493096d1a",
+        "events.jsonl": "dcdf4c4005b1f86355122ca9099b8e8a9901c71050bc032a0827f8b2a02f6f4f",
+        "assessment.jsonl": "07f821b545d531d1203e77ee0603683b73554b1fdc00219e2f909b09593417b6",
+        "capture-index.json": "d527fd2561145c7392a5a16cedf289363832b6d49618fdd4c91e56242fb86f9c",
+        "workspace.tar": "a80b33c12a10c5df51308948fc481eb216f3c92af0039bc61877128427d65ca4"
+      },
+      "failed_cases": []
+    },
+    {
+      "label": "r3-dependency-planner-repair-ornith",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "dependency-planner-repair",
+      "model": "ornith",
+      "execution_recipe_id": "saved-c3e5e575ccf676d29334223b8001f309",
+      "definition_digest": "13775dceb35f96ca4edb32ce7ee239a6d30a2a7f438a45924ca74a86d4d3b487",
+      "status": "skipped",
+      "reason": "earlier_timeout_for_model"
+    },
+    {
+      "label": "r3-byte-range-repair-ornith",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "byte-range-repair",
+      "model": "ornith",
+      "execution_recipe_id": "saved-a75776bfdbd5715f3209316c2a2eb3e8",
+      "definition_digest": "236be314bace934b37d81155a55a8f0864261877dc1a499a4db56e5f3a9aed7e",
+      "status": "skipped",
+      "reason": "earlier_timeout_for_model"
+    },
+    {
+      "label": "r3-byte-range-repair-qwen",
+      "round": 3,
+      "sampling_seed": 1044,
+      "task": "byte-range-repair",
+      "model": "qwen",
+      "execution_recipe_id": "saved-f56ccac7ae15e456e549f7a451f8b8c8",
+      "definition_digest": "d0af9670723a85c17fd97554276e29e675bd36e66bb2c0ccc0e77bc2fc288805",
+      "status": "completed",
+      "run_id": "20261106T235715Z-acb19388",
+      "cli_exit_code": 0,
+      "outcome": {
+        "event_sequence": 266,
+        "reason": "agent_finished"
+      },
+      "cleanup": {
+        "status": "complete"
+      },
+      "usage": {
+        "budget_charged_tokens": 8608,
+        "known_generated_tokens": 8608,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      },
+      "report": {
+        "calls": {
+          "compaction": null,
+          "dropped": 0,
+          "handoff": null,
+          "never_dispatched": null,
+          "open": null,
+          "retained": null,
+          "unknown_usage": null,
+          "unrequested": null,
+          "work": {
+            "calls": 15,
+            "known_calls": 15,
+            "known_ms": 221684,
+            "known_tokens": 8608,
+            "longest_ms": 65036,
+            "median_ms": 6224,
+            "median_of": null,
+            "reserved_tokens": 0,
+            "tokens_per_second": 38.830046372313745,
+            "unknown_calls": 0,
+            "unknown_ms": 0
+          }
+        },
+        "compactions": {
+          "applied": 0,
+          "applied_at_ms": [],
+          "deferred": 0,
+          "first_applied_sequence": null,
+          "more_applied": 0,
+          "planned": 0,
+          "rejected": 0
+        },
+        "complete": true,
+        "ended": true,
+        "errors": null,
+        "sessions": null,
+        "time": {
+          "compaction_ms": 0,
+          "elapsed_ms": 226828,
+          "handoff_ms": 0,
+          "model_ms": 221684,
+          "other_ms": 5144,
+          "retained_ms": 0,
+          "work_ms": 221684
+        },
+        "tools": {
+          "calls": 14,
+          "exited_non_zero": 0,
+          "failed": 0,
+          "failures": [],
+          "names": [
+            {
+              "calls": 7,
+              "name": "exec"
+            },
+            {
+              "calls": 4,
+              "name": "write_file"
+            },
+            {
+              "calls": 3,
+              "name": "read_file"
+            }
+          ],
+          "other": 0,
+          "other_failures": 0,
+          "timed_out": 0
+        },
+        "workspace": {
+          "bytes": 30720,
+          "sequence": 266
+        }
+      },
+      "assessment": {
+        "status": "complete",
+        "passed": 37,
+        "total": 37,
+        "all_checks_passed": true,
+        "functional": {
+          "passed": 35,
+          "total": 35
+        },
+        "deliverable": {
+          "passed": 2,
+          "total": 2
+        }
+      },
+      "metrics": {
+        "unread_external_observations": [],
+        "length_limited_calls": [],
+        "first_work_request": {
+          "call": 1,
+          "purpose": "work",
+          "started_ms": 1228,
+          "first_output_ms": 13395,
+          "first_non_thinking_ms": 13945,
+          "backend": {
+            "eval_count": 50,
+            "eval_duration": 1072398999,
+            "load_duration": 10441218560,
+            "prompt_eval_count": 1470,
+            "prompt_eval_cached_count": 0,
+            "prompt_eval_duration": 1072656999,
+            "total_duration": 12595965112
+          },
+          "ended_ms": 13945,
+          "generated_tokens": 50,
+          "prompt_tokens": 1470,
+          "finish_reason": "stop",
+          "first_output_latency_ms": 12167,
+          "first_non_thinking_latency_ms": 12717,
+          "generation_tokens_per_second": 46.62443740307893
+        },
+        "first_tool_latency_ms": 12717,
+        "reported_input_tokens_completed_calls": 97271,
+        "peak_reported_input_tokens_completed_calls": 14414,
+        "reported_uncached_prompt_tokens": 8420,
+        "backend_generation_tokens_per_second": 42.66893367229428,
+        "backend_prompt_seconds": 8.149668999,
+        "backend_load_seconds": 10.48819055,
+        "backend_measured_calls": 15,
+        "completed_response_count": 15
+      },
+      "evidence_sha256": {
+        "run.jsonl": "ee59395ee232fd6caac50ffc785b1f08ca52370c64309863dec1f6cabee35ab8",
+        "report.jsonl": "fa33fd0e5f43a473469bbb1e777d63b47f03e32af80c0a9a8fa6ff505c64567b",
+        "events.jsonl": "d7ae1997e1eee6176d9362854e927c7b9ef8d31b0e6c69c77ae22232351998e4",
+        "assessment.jsonl": "2af76bdefb25653939a23765503f4e3fa8aabb47b8ff5826ec389035b093e141",
+        "capture-index.json": "d02cf4939681ef067c5dd635eedb4617141cf31af0c580bcae410bd30472397a",
+        "workspace.tar": "78e17bd8519bf800043681f034a2dcebbd0457f71551340efa80918cc9c119a3"
+      },
+      "failed_cases": []
+    }
+  ],
+  "accounting_notes": [
+    "New native continuous-harness runs, separate from earlier Codex trials.",
+    "Generation counts include reasoning and tool output, not just visible prose.",
+    "Generation rates sum completed backend eval_count / eval_duration; partial unknown usage remains unknown.",
+    "Backend prompt/load duration sums cover completed replies with metrics; missing interrupted-call metrics are not measured zeros.",
+    "Input totals repeat context; peak input is reported separately. Uncached totals require the backend cached-count field.",
+    "First-output/action latency comes from coalesced archive observations and includes cold model load.",
+    "Three rounds on three tasks are not a broad coding-quality benchmark."
+  ],
+  "schedule_finished_at": "2026-11-07T00:01:06.084917+00:00",
+  "evidence_root": "/home/data2/playtime/framework-q8-repeatability-20261106",
+  "service_root": "/home/data2/playtime/q8-1106",
+  "evidence_sha256": {
+    "plan.json": "af3d3e375f2f7452f274d652e87fbb1a2006e922dc672d869385f10f2d8775e8",
+    "study-start.json": "1ad089ff22eb90feeaf07bbbebc522786ff4c7c9809235966512c28f62ac5abc",
+    "study-resume.json": "10d20fdb8cefd71862f5bb1f412920a9e9b1afa60124f35d9a3d1376cbfd6c1c",
+    "completed-schedule.json": "6a31419a2d669b145252f2bf2697ba44ef9025e3772a3ccf90b582b279889491",
+    "run-study-original.py": "d1838f09c14cd81730d422a7f3ee09f1a01e7b90680b8e0a427eaaf695af0baa",
+    "run-study.py": "a7885cf34be9bcdd10f8a504191bef068067c8fbcfaaa1bc97a5cd334a51f284",
+    "resume-decision.json": "336b6ec749d16d6b32717d752577bf67dd17b2c4d846ef22d1e3289c5f0ec145",
+    "summarize-study.py": "d93e2068098b9835ea562146d50c9c0af6230a9aa2de00dda99f182593eeab1c",
+    "finalize-docs.py": "427f6ac1a2ea1a4108570330e60960bad7fa559aa6a812be82fc41fe6611a452",
+    "final-integrity.json": "49497cb8a655240d7db15b22122851978cb476372d995a10552d44c48f289c53",
+    "final-framework.json": "250414c2bc4f23dbac353ffd9775a524845fbdaadfe50f460d33ce798137c856"
+  },
+  "final_framework_state": {
+    "time": "2026-11-07T00:02:23.511462+00:00",
+    "version": {
+      "version": "0.40.14"
+    },
+    "loaded": {
+      "models": []
+    },
+    "all_runs_cleanup_complete": true
+  }
+}

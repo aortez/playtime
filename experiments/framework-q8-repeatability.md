@@ -80,6 +80,108 @@ are observer timings, not precise provider-side token timestamps. Retain missing
 or incomplete timing as unknown. Report repeated-input tokens separately from
 uncached prompt work and peak context.
 
-Results will be appended after the frozen schedule has completed or stopped
-under its declared policy. Three rounds can expose variability on these tasks;
-they do not establish a general coding-quality ranking.
+## Results
+
+[Machine-readable results](framework-q8-repeatability-results-v1.json) retain
+run IDs, settings references, outcomes, functional/deliverable counts, failure
+details, timing and evidence hashes.
+
+The schedule ended at 2026-11-07T00:01:06.084917+00:00. Of 18 planned attempts,
+11 ran and seven were skipped after Ornith's first timeout. 9 attempts completed
+normally; 5 completed with every check passing. These counts include a wall
+timeout and a separate tool-batch-cap stop as unsuccessful attempts, even where
+partial files passed checks.
+
+| Model | Task | Round | Outcome | Checks | Time (m:ss) | Known output tokens |
+| --- | --- | ---: | --- | ---: | ---: | ---: |
+| Ornith Q8 | Ledger | 1 | Completed | 10/10 | 9:10 | 21,404 |
+| Qwen3.6 Q8 | Ledger | 1 | Completed | 9/10 | 4:04 | 9,278 |
+| Qwen3.6 Q8 | Planner | 1 | Completed | 23/24 | 7:18 | 16,575 |
+| Ornith Q8 | Planner | 1 | Wall timeout | 23/24 | 15:01 | 36,732 |
+| Qwen3.6 Q8 | Byte range | 1 | Completed | 37/37 | 5:42 | 12,871 |
+| Qwen3.6 Q8 | Ledger | 2 | Completed | 9/10 | 4:49 | 10,857 |
+| Qwen3.6 Q8 | Planner | 2 | Completed | 24/24 | 5:06 | 11,832 |
+| Qwen3.6 Q8 | Byte range | 2 | Completed | 25/37 | 6:42 | 15,287 |
+| Qwen3.6 Q8 | Ledger | 3 | Tool-batch cap | 8/10 | 1:40 | 3,556 |
+| Qwen3.6 Q8 | Planner | 3 | Completed | 24/24 | 5:40 | 12,945 |
+| Qwen3.6 Q8 | Byte range | 3 | Completed | 37/37 | 3:47 | 8,608 |
+
+Ornith's planner files passed all 22 functional cases and produced the sample
+plan, but the README was missing and the run had not finished at the 15-minute
+deadline. Calls four and six each exhausted the 8,192-token response allowance,
+mostly in reasoning, without a tool call. The remaining seven Ornith attempts
+were skipped under the frozen policy, so this study does not establish Ornith
+repeatability.
+
+Qwen's third ledger attempt returned nine valid `write_file` calls creating
+distinct test fixtures in one response. The existing controller limit is eight;
+it stopped before dispatching that batch. This is a controller compatibility
+outcome, and its partial 8/10 score is not a completed repair. Scheduling
+stopped for inspection, then resumed only the two unstarted Qwen tasks after
+cleanup and idle state were confirmed. The original failed attempt, controller
+limit, prompts, settings and frozen worker were retained; no model attempt was
+retried.
+
+Qwen's ledger invalid-row case failed in all three rounds. The first planner
+round failed `invalid_item`. Its second byte-range repair returned `[0, 9]`
+instead of `[[0, 9]]` for full-file responses, causing 12 case failures. Full
+per-attempt failures are retained in the JSON rather than collapsed into one
+accuracy percentage.
+
+## Timing and interpretation
+
+| Model | Measured generation rate across attempts | Median cold first output | Median cold first tool action |
+| --- | ---: | ---: | ---: |
+| Ornith Q8 | 42.2–43.0 tokens/s | 12.2 s | 12.8 s |
+| Qwen3.6 Q8 | 40.7–44.2 tokens/s | 12.2 s | 12.7 s |
+
+Generation rates include reasoning and tool-call tokens and use completed
+backend generation counts/durations. Cold model load is included in
+first-output/action latency; the operating system file cache was not cleared.
+Archive chunks are coalesced, so these are observer timings rather than exact
+first-token timestamps.
+
+The first ledger pair illustrates the difference between throughput and task
+speed. Both averaged about 42.2 generation tokens/s, but Ornith generated 21,404
+tokens and took 9:10, while Qwen generated 9,278 and took 4:04. Ornith spent
+about 8:27 generating, 19 seconds processing prompts and 11 seconds loading;
+Qwen spent about 3:40 generating, 6 seconds processing prompts and 10 seconds
+loading.
+
+The attempts used 69.0 minutes of measured run time in total. Schedule wall time
+was 101.1 minutes, including grading, unloading/loading boundaries and the
+operator investigation pause. Completed responses account for 159,945 generated
+tokens; 1 interrupted request has unknown usage, with its 8,192-token
+reservation kept separate from measured generation.
+
+The largest reported completed prompt was 22,609 tokens despite the
+131,072-token allocation. These tasks do not test full-window recall or
+establish long-context quality. Input totals repeat context across requests;
+peak input and backend-reported uncached prompt tokens are recorded separately.
+
+Both models meet the desired roughly 30–40 tokens/s generation range on these
+task contexts, but that alone does not establish dependable autonomous coding.
+The observed task failures, timeout and controller interaction matter more than
+the similar raw speed. Keep this native-harness study separate from the earlier
+Codex results and treat the incomplete Ornith schedule as a limitation of the
+comparison.
+
+## Validation and retained evidence
+
+- Formatting and workspace Clippy passed; workspace tests had 687 passes and 35 ignored tests.
+- The frozen Python suite passed (101 tests, six skipped).
+- Nine offline and ten Docker coding-checker controls passed; all five seed bundles validated.
+- Docker scripted and original-model live run-and-view gates passed. Bird was restored to Ollama 0.40.14 afterward.
+- All six default/on/off native compatibility probes passed before task inference.
+- Every accepted attempt has a complete cleanup receipt and retained workspace, independent assessment, event history and report. Assessment restored executable bits and directories from the verified capture index.
+
+After collection, the study model was unloaded and the isolated daemon stopped.
+Framework remained on Ollama 0.40.14 with no loaded models. The service history
+and all evidence remain available.
+
+Raw evidence, orchestration, the original stop and resume decision remain under
+`/home/data2/playtime/framework-q8-repeatability-20261106`. The isolated service
+history is `/home/data2/playtime/q8-1106`. The worker was built from clean
+commit `a3d373f147d29b99f193ebe9af54996339106cd3`; result documentation was
+added afterward. No weights, runtime versions, model settings, assessment
+identities or task inputs were changed during the comparison.
