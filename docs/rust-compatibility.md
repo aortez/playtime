@@ -1,5 +1,23 @@
 # Rust compatibility and goldens
 
+## Bounded tool-batch recovery and README assessments (2026-11-06)
+
+Continuous work now rejects an oversized tool batch without dispatching any
+call, records `model_error` kind `tool_batch_limit`, and supplies a notice naming
+the allowed count. The existing eight-call, aggregate-output and five-retry
+bounds remain unchanged. Batch and parse failures share a consecutive streak;
+the sixth batch failure retains `too_many_tools_in_one_response`. Generation
+settles once as known usage, and `failure_history_v3` can retain the additive
+`model_tool_batch_error` record kind. Mixed/invalid finish declarations, server
+overruns and memento behavior retain their previous stop semantics.
+`oversized-tool-batch-v1.json` pins the new notice, failure kind and accounting.
+
+Coding assessment revision 3 requires a regular README file for planner and
+byte-range tasks; ledger already required one. Revision 2 catalog/checker bytes
+and historical scores remain unchanged, and `--assessment-revision 2` selects
+the old rules explicitly. New assessments default to revision 3 and record the
+selected checker/catalog and current helper hashes.
+
 ## Framework Q8 coding models and recipes (2026-11-06)
 
 Two additional compiled registrations bind the exact 128K coding aliases for

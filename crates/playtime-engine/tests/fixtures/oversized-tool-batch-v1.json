@@ -1,0 +1,14 @@
+{
+  "notice": {
+    "role": "user",
+    "content": "The controller rejected your last tool batch. None of that response's tools ran. The response contained 9 tool calls. Retry with at most 8 tool calls per response."
+  },
+  "error": {
+    "kind": "tool_batch_limit",
+    "message": "The response contained 9 tool calls. Retry with at most 8 tool calls per response."
+  },
+  "request_usage": {"status": "known", "generated_tokens": 10},
+  "reason": "agent_finished",
+  "known_generated_tokens": 30,
+  "unknown_requests": 0
+}

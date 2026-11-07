@@ -172,7 +172,13 @@ then stop at its context limit with nothing to recover.
 
 The aggregate retained result allowance is the existing `output_bytes` setting
 for this policy, divided among a response's tool calls. Each needs at least 512
-bytes; an oversized batch stops the run before effects. Actual fitted message
+bytes. A batch exceeding eight calls or the aggregate result allowance runs
+none of its calls and retries with the permitted count in a controller notice.
+It shares the five-consecutive-retry bound with parser failures; the sixth
+batch-limit failure stops with `too_many_tools_in_one_response`. Completed
+generation is charged once as known usage. The full rejected response stays
+in observations, while the retry receives only the notice, without unpaired
+tool calls. Actual fitted message
 sizes are checked by the runtime independently of policy; full bounded results
 and explicit shortening notices remain in observations. Memento keeps its
 existing result-fitting semantics and wording.
@@ -213,7 +219,9 @@ excerpts, exit/timeout status and diagnostic excerpts. No command text is parsed
 to infer an artifact, task, cause or repair. These sequence numbers identify
 controller observations, not archive records or writer receipts.
 
-A recorded model parse failure contributes a separate `model_parse_error` fact:
+A recorded model parse failure contributes a separate `model_parse_error` fact;
+a rejected oversized batch contributes `model_tool_batch_error` with the same
+bounded fields and known usage:
 failed request ID/purpose, the `model_error` controller sequence, elapsed time,
 bounded parser diagnostic, recovery decision and either measured generated tokens
 or an unknown-usage reservation. Measured counts require the validated terminal

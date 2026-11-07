@@ -19,6 +19,8 @@ MAX_REPORT = 1024 * 1024
 MAX_FILES = 4096
 MAX_WORKSPACE = 48 * 1024 * 1024
 OUTCOMES = ("unknown", "completed", "timed_out", "cancelled", "failed", "skipped")
+ASSESSMENT_REVISIONS = (2, 3)
+CURRENT_REVISION = 3
 
 
 class AssessmentInterrupted(Exception):
@@ -49,17 +51,28 @@ def bounded_read(path, limit):
     return data
 
 
-def load_task(task_id):
-    catalog = json.loads(bounded_read(SUPPORT / "catalog.json", MAX_REPORT))
+def catalog_path(revision):
+    if revision not in ASSESSMENT_REVISIONS:
+        raise ValueError("unsupported assessment revision")
+    return SUPPORT / ("catalog.json" if revision == 2 else "catalog-v3.json")
+
+
+def load_task(task_id, revision=CURRENT_REVISION):
+    catalog = json.loads(bounded_read(catalog_path(revision), MAX_REPORT))
     if catalog["schema_version"] != 1 or task_id not in catalog["tasks"]:
         raise ValueError("unknown coding-repair task")
     return catalog["tasks"][task_id]
 
 
-def checker_identity(task_id):
-    paths = [SUPPORT / name for name in
-             ("catalog.json", "driver.py", "assessment_support.py")]
-    paths += [ROOT / "assessments" / task_id / "check.py", Path(__file__).resolve()]
+def checker_sources(task_id, revision):
+    load_task(task_id, revision)
+    name = "check-v3.py" if revision == 3 and task_id != "ledger-repair-v1" else "check.py"
+    return [SUPPORT / "driver.py", SUPPORT / "assessment_support.py",
+            ROOT / "assessments" / task_id / name]
+
+
+def checker_identity(task_id, revision=CURRENT_REVISION):
+    paths = [catalog_path(revision), *checker_sources(task_id, revision), Path(__file__).resolve()]
     files = {path.relative_to(ROOT).as_posix(): digest(path.read_bytes()) for path in paths}
     return {"files": files, "sha256": digest(json.dumps(files, sort_keys=True).encode())}
 
@@ -115,16 +128,15 @@ def freeze_candidate(source, destination):
             "sha256": digest(json.dumps(identity, sort_keys=True).encode())}
 
 
-def freeze_checker(task_id, destination, identity):
+def freeze_checker(task_id, destination, identity, revision=CURRENT_REVISION):
     destination.mkdir(mode=0o755)
     destination.chmod(0o755)
-    sources = [SUPPORT / name for name in ("driver.py", "assessment_support.py")]
-    sources.append(ROOT / "assessments" / task_id / "check.py")
-    for source in sources:
+    for source, name in zip(checker_sources(task_id, revision),
+                            ("driver.py", "assessment_support.py", "check.py")):
         data = source.read_bytes()
         if digest(data) != identity["files"][source.relative_to(ROOT).as_posix()]:
             raise ValueError("checker changed during preparation")
-        target = destination / source.name
+        target = destination / name
         target.write_bytes(data)
         target.chmod(0o644)
 
@@ -163,9 +175,10 @@ def command(args, timeout=15, *, start_new_session=False):
                           start_new_session=start_new_session)
 
 
-def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30, cancellation=None):
+def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30, cancellation=None,
+           assessment_revision=CURRENT_REVISION):
     cancellation = cancellation or Cancellation()
-    task = load_task(task_id)
+    task = load_task(task_id, assessment_revision)
     lock_path = ROOT / "environments/general.lock.json"
     lock_bytes = lock_path.read_bytes()
     image = json.loads(lock_bytes)["image_id"]
@@ -174,7 +187,7 @@ def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30, 
         "execution": {"outcome": outcome, "metadata": metadata or {},
                       "provenance": "caller-supplied; not inferred from checks"},
         "assessment": {"status": "not_run" if outcome == "skipped" else "incomplete"},
-        "checker": checker_identity(task_id), "candidate": None,
+        "checker": checker_identity(task_id, assessment_revision), "candidate": None,
         "environment": {"image_id": image, "lock_sha256": digest(lock_bytes),
                         "assessment_timeout_seconds": timeout}}
     if outcome == "skipped":
@@ -189,7 +202,7 @@ def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30, 
                 snapshot = temp / "candidate"
                 report["candidate"] = freeze_candidate(candidate, snapshot)
                 checker_snapshot = temp / "checker"
-                freeze_checker(task_id, checker_snapshot, report["checker"])
+                freeze_checker(task_id, checker_snapshot, report["checker"], assessment_revision)
                 command(["docker", "image", "inspect", image])
                 args = ["docker", "create", "--name", name, "--pull", "never",
                         "--label", "playtime.assessment=coding-repair-v1",
@@ -245,10 +258,13 @@ def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30, 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    catalog = json.loads((SUPPORT / "catalog.json").read_text())
+    catalog = json.loads(catalog_path(CURRENT_REVISION).read_text())
     parser.add_argument("task", choices=sorted(catalog["tasks"]))
     parser.add_argument("candidate", nargs="?", type=Path)
     parser.add_argument("--outcome", choices=OUTCOMES, default="unknown")
+    parser.add_argument("--assessment-revision", type=int, choices=ASSESSMENT_REVISIONS,
+                        default=CURRENT_REVISION,
+                        help="checker semantics: 3 requires a regular README file; 2 retains historical checks")
     parser.add_argument("--metadata", type=Path, help="JSON with harness/version, model/settings, run id and timing")
     parser.add_argument("--assessment-timeout", type=float, default=30,
                         help="checker container deadline in seconds (1–120); not the model task budget")
@@ -268,7 +284,8 @@ def main():
     try:
         report, exit_code = assess(args.task, args.candidate, outcome=args.outcome,
                                    metadata=metadata, timeout=args.assessment_timeout,
-                                   cancellation=cancellation)
+                                   cancellation=cancellation,
+                                   assessment_revision=args.assessment_revision)
         print(json.dumps(report, indent=2))
         return exit_code
     finally:

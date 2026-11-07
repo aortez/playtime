@@ -1516,8 +1516,8 @@ fn retained_tool_exchange_stays_paired_and_older_tools_enter_the_summary_togethe
 }
 
 #[test]
-fn impossible_preserved_input_budget_and_tool_batches_stop_without_maintenance() {
-    for case in 0..3 {
+fn impossible_preserved_input_and_budget_stop_without_maintenance() {
+    for case in 0..2 {
         let mut config = config();
         if case == 1 {
             config.parameters.limits.generated_tokens = 700.try_into().unwrap();
@@ -1527,11 +1527,13 @@ fn impossible_preserved_input_budget_and_tool_batches_stop_without_maintenance()
             0 => run.response(json!({"role":"assistant","content":"huge".repeat(4000)})),
             1 => {
                 for _ in 0..10 {
-                    if run.controller.terminal_decision().is_some() {break;}
+                    if run.controller.terminal_decision().is_some() {
+                        break;
+                    }
                     run.response(json!({"role":"assistant","content":"growing".repeat(450)}));
                 }
             }
-            _ => run.response(json!({"role":"assistant","tool_calls":(0..5).map(|_|call("exec",json!({"command":"never execute"}))).collect::<Vec<_>>()})),
+            _ => unreachable!(),
         }
         let result = run.finalize();
         assert_eq!(
@@ -1549,6 +1551,185 @@ fn impossible_preserved_input_budget_and_tool_batches_stop_without_maintenance()
                 .iter()
                 .any(|e| matches!(e.kind, EffectKind::Tool(_)))
         );
+    }
+}
+
+fn tool_batch(count: usize) -> Value {
+    json!({"role":"assistant","tool_calls":(0..count)
+        .map(|n| call("exec",json!({"command":format!("fixture {n}")})))
+        .collect::<Vec<_>>()})
+}
+
+#[test]
+fn oversized_batches_retry_without_dispatch_or_double_charging() {
+    for (output_bytes, limit) in [(2048, 4), (16384, 8)] {
+        let mut config = config();
+        config.parameters.limits.output_bytes = output_bytes.try_into().unwrap();
+        // Leave room for the larger ordinary work-result reserve.
+        config.parameters.limits.context_tokens = 65536.try_into().unwrap();
+        let mut run = Run::new(config);
+        let root = run.request().messages.clone();
+        let rejected = tool_batch(limit + 1);
+        run.response(rejected.clone());
+        let retry = run.request();
+        assert_eq!(retry.messages[..root.len()], root);
+        assert_eq!(retry.messages.len(), root.len() + 1);
+        let notice = retry.messages.last().unwrap().clone();
+        assert!(!run.records.iter().any(|r| r.kind == "tool_request"));
+        assert!(
+            run.records
+                .iter()
+                .any(|r| r.kind == "model_response" && r.data["response"]["message"] == rejected)
+        );
+        let error = run
+            .records
+            .iter()
+            .find(|r| r.kind == "model_error")
+            .unwrap()
+            .data
+            .clone();
+        assert_eq!(
+            error["request_usage"],
+            json!({"status":"known","generated_tokens":10})
+        );
+        assert_eq!(error["token_budget_charge"], 10);
+        assert_eq!(error["consecutive_errors"], 1);
+        assert_eq!(error["recovery_allowed"], true);
+        assert_eq!(error["tool_parse_errors"], 0);
+        // A corrected batch at the exact bound executes normally.
+        run.response(tool_batch(limit));
+        for _ in 0..limit {
+            run.complete(Outcome::Tool(
+                json!({"exit_code":0,"stdout":"ok","stderr":"","timed_out":false}),
+            ));
+        }
+        run.response(finish(json!("Checked the corrected batch.")));
+        let result = run.finalize();
+        assert_eq!(result.reason, StopReason::AgentFinished);
+        assert_eq!(result.usage.known_generated_tokens, 30);
+        assert_eq!(result.usage.unknown_requests, 0);
+        assert_eq!(
+            run.records
+                .iter()
+                .filter(|r| r.kind == "request_settled")
+                .count(),
+            3
+        );
+        assert_eq!(
+            run.dispatches
+                .iter()
+                .filter(|e| matches!(e.kind, EffectKind::Tool(_)))
+                .count(),
+            limit
+        );
+        if limit == 8 {
+            let actual = json!({"notice":notice,"error":error["error"],
+                "request_usage":error["request_usage"],"reason":result.reason,
+                "known_generated_tokens":result.usage.known_generated_tokens,
+                "unknown_requests":result.usage.unknown_requests});
+            let golden: Value =
+                serde_json::from_str(include_str!("fixtures/oversized-tool-batch-v1.json"))
+                    .unwrap();
+            assert_eq!(actual, golden);
+        }
+    }
+}
+
+#[test]
+fn batch_limits_and_parse_failures_share_the_consecutive_retry_bound() {
+    for offset in 0..2 {
+        let mut run = Run::new(config());
+        for n in 0..=compaction::TOOL_PARSE_RETRIES {
+            if (n + offset) % 2 == 0 {
+                run.complete(parse_failure());
+            } else {
+                run.response(tool_batch(5));
+            }
+            if n < compaction::TOOL_PARSE_RETRIES {
+                assert_eq!(run.request().purpose, RequestPurpose::Work);
+            }
+        }
+        let result = run.finalize();
+        assert_eq!(
+            result.reason,
+            if offset == 0 {
+                StopReason::TooManyToolsInOneResponse
+            } else {
+                StopReason::ToolParseRetryLimit
+            }
+        );
+        assert_eq!(result.usage.known_generated_tokens, 30);
+        assert_eq!(result.usage.unknown_requests, 3);
+        assert_eq!(result.usage.unknown_reserved_tokens, 3 * 512);
+        let errors: Vec<_> = run
+            .records
+            .iter()
+            .filter(|r| r.kind == "model_error")
+            .collect();
+        assert_eq!(errors.len(), 6);
+        for (n, error) in errors.iter().enumerate() {
+            assert_eq!(error.data["consecutive_errors"], n + 1);
+            assert_eq!(error.data["recovery_allowed"], n < 5);
+        }
+        assert!(!run.records.iter().any(|r| r.kind == "tool_request"));
+    }
+}
+
+#[test]
+fn accepted_work_resets_batch_retries_and_compaction_retains_the_failure() {
+    let mut run = Run::new(config());
+    for _ in 0..2 {
+        for _ in 0..compaction::TOOL_PARSE_RETRIES {
+            run.response(tool_batch(5));
+        }
+        run.response(json!({"role":"assistant","content":"I will split the batch."}));
+    }
+    run.until_summary();
+    run.response(json!({"role":"assistant","content":"Continue with smaller batches."}));
+    assert!(run.request().messages.iter().any(|m| {
+        m["content"]
+            .as_str()
+            .is_some_and(|text| text.contains("model_tool_batch_error"))
+    }));
+    run.response(finish(json!("Done.")));
+    assert_eq!(run.finalize().reason, StopReason::AgentFinished);
+}
+
+#[test]
+fn oversized_batches_do_not_recover_invalid_completion_or_server_overruns() {
+    for case in 0..2 {
+        let mut run = Run::new(config());
+        let mut response = tool_batch(9);
+        if case == 0 {
+            response["tool_calls"][0] = call(
+                "finish_run",
+                json!({"summary":"Do not accept a mixed finish."}),
+            );
+        }
+        run.complete(Outcome::ModelCompleted {
+            response: ModelResponse {
+                done: true,
+                generated_tokens: Some(if case == 0 { 10 } else { 513 }),
+                prompt_tokens: None,
+                message: response,
+            },
+            finish_reason: "stop".into(),
+        });
+        let result = run.finalize();
+        assert_eq!(
+            result.reason,
+            if case == 0 {
+                StopReason::InvalidCompletion
+            } else {
+                StopReason::TokenLimitExceededByServer
+            }
+        );
+        assert!(
+            !run.records
+                .iter()
+                .any(|r| r.kind == "model_error" || r.kind == "tool_request")
+        );
+        assert_eq!(result.usage.unknown_requests, 0);
     }
 }
 
