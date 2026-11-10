@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "source_experiment": "playtime-diversity-v1",
+  "task_revision": 1,
+  "assessment_revision": 5,
+  "source": {
+    "url": "https://www.reddit.com/r/LocalLLM/comments/1xnikyz/please_test_your_models_before_spending_money_on/",
+    "question": 24
+  },
+  "original_seed_files": {
+    "TASK.md": "cecda405f56a29d7c330dc46f85071247ff7c0fe859e4492e3519b465b0adba3",
+    "query.sql": "64a26e298d2f5c1fac9ff576b3fe30ae7c29e9e81a755a2a4d936056b64a63af",
+    "schema.sql": "1f2d0269512be183b441e0a92db72e8bfb3beed6a52b507b2682035521e06474"
+  },
+  "reference_files": {
+    "README.md": "41de7da511d3dd3292af8ad823e637ca9999da3b976d1879acb97fe5f23f5c07",
+    "query.sql": "5c387a5e19e8d616319845283a33848c75b08808e7ee68fb7002a5b937f16700"
+  },
+  "initial_checker_sha256": "f5dd4ac9536754754f064cf84e9b756b8f2beb5e4c646520196736201aa8e06e",
+  "controls": {
+    "reference_passed": 16,
+    "starter_passed": 4,
+    "total": 16,
+    "deliverable_total": 1
+  },
+  "adaptation": "Original Playtime implementation adapted from the cited question. API, bounds and output contract are pinned in TASK.md. Automated scores cover executable behavior; proofs and explanations require separate review."
+}

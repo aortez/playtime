@@ -78,9 +78,26 @@ can add saved bundle revisions and selection using the existing recipe model.
   bounded buffering and terminal error states; 21 checks, four-minute recipe.
 - **shortest-walk-v1:** implement exact shortest walks with target-relevant
   negative cycles; 17 checks, four-minute recipe.
+- **sql-tombstones-v1:** select the correct live resource versions with a SQL
+  window query; 16 checks, four-minute recipe (Reddit Q24).
+- **delta-debugging-v1:** minimize failures under non-monotone predicates while
+  preserving order and duplicate occurrences; 14 checks, four-minute recipe (Q33).
+- **stable-quadratic-v1:** compute real quadratic roots without losing small
+  roots to cancellation; 18 checks, four-minute recipe (Q35).
+- **crash-journal-v1:** recover interleaved transactions from a byte journal with
+  exact crash/corruption boundaries; 21 checks, four-minute recipe.
+- **linearizable-kv-v1:** find a globally consistent ordering of overlapping
+  reads, writes and atomic multi-key CAS operations; 22 checks under assessment
+  revision 7 and later, four-minute recipe.
+- **context-policy-edit-v1:** apply dispersed approved rules from a generated
+  long context while preserving existing behavior; 13 checks. The external
+  Codex context probe supplies its versioned archive separately from the seeds.
 
-The six coding bundles preserve the November 2026 Ornith/Qwen trial's repair
-inputs and the Bird screen's three Reddit-derived problems. Playtime is their
+The twelve coding bundles include the November 2026 Ornith/Qwen trial's repair
+inputs, the Bird screen's three Reddit-derived problems, and three later
+adaptations adding SQL, non-monotone minimization and numerical stability, plus
+two original compound-state tasks whose difficulty is not yet calibrated and
+a long-context policy edit. Playtime is their
 canonical catalog; notes retains historical copies and results. Their
 [assessment guide](../assessments/coding-repair-v1/README.md)
 explains recipe use, the reusable Docker checker, reference/starter controls,

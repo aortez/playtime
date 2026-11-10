@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "delta-debugging-v1",
+  "name": "Delta debugging",
+  "description": "Non-monotone minimization, order, duplicate occurrences and bounded predicate calls.",
+  "revision": 1,
+  "files": "seeds/delta-debugging-v1",
+  "provenance": "Adapted from Reddit Brutal Model Test Q33; original task, reference and independent grader authored for Playtime. See assessments/delta-debugging-v1/provenance.json.",
+  "assessment": "assessments/delta-debugging-v1"
+}

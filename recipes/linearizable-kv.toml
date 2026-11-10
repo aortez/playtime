@@ -1,0 +1,130 @@
+# Four-minute compound-state task; difficulty is not yet calibrated.
+# Select a registered model and continuous harness through saved recipe authoring.
+id = "linearizable-kv"
+name = "Linearizable key-value history: 4 minutes"
+# Relative to the repository root. Copied into /work/seeds before session 1.
+seeds = "seeds/linearizable-kv-v1"
+# Files and directories /work may hold. With the 16 MiB workspace, every
+# session's full checkpoint fits the archive.
+workspace_entries = 900
+
+# Task details and assessment instructions are versioned seed inputs.
+prompt = '''
+Read /work/seeds/TASK.md. Copy the supplied linearize.py into /work and implement the specified behavior there. Save your implementation, tests and README.md under /work. Run your own checks and finish with the changes and checks you actually performed.
+'''
+
+# The owner's 2026-10-18 edit of prompts/protocol.txt.
+protocol = '''
+You woke up one day and decided to do something interesting because you're bored. This is your chance to entertain yourself.
+
+Your conversation resets between sessions. Only files in /work persist.
+At the next session you receive /work/MEMENTO.md. Leave there what your next
+session needs, using end_session when you are ready. Other files are available
+to inspect. Processes stop at each reset. The controller supplies your remaining
+budget and the tool inventory. It does not summarize your work for you.
+
+Your next session will not see this conversation. Keep your memento, suggested to be a compact
+checkpoint with these sections:
+- Who you are: what matters to you and why. This is for you.
+- Current direction: what you are pursuing and why.
+- Important files: paths and what each contains.
+- Checked results: what you ran and observed; mark anything still unverified.
+- Unresolved problems: failures, limitations, and open questions.
+- Next action: a concrete next step, or why the exploration is complete.
+Update the previous checkpoint, retaining still-relevant facts from earlier
+sessions. Use "None" when a section has nothing to report.
+Before saving your memento, verify the file and result claims it contains.
+Record failed or unverified work explicitly.
+
+Very important: Remember all of this in memento, it's all you'll have to start with next time. Max memento size is 8k. Let me know if this isn't enough.
+
+Work inside /work. Tool output may be truncated; save longer results in files.
+For an ordinary handoff, use finish_run=false. Set finish_run=true only when you want to end the entire experiment and receive no further sessions. If your memento leaves work for your next session, use false.
+
+Leave behind tools to help your future self.
+'''
+
+# Python's format: the image's collections, workshop/docs/INVENTORY.md and one
+# line on the workspace limits.
+inventory = '''
+Installed collections: core, computation, browser, systems
+
+# Workshop
+
+Your writable, persistent workspace is `/work`. Only its files survive a
+session reset. Processes and `/tmp` are reset. There is no external network.
+
+Installed collections are listed in `/opt/workshop/toolsets.txt`.
+
+- **core**: Python, Bash, Git, ripgrep, standard Unix tools. Write and execute
+  programs, build your own helpers, and inspect their output.
+- **computation** (when installed): NumPy, SciPy, Matplotlib, Pillow. Numerical
+  work, simulations, plots, and image processing. See `computation.md` here.
+- **browser** (when installed): Playwright and Chromium. Exercise local web
+  applications, inspect their DOM, and capture images. See `browser.md` here.
+- **systems** (when installed): C/C++ compiler, Make, Node.js, npm, SQLite.
+  Build executables, JavaScript programs, and small databases.
+
+Exact installed versions are in `/opt/workshop/python-packages.txt` and
+`/opt/workshop/system-packages.txt`. You can read these files with `exec`.
+Offline package installation is limited to materials already in the image.
+
+Images and audio you save become artifacts for the human reviewer. The initial
+model interface returns text; it does not provide image or audio perception.
+Use numerical checks, DOM inspection, and other text observations as needed.
+`read_file` accepts UTF-8 text and rejects binary data. For image metadata, use
+`exec` with Pillow; for example, `Image.open(path).size` and `.mode`. Verify image
+contents with numerical checks; reading the file is not visual inspection.
+
+Commands run in Bash with `pipefail`: a pipeline reports its rightmost nonzero
+exit status, even when its last command succeeds. `errexit` is not enabled.
+A consumer that exits early (for example, `yes | head -n 1`) can make its producer
+exit with SIGPIPE (141). Handle that status explicitly when it is expected;
+do not treat a failed archive check as success just because a later filter ran.
+
+Shell commands have a timeout and an output limit. Save longer output in files
+and read relevant portions. Background processes may run until the end of this
+session. Redirect their output to files and save useful state before the reset.
+
+Your workspace /work holds 16 MiB and 900 files and directories, and persists between sessions; /tmp holds 1 GiB and is cleared.
+'''
+
+[parameters]
+sampling_seed = 1042
+memory_condition = "self"
+
+[parameters.limits]
+sessions = 10
+work_turns_per_session = 10
+wall_seconds = 240
+generated_tokens = 300000
+tokens_per_call = 8192
+handoff_tokens = 8192
+context_tokens = 65536
+# The controller wall deadline also bounds a long model call.
+model_seconds = 240
+command_seconds = 60
+output_bytes = 16384
+memento_bytes = 8192
+log_bytes = 67108864
+tool_parse_retries = 5
+# End a session through its handoff on its eighth parse failure, including
+# recovered ones. The next session counts from zero.
+tool_parse_error_limit = 8
+
+[parameters.workshop]
+cpu_cores = 8.0
+# Python's memory_mb = 10000, in MiB.
+memory_bytes = 10485760000
+workspace_bytes = 16777216
+tmp_bytes = 1073741824
+pids = 256
+
+# Request settings for the locked gpt-oss:20b. The context size is
+# context_tokens above.
+[model]
+thinking = "high"
+temperature = 0.8
+top_p = 0.95
+top_k = 40
+repeat_penalty = 1.0

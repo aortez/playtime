@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "source_experiment": "playtime-hard-screen-v1",
+  "task_revision": 1,
+  "assessment_revision": 6,
+  "source": {
+    "kind": "original",
+    "description": "Original Playtime compound-state task; not a scored adaptation of the Reddit questions."
+  },
+  "original_seed_files": {
+    "TASK.md": "04a2b20ecfe88fd398bc8fbab795dbf5b6535a011f70056eccaca4ad6be1525a",
+    "journal.py": "9eb569982677f81ac7b3b28e6c14c91921b4c5b3cfc16618646e8819261eb35a",
+    "wire.py": "5052a4255293b9b086d5a3a540135fe5026ea9df310b4c1193969352fc463f01"
+  },
+  "reference_files": {
+    "README.md": "4aaa49f9da9575a34c5b3ebaba41a65a73db7bfdbcf69fca10e2fc8c159d6aae",
+    "journal.py": "172dfb3b7428d9a15464a6fad29dd79e53e5f826646ee8493c12404e4568b8d0",
+    "wire.py": "5052a4255293b9b086d5a3a540135fe5026ea9df310b4c1193969352fc463f01"
+  },
+  "initial_checker_sha256": "80c67c53e908d426d89b9574ed116eb09c4012f012e4595289dc42bd5292d479",
+  "controls": {
+    "reference_passed": 21,
+    "starter_passed": 1,
+    "total": 21,
+    "deliverable_total": 1
+  },
+  "difficulty_status": "Uncalibrated: reference correctness and fault detection do not establish a local/frontier difficulty gap."
+}

@@ -28,7 +28,10 @@ class CodingRepairContract(unittest.TestCase):
                         continue
                     task = checker.load_task(task_id, revision)
                     self.assertEqual(task["assessment_revision"], revision)
-                    self.assertEqual(task["cases"], CATALOG[task_id]["cases"])
+                    expected = CATALOG[task_id]["cases"]
+                    if task_id == "linearizable-kv-v1" and revision < 7:
+                        expected = [c for c in expected if c["id"] != "deferred_noop_write"]
+                    self.assertEqual(task["cases"], expected)
                     identity = checker.checker_identity(task_id, revision)
                     destination = Path(temporary) / str(revision)
                     checker.freeze_checker(task_id, destination, identity, revision)
@@ -40,27 +43,34 @@ class CodingRepairContract(unittest.TestCase):
                     self.assertNotEqual(checker.checker_identity(task_id, 2)["sha256"],
                                         checker.checker_identity(task_id, 3)["sha256"])
         with self.assertRaises(ValueError):
-            checker.load_task("ledger-repair-v1", 5)
+            checker.load_task("ledger-repair-v1", 9)
 
     def test_frozen_inputs_and_original_checkers_match_provenance(self):
         for task_id, task in CATALOG.items():
             with self.subTest(task=task_id):
                 folder = ROOT / "assessments" / task_id
                 provenance = json.loads((folder / "provenance.json").read_text())
-                original = (folder / "historical-check.py").read_bytes()
-                self.assertEqual(hashlib.sha256(original).hexdigest(), provenance["historical_checker_sha256"])
+                if "historical_checker_sha256" in provenance:
+                    original = (folder / "historical-check.py").read_bytes()
+                    self.assertEqual(hashlib.sha256(original).hexdigest(), provenance["historical_checker_sha256"])
+                else:
+                    self.assertEqual(checker.digest((folder / "check.py").read_bytes()),
+                                     provenance["initial_checker_sha256"])
                 for name, expected in provenance["original_seed_files"].items():
                     data = (ROOT / "seeds" / task_id / name).read_bytes()
                     self.assertEqual(hashlib.sha256(data).hexdigest(), expected)
                 for name, expected in provenance["reference_files"].items():
                     self.assertEqual(checker.digest((folder / "reference" / name).read_bytes()), expected)
-                self.assertEqual(len(task["cases"]), provenance["controls"]["total"])
+                original_cases = [c for c in task["cases"] if c["id"] != "deferred_noop_write"]
+                self.assertEqual(len(original_cases), provenance["controls"]["total"])
                 self.assertEqual(len({case["id"] for case in task["cases"]}), len(task["cases"]))
                 self.assertEqual(sum(case["kind"] == "deliverable" for case in task["cases"]),
                                  provenance["controls"].get("deliverable_total", 2))
 
-    def test_imported_recipes_keep_four_minute_budget_and_private_graders(self):
-        for task_id in ("async-singleflight-v1", "streaming-jsonlines-v1", "shortest-walk-v1"):
+    def test_screen_recipes_keep_four_minute_budget_and_private_graders(self):
+        for task_id in ("async-singleflight-v1", "streaming-jsonlines-v1", "shortest-walk-v1",
+                        "sql-tombstones-v1", "delta-debugging-v1", "stable-quadratic-v1",
+                        "crash-journal-v1", "linearizable-kv-v1"):
             with self.subTest(task=task_id):
                 recipe = tomllib.loads((ROOT / "recipes" / (task_id.removesuffix("-v1") + ".toml")).read_text())
                 self.assertEqual(recipe["seeds"], "seeds/" + task_id)

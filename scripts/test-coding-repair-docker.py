@@ -17,7 +17,10 @@ checker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checker)
 TASKS = {"ledger-repair-v1": "report.py", "dependency-planner-repair-v1": "planner.py",
          "byte-range-repair-v1": "ranges.py", "async-singleflight-v1": "singleflight.py",
-         "streaming-jsonlines-v1": "jsonlines.py", "shortest-walk-v1": "shortestwalk.py"}
+         "streaming-jsonlines-v1": "jsonlines.py", "shortest-walk-v1": "shortestwalk.py",
+         "sql-tombstones-v1": "query.sql", "delta-debugging-v1": "ddmin.py",
+         "stable-quadratic-v1": "quadratic.py", "crash-journal-v1": "journal.py",
+         "linearizable-kv-v1": "linearize.py", "context-policy-edit-v1": "shipping.py"}
 
 
 class CodingRepairDocker(unittest.TestCase):
@@ -37,7 +40,9 @@ class CodingRepairDocker(unittest.TestCase):
     def test_positive_and_negative_controls(self):
         for task in TASKS:
             folder = ROOT / "assessments" / task
-            controls = json.loads((folder / "provenance.json").read_text())["controls"]
+            provenance = json.loads((folder / "provenance.json").read_text())
+            controls = provenance.get("revision_controls", {}).get(
+                str(checker.CURRENT_REVISION), provenance["controls"])
             for kind, path, expected in [
                 ("reference", folder / "reference", controls["reference_passed"]),
                 ("starter", ROOT / "seeds" / task, controls["starter_passed"]),
@@ -50,6 +55,8 @@ class CodingRepairDocker(unittest.TestCase):
 
     def test_candidate_local_modules_work_for_all_tasks(self):
         for task, program in TASKS.items():
+            if not program.endswith('.py'):
+                continue
             with self.subTest(task=task), tempfile.TemporaryDirectory() as temporary:
                 path = Path(temporary) / "candidate"
                 shutil.copytree(ROOT / "assessments" / task / "reference", path)
@@ -106,6 +113,107 @@ class CodingRepairDocker(unittest.TestCase):
                 self.assertEqual([row["case"] for row in current["assessment"]["results"]
                                   if not row["passed"]], ["readme"])
                 self.assertEqual(current["assessment"]["functional"], old["assessment"]["functional"])
+
+    def test_hard_graders_reject_targeted_faults(self):
+        mutations = [
+            ("crash-journal-v1", "if (zlib.crc32(payload) & 0xffffffff) != checksum:", "if False:", "checksum_no_resync"),
+            ("crash-journal-v1", "else:\n                active.pop(tx)", "else:\n                active.pop(tx)\n                state.clear()", "abort_discard"),
+            ("crash-journal-v1", "committed.append(tx)", "committed.append(tx)\n                seen.discard(tx)", "closed_id_reuse"),
+            ("crash-journal-v1", "'valid_bytes': offset", "'valid_bytes': len(data)", "every_crash_byte"),
+            ("crash-journal-v1", "active[tx].append(record)", "active[tx].append(record)\n                if op == 'put':\n                    state[record[2]] = record[3]", "pending_not_visible"),
+            ("linearizable-kv-v1", "other['end'] <= entry['start']", "other['end'] < entry['start']", "touching_intervals"),
+            ("linearizable-kv-v1", "key = done, tuple(sorted(state.items()))", "key = done", "state_matters_for_pruning"),
+            ("linearizable-kv-v1", "matches = all(state.get(k) == v for k, v in op[1].items())", "matches = any(state.get(k) == v for k, v in op[1].items())", "cas_checks_every_key"),
+            ("linearizable-kv-v1", "if matches:", "if True:", "failed_cas_no_writes"),
+            ("linearizable-kv-v1", "if suffix is not None:", "if suffix is None:\n                return None\n            if suffix is not None:", "backtrack_legal_write"),
+            ("linearizable-kv-v1", "entries = sorted(history, key=lambda e: e['id'])", "entries = sorted(history, key=lambda e: e['id'], reverse=True)", "lexicographic_witness"),
+        ]
+        for task, before, after, failed_case in mutations:
+            with self.subTest(task=task, case=failed_case), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "candidate"
+                shutil.copytree(ROOT / "assessments" / task / "reference", path)
+                program = path / TASKS[task]
+                source = program.read_text()
+                self.assertEqual(source.count(before), 1)
+                program.write_text(source.replace(before, after))
+                report = self.assess(task, path)
+                failed = [row["case"] for row in report["assessment"]["results"] if not row["passed"]]
+                self.assertIn(failed_case, failed)
+
+    def test_deferred_noop_write_is_versioned_and_rejects_greedy_pruning(self):
+        task = "linearizable-kv-v1"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "candidate"
+            shutil.copytree(ROOT / "assessments" / task / "reference", path)
+            program = path / "linearize.py"
+            source = program.read_text()
+            marker = "            suffix = search(done | (1 << i), next_state)"
+            self.assertEqual(source.count(marker), 1)
+            source = source.replace(marker, marker + "\n            if op[0] == 'put' and next_state == state and suffix is None:\n                return None")
+            program.write_text(source)
+            old = self.assess(task, path, assessment_revision=6)
+            new = self.assess(task, path, assessment_revision=7)
+            self.assertTrue(old["assessment"]["all_checks_passed"])
+            self.assertNotIn("deferred_noop_write", [r["case"] for r in old["assessment"]["results"]])
+            failed = [r["case"] for r in new["assessment"]["results"] if not r["passed"]]
+            self.assertIn("deferred_noop_write", failed)
+
+    def test_context_policy_rejects_wrong_rules_and_legacy_regressions(self):
+        task = "context-policy-edit-v1"
+        mutations = [
+            ("(grams - 500 + 249) // 250", "(grams - 500) // 250", "island_rounding"),
+            ("return 750 +", "return 900 +", "island_base"),
+            ("grams > 5000 or express", "grams > 5000", "island_no_express"),
+            ("base = 400 if", "base = 450 if", "legacy_prices"),
+        ]
+        for before, after, expected in mutations:
+            with self.subTest(case=expected), tempfile.TemporaryDirectory() as temporary:
+                candidate = Path(temporary) / "candidate"
+                shutil.copytree(ROOT / "assessments" / task / "reference", candidate)
+                program = candidate / "shipping.py"
+                source = program.read_text()
+                self.assertEqual(source.count(before), 1)
+                program.write_text(source.replace(before, after))
+                result = self.assess(task, candidate)
+                self.assertIn(expected, [r["case"] for r in result["assessment"]["results"] if not r["passed"]])
+
+    def test_diverse_graders_reject_targeted_faults(self):
+        mutations = [
+            ("sql-tombstones-v1", "WHERE version <= :cutoff", "WHERE version <= :cutoff AND deleted = 0", "tombstone_wins"),
+            ("sql-tombstones-v1", "event_id DESC", "event_id ASC", "equal_version_live_wins"),
+            ("sql-tombstones-v1", "version <= :cutoff", "version < :cutoff", "cutoff_inclusive"),
+            ("delta-debugging-v1", "if fails([]):", "if False:", "always_fails"),
+            ("delta-debugging-v1", "candidate = current[:start] + current[end:]", "candidate = sorted(current[:start] + current[end:])", "ordered_pair"),
+            ("stable-quadratic-v1", "q = -0.5 * (b + math.copysign(math.sqrt(discriminant), b))\n    return tuple(sorted((q / a, c / q)))", "s = math.sqrt(discriminant)\n    return tuple(sorted(((-b-s)/(2*a), (-b+s)/(2*a))))", "cancellation_positive"),
+            ("stable-quadratic-v1", "return tuple(sorted((q / a, c / q)))", "return q / a, c / q", "ordinary"),
+            ("stable-quadratic-v1", "if a == 0 or not all(math.isfinite(x) for x in (a, b, c)):", "if a == 0:", "nonfinite_inputs"),
+        ]
+        for task, before, after, failed_case in mutations:
+            with self.subTest(task=task, case=failed_case), tempfile.TemporaryDirectory() as temporary:
+                path = Path(temporary) / "candidate"
+                shutil.copytree(ROOT / "assessments" / task / "reference", path)
+                program = path / TASKS[task]
+                source = program.read_text()
+                self.assertEqual(source.count(before), 1)
+                program.write_text(source.replace(before, after))
+                report = self.assess(task, path)
+                self.assertIn(failed_case, [row["case"] for row in report["assessment"]["results"] if not row["passed"]])
+        with tempfile.TemporaryDirectory() as temporary:
+            task = "delta-debugging-v1"
+            path = Path(temporary) / "candidate"
+            shutil.copytree(ROOT / "assessments" / task / "reference", path)
+            (path / "ddmin.py").write_text(
+                "def ddmin(items, fails):\n"
+                "    if fails([]): return []\n"
+                "    result = list(items)\n"
+                "    i = 0\n"
+                "    while i < len(result):\n"
+                "        candidate = result[:i] + result[i+1:]\n"
+                "        if fails(list(candidate)): result = candidate\n"
+                "        else: i += 1\n"
+                "    return result\n")
+            report = self.assess(task, path)
+            self.assertIn("reconsider_deletions", [row["case"] for row in report["assessment"]["results"] if not row["passed"]])
 
     def test_import_noise_cannot_corrupt_the_report(self):
         task = "dependency-planner-repair-v1"

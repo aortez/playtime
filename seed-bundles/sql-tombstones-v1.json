@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "sql-tombstones-v1",
+  "name": "SQL tombstones and version selection",
+  "description": "Database version selection, cutoff boundaries, ties and deletion semantics.",
+  "revision": 1,
+  "files": "seeds/sql-tombstones-v1",
+  "provenance": "Adapted from Reddit Brutal Model Test Q24; original task, reference and independent grader authored for Playtime. See assessments/sql-tombstones-v1/provenance.json.",
+  "assessment": "assessments/sql-tombstones-v1"
+}
