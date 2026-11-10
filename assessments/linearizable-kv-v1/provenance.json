@@ -39,7 +39,7 @@
   },
   "assessment_revision_7": {
     "case": "deferred_noop_write",
-    "source": "experiments/coding-repair/gyro-noop-write-counterexample-2026-11-07.json",
+    "source": "Posthoc counterexample from the 2026-11-07 Bird runtime comparison; the study record stays outside the repository.",
     "note": "Promoted before new model runs; task, starter, reference and revision-6 checker unchanged."
   }
 }
