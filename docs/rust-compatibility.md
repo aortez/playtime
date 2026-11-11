@@ -1541,3 +1541,15 @@ The reviewed file-backed recipe catalog adds `simulation-repair`, with a
 assessment code stays outside that seed directory. This adds catalog content,
 offline authoring/checking helpers, and a catalog regression test; it changes no
 runtime policy, API schema, existing recipe allocation, model default, or golden.
+
+## Ollama parameter listing order (2026-11-10)
+
+Ollama lists a model's `parameters` in a different key order after each process
+start, so a reviewed identity with more than one parameter failed its check until
+a restart happened to reproduce the lock's order (#155). Execution verification
+and API model review now accept the expected lines in another key order, with
+lines that share a key, such as `stop`, still in order. They use the lock's
+listing, so the definition fingerprint stays the reviewed one; any added, missing
+or changed line still fails. The raw `/api/show` response keeps Ollama's order.
+No lock, fingerprint, wire/schema or golden changes, and existing registrations
+stay valid.

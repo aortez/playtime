@@ -169,7 +169,7 @@ impl ModelBrowser {
             .reads
             .try_acquire()
             .map_err(|_| ApiError::new("model_discovery_busy"))?;
-        let detail = self
+        let mut detail = self
             .reader()?
             .inspect(
                 &request.name,
@@ -179,6 +179,27 @@ impl ModelBrowser {
             )
             .await
             .map_err(failure)?;
+        // Ollama reorders `parameters` after a restart (#155). Review a reviewed
+        // model in its lock's order so the same lines keep the same fingerprint.
+        let digest = detail
+            .inventory
+            .entries
+            .iter()
+            .find(|e| e.name == request.name)
+            .and_then(|e| e.digest.clone());
+        if let (Some(definition), Some(digest)) = (detail.definition.as_mut(), digest)
+            && playtime_runner::docker::align_reviewed_parameters(
+                &request.name,
+                &digest,
+                &detail.inventory.version,
+                definition,
+            )
+        {
+            detail.definition_sha256 = Some(playtime_ollama::json::hash(
+                &playtime_ollama::json::canonical(definition, Limits::default().metadata_bytes)
+                    .map_err(failure)?,
+            ));
+        }
         let entry = detail
             .inventory
             .entries

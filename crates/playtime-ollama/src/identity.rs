@@ -135,6 +135,26 @@ pub(crate) fn local(value: &Value) -> Result<()> {
     }
     Ok(())
 }
+/// Ollama lists `parameters` in a different key order after each process start
+/// (#155). When `observed` holds exactly the expected lines in another key order,
+/// copy the expected listing so its definition digest still matches. Lines that
+/// share a key, such as `stop`, must keep their order. Returns whether it copied.
+pub fn align_parameters(observed: &mut Value, expected: &Value) -> bool {
+    fn sorted(text: &str) -> Vec<&str> {
+        let mut lines: Vec<&str> = text.split('\n').collect();
+        lines.sort_by_key(|line| line.split_whitespace().next().unwrap_or(""));
+        lines
+    }
+    let listing = match (
+        observed.get("parameters").and_then(Value::as_str),
+        expected.get("parameters").and_then(Value::as_str),
+    ) {
+        (Some(seen), Some(want)) if seen != want && sorted(seen) == sorted(want) => want.to_owned(),
+        _ => return false,
+    };
+    observed["parameters"] = Value::String(listing);
+    true
+}
 pub(crate) fn verify(
     lock: &ExecutionModel,
     version: Value,
@@ -175,7 +195,7 @@ pub(crate) fn verify(
     {
         return Err(bad());
     }
-    let definition = Value::Object(
+    let mut definition = Value::Object(
         [
             "template",
             "parameters",
@@ -187,6 +207,7 @@ pub(crate) fn verify(
         .map(|k| (k.into(), show.get(k).cloned().unwrap_or(Value::Null)))
         .collect(),
     );
+    align_parameters(&mut definition, &lock.definition);
     let canonical_definition = json::canonical(&definition, limit)?;
     let definition_sha256 = json::hash(&canonical_definition);
     if definition_sha256 != lock.definition_sha256 {

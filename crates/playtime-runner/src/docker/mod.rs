@@ -24,7 +24,7 @@ pub use registered_model::{
     GPT_OSS_120B_MODEL_LOCK, GPT_OSS_120B_USAGE_MODEL_LOCK, ORNITH_35B_GPU_MODEL_LOCK,
     ORNITH_35B_Q8_MODEL_LOCK, QWEN_36_35B_A3B_BF16_MODEL_LOCK, QWEN_36_35B_Q8_MODEL_LOCK,
     QWEN_38_27B_BF16_MODEL_LOCK, QWEN_CODER_NEXT_MODEL_LOCK, QWEN_MODEL_LOCK,
-    reviewed_identity_capabilities,
+    align_reviewed_parameters, reviewed_identity_capabilities,
 };
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";

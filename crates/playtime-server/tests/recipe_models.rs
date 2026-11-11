@@ -582,3 +582,68 @@ async fn real_registration_path_selects_the_reviewed_lock_but_never_approves_an_
     assert_eq!(registry.list().await.unwrap().items.len(), 2);
     catalog.check().await.unwrap();
 }
+
+#[tokio::test]
+async fn review_keeps_a_reviewed_lock_when_ollama_reorders_its_parameters() {
+    use playtime_server::models::ModelBrowser;
+    use playtime_test_support::model_metadata::FakeOllama;
+    let lock: serde_json::Value =
+        serde_json::from_slice(playtime_runner::docker::QWEN_MODEL_LOCK).unwrap();
+    let lines: Vec<&str> = lock["definition"]["parameters"]
+        .as_str()
+        .unwrap()
+        .split('\n')
+        .collect();
+    // On 2026-10-26 a fresh Ollama listed repeat_penalty first (#155).
+    let reordered = [3, 0, 1, 2, 4, 5].map(|i| lines[i]).join("\n");
+    let root = TestRoot::new().unwrap();
+    let fake = FakeOllama::start().await;
+    {
+        let mut state = fake.metadata.0.lock().unwrap();
+        state.tags = serde_json::json!({"models":[{"name":lock["name"], "digest":lock["digest"]}]});
+        state.version = lock["ollama_version"].as_str().unwrap().into();
+        state.show = lock["definition"].clone();
+        state.show["parameters"] = reordered.clone().into();
+    }
+    let registry = Registry::new(
+        Ledger::open(&root.0).await.unwrap(),
+        Some(Arc::new(ModelBrowser::new(&fake.endpoint).unwrap())),
+    );
+    let inspect = || ModelInspectRequest {
+        name: lock["name"].as_str().unwrap().into(),
+        expected_digest: None,
+    };
+    let review = registry.review(inspect()).await.unwrap();
+    assert_eq!(
+        review.inspection.definition_sha256.as_deref(),
+        lock["definition_sha256"].as_str()
+    );
+    assert!(review.inspection.reviewed_capabilities.is_some());
+    let accepted = registry
+        .register(
+            IdempotencyKey::new("reordered").unwrap(),
+            review.request.unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        accepted
+            .registration
+            .identity
+            .reviewed_capabilities
+            .is_some()
+    );
+    let record = registry
+        .get(accepted.registration.registration_id)
+        .await
+        .unwrap();
+    assert_eq!(record.definition, lock["definition"]);
+    // A changed value is a different identity, with no reviewed support.
+    fake.metadata.0.lock().unwrap().show["parameters"] = reordered.replace("0.6", "0.7").into();
+    let changed = registry.review(inspect()).await.unwrap().inspection;
+    assert_ne!(
+        changed.definition_sha256.as_deref(),
+        lock["definition_sha256"].as_str()
+    );
+    assert!(changed.reviewed_capabilities.is_none());
+}
