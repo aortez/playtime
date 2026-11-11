@@ -27,6 +27,21 @@ fn selected_metadata() -> Vec<Value> {
         m.definition,
     ]
 }
+/// The lock's parameter lines in the given order, as a restarted Ollama lists them.
+fn listing(order: &[usize]) -> Value {
+    let text = model().definition["parameters"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let lines: Vec<&str> = text.split('\n').collect();
+    json!(
+        order
+            .iter()
+            .map(|&i| lines[i])
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
 fn replies(values: Vec<Value>) -> Vec<HttpResponse> {
     values
         .into_iter()
@@ -100,8 +115,27 @@ async fn selected_identity_is_rechecked_before_each_chat_and_booleans_are_not_le
 }
 
 #[tokio::test]
+async fn restarted_ollama_parameter_order_still_matches_the_lock() {
+    // Lock lines: temperature, top_k, top_p, repeat_penalty, then two stops. On
+    // 2026-10-26 a fresh Ollama listed repeat_penalty first (#155).
+    for order in [[3, 0, 1, 2, 4, 5], [4, 5, 2, 0, 3, 1]] {
+        let mut metadata = selected_metadata();
+        metadata[2]["parameters"] = listing(&order);
+        let fake = Fake::new(replies(metadata));
+        let mut adapter = Adapter::with_model(fake, model(), Limits::default()).unwrap();
+        let inspection = adapter
+            .inspect(false, deadline(), &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(inspection.definition_sha256, model().definition_sha256);
+        assert_eq!(inspection.definition, model().definition);
+        assert_eq!(inspection.show["parameters"], listing(&order));
+    }
+}
+
+#[tokio::test]
 async fn cached_verification_never_hides_selected_identity_drift() {
-    for case in 0..7 {
+    for case in 0..10 {
         let mut changed = selected_metadata();
         match case {
             0 => changed[0]["version"] = json!("changed"),
@@ -110,6 +144,17 @@ async fn cached_verification_never_hides_selected_identity_drift() {
             3 => changed[2]["template"] = json!("changed"),
             4 => changed[2]["capabilities"] = json!(["completion"]),
             5 => changed[2]["remote_host"] = json!("remote"),
+            // A reordered listing must still hold the same lines, stops in order.
+            6 => {
+                changed[2]["parameters"] = json!(
+                    listing(&[3, 0, 1, 2, 4, 5])
+                        .as_str()
+                        .unwrap()
+                        .replace("0.6", "0.7")
+                )
+            }
+            7 => changed[2]["parameters"] = listing(&[3, 0, 1, 2, 5, 4]),
+            8 => changed[2]["parameters"] = listing(&[3, 0, 1, 4, 5]),
             _ => changed[1]["models"][0]["name"] = json!("gpt-oss:20b"),
         }
         let fake = Fake::new(

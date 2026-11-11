@@ -16,24 +16,45 @@ pub const ORNITH_35B_GPU_MODEL_LOCK: &[u8] = include_bytes!("ornith-1.5-35b-gpu-
 
 pub const GPT_OSS_120B_USAGE_MODEL_LOCK: &[u8] = include_bytes!("gpt-oss-120b-usage-v1-lock.json");
 
+const REVIEWED_LOCKS: [&[u8]; 10] = [
+    MODEL_LOCK,
+    QWEN_MODEL_LOCK,
+    QWEN_CODER_NEXT_MODEL_LOCK,
+    QWEN_38_27B_BF16_MODEL_LOCK,
+    QWEN_36_35B_A3B_BF16_MODEL_LOCK,
+    ORNITH_35B_Q8_MODEL_LOCK,
+    QWEN_36_35B_Q8_MODEL_LOCK,
+    GPT_OSS_120B_MODEL_LOCK,
+    GPT_OSS_120B_USAGE_MODEL_LOCK,
+    ORNITH_35B_GPU_MODEL_LOCK,
+];
+
+/// Puts an observed definition's `parameters` in the reviewed lock's order when
+/// the lock for this name, digest and backend lists the same lines (#155), so a
+/// restarted Ollama still matches its review. Returns whether it changed.
+pub fn align_reviewed_parameters(
+    name: &str,
+    digest: &str,
+    backend: &str,
+    definition: &mut Value,
+) -> bool {
+    REVIEWED_LOCKS.into_iter().any(|bytes| {
+        serde_json::from_slice::<Value>(bytes).is_ok_and(|lock| {
+            lock["name"].as_str() == Some(name)
+                && lock["digest"].as_str() == Some(digest)
+                && lock["ollama_version"].as_str() == Some(backend)
+                && playtime_ollama::align_parameters(definition, &lock["definition"])
+        })
+    })
+}
+
 pub fn reviewed_identity_capabilities(
     name: &str,
     digest: &str,
     backend: &str,
     definition_sha256: &str,
 ) -> Option<RecipeModelCapabilities> {
-    for bytes in [
-        MODEL_LOCK,
-        QWEN_MODEL_LOCK,
-        QWEN_CODER_NEXT_MODEL_LOCK,
-        QWEN_38_27B_BF16_MODEL_LOCK,
-        QWEN_36_35B_A3B_BF16_MODEL_LOCK,
-        ORNITH_35B_Q8_MODEL_LOCK,
-        QWEN_36_35B_Q8_MODEL_LOCK,
-        GPT_OSS_120B_MODEL_LOCK,
-        GPT_OSS_120B_USAGE_MODEL_LOCK,
-        ORNITH_35B_GPU_MODEL_LOCK,
-    ] {
+    for bytes in REVIEWED_LOCKS {
         let lock: Value = serde_json::from_slice(bytes).ok()?;
         if lock["name"].as_str() != Some(name)
             || lock["digest"].as_str() != Some(digest)

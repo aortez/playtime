@@ -11,7 +11,10 @@ The development profile uses Ollama **0.32.3** and **`qwen3:1.7b`**.
 [The model lock](../models/qwen3-1.7b.lock.json) records the exact digest and
 canonical five-field definition; its worker copy must match byte-for-byte.
 The compiled capability review matches name, digest, backend version and
-definition fingerprint, not just the model family or a mutable tag.
+definition fingerprint, not just the model family or a mutable tag. Ollama lists
+`parameters` in a new key order after each start; the check accepts the lock's
+lines in any key order (lines that share a key keep theirs) and fingerprints
+them in the lock's order.
 
 Native CPU probes on 2026-10-25 established:
 
