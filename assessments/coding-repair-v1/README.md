@@ -321,9 +321,33 @@ unchanged.
 
 Assessment revision **7** adds the deferred-no-op-write regression to the
 history checker, preserving `check.py` for revision 6 and selecting
-`check-v7.py` for later revisions. Assessment revision **8**, now the default,
-adds the context-policy edit task. Existing acceptance cases retain their
-revision-7 behavior.
+`check-v7.py` for later revisions. Assessment revision **8** adds the
+context-policy edit task. Existing acceptance cases retain their revision-7
+behavior.
+
+Assessment revision **9**, now the default, fixes three graders, each in a new
+`check-v9.py`:
+
+- Delta debugging records predicate-rule violations, so a candidate that
+  catches the error raised inside `fails` still fails the case.
+- Single-flight keeps each case's warnings with that case and collects its
+  leftovers before recording a pass, so one case's failure no longer fails
+  the next.
+- Linearizable history gives each case one CPU second, so a slow search fails
+  that case instead of leaving the whole assessment incomplete. The
+  reference's heaviest case needs about 30 ms, and all 22 budgets fit within
+  the default 30-second container deadline. A 19-entry history no longer has
+  to raise `ValueError`, since TASK.md does not say so explicitly.
+
+Revision 9 also fixes the hash seed, so a candidate that depends on set order
+gets the same verdicts on every run. `-I` ignores `PYTHONHASHSEED`, so the
+checker starts with `-P -s` and `PYTHONHASHSEED=0` instead, and `driver-v9.py`
+refuses to grade unless that seed is in effect and the only other interpreter
+variables are the locked image's own. `revisions.json` pins the catalog,
+driver, support module and checker digests of every revision. Earlier
+revisions keep their files and behavior, and no control score changes. The
+retained study workspaces for these three tasks score the same at revision 9
+as at revision 8.
 
 ## Validate without running models
 
@@ -332,12 +356,14 @@ python3 scripts/test-coding-repair.py -v
 python3 scripts/test-coding-repair-docker.py -v
 ```
 
-The first command validates frozen identities, report completeness/counts,
-snapshot behavior, skipped outcomes and unavailable infrastructure without
-executing candidates. CI runs it alongside seed-bundle validation. The Docker
-gate runs reference and starter controls for all twelve tasks, ten targeted faults
-in the original imports, nine in the later adaptations and eleven in the harder
-tasks, plus deferred-no-op and context-policy regressions, local modules/executables,
+The first command validates frozen identities against `revisions.json`, report
+completeness/counts, snapshot behavior, skipped outcomes, the revision 9 launch
+arguments and unavailable infrastructure without executing candidates. CI runs
+it alongside seed-bundle validation. The Docker gate runs reference and starter
+controls at every assessment revision for all twelve tasks, ten targeted faults in
+the original imports, nine in the later adaptations and eleven in the harder
+tasks, plus deferred-no-op, context-policy and revision 9 regressions, the
+revision 9 environment guard, local modules/executables,
 dataclasses with postponed annotations, noisy output, missing programs,
 README directories under historical and current assessment revisions,
 partial-workspace outcomes and deadline/cancellation cleanup (including signals
@@ -351,7 +377,7 @@ The later SQL/minimizer/numerical references score **16/16, 14/14, 18/18**;
 their starters score **4/16, 0/14, 0/18**.
 The journal reference scores **21/21**, with **1/21** for its starter. The
 history reference scores **22/22**, with **6/22** for its starter under revisions
-7 and 8 (revision 6 remains 21/21 and 6/21). The context-policy reference scores
+7–9 (revision 6 remains 21/21 and 6/21). The context-policy reference scores
 **13/13**, with **9/13** for the starter that already implements legacy behavior.
 Some empty/impossible cases are already correct in the stubs;
 starter credit is not evidence that the full task is easy. The authored

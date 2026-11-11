@@ -19,8 +19,17 @@ MAX_REPORT = 1024 * 1024
 MAX_FILES = 4096
 MAX_WORKSPACE = 48 * 1024 * 1024
 OUTCOMES = ("unknown", "completed", "timed_out", "cancelled", "failed", "skipped")
-ASSESSMENT_REVISIONS = (2, 3, 4, 5, 6, 7, 8)
-CURRENT_REVISION = 8
+ASSESSMENT_REVISIONS = (2, 3, 4, 5, 6, 7, 8, 9)
+CURRENT_REVISION = 9
+# A task keeps check.py until a revision replaces it; each entry is the first
+# revision that selects the named checker.
+REVISED_CHECKERS = {
+    "dependency-planner-repair-v1": ((3, "check-v3.py"),),
+    "byte-range-repair-v1": ((3, "check-v3.py"),),
+    "linearizable-kv-v1": ((7, "check-v7.py"), (9, "check-v9.py")),
+    "async-singleflight-v1": ((9, "check-v9.py"),),
+    "delta-debugging-v1": ((9, "check-v9.py"),),
+}
 
 
 class AssessmentInterrupted(Exception):
@@ -66,10 +75,10 @@ def load_task(task_id, revision=CURRENT_REVISION):
 
 def checker_sources(task_id, revision):
     load_task(task_id, revision)
-    name = "check-v3.py" if revision >= 3 and task_id in (
-        "dependency-planner-repair-v1", "byte-range-repair-v1") else "check.py"
-    if revision >= 7 and task_id == "linearizable-kv-v1":
-        name = "check-v7.py"
+    name = "check.py"
+    for first, revised in REVISED_CHECKERS.get(task_id, ()):
+        if revision >= first:
+            name = revised
     driver = f"driver-v{revision}.py" if revision >= 4 else "driver.py"
     return [SUPPORT / driver, SUPPORT / "assessment_support.py",
             ROOT / "assessments" / task_id / name]
@@ -196,6 +205,10 @@ def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30, 
                         "assessment_timeout_seconds": timeout}}
     if outcome == "skipped":
         return report, 0
+    # -I would ignore PYTHONHASHSEED, so from revision 9 the seed is pinned with
+    # -I's other parts (-P, -s); driver-v9.py refuses to grade without them.
+    isolation, environment = (["-I"], []) if assessment_revision < 9 else (
+        ["-P", "-s"], ["--env", "PYTHONHASHSEED=0"])
     name = "playtime-coding-check-" + uuid.uuid4().hex
     created = False
     cleanup_error = None
@@ -218,7 +231,8 @@ def assess(task_id, candidate, *, outcome="unknown", metadata=None, timeout=30, 
                         "--workdir", "/candidate", "--mount",
                         f"type=bind,src={snapshot},dst=/candidate,readonly",
                         "--mount", f"type=bind,src={checker_snapshot},dst=/assessment,readonly",
-                        "--entrypoint", "python3", image, "-I", "/assessment/driver.py"]
+                        *environment, "--entrypoint", "python3", image, *isolation,
+                        "/assessment/driver.py"]
                 # Record the owned name before create; cleanup also covers a timed-out
                 # create whose container was created but whose response was lost.
                 created = True
@@ -268,7 +282,7 @@ def main():
     parser.add_argument("--outcome", choices=OUTCOMES, default="unknown")
     parser.add_argument("--assessment-revision", type=int, choices=ASSESSMENT_REVISIONS,
                         default=CURRENT_REVISION,
-                        help="6 adds crash recovery and linearizable history; 2–5 retain earlier catalogs/checks")
+                        help="9 fixes three graders and pins the hash seed; 2–8 retain earlier catalogs/checks")
     parser.add_argument("--metadata", type=Path, help="JSON with harness/version, model/settings, run id and timing")
     parser.add_argument("--assessment-timeout", type=float, default=30,
                         help="checker container deadline in seconds (1–120); not the model task budget")

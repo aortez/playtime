@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("coding_repair", ROOT / "scripts/check-coding-repair.py")
@@ -37,21 +38,103 @@ class CodingRepairDocker(unittest.TestCase):
         self.assertEqual(report["cleanup"]["status"], "completed")
         return report
 
-    def test_positive_and_negative_controls(self):
+    def test_positive_and_negative_controls_at_every_revision(self):
         for task in TASKS:
             folder = ROOT / "assessments" / task
             provenance = json.loads((folder / "provenance.json").read_text())
-            controls = provenance.get("revision_controls", {}).get(
-                str(checker.CURRENT_REVISION), provenance["controls"])
-            for kind, path, expected in [
-                ("reference", folder / "reference", controls["reference_passed"]),
-                ("starter", ROOT / "seeds" / task, controls["starter_passed"]),
-            ]:
-                with self.subTest(task=task, kind=kind):
-                    report = self.assess(task, path)
-                    self.assertEqual(report["assessment"]["passed"], expected)
-                    self.assertEqual(report["assessment"]["total"], controls["total"])
-                    self.assertEqual(report["execution"]["outcome"], "unknown")
+            for revision in checker.ASSESSMENT_REVISIONS:
+                if revision < provenance["assessment_revision"]:
+                    continue
+                controls = provenance.get("revision_controls", {}).get(
+                    str(revision), provenance["controls"])
+                for kind, path, expected in [
+                    ("reference", folder / "reference", controls["reference_passed"]),
+                    ("starter", ROOT / "seeds" / task, controls["starter_passed"]),
+                ]:
+                    with self.subTest(task=task, revision=revision, kind=kind):
+                        report = self.assess(task, path, assessment_revision=revision)
+                        self.assertEqual(report["task"]["assessment_revision"], revision)
+                        self.assertEqual(report["assessment"]["passed"], expected)
+                        self.assertEqual(report["assessment"]["total"], controls["total"])
+                        self.assertEqual(report["execution"]["outcome"], "unknown")
+
+    def test_revision_9_fails_ddmin_that_absorbs_predicate_errors(self):
+        task = "delta-debugging-v1"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "candidate"
+            path.mkdir()
+            (path / "README.md").write_text("Exhaustive-search fixture.\n")
+            (path / "ddmin.py").write_text(
+                "from itertools import combinations\n"
+                "def ddmin(items, fails):\n"
+                "    for size in range(len(items) + 1):\n"
+                "        for indexes in combinations(range(len(items)), size):\n"
+                "            try:\n"
+                "                if fails([items[i] for i in indexes]):\n"
+                "                    return [items[i] for i in indexes]\n"
+                "            except Exception:\n"
+                "                pass\n"
+                "    return list(items)\n")
+            old = self.assess(task, path, assessment_revision=8)
+            new = self.assess(task, path)
+            self.assertTrue(old["assessment"]["all_checks_passed"])
+            self.assertEqual([r["case"] for r in new["assessment"]["results"] if not r["passed"]],
+                             ["all_required"])
+
+    def test_revision_9_keeps_single_flight_warnings_in_their_own_case(self):
+        task = "async-singleflight-v1"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "candidate"
+            shutil.copytree(ROOT / "assessments" / task / "reference", path)
+            program = path / "singleflight.py"
+            source = program.read_text()
+            before = "if self._tasks.get(key) is done:"
+            self.assertEqual(source.count(before), 1)
+            program.write_text(source.replace(before, "if key in self._tasks:"))
+            old = self.assess(task, path, assessment_revision=8)
+            new = self.assess(task, path)
+            self.assertIn("synchronous_factory_failure",
+                          [r["case"] for r in old["assessment"]["results"] if not r["passed"]])
+            self.assertEqual([r["case"] for r in new["assessment"]["results"] if not r["passed"]],
+                             ["completion_cleanup_race"])
+
+    def test_revision_9_fails_a_slow_history_case_without_losing_the_rest(self):
+        task = "linearizable-kv-v1"
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "candidate"
+            shutil.copytree(ROOT / "assessments" / task / "reference", path)
+            program = path / "linearize.py"
+            source = program.read_text()
+            memo = "        if key in impossible:\n            return None\n"
+            self.assertEqual(source.count(memo), 1)
+            program.write_text(source.replace(memo, ""))
+            old, code = checker.assess(task, path, assessment_revision=8, timeout=5)
+            self.assertEqual(code, 2)
+            self.assertEqual(old["assessment"], {"status": "incomplete", "reason": "assessment_timeout"})
+            self.assertEqual(old["cleanup"]["status"], "completed")
+            new = self.assess(task, path)
+            failed = [r for r in new["assessment"]["results"] if not r["passed"]]
+            self.assertEqual([r["case"] for r in failed], ["equivalent_prefixes"])
+            self.assertEqual(failed[0]["error"], "case exceeded 1 CPU second")
+
+    def test_revision_9_refuses_to_grade_without_its_interpreter_environment(self):
+        task = "ledger-repair-v1"
+        real = checker.command
+        for change in ("drop_seed", "add_import_path"):
+            def launch(args, *rest, **options):
+                if args[:2] == ["docker", "create"]:
+                    seed = args.index("PYTHONHASHSEED=0")
+                    if change == "drop_seed":
+                        args = args[:seed - 1] + args[seed + 1:]
+                    else:
+                        args = args[:seed + 1] + ["--env", "PYTHONPATH=/candidate"] + args[seed + 1:]
+                return real(args, *rest, **options)
+
+            with self.subTest(change=change), patch.object(checker, "command", side_effect=launch):
+                report, code = checker.assess(task, ROOT / "assessments" / task / "reference")
+                self.assertEqual(code, 2)
+                self.assertEqual(report["assessment"]["status"], "incomplete")
+                self.assertEqual(report["cleanup"]["status"], "completed")
 
     def test_candidate_local_modules_work_for_all_tasks(self):
         for task, program in TASKS.items():

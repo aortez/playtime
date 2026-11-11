@@ -35,11 +35,21 @@
       "starter_passed": 6,
       "total": 22,
       "deliverable_total": 1
+    },
+    "9": {
+      "reference_passed": 22,
+      "starter_passed": 6,
+      "total": 22,
+      "deliverable_total": 1
     }
   },
   "assessment_revision_7": {
     "case": "deferred_noop_write",
     "source": "Posthoc counterexample from the 2026-11-07 Bird runtime comparison; the study record stays outside the repository.",
     "note": "Promoted before new model runs; task, starter, reference and revision-6 checker unchanged."
+  },
+  "assessment_revision_9": {
+    "checker": "check-v9.py",
+    "change": "One CPU second per case; a 19-entry history no longer has to raise ValueError."
   }
 }
