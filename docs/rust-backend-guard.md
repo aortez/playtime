@@ -191,9 +191,10 @@ enforce deadlines across guard/SSH loss, install reviewed Rust-only access contr
 and provide explicit activation/rollback with a dedicated-host fault gate. O2c
 must join the unchanged #55 parser/transport, freeze worker inputs/capabilities,
 map host deadlines conservatively, preserve raw observations and archive settlement
-barriers, and join #59/#43 recovery ownership. Direct Docker/Ollama run-and-view
-already works; it does not establish these guarded host-ownership guarantees or
-complete the restart/worker-loss recovery matrix.
+barriers, and join the daemon's restart reattachment (#59) and operator release.
+Direct Docker/Ollama run-and-view already works; it does not establish these
+guarded host-ownership guarantees or complete the restart/worker-loss recovery
+matrix.
 
 Historical validation of the original guard implementation (#60): formatting
 and locked all-target workspace Clippy;

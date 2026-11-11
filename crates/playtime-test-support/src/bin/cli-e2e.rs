@@ -19,7 +19,7 @@ async fn main() {
     }
     if backend.as_deref() == Some("simulation") {
         eprintln!(
-            "Simulation gate unavailable: #20's production playtimed/test-supervisor adapter, #42 archives, and #43 worker-loss recovery are required. No fixture fallback or skip."
+            "Simulation gate unavailable: #20's production playtimed/test-supervisor adapter, #42 archives, and worker-loss recovery, which isn't planned (#58), are required. No fixture fallback or skip."
         );
         std::process::exit(1);
     }

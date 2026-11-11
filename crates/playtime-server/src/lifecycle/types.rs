@@ -152,9 +152,14 @@ pub struct Admission {
 pub struct OperatorRelease {
     pub released: Stamp,
     pub reason: String,
-    /// Fresh evidence that the original invocation stopped. None only when no
-    /// worker start was ever submitted.
+    /// Fresh evidence that the original invocation stopped. None when no
+    /// worker start was ever submitted, or when the worker's boot has ended.
     pub supervisor: Option<SupervisorObservation>,
+    /// The boot this release was made on, when the worker started on an
+    /// earlier one. No process outlives its boot, so that is the evidence the
+    /// original invocation stopped; no supervisor can observe it any more.
+    #[serde(default)]
+    pub later_boot_id: Option<ControlId>,
     /// Exact external resources verified absent before release.
     pub absent_resources: Vec<String>,
 }

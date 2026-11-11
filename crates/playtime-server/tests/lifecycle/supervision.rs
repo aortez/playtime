@@ -12,6 +12,7 @@ struct ManagerFixture {
     diagnostics_failed: AtomicBool,
     lose_stop: AtomicBool,
     stops: AtomicUsize,
+    observes: AtomicUsize,
 }
 impl ManagerFixture {
     fn new() -> Self {
@@ -32,6 +33,7 @@ impl ManagerFixture {
             diagnostics_failed: AtomicBool::new(false),
             lose_stop: AtomicBool::new(false),
             stops: AtomicUsize::new(0),
+            observes: AtomicUsize::new(0),
         }
     }
 }
@@ -50,6 +52,7 @@ impl Supervisor for ManagerFixture {
         self.child.locate(launch).await
     }
     async fn observe(&self, _: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
+        self.observes.fetch_add(1, Ordering::SeqCst);
         if self.unavailable.load(Ordering::SeqCst) || self.diagnostics_failed.load(Ordering::SeqCst)
         {
             return Err(Error::Uncertain);
@@ -212,6 +215,92 @@ async fn release_requires_the_original_invocation_to_be_stopped() {
     let evidence = released.operator_release.unwrap().supervisor.unwrap();
     assert!(evidence.stopped);
     assert_eq!(evidence.active_state, "unloaded");
+}
+
+/// The host after a reboot: the same clock, on another boot.
+struct Rebooted(playtime_protocol::worker::ControlId);
+impl Clock for Rebooted {
+    fn now(&self) -> Stamp {
+        SystemClock.now()
+    }
+    fn boot_id(&self) -> Result<playtime_protocol::worker::ControlId> {
+        Ok(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn release_takes_a_later_boot_as_proof_that_the_worker_stopped() {
+    let root = Root::new();
+    let resource = "container playtime-fake-agent-1";
+    let archive = Arc::new(ResidualArchive {
+        inner: archive(&root.0),
+        present: Mutex::new(vec![format!("{resource} is present")]),
+    });
+    let supervisor = Arc::new(ManagerFixture::new());
+    let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
+    let accepted = admit(&c).await;
+    let ready = prepared(&c, &accepted).await;
+    c.begin(ready.run_id.clone()).await.unwrap();
+    // A reboot ends the worker, and no supervisor can observe its unit after.
+    supervisor
+        .child
+        .terminate(ready.prepared.as_ref().unwrap())
+        .unwrap();
+    supervisor.unavailable.store(true, Ordering::SeqCst);
+    let refused = c.release(ready.run_id.clone(), "rebooted".into()).await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if remaining.len() == 2 && remaining[0].contains("could not be observed")),
+        "on the worker's own boot, only the supervisor proves it stopped: {refused:?}"
+    );
+    drop(c);
+    let boot = random_id().unwrap();
+    let c = coordinator_on(
+        &root.0,
+        archive.clone(),
+        supervisor.clone(),
+        Arc::new(Rebooted(boot.clone())),
+    )
+    .await;
+    // Without the fixture's legacy compatibility pointer, only the ledger slot
+    // can block admission.
+    fs::remove_file(root.0.join(".playtime/active.json")).unwrap();
+    assert!(matches!(
+        c.admit(c.ledger().service_id().clone(), "second".into(), request())
+            .await,
+        Err(Error::Busy)
+    ));
+    let observed = supervisor.observes.load(Ordering::SeqCst);
+    // The reboot proves the worker stopped, not that its resources are gone.
+    let refused = c.release(ready.run_id.clone(), "rebooted".into()).await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if remaining == &vec![format!("{resource} is present")]),
+        "a remaining resource keeps the slot after a reboot too: {refused:?}"
+    );
+    assert_ne!(
+        c.ledger().get(&ready.run_id).await.unwrap().phase,
+        Phase::Terminal
+    );
+    archive.present.lock().unwrap().clear();
+    let released = c
+        .release(ready.run_id.clone(), "rebooted".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        supervisor.observes.load(Ordering::SeqCst),
+        observed,
+        "release doesn't ask the supervisor about a unit from an earlier boot"
+    );
+    assert_eq!(released.phase, Phase::Terminal);
+    assert_eq!(released.reason, Some(Reason::OperatorReleased));
+    let evidence = released.operator_release.unwrap();
+    assert_eq!(evidence.later_boot_id, Some(boot));
+    assert!(evidence.supervisor.is_none());
+    assert_eq!(evidence.absent_resources, vec![resource.to_string()]);
+    c.admit(c.ledger().service_id().clone(), "second".into(), request())
+        .await
+        .expect("the release frees the slot");
 }
 
 #[tokio::test]

@@ -85,8 +85,9 @@ descriptor/build-record bytes in `InputManifest.files`. `prepare_recoverable`
 additionally freezes the supported execution contract only when the validated
 bundle advertises `controller_archive_v1`. The worker independently checks it
 before controller creation. Ordinary preparation does not opt in. See
-[recovery contracts](rust-recovery-contract.md) for the read-only #50 scope and
-the remaining #43 transaction work. The demo self-capture helper is never used here.
+[recovery contracts](rust-recovery-contract.md) for the read-only #50 scope; the
+transaction work it would need isn't planned (#58). The demo self-capture helper
+is never used here.
 
 `VerifiedBundle::from_archive` uses storage-verified input references.
 `materialize(parent, run_id)` creates a fresh per-run directory and executable

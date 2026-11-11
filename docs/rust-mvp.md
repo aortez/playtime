@@ -174,9 +174,8 @@ The released execution path does not include the following capabilities. Issue
 numbers identify their design discussions; priorities belong to the owner:
 
 - Host enforcement or the guard in the run path (#67, #68 as written, #70).
-- Automatic recovery of a run whose worker is gone (#43, #58). Such a run
-  keeps its archive and waits for `playtime runs release`, which refuses a run
-  from before a host reboot.
+- Automatic recovery of a run whose worker is gone (not planned; see #58).
+  Such a run keeps its archive and waits for `playtime runs release`.
 - Remote access (#25), reports (#26), repeat and pilots (#27).
 - Research features (#2 to #15), including the launcher's recipe variations,
   parameter and model choice, seed upload and readiness checks (#2 to #7).

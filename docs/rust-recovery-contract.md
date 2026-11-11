@@ -5,8 +5,8 @@
 recoverable simulation and compute a deterministic recovery proposal from
 bounded evidence. It cannot acquire recovery ownership, stop a process, change
 an archive, append events, truncate a tail, adopt a receipt, release admission,
-or abandon a run. Those storage transactions and lifecycle integrations remain
-unimplemented (#43 R2 and daemon integration). The daemon's operator release is
+or abandon a run. Those storage transactions and lifecycle integrations aren't
+implemented, and aren't planned (#58). The daemon's operator release is
 a separate lifecycle operation: it does not apply a recovery proposal or modify
 archive evidence. See [development](development.md#gates-that-are-not-implemented)
 for the incomplete restart/recovery acceptance gates.
