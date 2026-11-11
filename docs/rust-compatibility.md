@@ -8,10 +8,11 @@ outlives its boot, so release now takes the changed boot ID as the evidence that
 the original invocation stopped. It doesn't ask the supervisor then, and the
 release record gains an optional `later_boot_id` holding the current boot ID,
 with `supervisor` left empty. Every resource in the worker's Docker ownership
-journal must still be absent. Older binaries ignore the new field, and ledger
-records without it read as before, so the ledger version stays 7. The `Clock`
-port gains `boot_id`, which reads the kernel's by default. Worker control, API
-schemas and goldens are unchanged.
+journal must still be absent. A boot ID names a boot of one host, so this
+assumes the root stays on the host that ran the worker. Older binaries ignore
+the new field, and ledger records without it read as before, so the ledger
+version stays 7. The `Clock` port gains `boot_id`, which reads the kernel's by
+default. Worker control, API schemas and goldens are unchanged.
 
 ## Daemon restart reattachment (#59, 2026-11-10)
 

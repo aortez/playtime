@@ -124,8 +124,8 @@ bounds are in [worker lifecycle](rust-worker-lifecycle.md#real-systemd-supervisi
 
 The dedicated CLI/UI `--backend simulation` wrappers intentionally fail. The
 service `--case normal` and `--case lifecycle` gates work, but the broader client
-simulation acceptance still requires worker-loss recovery and the associated
-failure matrix. There is no fixture fallback. Service `--case recovery` is not
+simulation acceptance still requires worker-loss recovery, which isn't planned
+(#58), and the associated failure matrix. There is no fixture fallback. Service `--case recovery` is not
 supported by the wrapper.
 
 Do not interpret this as an absence of Rust simulation or live execution. Those

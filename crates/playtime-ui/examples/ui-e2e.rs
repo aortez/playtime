@@ -159,7 +159,7 @@ async fn main() {
     }
     if args[1] == "simulation" {
         eprintln!(
-            "Simulation gate unavailable: #42 archive driver is merged, but #20 production service and #43 recovery are required. No fixture fallback; #22 remains open."
+            "Simulation gate unavailable: #42 archive driver is merged, but #20 production service and worker-loss recovery, which isn't planned (#58), are required. No fixture fallback; #22 remains open."
         );
         std::process::exit(1);
     }

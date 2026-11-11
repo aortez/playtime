@@ -144,8 +144,9 @@ authority to increment that generation remain part of the later recovery slice.
 A new coordinator marks active ownership reconciling before any public liveness
 claim. Its conformance harness can reauthenticate the **same surviving worker**;
 it never starts a replacement from a lost reply or worker death. The production
-daemon does not yet resume these actors after restart. Further execution after
-worker loss would require explicit continuation; automatic recovery is not
+daemon does the same after a restart on the same boot; see
+[restarting the daemon](rust-daemon.md#restarting-the-daemon). Further execution
+after worker loss would require explicit continuation; automatic recovery is not
 implemented. Operator release can free admission after termination/resource
 checks, without continuing execution or repairing archive evidence.
 
