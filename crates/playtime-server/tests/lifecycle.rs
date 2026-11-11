@@ -474,6 +474,78 @@ async fn release_is_refused_while_an_external_resource_remains() {
     );
 }
 
+/// A port whose resource check can't be made, as without Docker.
+struct UncheckedArchive {
+    inner: Arc<FixtureArchive>,
+    error: std::sync::Mutex<Option<fn() -> Error>>,
+}
+#[async_trait::async_trait]
+impl ArchivePort for UncheckedArchive {
+    async fn validate_preview(&self, request: &AdmissionRequest) -> Result<Selection> {
+        self.inner.validate_preview(request).await
+    }
+    async fn prepare(&self, admission: &Admission) -> Result<PreparedLaunch> {
+        self.inner.prepare(admission).await
+    }
+    async fn verify_status(
+        &self,
+        prepared: &PreparedLaunch,
+        previous: Option<&playtime_protocol::worker::Receipt>,
+        status: &playtime_protocol::worker::Status,
+    ) -> Result<()> {
+        self.inner.verify_status(prepared, previous, status).await
+    }
+    async fn external_resources(&self, _admission: &Admission) -> Result<ExternalResources> {
+        match *self.error.lock().unwrap() {
+            Some(error) => Err(error()),
+            None => Ok(ExternalResources::default()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn release_is_refused_while_resources_cannot_be_checked() {
+    let root = Root::new();
+    let archive = Arc::new(UncheckedArchive {
+        inner: archive(&root.0),
+        error: std::sync::Mutex::new(Some(|| Error::Refused(vec![Remaining::DockerUnavailable]))),
+    });
+    let supervisor = Arc::new(FixtureSupervisor::default());
+    let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
+    let admitted = admit(&c).await;
+    let p = prepared(&c, &admitted).await;
+    c.cancel(admitted.run_id.clone()).await.unwrap();
+    supervisor.terminate(p.prepared.as_ref().unwrap()).unwrap();
+    let release = || c.release(admitted.run_id.clone(), "operator test".into());
+    let refused = release().await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if remaining == &vec![Remaining::DockerUnavailable]),
+        "the check's own reason reaches the refusal: {refused:?}"
+    );
+    *archive.error.lock().unwrap() = Some(|| Error::Invalid("journal unreadable"));
+    let refused = release().await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if matches!(remaining.as_slice(),
+                [Remaining::ResourcesUnverified { error }] if error == "journal unreadable")),
+        "any other failed check refuses too: {refused:?}"
+    );
+    *archive.error.lock().unwrap() = Some(|| Error::Refused(vec![]));
+    let refused = release().await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if matches!(remaining.as_slice(), [Remaining::ResourcesUnverified { .. }])),
+        "a failed check that names no reason still refuses: {refused:?}"
+    );
+    assert_ne!(
+        c.ledger().get(&admitted.run_id).await.unwrap().phase,
+        Phase::Terminal
+    );
+    *archive.error.lock().unwrap() = None;
+    assert_eq!(release().await.unwrap().phase, Phase::Terminal);
+}
+
 #[tokio::test]
 async fn authentication_binds_peer_invocation_and_credentials_and_prevents_unpermitted_begin() {
     let root = Root::new();

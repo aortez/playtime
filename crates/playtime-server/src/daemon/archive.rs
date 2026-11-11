@@ -577,7 +577,11 @@ impl Archive {
         self.execution(mode).await
     }
     /// Targets resolve concurrently, so an offline machine delays startup once.
-    pub async fn add_targets(&mut self, targets: Vec<InferenceTarget>) -> life::Result<()> {
+    /// Returns each target that started without its model, and why.
+    pub async fn add_targets(
+        &mut self,
+        targets: Vec<InferenceTarget>,
+    ) -> life::Result<Vec<(String, &'static str)>> {
         let resolved = futures_util::future::try_join_all(targets.into_iter().map(|mut target| {
             let mut selected = self.clone();
             async move {
@@ -587,15 +591,20 @@ impl Archive {
                     .to_owned();
                 selected.selected_target = Some(target.clone());
                 selected.live = None;
-                super::tolerate_unavailable(selected.enable_live(&target.endpoint).await)?;
-                Ok::<_, Error>((target, selected.live))
+                let unavailable =
+                    super::tolerate_unavailable(selected.enable_live(&target.endpoint).await)?;
+                Ok::<_, Error>((target, selected.live, unavailable))
             }
         }))
         .await?;
-        for (target, live) in resolved {
+        let mut unavailable = Vec::new();
+        for (target, live, reason) in resolved {
+            if let Some(reason) = reason {
+                unavailable.push((target.id.clone(), reason));
+            }
             self.targets.insert(target.id.clone(), (target, live));
         }
-        Ok(())
+        Ok(unavailable)
     }
     pub async fn execution(&self, mode: RunMode) -> life::Result<Self> {
         let mut ready = self.clone();
@@ -1103,12 +1112,10 @@ impl ArchivePort for Archive {
             RunMode::Simulation => Ok(ExternalResources::default()),
             // Every Docker mode's worker keeps the same ownership journal.
             RunMode::ScriptedSmoke | RunMode::LiveSmoke | RunMode::Experiment => {
-                let Some(engine) = self.docker_engine.clone() else {
-                    return Ok(ExternalResources {
-                        absent: Vec::new(),
-                        remaining: vec![Remaining::DockerUnavailable],
-                    });
-                };
+                let engine = self
+                    .docker_engine
+                    .clone()
+                    .ok_or_else(|| Error::Refused(vec![Remaining::DockerUnavailable]))?;
                 let prepared = admission.prepared.clone().ok_or(Error::Uncertain)?;
                 let proposals = tokio::task::spawn_blocking(move || ownership_journal(&prepared))
                     .await

@@ -121,12 +121,7 @@ async fn cancel_and_release(
     )
     .await?;
     again.expect(5)?;
-    let refusal: serde_json::Value = again
-        .stderr
-        .split(|b| *b == b'\n')
-        .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
-        .find(|frame| frame["kind"] == "error")
-        .unwrap_or_default();
+    let refusal = again.error()?;
     if refusal["data"]["code"] != "release_refused"
         || refusal["data"]["details"]["remaining"] != json!([{"code": "run_terminal"}])
     {

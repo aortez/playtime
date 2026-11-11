@@ -551,6 +551,11 @@ impl Coordinator {
                         present.extend(resources.remaining);
                         resources.absent
                     }
+                    // A check that couldn't be made can say why.
+                    Err(Error::Refused(remaining)) if !remaining.is_empty() => {
+                        present.extend(remaining);
+                        Vec::new()
+                    }
                     Err(error) => {
                         present.push(Remaining::ResourcesUnverified {
                             error: error.to_string(),

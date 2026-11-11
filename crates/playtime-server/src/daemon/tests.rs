@@ -792,8 +792,11 @@ fn authoring_startup_tolerates_only_execution_limitations() {
     for reason in [
         "Docker readiness unavailable",
         "locked Docker image unavailable",
+        "invalid Docker executable/socket selection",
         "live model unavailable",
         "live runs need the Docker workshop",
+        "bundle does not implement this daemon's frozen Docker profile",
+        "bundle does not implement this daemon's live model profile",
     ] {
         assert_eq!(
             super::tolerate_unavailable(Err(Error::Invalid(reason))).unwrap(),

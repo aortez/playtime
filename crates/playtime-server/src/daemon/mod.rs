@@ -20,7 +20,7 @@ use playtime_protocol::{api::*, worker::WorkerState};
 use playtime_runner::ArchiveQueries;
 use playtime_storage::{ArchiveReader, ReadPrefix};
 use playtime_worker::bundle::VerifiedBundle;
-use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, io::Write, path::Path, sync::Arc, time::Duration};
 use tokio::sync::{RwLock, Semaphore, watch};
 
 #[derive(Clone)]
@@ -145,7 +145,11 @@ impl Daemon {
         {
             limitations.push(format!("started without the live model: {reason}"));
         }
-        archive.add_targets(targets.targets).await?;
+        for (target, reason) in archive.add_targets(targets.targets).await? {
+            limitations.push(format!(
+                "started without inference target {target}: {reason}"
+            ));
+        }
         let archive = Arc::new(archive);
         let models = live
             .map(crate::models::ModelBrowser::new)
@@ -947,9 +951,11 @@ impl Application for Daemon {
             .map_err(|error| match error {
                 life::Error::Refused(remaining) => {
                     // The full account can hold error text, so only the log
-                    // gets it.
+                    // gets it. A log that can't be written mustn't cost the
+                    // reply, as a panicking eprintln would.
                     let accounts: Vec<String> = remaining.iter().map(ToString::to_string).collect();
-                    eprintln!(
+                    let _ = writeln!(
+                        std::io::stderr(),
                         "playtimed: release of {run} refused: {}",
                         accounts.join("; ")
                     );

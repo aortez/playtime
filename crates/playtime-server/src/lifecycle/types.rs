@@ -168,7 +168,7 @@ pub struct OperatorRelease {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ExternalResources {
     pub absent: Vec<String>,
-    /// What is still present, or couldn't be checked.
+    /// What is still present, or couldn't be inspected.
     pub remaining: Vec<Remaining>,
 }
 

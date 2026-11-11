@@ -251,8 +251,9 @@ handoff and after uncertain worker loss.
 
 A refusal, `release_refused`, gives a code for each thing that remains, plus
 the kind and name of any Docker resource it concerns. The full account,
-including any error text, goes only to the daemon's log (its stderr, which
-systemd keeps in the journal). The CLI prints one line per entry.
+including the worker's unit and any error text, goes only to the daemon's log
+(its stderr, which systemd keeps in the journal). The CLI prints one line per
+entry.
 
 | Code | What remains |
 | --- | --- |
@@ -261,7 +262,7 @@ systemd keeps in the journal). The CLI prints one line per entry.
 | `worker_running` | The worker's unit hasn't stopped |
 | `worker_replaced` | The unit no longer matches the invocation the daemon saved |
 | `worker_unverified` | The supervisor couldn't show that the unit stopped |
-| `docker_unavailable` | The daemon started without Docker, so it can't inspect the run's resources; its log says why |
+| `docker_unavailable` | The daemon has no Docker connection to inspect the run's resources: it wasn't started with `--docker-scripted`, or enabling Docker failed at startup and its log says why |
 | `resources_unverified` | The run's Docker resources couldn't be listed, for example from an unreadable ownership journal |
 | `resource_present` | The named container or volume still exists |
 | `resource_mislabeled` | A resource with that name exists, but its labels differ from the run's |

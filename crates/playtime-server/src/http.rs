@@ -881,6 +881,10 @@ mod tests {
                 "unsafe_value",
                 serde_json::json!([{"code": "a", "name": "/home/x"}]),
             ),
+            (
+                "widest",
+                serde_json::json!({"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8}),
+            ),
             ("unsafe_key", serde_json::json!([{"a b": "c"}])),
             ("too_deep", serde_json::json!([{"code": ["a"]}])),
             (
@@ -896,7 +900,10 @@ mod tests {
         let body: playtime_protocol::v1::ErrorResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             serde_json::Value::Object(body.details),
-            serde_json::json!({"records": [{"code": "a_b", "name": "c-1", "count": 2}]})
+            serde_json::json!({
+                "records": [{"code": "a_b", "name": "c-1", "count": 2}],
+                "widest": {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8},
+            })
         );
     }
 }
