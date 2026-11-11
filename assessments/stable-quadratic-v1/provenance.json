@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "source_experiment": "playtime-diversity-v1",
+  "task_revision": 1,
+  "assessment_revision": 5,
+  "source": {
+    "url": "https://www.reddit.com/r/LocalLLM/comments/1xnikyz/please_test_your_models_before_spending_money_on/",
+    "question": 35
+  },
+  "original_seed_files": {
+    "TASK.md": "e3bc081da0e5229bf11dbe9f23c86b05673248dfc3dd4e3744fefa304c4e3d45",
+    "quadratic.py": "3d4815a793dbef6471689451cc557880e2a356b568f4c91ec19bc44eabec86a4"
+  },
+  "reference_files": {
+    "README.md": "e7f5424cc125b8e7d1f2b2153bdb15865b68474298c2408665c520a311ac3d9e",
+    "quadratic.py": "fca5eaa4d759ad4027f75b5b90a0a9319a3a35d6bb64e1bb72425381ee5d92d6"
+  },
+  "initial_checker_sha256": "9df9076289677a89e66ed7da0601538917055aa946c30e0810632cffecaf8f7f",
+  "controls": {
+    "reference_passed": 18,
+    "starter_passed": 0,
+    "total": 18,
+    "deliverable_total": 1
+  },
+  "adaptation": "Original Playtime implementation adapted from the cited question. API, bounds and output contract are pinned in TASK.md. Automated scores cover executable behavior; proofs and explanations require separate review."
+}

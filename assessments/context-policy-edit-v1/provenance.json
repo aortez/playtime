@@ -1,0 +1,36 @@
+{
+  "source": "Original Playtime long-context edit task, November 10, 2026",
+  "task_revision": 1,
+  "archive_generator": "archive.mjs",
+  "requirements_positions": [
+    0.05,
+    0.5,
+    0.95
+  ],
+  "rejected_proposal_positions": [
+    0.25,
+    0.75
+  ],
+  "original_seed_files": {
+    "shipping.py": "81189620ec8716265fc3568c0f249d8941525186f5e09ee2d7cf20ef7b65c89d",
+    "TASK.md": "fadf5e72cb4c9a1f37d86f65d858652b86ff1376b9779bd2fddb5f935803e930",
+    "test_legacy.py": "bc3ffe2ca88329c2e0ac652a33a970b4b65d1d0cc885d4b7df08751e7a71796c"
+  },
+  "reference_files": {
+    "README.md": "b87d988d7c9ea4b35c7402efc94d57501f16ba6464950651240e10f5759dd20c",
+    "shipping.py": "269bb1d60fcdd47b92c69a945ef1610e7bd4dfd65f40c7b614b0fc46cb30b628",
+    "TASK.md": "fadf5e72cb4c9a1f37d86f65d858652b86ff1376b9779bd2fddb5f935803e930",
+    "test_legacy.py": "bc3ffe2ca88329c2e0ac652a33a970b4b65d1d0cc885d4b7df08751e7a71796c"
+  },
+  "initial_checker_sha256": "62048695051f56952e1ebe8999a6750008251f4fd04eefa659c14c8fb87e67a8",
+  "controls": {
+    "reference_passed": 13,
+    "starter_passed": 9,
+    "total": 13,
+    "deliverable_total": 1
+  },
+  "limitations": [
+    "Synthetic edit task; one archive does not establish general long-context coding quality.",
+    "Archive is injected as first-user-message context by the declared external Codex adapter; task rules are not supplied as files."
+  ]
+}

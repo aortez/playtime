@@ -1,0 +1,915 @@
+{
+  "schema_version": 1,
+  "tasks": {
+    "ledger-repair-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "sample",
+          "kind": "functional"
+        },
+        {
+          "id": "exact_cents",
+          "kind": "functional"
+        },
+        {
+          "id": "validate_before_dedup",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_rows",
+          "kind": "functional"
+        },
+        {
+          "id": "quoted_unicode_sorted",
+          "kind": "functional"
+        },
+        {
+          "id": "empty_ledger",
+          "kind": "functional"
+        },
+        {
+          "id": "wrong_header",
+          "kind": "functional"
+        },
+        {
+          "id": "missing_input",
+          "kind": "functional"
+        },
+        {
+          "id": "delivered_report",
+          "kind": "deliverable"
+        },
+        {
+          "id": "usage_and_validation_notes_present",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "dependency-planner-repair-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "empty",
+          "kind": "functional"
+        },
+        {
+          "id": "independent_sorted",
+          "kind": "functional"
+        },
+        {
+          "id": "wave_snapshot",
+          "kind": "functional"
+        },
+        {
+          "id": "diamond_reversed",
+          "kind": "functional"
+        },
+        {
+          "id": "duplicate_edges",
+          "kind": "functional"
+        },
+        {
+          "id": "extra_fields_no_mutation",
+          "kind": "functional"
+        },
+        {
+          "id": "deep_chain",
+          "kind": "functional"
+        },
+        {
+          "id": "cycle_downstream",
+          "kind": "functional"
+        },
+        {
+          "id": "self_cycle",
+          "kind": "functional"
+        },
+        {
+          "id": "duplicate_ids",
+          "kind": "functional"
+        },
+        {
+          "id": "unknown_dependency",
+          "kind": "functional"
+        },
+        {
+          "id": "validate_even_if_cycle",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_container",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_item",
+          "kind": "functional"
+        },
+        {
+          "id": "missing_fields",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_id",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_dependency",
+          "kind": "functional"
+        },
+        {
+          "id": "empty_id",
+          "kind": "functional"
+        },
+        {
+          "id": "cli_good",
+          "kind": "functional"
+        },
+        {
+          "id": "cli_json",
+          "kind": "functional"
+        },
+        {
+          "id": "cli_cycle",
+          "kind": "functional"
+        },
+        {
+          "id": "cli_missing",
+          "kind": "functional"
+        },
+        {
+          "id": "delivered_plan",
+          "kind": "deliverable"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "byte-range-repair-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "none",
+          "kind": "functional"
+        },
+        {
+          "id": "empty",
+          "kind": "functional"
+        },
+        {
+          "id": "zero_no_header",
+          "kind": "functional"
+        },
+        {
+          "id": "explicit",
+          "kind": "functional"
+        },
+        {
+          "id": "clipping",
+          "kind": "functional"
+        },
+        {
+          "id": "open",
+          "kind": "functional"
+        },
+        {
+          "id": "suffix",
+          "kind": "functional"
+        },
+        {
+          "id": "long_suffix",
+          "kind": "functional"
+        },
+        {
+          "id": "mixed_sorted",
+          "kind": "functional"
+        },
+        {
+          "id": "adjacent_overlap",
+          "kind": "functional"
+        },
+        {
+          "id": "case_ows",
+          "kind": "functional"
+        },
+        {
+          "id": "unknown_unit",
+          "kind": "functional"
+        },
+        {
+          "id": "skip_unsatisfiable",
+          "kind": "functional"
+        },
+        {
+          "id": "all_unsatisfiable",
+          "kind": "functional"
+        },
+        {
+          "id": "zero_valid",
+          "kind": "functional"
+        },
+        {
+          "id": "large_start",
+          "kind": "functional"
+        },
+        {
+          "id": "reversed",
+          "kind": "functional"
+        },
+        {
+          "id": "internal_space",
+          "kind": "functional"
+        },
+        {
+          "id": "separator_space",
+          "kind": "functional"
+        },
+        {
+          "id": "unicode_digits",
+          "kind": "functional"
+        },
+        {
+          "id": "empty_member",
+          "kind": "functional"
+        },
+        {
+          "id": "extra_hyphen",
+          "kind": "functional"
+        },
+        {
+          "id": "plus",
+          "kind": "functional"
+        },
+        {
+          "id": "bad_member_invalidates_all",
+          "kind": "functional"
+        },
+        {
+          "id": "limit32",
+          "kind": "functional"
+        },
+        {
+          "id": "limit33",
+          "kind": "functional"
+        },
+        {
+          "id": "bool_size",
+          "kind": "functional"
+        },
+        {
+          "id": "negative_size",
+          "kind": "functional"
+        },
+        {
+          "id": "float_size",
+          "kind": "functional"
+        },
+        {
+          "id": "bad_header",
+          "kind": "functional"
+        },
+        {
+          "id": "cli_valid",
+          "kind": "functional"
+        },
+        {
+          "id": "cli_unsatisfiable",
+          "kind": "functional"
+        },
+        {
+          "id": "cli_invalid_size",
+          "kind": "functional"
+        },
+        {
+          "id": "cli_unicode_size",
+          "kind": "functional"
+        },
+        {
+          "id": "cli_missing_args",
+          "kind": "functional"
+        },
+        {
+          "id": "delivered_example",
+          "kind": "deliverable"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "async-singleflight-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "shared",
+          "kind": "functional"
+        },
+        {
+          "id": "one_cancel",
+          "kind": "functional"
+        },
+        {
+          "id": "all_cancel",
+          "kind": "functional"
+        },
+        {
+          "id": "errors",
+          "kind": "functional"
+        },
+        {
+          "id": "orphan_error",
+          "kind": "functional"
+        },
+        {
+          "id": "independent_keys_instances",
+          "kind": "functional"
+        },
+        {
+          "id": "success_not_cached",
+          "kind": "functional"
+        },
+        {
+          "id": "failure_not_cached",
+          "kind": "functional"
+        },
+        {
+          "id": "completion_cleanup_race",
+          "kind": "functional"
+        },
+        {
+          "id": "synchronous_factory_failure",
+          "kind": "functional"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "streaming-jsonlines-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "all_byte_splits",
+          "kind": "functional"
+        },
+        {
+          "id": "exact_limits",
+          "kind": "functional"
+        },
+        {
+          "id": "cr_counts_toward_limit",
+          "kind": "functional"
+        },
+        {
+          "id": "blank_lines_count",
+          "kind": "functional"
+        },
+        {
+          "id": "unterminated_limit",
+          "kind": "functional"
+        },
+        {
+          "id": "many_short_records",
+          "kind": "functional"
+        },
+        {
+          "id": "blank_empty_finish",
+          "kind": "functional"
+        },
+        {
+          "id": "null_and_json_types",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_limits",
+          "kind": "functional"
+        },
+        {
+          "id": "bounded_allocation",
+          "kind": "functional"
+        },
+        {
+          "id": "bad_utf8",
+          "kind": "functional"
+        },
+        {
+          "id": "bad_json",
+          "kind": "functional"
+        },
+        {
+          "id": "trailing_garbage",
+          "kind": "functional"
+        },
+        {
+          "id": "nan",
+          "kind": "functional"
+        },
+        {
+          "id": "infinity",
+          "kind": "functional"
+        },
+        {
+          "id": "negative_infinity",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_escape",
+          "kind": "functional"
+        },
+        {
+          "id": "incomplete_utf8_finish",
+          "kind": "functional"
+        },
+        {
+          "id": "incomplete_json_finish",
+          "kind": "functional"
+        },
+        {
+          "id": "valid_final_record",
+          "kind": "functional"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "shortest-walk-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "empty_walk",
+          "kind": "functional"
+        },
+        {
+          "id": "unreachable",
+          "kind": "functional"
+        },
+        {
+          "id": "negative_edges",
+          "kind": "functional"
+        },
+        {
+          "id": "parallel_edges",
+          "kind": "functional"
+        },
+        {
+          "id": "negative_self_loop",
+          "kind": "functional"
+        },
+        {
+          "id": "negative_cycle_to_target",
+          "kind": "functional"
+        },
+        {
+          "id": "unreachable_negative_cycle",
+          "kind": "functional"
+        },
+        {
+          "id": "cycle_cannot_reach_target",
+          "kind": "functional"
+        },
+        {
+          "id": "cycle_and_unreachable_target",
+          "kind": "functional"
+        },
+        {
+          "id": "zero_cycle",
+          "kind": "functional"
+        },
+        {
+          "id": "source_target_cycle",
+          "kind": "functional"
+        },
+        {
+          "id": "source_target_no_return",
+          "kind": "functional"
+        },
+        {
+          "id": "huge_integer",
+          "kind": "functional"
+        },
+        {
+          "id": "above_float_precision",
+          "kind": "functional"
+        },
+        {
+          "id": "reverse_edge_order",
+          "kind": "functional"
+        },
+        {
+          "id": "seeded_graphs_160",
+          "kind": "functional"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "sql-tombstones-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "empty",
+          "kind": "functional"
+        },
+        {
+          "id": "single_live",
+          "kind": "functional"
+        },
+        {
+          "id": "cutoff_inclusive",
+          "kind": "functional"
+        },
+        {
+          "id": "future_ignored",
+          "kind": "functional"
+        },
+        {
+          "id": "future_only",
+          "kind": "functional"
+        },
+        {
+          "id": "tombstone_wins",
+          "kind": "functional"
+        },
+        {
+          "id": "resurrection",
+          "kind": "functional"
+        },
+        {
+          "id": "equal_version_live_wins",
+          "kind": "functional"
+        },
+        {
+          "id": "equal_version_delete_wins",
+          "kind": "functional"
+        },
+        {
+          "id": "version_before_id",
+          "kind": "functional"
+        },
+        {
+          "id": "resources_independent",
+          "kind": "functional"
+        },
+        {
+          "id": "negative_versions",
+          "kind": "functional"
+        },
+        {
+          "id": "exact_i64",
+          "kind": "functional"
+        },
+        {
+          "id": "binary_order_and_payload",
+          "kind": "functional"
+        },
+        {
+          "id": "seeded_histories_80",
+          "kind": "functional"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "delta-debugging-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "empty_fails",
+          "kind": "functional"
+        },
+        {
+          "id": "always_fails",
+          "kind": "functional"
+        },
+        {
+          "id": "singleton",
+          "kind": "functional"
+        },
+        {
+          "id": "all_required",
+          "kind": "functional"
+        },
+        {
+          "id": "one_relevant",
+          "kind": "functional"
+        },
+        {
+          "id": "distant_pair",
+          "kind": "functional"
+        },
+        {
+          "id": "ordered_pair",
+          "kind": "functional"
+        },
+        {
+          "id": "duplicates",
+          "kind": "functional"
+        },
+        {
+          "id": "unhashable_identity",
+          "kind": "functional"
+        },
+        {
+          "id": "nonmonotone_cardinality",
+          "kind": "functional"
+        },
+        {
+          "id": "global_minimum_not_required",
+          "kind": "functional"
+        },
+        {
+          "id": "reconsider_deletions",
+          "kind": "functional"
+        },
+        {
+          "id": "seeded_nonmonotone_80",
+          "kind": "functional"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "stable-quadratic-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "ordinary",
+          "kind": "functional"
+        },
+        {
+          "id": "cancellation_positive",
+          "kind": "functional"
+        },
+        {
+          "id": "cancellation_negative",
+          "kind": "functional"
+        },
+        {
+          "id": "opposite_sign_roots",
+          "kind": "functional"
+        },
+        {
+          "id": "negative_leading",
+          "kind": "functional"
+        },
+        {
+          "id": "repeated_positive",
+          "kind": "functional"
+        },
+        {
+          "id": "repeated_negative",
+          "kind": "functional"
+        },
+        {
+          "id": "repeated_zero",
+          "kind": "functional"
+        },
+        {
+          "id": "negative_repeated_zero",
+          "kind": "functional"
+        },
+        {
+          "id": "zero_b",
+          "kind": "functional"
+        },
+        {
+          "id": "zero_c_positive_b",
+          "kind": "functional"
+        },
+        {
+          "id": "zero_c_negative_b",
+          "kind": "functional"
+        },
+        {
+          "id": "scaled_coefficients",
+          "kind": "functional"
+        },
+        {
+          "id": "tiny_root",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_domain",
+          "kind": "functional"
+        },
+        {
+          "id": "nonfinite_inputs",
+          "kind": "functional"
+        },
+        {
+          "id": "seeded_scales_80",
+          "kind": "functional"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "crash-journal-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "empty",
+          "kind": "functional"
+        },
+        {
+          "id": "pending_not_visible",
+          "kind": "functional"
+        },
+        {
+          "id": "abort_discard",
+          "kind": "functional"
+        },
+        {
+          "id": "commit_order",
+          "kind": "functional"
+        },
+        {
+          "id": "within_transaction_order",
+          "kind": "functional"
+        },
+        {
+          "id": "delete_at_commit_time",
+          "kind": "functional"
+        },
+        {
+          "id": "independent_interleaved_abort",
+          "kind": "functional"
+        },
+        {
+          "id": "empty_commit",
+          "kind": "functional"
+        },
+        {
+          "id": "unicode_and_empty",
+          "kind": "functional"
+        },
+        {
+          "id": "every_crash_byte",
+          "kind": "functional"
+        },
+        {
+          "id": "checksum_no_resync",
+          "kind": "functional"
+        },
+        {
+          "id": "magic_no_resync",
+          "kind": "functional"
+        },
+        {
+          "id": "oversized_length",
+          "kind": "functional"
+        },
+        {
+          "id": "malformed_payload",
+          "kind": "functional"
+        },
+        {
+          "id": "inactive_or_duplicate_begin",
+          "kind": "functional"
+        },
+        {
+          "id": "closed_id_reuse",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_operation_stops_commit",
+          "kind": "functional"
+        },
+        {
+          "id": "payload_limit_inclusive",
+          "kind": "functional"
+        },
+        {
+          "id": "seeded_interleavings_60",
+          "kind": "functional"
+        },
+        {
+          "id": "input_type",
+          "kind": "functional"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    },
+    "linearizable-kv-v1": {
+      "task_revision": 1,
+      "assessment_revision": 7,
+      "cases": [
+        {
+          "id": "empty",
+          "kind": "functional"
+        },
+        {
+          "id": "absent_vs_empty",
+          "kind": "functional"
+        },
+        {
+          "id": "overlapping_future_write",
+          "kind": "functional"
+        },
+        {
+          "id": "real_time_blocks_future",
+          "kind": "functional"
+        },
+        {
+          "id": "touching_intervals",
+          "kind": "functional"
+        },
+        {
+          "id": "backtrack_legal_write",
+          "kind": "functional"
+        },
+        {
+          "id": "failed_cas_is_observation",
+          "kind": "functional"
+        },
+        {
+          "id": "cas_checks_every_key",
+          "kind": "functional"
+        },
+        {
+          "id": "failed_cas_no_writes",
+          "kind": "functional"
+        },
+        {
+          "id": "atomic_batch_no_partial_visibility",
+          "kind": "functional"
+        },
+        {
+          "id": "delete_to_absent",
+          "kind": "functional"
+        },
+        {
+          "id": "empty_cas_maps",
+          "kind": "functional"
+        },
+        {
+          "id": "multi_key_cycle",
+          "kind": "functional"
+        },
+        {
+          "id": "lexicographic_witness",
+          "kind": "functional"
+        },
+        {
+          "id": "state_matters_for_pruning",
+          "kind": "functional"
+        },
+        {
+          "id": "shuffled_input",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_history_validation",
+          "kind": "functional"
+        },
+        {
+          "id": "invalid_initial",
+          "kind": "functional"
+        },
+        {
+          "id": "seeded_permutation_oracle_80",
+          "kind": "functional"
+        },
+        {
+          "id": "equivalent_prefixes",
+          "kind": "functional"
+        },
+        {
+          "id": "deferred_noop_write",
+          "kind": "functional"
+        },
+        {
+          "id": "readme",
+          "kind": "deliverable"
+        }
+      ]
+    }
+  }
+}

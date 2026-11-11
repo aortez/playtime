@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "shortest-walk-v1",
+  "name": "Shortest walk with negative cycles",
+  "description": "Exact shortest walks, unreachable targets and negative cycles that can affect the target.",
+  "revision": 1,
+  "files": "seeds/shortest-walk-v1",
+  "provenance": "Imported unchanged from notes bird-screen-v2, adapted from Reddit Brutal Model Test Q22. See assessments/shortest-walk-v1/provenance.json for source and historical hashes.",
+  "assessment": "assessments/shortest-walk-v1"
+}

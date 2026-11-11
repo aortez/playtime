@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "source_experiment": "bird-screen-v2",
+  "original_harness": "Codex CLI 0.160.0",
+  "task_revision": 1,
+  "assessment_revision": 4,
+  "source": {
+    "url": "https://www.reddit.com/r/LocalLLM/comments/1xnikyz/please_test_your_models_before_spending_money_on/",
+    "question": 22
+  },
+  "source_notes_commit": "e2f04e92",
+  "source_suite_sha256": "057eb8b1ead7caef1cbed550aa21627b8f40b0c94b8c6c0f31f9ee2191d1060b",
+  "historical_checker_sha256": "11e2d432cc4cf8d873076dd7e0060defd5b020cd64e9283e94fd04c21635068f",
+  "original_seed_files": {
+    "TASK.md": "93d5c96c4d98d7ed2d948389ddbaf50c84ff569c2e1962148bc943b3a91ebcad",
+    "shortestwalk.py": "3958593722709f5093762ad396e9520a652f327c82666516646e3f1d2c3dc07f"
+  },
+  "reference_files": {
+    "README.md": "613793c7dfcd33f7dd8d2abcf9c41df67a9efb505b6e5e50ee87fb60fad58d94",
+    "shortestwalk.py": "9d11c8c6effaf5a959232355f0122058a47a2551fbaf6f0b75b44fd4d7370968"
+  },
+  "controls": {
+    "reference_passed": 17,
+    "starter_passed": 0,
+    "total": 17,
+    "deliverable_total": 1
+  },
+  "adaptation": "Task and reference bytes unchanged. Same acceptance cases and README regular-file presence rule. Adds registered candidate modules and private report transport through the shared offline assessment helper; execution outcomes remain separate."
+}

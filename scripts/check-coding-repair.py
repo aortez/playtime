@@ -19,8 +19,8 @@ MAX_REPORT = 1024 * 1024
 MAX_FILES = 4096
 MAX_WORKSPACE = 48 * 1024 * 1024
 OUTCOMES = ("unknown", "completed", "timed_out", "cancelled", "failed", "skipped")
-ASSESSMENT_REVISIONS = (2, 3)
-CURRENT_REVISION = 3
+ASSESSMENT_REVISIONS = (2, 3, 4, 5, 6, 7, 8)
+CURRENT_REVISION = 8
 
 
 class AssessmentInterrupted(Exception):
@@ -54,7 +54,7 @@ def bounded_read(path, limit):
 def catalog_path(revision):
     if revision not in ASSESSMENT_REVISIONS:
         raise ValueError("unsupported assessment revision")
-    return SUPPORT / ("catalog.json" if revision == 2 else "catalog-v3.json")
+    return SUPPORT / ("catalog.json" if revision == 2 else f"catalog-v{revision}.json")
 
 
 def load_task(task_id, revision=CURRENT_REVISION):
@@ -66,8 +66,12 @@ def load_task(task_id, revision=CURRENT_REVISION):
 
 def checker_sources(task_id, revision):
     load_task(task_id, revision)
-    name = "check-v3.py" if revision == 3 and task_id != "ledger-repair-v1" else "check.py"
-    return [SUPPORT / "driver.py", SUPPORT / "assessment_support.py",
+    name = "check-v3.py" if revision >= 3 and task_id in (
+        "dependency-planner-repair-v1", "byte-range-repair-v1") else "check.py"
+    if revision >= 7 and task_id == "linearizable-kv-v1":
+        name = "check-v7.py"
+    driver = f"driver-v{revision}.py" if revision >= 4 else "driver.py"
+    return [SUPPORT / driver, SUPPORT / "assessment_support.py",
             ROOT / "assessments" / task_id / name]
 
 
@@ -264,7 +268,7 @@ def main():
     parser.add_argument("--outcome", choices=OUTCOMES, default="unknown")
     parser.add_argument("--assessment-revision", type=int, choices=ASSESSMENT_REVISIONS,
                         default=CURRENT_REVISION,
-                        help="checker semantics: 3 requires a regular README file; 2 retains historical checks")
+                        help="6 adds crash recovery and linearizable history; 2–5 retain earlier catalogs/checks")
     parser.add_argument("--metadata", type=Path, help="JSON with harness/version, model/settings, run id and timing")
     parser.add_argument("--assessment-timeout", type=float, default=30,
                         help="checker container deadline in seconds (1–120); not the model task budget")

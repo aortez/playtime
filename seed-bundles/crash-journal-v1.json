@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "crash-journal-v1",
+  "name": "Crash journal recovery",
+  "description": "Interleaved transactions, commit atomicity, torn frames and corruption boundaries.",
+  "revision": 1,
+  "files": "seeds/crash-journal-v1",
+  "provenance": "Original Playtime hard-screen task. See assessments/crash-journal-v1/provenance.json.",
+  "assessment": "assessments/crash-journal-v1"
+}

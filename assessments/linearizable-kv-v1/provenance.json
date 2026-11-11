@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "source_experiment": "playtime-hard-screen-v1",
+  "task_revision": 1,
+  "assessment_revision": 6,
+  "source": {
+    "kind": "original",
+    "description": "Original Playtime compound-state task; not a scored adaptation of the Reddit questions."
+  },
+  "original_seed_files": {
+    "TASK.md": "a4e7e00bfde62ce7f1b5337215ecae46114c79f34b3b075e71e37c0dfd24f9c9",
+    "linearize.py": "147380c913826d1903c7897258505a04e5bb3933083b953571c66b6093458ee5"
+  },
+  "reference_files": {
+    "README.md": "1613f10421604c757a766a5fe0c97038a2db925420b395fb467bbaeac4c47a8f",
+    "linearize.py": "2a04b7ca0408abd5c88fdd006d5eb6296b195bbfada282baa9590a2d33bca2ed"
+  },
+  "initial_checker_sha256": "19daa0fe03cce4014fd09b72b4a18d10a76335fe9eed3942825aaf0b38f1d21a",
+  "controls": {
+    "reference_passed": 21,
+    "starter_passed": 6,
+    "total": 21,
+    "deliverable_total": 1
+  },
+  "difficulty_status": "Uncalibrated: reference correctness and fault detection do not establish a local/frontier difficulty gap.",
+  "revision_controls": {
+    "7": {
+      "reference_passed": 22,
+      "starter_passed": 6,
+      "total": 22,
+      "deliverable_total": 1
+    },
+    "8": {
+      "reference_passed": 22,
+      "starter_passed": 6,
+      "total": 22,
+      "deliverable_total": 1
+    }
+  },
+  "assessment_revision_7": {
+    "case": "deferred_noop_write",
+    "source": "Posthoc counterexample from the 2026-11-07 Bird runtime comparison; the study record stays outside the repository.",
+    "note": "Promoted before new model runs; task, starter, reference and revision-6 checker unchanged."
+  }
+}

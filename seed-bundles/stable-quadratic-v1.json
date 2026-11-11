@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "stable-quadratic-v1",
+  "name": "Stable real quadratic roots",
+  "description": "Numerical stability, cancellation, exact repeated roots and domain errors.",
+  "revision": 1,
+  "files": "seeds/stable-quadratic-v1",
+  "provenance": "Adapted from Reddit Brutal Model Test Q35; original task, reference and independent grader authored for Playtime. See assessments/stable-quadratic-v1/provenance.json.",
+  "assessment": "assessments/stable-quadratic-v1"
+}

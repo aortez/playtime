@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "linearizable-kv-v1",
+  "name": "Linearizable key-value history",
+  "description": "Global ordering, real-time precedence, atomic compare-and-swap and state-aware pruning.",
+  "revision": 1,
+  "files": "seeds/linearizable-kv-v1",
+  "provenance": "Original Playtime hard-screen task. See assessments/linearizable-kv-v1/provenance.json.",
+  "assessment": "assessments/linearizable-kv-v1"
+}

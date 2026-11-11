@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "context-policy-edit-v1",
+  "name": "Long-context shipping policy edit",
+  "description": "Apply three dispersed approved rules while rejecting obsolete proposals and preserving legacy behavior.",
+  "revision": 1,
+  "files": "seeds/context-policy-edit-v1",
+  "provenance": "Original Playtime context-edit task; requires the versioned archive generator in its assessment directory.",
+  "assessment": "assessments/context-policy-edit-v1"
+}
