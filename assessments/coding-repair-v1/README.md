@@ -255,10 +255,9 @@ python3 scripts/check-coding-repair.py ledger-repair-v1 \
 ```
 
 The original three tasks have two deliverable checks for the example and README;
-revision 3 and later require **regular files of more than 50 bytes**. The three
-original Reddit-derived tasks and the three later adaptations use a single
-deliverable check: `README.md`
-must be a regular file, with no minimum size. These checks do not verify the
+revision 3 and later require **regular files of more than 50 bytes**. The other
+nine tasks use a single deliverable check: `README.md` must be a regular file,
+with no minimum size. These checks do not verify the
 quality or truth of the documentation. Individual cases can exercise
 several inputs, so 70/71 is a case tally, not a calibrated accuracy percentage.
 Finite examples are not a proof of correctness. Keep assessment feedback away

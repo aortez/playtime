@@ -268,7 +268,7 @@ def main():
     parser.add_argument("--outcome", choices=OUTCOMES, default="unknown")
     parser.add_argument("--assessment-revision", type=int, choices=ASSESSMENT_REVISIONS,
                         default=CURRENT_REVISION,
-                        help="8 adds the context-policy edit; 2–7 retain earlier catalogs/checks")
+                        help="6 adds crash recovery and linearizable history; 2–5 retain earlier catalogs/checks")
     parser.add_argument("--metadata", type=Path, help="JSON with harness/version, model/settings, run id and timing")
     parser.add_argument("--assessment-timeout", type=float, default=30,
                         help="checker container deadline in seconds (1–120); not the model task budget")

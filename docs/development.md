@@ -61,7 +61,8 @@ The [coding-repair assessments](../assessments/coding-repair-v1/README.md) also 
 `python3 scripts/test-coding-repair.py -v` (offline, included in CI) and
 `python3 scripts/test-coding-repair-docker.py -v` (the locked local image).
 The latter checks all twelve starters/references, nineteen targeted faults in the
-Reddit-derived tasks and eleven in the compound-state tasks, local Python modules
+Reddit-derived tasks, eleven in the compound-state tasks, the deferred no-op
+write case, four context-policy pricing faults, local Python modules
 and executables, dataclasses, noisy candidate
 imports, partial-workspace outcomes and
 deadline/cancellation cleanup, including signals during container removal.
