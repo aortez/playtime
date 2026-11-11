@@ -199,9 +199,9 @@ The application adapter must implement these authority boundaries:
 - `cancel` returns the original saved intent and its current enforcement state.
   A request acknowledgment does not mean that a process stopped. HTTP never
   extends grace or infers an experimental outcome. A run with no worker that
-  can still run (none was started, the supervisor saw it stop, or it started on
-  an earlier boot) is returned unchanged, with no new intent; the reply is still
-  202 while the run isn't terminal.
+  can still run (none was started and it's no longer preparing, the supervisor
+  saw it stop, or it started on an earlier boot) is returned unchanged, with no
+  new intent; the reply is still 202 while the run isn't terminal.
 - `release` is an explicit operator resolution. The adapter itself verifies the
   worker and resources; a refusal is `release_refused` with `details.remaining`.
   Adapters without it return `unsupported_capability`.

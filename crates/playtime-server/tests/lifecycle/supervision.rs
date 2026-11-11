@@ -4,6 +4,7 @@ use std::sync::{
     Mutex,
     atomic::{AtomicBool, AtomicUsize},
 };
+use tokio::sync::Notify;
 
 struct ManagerFixture {
     child: FixtureSupervisor,
@@ -15,6 +16,11 @@ struct ManagerFixture {
     /// Every stop request, including those the manager refuses.
     stop_calls: AtomicUsize,
     observes: AtomicUsize,
+    /// Holds the next locate after announcing it on `locating`, until
+    /// `resume_locate`.
+    pause_locate: AtomicBool,
+    locating: Notify,
+    resume_locate: Notify,
 }
 impl ManagerFixture {
     fn new() -> Self {
@@ -37,6 +43,9 @@ impl ManagerFixture {
             stops: AtomicUsize::new(0),
             stop_calls: AtomicUsize::new(0),
             observes: AtomicUsize::new(0),
+            pause_locate: AtomicBool::new(false),
+            locating: Notify::new(),
+            resume_locate: Notify::new(),
         }
     }
 }
@@ -52,6 +61,10 @@ impl Supervisor for ManagerFixture {
         self.child.start(launch).await
     }
     async fn locate(&self, launch: &PreparedLaunch) -> Result<playtime_worker_control::Endpoint> {
+        if self.pause_locate.swap(false, Ordering::SeqCst) {
+            self.locating.notify_one();
+            self.resume_locate.notified().await;
+        }
         self.child.locate(launch).await
     }
     async fn observe(&self, _: &PreparedLaunch) -> Result<Option<SupervisorObservation>> {
@@ -430,6 +443,96 @@ async fn cancel_leaves_a_run_whose_worker_stopped_waiting_for_release() {
     let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
     assert_eq!(cancelled, lost, "nothing is left to cancel");
     assert_eq!(c.ledger().get(&ready.run_id).await.unwrap(), lost);
+}
+
+#[tokio::test]
+async fn a_stop_seen_during_a_cancel_leaves_the_run_waiting_for_release() {
+    let root = Root::new();
+    let supervisor = Arc::new(ManagerFixture::new());
+    let c = coordinator(&root.0, archive(&root.0), supervisor.clone()).await;
+    let accepted = admit(&c).await;
+    let ready = prepared(&c, &accepted).await;
+    c.begin(ready.run_id.clone()).await.unwrap();
+    // The worker dies as the operator cancels, and a refresh sees its unit
+    // stop while the cancel is still trying to reach it.
+    supervisor
+        .child
+        .terminate(ready.prepared.as_ref().unwrap())
+        .unwrap();
+    supervisor.pause_locate.store(true, Ordering::SeqCst);
+    let cancel = tokio::spawn({
+        let (c, run) = (c.clone(), ready.run_id.clone());
+        async move { c.cancel(run).await }
+    });
+    tokio::time::timeout(Duration::from_secs(10), supervisor.locating.notified())
+        .await
+        .expect("the cancel tries to reach the worker");
+    {
+        let mut observation = supervisor.observation.lock().unwrap();
+        observation.active_state = "unloaded".into();
+        observation.main_pid = 0;
+        observation.stopped = true;
+    }
+    after_refresh_floor().await;
+    let lost = c.refresh(ready.run_id.clone()).await.unwrap();
+    assert_eq!(
+        (lost.phase, lost.reason),
+        (Phase::Reconciling, Some(Reason::WorkerUnavailable))
+    );
+    supervisor.resume_locate.notify_one();
+    let cancelled = cancel.await.unwrap().unwrap();
+    assert_eq!(
+        (cancelled.phase, cancelled.reason),
+        (Phase::Reconciling, Some(Reason::WorkerUnavailable)),
+        "the run still waits for a release"
+    );
+    assert_eq!(cancelled.cancel_delivery, Some(CancelDelivery::Uncertain));
+}
+
+/// Preparation that fails, as when a run's target can't be reached.
+struct FailingPreparation(Arc<FixtureArchive>);
+#[async_trait]
+impl ArchivePort for FailingPreparation {
+    async fn validate_preview(&self, request: &AdmissionRequest) -> Result<Selection> {
+        self.0.validate_preview(request).await
+    }
+    async fn prepare(&self, _: &Admission) -> Result<PreparedLaunch> {
+        Err(Error::Invalid("fixture preparation fails"))
+    }
+    async fn verify_status(
+        &self,
+        prepared: &PreparedLaunch,
+        previous: Option<&playtime_protocol::worker::Receipt>,
+        status: &playtime_protocol::worker::Status,
+    ) -> Result<()> {
+        self.0.verify_status(prepared, previous, status).await
+    }
+}
+
+#[tokio::test]
+async fn cancel_leaves_a_run_whose_preparation_failed_waiting_for_release() {
+    let root = Root::new();
+    let c = coordinator(
+        &root.0,
+        Arc::new(FailingPreparation(archive(&root.0))),
+        Arc::new(ManagerFixture::new()),
+    )
+    .await;
+    let accepted = admit(&c).await;
+    c.start(accepted.run_id.clone()).await.unwrap_err();
+    let failed = c.ledger().get(&accepted.run_id).await.unwrap();
+    assert_eq!(
+        (failed.phase, failed.reason),
+        (Phase::Reconciling, Some(Reason::PreparationFailed))
+    );
+    let cancelled = c.cancel(accepted.run_id.clone()).await.unwrap();
+    assert_eq!(cancelled, failed, "nothing is left to cancel");
+    assert_eq!(c.ledger().get(&accepted.run_id).await.unwrap(), failed);
+    let released = c
+        .release(accepted.run_id.clone(), "preparation failed".into())
+        .await
+        .unwrap();
+    assert_eq!(released.phase, Phase::Terminal);
 }
 
 #[tokio::test]

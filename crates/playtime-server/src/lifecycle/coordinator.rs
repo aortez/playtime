@@ -386,14 +386,19 @@ impl Coordinator {
                 // Without a worker that can run, nothing is left to cancel,
                 // and the run keeps waiting for an operator release.
                 let current = inner.ledger.get(&id).await?;
-                if inner.no_worker_can_run(&current).await {
+                if inner.started_on_earlier_boot(&current).await {
                     return Ok(current);
                 }
                 let now = inner.clock.now();
                 let admission = inner
                     .ledger
                     .update(&id, "cancel_requested", move |record| {
-                        if record.phase == Phase::Terminal || record.cancel_requested.is_some() {
+                        // Checked in the intent's own transaction, so a stop
+                        // saved just before it still counts.
+                        if record.phase == Phase::Terminal
+                            || record.cancel_requested.is_some()
+                            || no_worker_left(record)
+                        {
                             return Ok(());
                         }
                         record.cancel_requested = Some(now);
@@ -404,7 +409,7 @@ impl Coordinator {
                         Ok(())
                     })
                     .await?;
-                if admission.phase == Phase::Terminal {
+                if admission.phase == Phase::Terminal || no_worker_left(&admission) {
                     return Ok(admission);
                 }
                 if admission.cancel_delivery == Some(CancelDelivery::WorkerAcknowledged) {
@@ -460,11 +465,16 @@ impl Coordinator {
                         } else {
                             CancelDelivery::Uncertain
                         });
-                        record.reason = Some(if delivered {
-                            Reason::CancelRequested
-                        } else {
-                            Reason::ControlUncertain
-                        });
+                        // A stop the supervisor saw meanwhile outranks the
+                        // delivery: the worker is gone, and the run waits for
+                        // a release.
+                        if !record.supervisor.as_ref().is_some_and(|s| s.stopped) {
+                            record.reason = Some(if delivered {
+                                Reason::CancelRequested
+                            } else {
+                                Reason::ControlUncertain
+                            });
+                        }
                         Ok(())
                     })
                     .await?;
@@ -585,22 +595,15 @@ impl Inner {
             .map_err(|_| Error::Uncertain)??;
         Ok((boot != prepared.binding.boot_id).then_some(boot))
     }
-    /// No worker for the run is running or can still start: none was
-    /// submitted and preparation no longer owns the run, the supervisor saw
-    /// the worker stop, or it started on an earlier boot (#43). These are the
-    /// cases in which a stop has nothing to do. A boot that can't be read
-    /// never counts, so it can't hold back a stop.
-    async fn no_worker_can_run(&self, admission: &Admission) -> bool {
-        if !admission.start_attempted {
-            // Only a run that is still preparing can submit its worker.
-            return admission.phase == Phase::Reconciling;
-        }
-        if admission.supervisor.as_ref().is_some_and(|s| s.stopped) {
-            return true;
-        }
+    /// The run's worker started on an earlier boot, so it has stopped (#43). A
+    /// stop has nothing to do then. A boot that can't be read never counts,
+    /// so it can't hold back a stop.
+    async fn started_on_earlier_boot(&self, admission: &Admission) -> bool {
         match admission.prepared.as_ref() {
-            Some(prepared) => matches!(self.later_boot(prepared).await, Ok(Some(_))),
-            None => false,
+            Some(prepared) if admission.start_attempted => {
+                matches!(self.later_boot(prepared).await, Ok(Some(_)))
+            }
+            _ => false,
         }
     }
     async fn replay(&self, key: &str, request: &AdmissionRequest) -> Result<Option<Acceptance>> {
@@ -615,4 +618,15 @@ impl Inner {
             admission,
         }))
     }
+}
+
+/// The record alone shows that no worker for the run is running or can still
+/// start: none was submitted and preparation no longer owns the run, or the
+/// supervisor saw the worker stop. A stop has nothing to do then.
+fn no_worker_left(record: &Admission) -> bool {
+    if !record.start_attempted {
+        // Only a run that is still preparing can submit its worker.
+        return record.phase == Phase::Reconciling;
+    }
+    record.supervisor.as_ref().is_some_and(|s| s.stopped)
 }

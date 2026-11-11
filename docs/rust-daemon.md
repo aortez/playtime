@@ -215,13 +215,19 @@ run records Reconciling with reason `execution_failed` and stays reserved until
 an operator releases it. The run's `orchestration.failure` carries the worker's
 text, and still does after a release.
 
+A run whose preparation fails records Reconciling with reason
+`preparation_failed`. It never submitted a worker, so it too stays reserved
+until an operator releases it.
+
 A cancel has nothing to do once no worker for the run can be running: none was
 submitted and preparation no longer owns the run, the supervisor saw the worker
 stop, or it started on an earlier boot. The cancel then returns the run
 unchanged, without recording an intent, so a run waiting for a release keeps
 waiting, and `runs cancel` adds the release command as `next`. Otherwise a
 cancel still revokes the grant, asks the worker to cancel and stops its unit,
-even for a run that already waits for a release.
+even for a run that already waits for a release. If the supervisor sees the
+worker stop while a cancel is still trying to reach it, the run keeps waiting
+for a release too.
 
 `playtime runs release RUN_ID --reason TEXT` is that explicit operator path. The
 daemon refuses unless the run is not Terminal and, if a worker start was ever
