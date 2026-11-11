@@ -122,10 +122,10 @@ of the model host (#67, #70).
 `./go.sh` builds the worker bundle and the binaries from its checkout, starts
 the daemon as the user unit `playtimed-go` with its data under
 `/home/data2/playtime`, and opens the workbench. The daemon keeps running when
-the workbench closes. Rebuilding during a run restarts it, and the restarted
-daemon picks the run up from its worker. `./go.sh --no-build` reopens the
-workbench, `./go.sh --stop` stops the daemon between runs, and `./go.sh --help`
-lists its settings.
+the workbench closes, and the script won't restart it while a run is going,
+since a daemon from another build may not be able to follow the run.
+`./go.sh --no-build` reopens the workbench, `./go.sh --stop` stops the daemon
+between runs, and `./go.sh --help` lists its settings.
 
 To do the same by hand, build the worker bundle and the binaries, then start
 the daemon on a new root with the live endpoint and the recipe catalog:
@@ -159,8 +159,8 @@ Rules for live runs:
   `systemctl --user list-units 'playtime-*' --state=active` lists no worker.
 - The owner stays off the model host while a run is live, and nothing changes
   the model host; identity checks are read-only metadata calls.
-- Restart the daemon during a run only to change it; bring it back before the
-  run's wall limit plus three minutes, when systemd ends the worker.
+- Don't rebuild the daemon during a run. If it restarts, bring it back before
+  the run's wall limit plus three minutes, when systemd ends the worker.
 - Recipe limits change only with the owner's review.
 - Keep every attempt as a record, including failed ones.
 

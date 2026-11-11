@@ -6,7 +6,9 @@ processes, workspace capture, archive publication and client downloads are real.
 The same controller and archive encoder also retain the existing simulation path.
 The [live-model path](rust-live-model.md) and [reviewed recipe catalog](rust-recipes.md)
 add real inference and seeds through this composition. A restarted daemon
-reattaches to a surviving worker ([daemon](rust-daemon.md#restarting-the-daemon)).
+follows a surviving Docker worker the same way it follows a simulation worker,
+though only the simulation's restart is gated
+([daemon](rust-daemon.md#restarting-the-daemon)).
 Model-host enforcement, automatic image restoration and archive recovery remain
 unimplemented.
 

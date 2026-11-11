@@ -367,6 +367,16 @@ impl NormalService {
         let run = client.lookup_key(&key).await?.run_id;
         let workers = root.join("service/.playtime/workers");
         let worker = PausedWorker::pause(&workers.join(run.as_str()), false, systemd).await?;
+        // Paused before its control socket listened, the worker can't have had
+        // its Begin, so only the restarted daemon can begin it. The CPU test
+        // worker listens about 180 ms after its start is recorded. A systemd
+        // worker records itself just before it listens, so under systemd the
+        // gate reports whether it paused the worker in time.
+        let before_listening =
+            !PausedWorker::listening(&workers.join(run.as_str()).join("control.sock"));
+        if !before_listening && !systemd {
+            return Err("the worker listened before the gate paused it".into());
+        }
         let (endpoint, _) = playtime_local::read_connection(&connection)?;
         let listen = endpoint
             .endpoint
@@ -380,11 +390,14 @@ impl NormalService {
             .await?;
         // The client from before the restart reaches the new daemon, which
         // waits on the paused original worker rather than replacing it. The
-        // run stays reconciling until that worker authenticates again.
+        // run stays reconciling until that worker authenticates again, with
+        // control being resolved, so clients don't ask for a release.
         let paused = client.run(&run).await?;
-        if paused.orchestration.state != OrchestrationState::Reconciling {
+        if paused.orchestration.state != OrchestrationState::Reconciling
+            || paused.orchestration.reason.as_deref() != Some("control_uncertain")
+        {
             return Err(format!(
-                "the run wasn't reconciling while its worker was paused: {:?}",
+                "the restarted daemon isn't resolving the paused worker's run: {:?}",
                 paused.orchestration
             )
             .into());
@@ -407,6 +420,7 @@ impl NormalService {
             released: None,
             restart: Some(json!({
                 "worker_pid": worker.pid,
+                "paused_before_listening": before_listening,
                 "orchestration_while_paused": paused.orchestration,
             })),
             systemd,
@@ -486,10 +500,17 @@ impl NormalService {
         let worker = PausedWorker::pause(&directory, true, self.systemd).await?;
         let (client, id) = (self.client.clone(), run.clone());
         let cancel = tokio::spawn(async move { client.cancel(&id).await });
-        // The ledger saves the request at once. Delivery to the paused worker
-        // waits out its five-second control deadline before the daemon asks
-        // the supervisor to stop it, so this daemon dies before that request.
-        sleep(Duration::from_secs(2)).await;
+        // Delivery to the paused worker waits out its five-second control
+        // deadline before the daemon asks the supervisor to stop it, so this
+        // daemon dies once its ledger holds the request, before that stop.
+        let ledger = self.root.join("service/.playtime/service.sqlite3");
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while !cancellation_saved(&ledger, &run)? {
+            if Instant::now() >= deadline {
+                return Err("the daemon did not save the cancellation".into());
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
         self.child.kill().await?;
         self.child.wait().await?;
         cancel.abort();
@@ -1247,6 +1268,19 @@ fn long_responses_streamed(
     }
     Ok((long, calls_only))
 }
+/// Whether the daemon's ledger holds the run's cancellation. A read-only
+/// connection takes no write lock, so the daemon's own writes go on.
+fn cancellation_saved(ledger: &Path, run: &RunId) -> Result<bool> {
+    let connection =
+        rusqlite::Connection::open_with_flags(ledger, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let record: String = connection.query_row(
+        "SELECT record FROM runs WHERE id = ?1",
+        [run.as_str()],
+        |row| row.get(0),
+    )?;
+    let record: serde_json::Value = serde_json::from_str(&record)?;
+    Ok(!record["cancel_requested"].is_null())
+}
 /// A simulation worker the harness paused through a pidfd, which names that
 /// exact process.
 struct PausedWorker {
@@ -1278,6 +1312,14 @@ impl PausedWorker {
                     return Err("the worker exited before the harness paused it".into());
                 }
                 rustix::process::pidfd_send_signal(&pidfd, rustix::process::Signal::STOP)?;
+                // The signal lands asynchronously; the kernel reports when it has.
+                let stopped = Instant::now() + Duration::from_secs(5);
+                while !Self::stopped(pid)? {
+                    if Instant::now() >= stopped {
+                        return Err("the worker did not stop".into());
+                    }
+                    sleep(Duration::from_millis(1)).await;
+                }
                 return Ok(Self { pid, pidfd, record });
             }
             if Instant::now() >= deadline {
@@ -1285,6 +1327,14 @@ impl PausedWorker {
             }
             sleep(Duration::from_millis(1)).await;
         }
+    }
+    /// Whether the kernel reports this process stopped by a signal.
+    fn stopped(pid: u32) -> Result<bool> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
+        let state = stat
+            .rsplit_once(')')
+            .and_then(|(_, tail)| tail.split_whitespace().next());
+        Ok(state == Some("T"))
     }
     /// A listening Unix socket has the accepting flag in the kernel's table.
     fn listening(socket: &Path) -> bool {

@@ -362,8 +362,8 @@ separate from the production package and service gates in [development](developm
 ## Recovery boundary
 
 Exclusive takeover, recovery transactions, and the full crash/failure matrix
-remain incomplete; daemon reattachment to a surviving worker is implemented. The read-only
-[recovery contract](rust-recovery-contract.md) does not implement an owned
+remain incomplete; daemon reattachment to a surviving worker is implemented.
+The read-only [recovery contract](rust-recovery-contract.md) does not implement an owned
 `InvocationFence`, `HeldRecoveryAuthority`, or permission to mutate an archive.
 A serializable stopped observation cannot supply that authority. Operator release
 is a separate implemented path that verifies termination and resource cleanup,

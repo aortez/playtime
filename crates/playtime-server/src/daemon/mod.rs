@@ -178,14 +178,42 @@ impl Daemon {
                 catalog,
             }),
         };
-        for record in this.inner.coordinator.ledger().list().await? {
+        // The active run comes first, so a worker waiting for its Begin or a
+        // stop doesn't wait behind the history's revalidation.
+        let (active, history): (Vec<_>, Vec<_>) = this
+            .inner
+            .coordinator
+            .ledger()
+            .list()
+            .await?
+            .into_iter()
+            .partition(|record| record.phase != Phase::Terminal);
+        // No worker outlives its boot, and a supervisor can't observe one from
+        // an earlier boot, so following such a run would only poll failures.
+        let boot = tokio::task::spawn_blocking(playtime_worker_control::boot_id)
+            .await
+            .ok()
+            .and_then(|boot| boot.ok());
+        for record in active.into_iter().chain(history) {
+            let follow = record.phase != Phase::Terminal
+                && record.start_attempted
+                && boot.is_some()
+                && record.prepared.as_ref().map(|p| &p.binding.boot_id) == boot.as_ref();
             // A saved boundary is historical confirmation, never a fresh claim
             // of worker liveness. Only a refresh that authenticates the
             // original worker makes the run current again.
+            let record = if follow {
+                this.inner
+                    .coordinator
+                    .reattaching(record.run_id.clone())
+                    .await?
+            } else {
+                record
+            };
             this.publish(record.clone())
                 .await
                 .map_err(|_| life::Error::Uncertain)?;
-            if record.phase != Phase::Terminal && record.start_attempted {
+            if follow {
                 tokio::spawn(this.clone().reattach(record));
             }
         }
@@ -339,19 +367,13 @@ impl Daemon {
         }
         self.follow(run).await;
     }
-    /// Follows a run that an earlier daemon started, without preparing or
-    /// starting a worker again (#59). Each refresh authenticates the original
-    /// invocation through the supervisor and its private control socket before
-    /// the run is current again, and a saved cancellation is delivered again on
-    /// its own lane. A worker that stopped meanwhile stays reserved.
+    /// Follows a run that an earlier daemon on this boot started, without
+    /// preparing or starting a worker again (#59). Each refresh authenticates
+    /// the original invocation through the supervisor and its private control
+    /// socket before the run is current again, and a saved cancellation is
+    /// delivered again on its own lane. A worker that stopped meanwhile stays
+    /// reserved.
     async fn reattach(self, record: Admission) {
-        // No worker outlives its boot, and a supervisor can't observe one from
-        // an earlier boot, so following such a run would only poll failures.
-        let boot = tokio::task::spawn_blocking(playtime_worker_control::boot_id).await;
-        let started = record.prepared.as_ref().map(|p| &p.binding.boot_id);
-        if !matches!(boot, Ok(Ok(boot)) if started == Some(&boot)) {
-            return;
-        }
         if record.cancel_requested.is_some()
             && record.stop_delivery != Some(life::StopDelivery::Stopped)
         {

@@ -342,13 +342,23 @@ async fn cpu_supervisor_adopts_only_the_saved_worker_while_it_runs() {
     use crate::daemon::test_supervisor::CpuTestSupervisor;
     use crate::lifecycle::ports::Supervisor;
     use playtime_worker_control::{boot_id, systemd::process_start, write_once};
+    /// Kills and reaps the stand-in worker even when an assertion fails.
+    struct Reaped(std::process::Child);
+    impl Drop for Reaped {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
     let root = Root::new();
     let run = playtime_core::RunId::new("synthetic-restart").unwrap();
-    let mut child = std::process::Command::new("sleep")
-        .arg("30")
-        .spawn()
-        .unwrap();
-    let (pid, start) = (child.id(), process_start(child.id()).unwrap());
+    let child = Reaped(
+        std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let (pid, start) = (child.0.id(), process_start(child.0.id()).unwrap());
     // Each case owns a private directory and invocation, as each launch does.
     let case = |invocation: u8, saved: Option<serde_json::Value>| {
         let mut launch = launch(&run, invocation);
@@ -380,16 +390,17 @@ async fn cpu_supervisor_adopts_only_the_saved_worker_while_it_runs() {
         assert!(supervisor.observe(launch).await.is_err());
     }
     let saved = case(9, Some(json!({"pid": pid, "start_ticks": start})));
+    // An earlier daemon's start leaves its invocation, so none starts again,
+    // even in a supervisor that hasn't adopted it.
+    assert!(matches!(
+        CpuTestSupervisor::default().start(&saved).await,
+        Err(Error::Uncertain)
+    ));
     let running = supervisor.observe(&saved).await.unwrap().unwrap();
     assert_eq!(
         (running.main_pid, running.stopped, running.result.as_str()),
         (pid, false, "running")
     );
-    // An earlier daemon's start leaves its invocation, so none starts again.
-    assert!(matches!(
-        supervisor.start(&saved).await,
-        Err(Error::Uncertain)
-    ));
     supervisor.stop(&saved, &running).await.unwrap();
     // Not reaped yet, the exited worker keeps its PID and start time.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -404,7 +415,7 @@ async fn cpu_supervisor_adopts_only_the_saved_worker_while_it_runs() {
     // An exit names the saved worker only when its start time matches.
     let reused = case(10, Some(json!({"pid": pid, "start_ticks": start + 1})));
     assert!(supervisor.observe(&reused).await.is_err());
-    child.wait().unwrap();
+    drop(child);
 }
 
 #[test]
