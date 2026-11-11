@@ -90,6 +90,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "systemd user supervisor"
         }
     );
+    for limitation in daemon.limitations() {
+        eprintln!("playtimed: {limitation}");
+    }
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! { _ = tokio::signal::ctrl_c() => (), _ = terminate.recv() => () }
     server.stop().await?;

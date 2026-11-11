@@ -792,10 +792,17 @@ fn authoring_startup_tolerates_only_execution_limitations() {
     for reason in [
         "Docker readiness unavailable",
         "locked Docker image unavailable",
+        "invalid Docker executable/socket selection",
         "live model unavailable",
         "live runs need the Docker workshop",
+        "bundle does not implement this daemon's frozen Docker profile",
+        "bundle does not implement this daemon's live model profile",
     ] {
-        assert!(super::tolerate_unavailable(Err(Error::Invalid(reason))).is_ok());
+        assert_eq!(
+            super::tolerate_unavailable(Err(Error::Invalid(reason))).unwrap(),
+            Some(reason),
+            "the daemon's log says why it started without this"
+        );
         let error = super::execution_unavailable(Error::Invalid(reason));
         assert_eq!(error.code(), "execution_unavailable");
         assert_eq!(error.0.details["reasons"].as_array().unwrap().len(), 1);
@@ -816,6 +823,80 @@ fn authoring_startup_tolerates_only_execution_limitations() {
         super::execution_unavailable(Error::Invalid("invalid saved recipe")).code(),
         "catalog_corrupt"
     );
+}
+/// A refused release's reply, as the HTTP error filter delivers it.
+async fn refusal_details(remaining: &[Remaining]) -> serde_json::Map<String, serde_json::Value> {
+    let response = crate::http::error_response(super::release_refused(remaining), None);
+    let bytes = axum::body::to_bytes(response.into_body(), 16_384)
+        .await
+        .unwrap();
+    let body: playtime_protocol::v1::ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body.code, "release_refused");
+    body.details
+}
+#[tokio::test]
+async fn a_refused_release_says_why_through_the_error_filter() {
+    let resource = |kind, name: &str| Resource {
+        kind,
+        name: name.into(),
+    };
+    let holder = "playtime-04aeb7176e47bb0d37342b88f1eb8a6f-holder-0";
+    let unit = || "playtime-0123456789abcdef0123456789abcdef.service".to_string();
+    let remaining = [
+        Remaining::RunTerminal,
+        Remaining::RunChanged,
+        Remaining::WorkerRunning {
+            unit: unit(),
+            state: "deactivating".into(),
+            main_pid: 41,
+        },
+        Remaining::WorkerReplaced { unit: unit() },
+        Remaining::WorkerUnverified {
+            unit: unit(),
+            error: Some("D-Bus said: /run/user/1000/bus refused".into()),
+        },
+        Remaining::DockerUnavailable,
+        Remaining::ResourcesUnverified {
+            error: "lifecycle I/O: /home/private/workers: No such file".into(),
+        },
+        Remaining::ResourcePresent(resource("container", holder)),
+        Remaining::ResourceMislabeled(resource("volume", "playtime-x-volume-0")),
+        Remaining::ResourceUninspected {
+            resource: resource("container", "playtime-x-agent-1"),
+            error: "Docker said: permission denied".into(),
+        },
+        // A name the filter rejects would drop the whole list, so the reply
+        // leaves it out and keeps the code.
+        Remaining::ResourcePresent(resource("container", "/escaped name")),
+    ];
+    let details = refusal_details(&remaining).await;
+    assert_eq!(
+        serde_json::Value::Object(details),
+        json!({"remaining": [
+            {"code": "run_terminal"},
+            {"code": "run_changed"},
+            {"code": "worker_running"},
+            {"code": "worker_replaced"},
+            {"code": "worker_unverified"},
+            {"code": "docker_unavailable"},
+            {"code": "resources_unverified"},
+            {"code": "resource_present", "kind": "container", "name": holder},
+            {"code": "resource_mislabeled", "kind": "volume", "name": "playtime-x-volume-0"},
+            {"code": "resource_uninspected", "kind": "container", "name": "playtime-x-agent-1"},
+            {"code": "resource_present"},
+        ]}),
+        "only codes and resource names reach clients; error text stays in the log"
+    );
+    // The filter keeps at most 32 entries in a list.
+    let many: Vec<Remaining> = (0..40)
+        .map(|n| {
+            Remaining::ResourcePresent(resource("container", &format!("playtime-x-agent-{n}")))
+        })
+        .collect();
+    let details = refusal_details(&many).await;
+    assert_eq!(details["remaining"].as_array().unwrap().len(), 32);
+    assert_eq!(details["remaining"][31]["name"], "playtime-x-agent-31");
+    assert_eq!(details["omitted"], 8);
 }
 #[tokio::test]
 async fn registrations_bound_to_no_configured_machine_are_refused_as_changed_metadata() {

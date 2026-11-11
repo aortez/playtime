@@ -246,7 +246,13 @@ fn safe_detail(value: &serde_json::Value, depth: usize) -> bool {
         serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => true,
         serde_json::Value::String(s) => valid_id(s),
         serde_json::Value::Array(a) => a.len() <= 32 && a.iter().all(|v| safe_detail(v, depth + 1)),
-        _ => false,
+        // A record such as a refused release's entry: identifier keys, and
+        // values that pass on their own.
+        serde_json::Value::Object(o) => {
+            o.len() <= 8
+                && o.iter()
+                    .all(|(k, v)| valid_id(k) && safe_detail(v, depth + 1))
+        }
     }
 }
 pub(crate) fn error_response(error: ApiError, request_id: Option<RequestId>) -> Response {
@@ -861,5 +867,43 @@ mod tests {
         assert_eq!(body.code, "backend_unavailable");
         assert_eq!(body.request_id, Some(request_id));
         assert!(body.details.is_empty());
+    }
+
+    #[tokio::test]
+    async fn safe_details_keep_records_of_identifiers_only() {
+        let mut error = ApiError::new("release_refused");
+        let details = [
+            (
+                "records",
+                serde_json::json!([{"code": "a_b", "name": "c-1", "count": 2}]),
+            ),
+            (
+                "unsafe_value",
+                serde_json::json!([{"code": "a", "name": "/home/x"}]),
+            ),
+            (
+                "widest",
+                serde_json::json!({"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8}),
+            ),
+            ("unsafe_key", serde_json::json!([{"a b": "c"}])),
+            ("too_deep", serde_json::json!([{"code": ["a"]}])),
+            (
+                "too_wide",
+                serde_json::json!({"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8, "i": 9}),
+            ),
+        ];
+        for (key, value) in details {
+            error.0.details.insert(key.into(), value);
+        }
+        let response = error_response(error, None);
+        let bytes = to_bytes(response.into_body(), 16_384).await.unwrap();
+        let body: playtime_protocol::v1::ErrorResponse = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            serde_json::Value::Object(body.details),
+            serde_json::json!({
+                "records": [{"code": "a_b", "name": "c-1", "count": 2}],
+                "widest": {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8},
+            })
+        );
     }
 }

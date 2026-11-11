@@ -42,6 +42,13 @@ test supervisor rejects real Docker capabilities; there is no fallback when
 systemd or the locked image is unavailable.
 
 The service checks Docker metadata and the locked image at startup and admission.
+If a startup check fails, the daemon still starts, without Docker, and its log
+(stderr) says why, as in `playtimed: started without Docker: locked Docker image
+unavailable`. It reports a live model or inference target it can't use the
+same way. Admission
+checks again, but a release uses only the Docker access the daemon started with,
+so it refuses a Docker run's release with `docker_unavailable` until the daemon
+restarts with Docker.
 It freezes the selected executable digest, canonical socket, daemon identity,
 image lock, embedded helper digests, bundle identity, configuration version,
 prompts, scripted replies and resource/storage/capture limits. The worker repeats
@@ -209,7 +216,10 @@ The killed worker also leaves a failed `playtime-<id>.service` user unit, so
 `systemctl --user reset-failed 'playtime-*'`, which leaves active units alone.
 Test-only teardown removes only its
 three independently verified resources after original-worker death; it neither
-writes recovery evidence into the archive nor releases admission. Default CPU CI
+writes recovery evidence into the archive nor releases admission. A daemon then
+started with an unreachable Docker socket must log that it started without
+Docker and refuse the run's release with `docker_unavailable`, so the run stays
+reserved. Default CPU CI
 uses typed fake ports and the real controller/writer for capture/publication
 failure, late receipt, cumulative capacity, cancellation, owner loss and daemon
 uncertainty. It never executes command text or accesses Docker/GPU.

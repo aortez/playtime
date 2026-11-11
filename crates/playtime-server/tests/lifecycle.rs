@@ -350,7 +350,8 @@ async fn cancellation_before_begin_is_durable_and_never_creates_run_records() {
         .release(admitted.run_id.clone(), "operator test".into())
         .await;
     assert!(
-        matches!(&refused, Err(Error::Refused(remaining)) if remaining.len() == 1),
+        matches!(&refused, Err(Error::Refused(remaining))
+            if matches!(remaining.as_slice(), [Remaining::WorkerUnverified { error: None, .. }])),
         "an unverified live worker keeps the slot: {refused:?}"
     );
     // With the worker reaped (releasing its run lock) and the fixture's legacy
@@ -394,11 +395,18 @@ async fn cancellation_before_begin_is_durable_and_never_creates_run_records() {
     assert_ne!(next.admission.run_id, admitted.run_id);
 }
 
+fn fake_agent() -> Resource {
+    Resource {
+        kind: "container",
+        name: "playtime-fake-agent-1".into(),
+    }
+}
+
 /// A fake external-resource port standing in for a Docker run's ownership
 /// journal check.
 struct ResidualArchive {
     inner: Arc<FixtureArchive>,
-    present: std::sync::Mutex<Vec<String>>,
+    present: std::sync::Mutex<Vec<Remaining>>,
 }
 #[async_trait::async_trait]
 impl ArchivePort for ResidualArchive {
@@ -424,7 +432,7 @@ impl ArchivePort for ResidualArchive {
             } else {
                 Vec::new()
             },
-            present,
+            remaining: present,
         })
     }
 }
@@ -434,7 +442,7 @@ async fn release_is_refused_while_an_external_resource_remains() {
     let root = Root::new();
     let archive = Arc::new(ResidualArchive {
         inner: archive(&root.0),
-        present: std::sync::Mutex::new(vec!["container playtime-fake-agent-1 is present".into()]),
+        present: std::sync::Mutex::new(vec![Remaining::ResourcePresent(fake_agent())]),
     });
     let supervisor = Arc::new(FixtureSupervisor::default());
     let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
@@ -447,7 +455,7 @@ async fn release_is_refused_while_an_external_resource_remains() {
         .await;
     assert!(
         matches!(&refused, Err(Error::Refused(remaining))
-            if remaining == &vec!["container playtime-fake-agent-1 is present".to_string()]),
+            if remaining == &vec![Remaining::ResourcePresent(fake_agent())]),
         "a remaining resource keeps the slot: {refused:?}"
     );
     assert_ne!(
@@ -464,6 +472,78 @@ async fn release_is_refused_while_an_external_resource_remains() {
         released.operator_release.unwrap().absent_resources,
         vec!["container playtime-fake-agent-1".to_string()]
     );
+}
+
+/// A port whose resource check can't be made, as without Docker.
+struct UncheckedArchive {
+    inner: Arc<FixtureArchive>,
+    error: std::sync::Mutex<Option<fn() -> Error>>,
+}
+#[async_trait::async_trait]
+impl ArchivePort for UncheckedArchive {
+    async fn validate_preview(&self, request: &AdmissionRequest) -> Result<Selection> {
+        self.inner.validate_preview(request).await
+    }
+    async fn prepare(&self, admission: &Admission) -> Result<PreparedLaunch> {
+        self.inner.prepare(admission).await
+    }
+    async fn verify_status(
+        &self,
+        prepared: &PreparedLaunch,
+        previous: Option<&playtime_protocol::worker::Receipt>,
+        status: &playtime_protocol::worker::Status,
+    ) -> Result<()> {
+        self.inner.verify_status(prepared, previous, status).await
+    }
+    async fn external_resources(&self, _admission: &Admission) -> Result<ExternalResources> {
+        match *self.error.lock().unwrap() {
+            Some(error) => Err(error()),
+            None => Ok(ExternalResources::default()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn release_is_refused_while_resources_cannot_be_checked() {
+    let root = Root::new();
+    let archive = Arc::new(UncheckedArchive {
+        inner: archive(&root.0),
+        error: std::sync::Mutex::new(Some(|| Error::Refused(vec![Remaining::DockerUnavailable]))),
+    });
+    let supervisor = Arc::new(FixtureSupervisor::default());
+    let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
+    let admitted = admit(&c).await;
+    let p = prepared(&c, &admitted).await;
+    c.cancel(admitted.run_id.clone()).await.unwrap();
+    supervisor.terminate(p.prepared.as_ref().unwrap()).unwrap();
+    let release = || c.release(admitted.run_id.clone(), "operator test".into());
+    let refused = release().await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if remaining == &vec![Remaining::DockerUnavailable]),
+        "the check's own reason reaches the refusal: {refused:?}"
+    );
+    *archive.error.lock().unwrap() = Some(|| Error::Invalid("journal unreadable"));
+    let refused = release().await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if matches!(remaining.as_slice(),
+                [Remaining::ResourcesUnverified { error }] if error == "journal unreadable")),
+        "any other failed check refuses too: {refused:?}"
+    );
+    *archive.error.lock().unwrap() = Some(|| Error::Refused(vec![]));
+    let refused = release().await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if matches!(remaining.as_slice(), [Remaining::ResourcesUnverified { .. }])),
+        "a failed check that names no reason still refuses: {refused:?}"
+    );
+    assert_ne!(
+        c.ledger().get(&admitted.run_id).await.unwrap().phase,
+        Phase::Terminal
+    );
+    *archive.error.lock().unwrap() = None;
+    assert_eq!(release().await.unwrap().phase, Phase::Terminal);
 }
 
 #[tokio::test]

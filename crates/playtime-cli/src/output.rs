@@ -291,8 +291,19 @@ fn text(value: &Value) -> String {
                     .map(|r| format!(" (recovery: {})", word(r)))
                     .unwrap_or_default()
             )];
+            // A refused release: each entry's code, and the Docker resource it
+            // names.
             if let Some(remaining) = data["details"]["remaining"].as_array() {
-                lines.extend(remaining.iter().map(|item| format!("  - {}", word(item))));
+                lines.extend(remaining.iter().map(|item| {
+                    let mut line = format!("  - {}", word(item.get("code").unwrap_or(item)));
+                    if let (Some(kind), Some(name)) = (item.get("kind"), item.get("name")) {
+                        line.push_str(&format!(": {} {}", word(kind), word(name)));
+                    }
+                    line
+                }));
+                if let Some(omitted) = data["details"]["omitted"].as_u64() {
+                    lines.push(format!("  - {omitted} more, listed in the daemon's log"));
+                }
             }
             // Reasons name what to change, such as a missing inference target.
             if let Some(reasons) = data["details"]["reasons"].as_array() {
@@ -537,6 +548,19 @@ mod tests {
         assert_eq!(
             text(&value),
             "execution_unavailable: Execution is unavailable\n  - target_required"
+        );
+    }
+    #[test]
+    fn a_refused_release_names_what_remains() {
+        let value = envelope(
+            "error",
+            json!({"code":"release_refused","message":"The release was refused; see details",
+                "details":{"remaining":[{"code":"docker_unavailable"},
+                    {"code":"resource_present","kind":"volume","name":"playtime-x-volume-0"}],"omitted":3}}),
+        );
+        assert_eq!(
+            text(&value),
+            "release_refused: The release was refused; see details\n  - docker_unavailable\n  - resource_present: volume playtime-x-volume-0\n  - 3 more, listed in the daemon's log"
         );
     }
     #[test]

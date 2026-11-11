@@ -1,5 +1,22 @@
 # Rust compatibility and goldens
 
+## Release refusal reasons (#204, 2026-11-10)
+
+A refused release used to reach clients with empty details: the daemon put
+readable sentences in `details.remaining`, and the HTTP error filter, which
+keeps only identifiers, dropped them. Each entry is now a record with a stable
+`code`, such as `resource_present`, and for a Docker resource its `kind` and
+`name`; a refusal lists at most 32, and `details.omitted` counts the rest. The
+sentences, with any error text, go to the daemon's log instead. To carry these,
+the filter now also keeps records of up to 8 identifier keys, within its
+existing depth and size bounds; strings still pass only as identifiers. The CLI
+prints each entry's code and resource. The refusal's message no longer says the
+run still owns something, which wasn't true of every code; it now reads "The
+release was refused; see details". A daemon that starts without Docker, the live
+model or an inference target's model now says why on stderr, and a Docker run's
+release that it can't verify says `docker_unavailable`. The ledger, worker
+control, API schemas and goldens are unchanged.
+
 ## Cancel on a run with no worker left (2026-11-10)
 
 A cancel used to take a run out of waiting for a release when no worker for it

@@ -207,7 +207,9 @@ keeps waiting. A normal run doesn't pass through Reconciling: a starting worker
 that hasn't answered yet keeps its phase until its startup deadline, and a
 completed run stays Running while the daemon stops its unit (#93). `--follow`
 still waits for a terminal stream.
-Server error envelopes retain codes, safe details, and request IDs.
+Server error envelopes retain codes, safe details, and request IDs. A refused
+release (exit 5) prints one line per entry in `details.remaining`: its code and
+any Docker resource it names, such as `resource_present: volume NAME`.
 
 `download_to_path_with_force` is reusable by the UI. It holds the selected parent
 directory, creates a private sibling staging file, streams and verifies length and

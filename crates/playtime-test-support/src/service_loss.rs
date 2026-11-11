@@ -1,7 +1,8 @@
 //! Explicit real-Docker/systemd loss probe. Its disposable admission remains
 //! reserved, including after harness cleanup; this implements no recovery policy.
-use crate::{Result, TestRoot, isolated, run_command};
+use crate::{Result, TestRoot, capture, isolated, run_command};
 use playtime_client::Client;
+use playtime_core::RunId;
 use playtime_docker::{
     CancellationToken, Engine, Proposal, Role,
     transport::{Cli, LocalExit, Operation, Transport},
@@ -234,20 +235,96 @@ pub async fn worker_loss(cli: &Path, daemon: &Path, bundle: &Path, evidence: &Pa
     if still.orchestration.state != OrchestrationState::Reconciling {
         return Err("test cleanup released admission".into());
     }
+    child.kill().await?;
+    child.wait().await?;
+    let without_docker =
+        release_without_docker(cli, daemon, bundle, &root, &accepted.run_id, &mut records).await?;
     std::fs::create_dir_all(evidence)?;
     std::fs::write(
         evidence.join("worker-loss.json"),
         serde_json::to_vec_pretty(&json!({"case":"worker-loss",
         "run":view,"original_worker_stopped":stopped,"proposals":proposals,"test_cleanup":cleanup,
-        "no_replacement_or_new_admission":true,"daemon_restart_remains_reserved":true,"reserved_service_root":service}))?,
+        "no_replacement_or_new_admission":true,"daemon_restart_remains_reserved":true,
+        "release_without_docker":without_docker,"reserved_service_root":service}))?,
     )?;
-    child.kill().await?;
-    child.wait().await?;
     println!(
-        "Worker-loss gate: original invocation terminated; no replay or new admission; reserved ledger retained at {}",
+        "Worker-loss gate: original invocation terminated; no replay or new admission; without Docker, its release was refused as docker_unavailable; reserved ledger retained at {}",
         service.display()
     );
     Ok(())
+}
+
+/// A daemon that can't reach Docker still starts and its log says why. It
+/// refuses to release a Docker run whose resources it can't check, and the
+/// refusal says why. The run stays reserved.
+async fn release_without_docker(
+    cli: &Path,
+    daemon: &Path,
+    bundle: &Path,
+    root: &TestRoot,
+    run: &RunId,
+    records: &mut Vec<Value>,
+) -> Result<Value> {
+    let service = root.join("service");
+    let connection = service.join(".playtime/connection.json");
+    let mut command = isolated(daemon, root);
+    command
+        .args([
+            "--listen",
+            "127.0.0.1:0",
+            "--docker-scripted",
+            "--docker-socket",
+        ])
+        .arg(root.join("no-docker.sock"))
+        .arg("--root")
+        .arg(&service)
+        .arg("--bundle")
+        .arg(bundle)
+        .env("PATH", "/no-runtime-cargo");
+    let mut child = command.spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(40);
+    while Client::from_connection(&connection).await.is_err() {
+        if let Some(status) = child.try_wait()? {
+            return Err(format!("daemon without Docker exited: {status}").into());
+        }
+        if Instant::now() >= deadline {
+            return Err("daemon without Docker readiness deadline".into());
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+    let refused = run_command(
+        cli,
+        root,
+        Some(&connection),
+        [
+            "runs",
+            "release",
+            run.as_str(),
+            "--reason",
+            "worker-loss gate: no Docker to check its resources",
+            "--format",
+            "json",
+        ],
+        records,
+    )
+    .await?;
+    child.start_kill()?;
+    let log = String::from_utf8_lossy(&capture(child).await?.stderr).into_owned();
+    refused.expect(5)?;
+    let details = refused.error()?["data"]["details"].clone();
+    if details["remaining"] != json!([{"code": "docker_unavailable"}]) {
+        return Err(
+            format!("a release without Docker didn't say why it was refused: {details}").into(),
+        );
+    }
+    if !log.contains("playtimed: started without Docker: ")
+        || !log.contains(&format!(
+            "playtimed: release of {run} refused: Docker is not enabled"
+        ))
+    {
+        return Err(format!("the daemon's log didn't say it ran without Docker: {log}").into());
+    }
+    Ok(details)
 }
 
 /// Test teardown only, after proven original-worker death and acknowledged

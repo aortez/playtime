@@ -80,6 +80,14 @@ impl Captured {
     pub fn json(&self) -> Result<Value> {
         Ok(serde_json::from_slice(&self.stdout)?)
     }
+    /// The error envelope a failed CLI command writes among its stderr frames.
+    pub fn error(&self) -> Result<Value> {
+        self.stderr
+            .split(|b| *b == b'\n')
+            .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+            .find(|frame| frame["kind"] == "error")
+            .ok_or_else(|| "no error envelope on stderr".into())
+    }
     pub fn frames(&self) -> Result<Vec<Value>> {
         self.stdout
             .split(|b| *b == b'\n')

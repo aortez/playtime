@@ -501,14 +501,14 @@ impl Coordinator {
         self.owned_launch(move |inner| async move {
             let admission = inner.ledger.get(&run).await?;
             if admission.phase == Phase::Terminal {
-                return Err(Error::Refused(vec!["run is already terminal".into()]));
+                return Err(Error::Refused(vec![Remaining::RunTerminal]));
             }
             let mut present = Vec::new();
             // Start intent is durable before any submission, so without it no
             // worker or worker-owned resource can exist for this run.
             let (supervisor, later_boot_id, absent_resources) = if admission.start_attempted {
                 let prepared = admission.prepared.as_ref().ok_or(Error::Uncertain)?;
-                let unit = &prepared.binding.unit;
+                let unit = || prepared.binding.unit.clone();
                 let later_boot_id = inner.later_boot(prepared).await?;
                 let observation = if later_boot_id.is_some() {
                     // No supervisor can observe a unit from an earlier boot.
@@ -520,34 +520,46 @@ impl Coordinator {
                                 saved.manager_id != observation.manager_id
                                     || saved.cgroup != observation.cgroup
                             }) {
-                                present
-                                    .push(format!("{unit} no longer matches its saved identity"));
+                                present.push(Remaining::WorkerReplaced { unit: unit() });
                             } else if !observation.stopped {
-                                present.push(format!(
-                                    "{unit} is {} with main PID {}",
-                                    observation.active_state, observation.main_pid
-                                ));
+                                present.push(Remaining::WorkerRunning {
+                                    unit: unit(),
+                                    state: observation.active_state.clone(),
+                                    main_pid: observation.main_pid,
+                                });
                             }
                             Some(observation)
                         }
                         Ok(None) => {
-                            present
-                                .push(format!("the supervisor cannot verify that {unit} stopped"));
+                            present.push(Remaining::WorkerUnverified {
+                                unit: unit(),
+                                error: None,
+                            });
                             None
                         }
                         Err(error) => {
-                            present.push(format!("{unit} could not be observed: {error}"));
+                            present.push(Remaining::WorkerUnverified {
+                                unit: unit(),
+                                error: Some(error.to_string()),
+                            });
                             None
                         }
                     }
                 };
                 let resources = match inner.archive.external_resources(&admission).await {
                     Ok(resources) => {
-                        present.extend(resources.present);
+                        present.extend(resources.remaining);
                         resources.absent
                     }
+                    // A check that couldn't be made can say why.
+                    Err(Error::Refused(remaining)) if !remaining.is_empty() => {
+                        present.extend(remaining);
+                        Vec::new()
+                    }
                     Err(error) => {
-                        present.push(format!("external resources could not be verified: {error}"));
+                        present.push(Remaining::ResourcesUnverified {
+                            error: error.to_string(),
+                        });
                         Vec::new()
                     }
                 };
@@ -575,9 +587,7 @@ impl Coordinator {
                 })
                 .await?;
             if !applied {
-                return Err(Error::Refused(vec![
-                    "the run changed during verification; retry".into(),
-                ]));
+                return Err(Error::Refused(vec![Remaining::RunChanged]));
             }
             Ok(record)
         })

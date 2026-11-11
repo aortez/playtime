@@ -577,7 +577,11 @@ impl Archive {
         self.execution(mode).await
     }
     /// Targets resolve concurrently, so an offline machine delays startup once.
-    pub async fn add_targets(&mut self, targets: Vec<InferenceTarget>) -> life::Result<()> {
+    /// Returns each target that started without its model, and why.
+    pub async fn add_targets(
+        &mut self,
+        targets: Vec<InferenceTarget>,
+    ) -> life::Result<Vec<(String, &'static str)>> {
         let resolved = futures_util::future::try_join_all(targets.into_iter().map(|mut target| {
             let mut selected = self.clone();
             async move {
@@ -587,15 +591,20 @@ impl Archive {
                     .to_owned();
                 selected.selected_target = Some(target.clone());
                 selected.live = None;
-                super::tolerate_unavailable(selected.enable_live(&target.endpoint).await)?;
-                Ok::<_, Error>((target, selected.live))
+                let unavailable =
+                    super::tolerate_unavailable(selected.enable_live(&target.endpoint).await)?;
+                Ok::<_, Error>((target, selected.live, unavailable))
             }
         }))
         .await?;
-        for (target, live) in resolved {
+        let mut unavailable = Vec::new();
+        for (target, live, reason) in resolved {
+            if let Some(reason) = reason {
+                unavailable.push((target.id.clone(), reason));
+            }
             self.targets.insert(target.id.clone(), (target, live));
         }
-        Ok(())
+        Ok(unavailable)
     }
     pub async fn execution(&self, mode: RunMode) -> life::Result<Self> {
         let mut ready = self.clone();
@@ -1103,32 +1112,38 @@ impl ArchivePort for Archive {
             RunMode::Simulation => Ok(ExternalResources::default()),
             // Every Docker mode's worker keeps the same ownership journal.
             RunMode::ScriptedSmoke | RunMode::LiveSmoke | RunMode::Experiment => {
-                let engine = self.docker_engine.clone().ok_or(Error::Invalid(
-                    "Docker is not enabled, so its resources cannot be verified",
-                ))?;
+                let engine = self
+                    .docker_engine
+                    .clone()
+                    .ok_or_else(|| Error::Refused(vec![Remaining::DockerUnavailable]))?;
                 let prepared = admission.prepared.clone().ok_or(Error::Uncertain)?;
                 let proposals = tokio::task::spawn_blocking(move || ownership_journal(&prepared))
                     .await
                     .map_err(|_| Error::Uncertain)??;
                 let mut resources = ExternalResources::default();
                 for proposal in proposals {
-                    let kind = if proposal.role == playtime_docker::Role::Volume {
-                        "volume"
-                    } else {
-                        "container"
+                    let resource = Resource {
+                        kind: if proposal.role == playtime_docker::Role::Volume {
+                            "volume"
+                        } else {
+                            "container"
+                        },
+                        name: proposal.name.clone(),
                     };
-                    let name = format!("{kind} {}", proposal.name);
                     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
                     let cancel = playtime_docker::CancellationToken::new();
                     match engine.residual(&proposal, deadline, cancel).await {
-                        Ok(None) => resources.absent.push(name),
-                        Ok(Some(true)) => resources.present.push(format!("{name} is present")),
+                        Ok(None) => resources.absent.push(resource.to_string()),
+                        Ok(Some(true)) => resources
+                            .remaining
+                            .push(Remaining::ResourcePresent(resource)),
                         Ok(Some(false)) => resources
-                            .present
-                            .push(format!("{name} is present with different labels")),
-                        Err(error) => resources
-                            .present
-                            .push(format!("{name} could not be inspected: {error}")),
+                            .remaining
+                            .push(Remaining::ResourceMislabeled(resource)),
+                        Err(error) => resources.remaining.push(Remaining::ResourceUninspected {
+                            resource,
+                            error: error.to_string(),
+                        }),
                     }
                 }
                 Ok(resources)
