@@ -7,9 +7,9 @@ and workshop effects; [Docker run-and-view](rust-docker-run-and-view.md),
 [live inference](rust-live-model.md), and the [recipe catalog](rust-recipes.md)
 add native execution through the same application boundary.
 
-This guide covers admission, confirmed reads, lifecycle publication, and the
-normal CPU simulation gate. Automatic restart reattachment and archive recovery
-are not implemented. The [recovery planner](rust-recovery-contract.md) supports
+This guide covers admission, confirmed reads, lifecycle publication, restart
+reattachment and the CPU simulation gates. Archive recovery after worker loss is
+not implemented. The [recovery planner](rust-recovery-contract.md) supports
 explicitly recoverable simulations, but normal daemon preparation does not opt
 into that capability or grant permission to repair these archives.
 
@@ -37,10 +37,15 @@ bounds and stop grace. Worker control remains protocol v1.
 
 For an isolated CPU test, add `--cpu-test-supervisor --listen 127.0.0.1:0`.
 This supervisor accepts only the packaged controller simulation. It authenticates
-its owned child and establishes termination by reaping it, but does not claim
-systemd deadlines, cgroup enforcement or restart reattachment. The capability
-response identifies this mode explicitly. A short absolute root avoids Unix
-socket path limits.
+its owned child and establishes termination by reaping it. A restarted daemon
+adopts the worker an earlier one started on this boot through a pidfd, opened
+while that exact process runs: its saved PID and kernel start time must match.
+Such a worker has exited once its pidfd says so, never because its PID is
+missing or reused. So a restarted daemon can't observe a worker that exited
+before the restart, and that run can't be released. The supervisor does not
+claim systemd deadlines or cgroup enforcement. The capability response
+identifies this mode explicitly. A short absolute root avoids Unix socket path
+limits.
 
 ```sh
 target/debug/playtime --connection-file /absolute/service-root/.playtime/connection.json \
@@ -151,8 +156,9 @@ source; `last_status` remains the last worker confirmation. Later recovery must
 add its own provenance rather than overwrite this origin. Equal confirmations
 create no extra transition. Failed validation/publication retains the prior
 verified projection with visible uncertainty and no terminal stream notice.
-On daemon startup, saved prefixes are revalidated for inspection; active runs
-remain reconciling. The daemon does not resume their refresh/launch actors.
+On daemon startup, saved prefixes are revalidated for inspection, and the active
+run is reconciling until its worker authenticates again; see
+[restarting the daemon](#restarting-the-daemon).
 
 There is one coalesced refresh lane per run, a 250 ms floor, a five-second request
 bound and failure backoff capped at five seconds. Observers share it. Cancellation
@@ -223,10 +229,44 @@ removed underneath an uncertain invocation. The Python launcher checks the
 Rust ledger while holding the common flock, preserving exclusion during the
 reservation-to-worker handoff and after uncertain worker loss.
 
+## Restarting the daemon
+
+The ledger marks the active run reconciling (`coordinator_restarted`) when the
+daemon opens it. If a worker start was submitted on this boot, the daemon then
+follows the run with the refresh that a launch starts, without preparing or
+starting a worker again. It does so before it revalidates the rest of the
+history and before the API serves. Unless the last observation saw the worker
+stop, it first marks the run `control_uncertain`, control being resolved, so
+clients don't take it for a run waiting for a release. A run it doesn't follow
+keeps `coordinator_restarted`, which clients show as waiting for one.
+
+Each refresh authenticates the original invocation through the supervisor and
+the private control socket, and checks that its receipt extends the saved
+confirmation, before the run is current again. A worker still waiting for Begin
+gets its authorized Begin, after the grant, cancellation and startup-deadline
+checks. A saved cancellation that hasn't stopped the worker is delivered again on
+its own lane, and an accepted stop is only observed, never restarted.
+
+The worker keeps its frozen executable, allocation, work clock and deadline, and
+its key still names it; new previews use the new bundle. A daemon restarted with
+another bundle can follow it only while its build keeps the worker control
+protocol version and the unit checks, including `FINISH_MARGIN`. Neither that
+nor the restart of a Docker or live worker is gated yet.
+
+Under systemd, a worker that stopped while no daemon ran is lost like any other,
+and its run waits for a release; so does a run whose preparation was cut short,
+since it never started a worker. A worker that the daemon hasn't stopped ends at
+the run's wall limit plus three minutes, so a daemon back before then still
+confirms a finished run's end. No worker outlives a host reboot, so the daemon
+doesn't follow a run whose worker started on an earlier boot. That run stays
+reconciling, and release refuses it for now, because the supervisor can't verify
+a unit from an earlier boot.
+
 ## Executable gate and remaining gates
 
 ```sh
 ./scripts/test-rust-service-e2e.sh --case normal
+./scripts/test-rust-service-e2e.sh --case lifecycle
 ./scripts/test-rust-worker-package.sh
 ./scripts/test-rust-cli-e2e.sh --backend fixture
 ./scripts/test-rust-ui-e2e.sh --backend fixture
@@ -252,9 +292,28 @@ regenerate any screenshot goldens. A separate default-systemd daemon invocation
 using the launch commands above checks the real manager hooks; the CPU gate is
 not evidence of independent enforcement.
 
-`--case lifecycle` and `--case recovery` are not supported by the service wrapper.
-The dedicated CLI/UI `--backend simulation` gates still fail pending restart and
-worker-loss recovery integration, even though the normal service gate above works.
+The lifecycle gate runs the normal gate's run with the daemon killed in the
+middle. As soon as the CPU supervisor records the worker's start, the gate pauses
+the worker through a pidfd, before its control socket listens, so only a
+restarted daemon can send its Begin. The gate then kills the daemon, restarts it
+on the same root, port and bundle, and resumes the worker. A client from before
+the restart must still reach the run, which is `control_uncertain` while its
+worker is paused, and its key must still name it. The run must then finish
+normally on that same worker, with every normal check passing, no other worker
+for it, and its slot free for a waiting launch. A second run then has its worker
+paused once it listens, and the daemon dies again as soon as its ledger holds
+that run's cancellation. The restarted daemon must accept the stop itself, the
+first view after the restart showing it only requested, and the run then waits
+for a release, like any cancelled run. The gate becomes the workers' parent
+(`PR_SET_CHILD_SUBREAPER`): otherwise the kernel ends a paused worker with SIGHUP
+when its daemon's death orphans its process group. `--case lifecycle --backend
+systemd` runs the same gate under user systemd; it is opt-in and not part of CI.
+There the worker records itself just before it listens, so the gate records
+whether it paused the worker in time instead of requiring it.
+
+`--case recovery` is not supported by the service wrapper. The dedicated CLI/UI
+`--backend simulation` gates still fail pending worker-loss recovery integration,
+even though the normal and lifecycle service gates above work.
 Operator release is implemented; it does not write a recovery settlement or
 complete the restart/crash failure matrix. See [development](development.md#gates-that-are-not-implemented)
 for gate scope and [recovery](rust-recovery-contract.md) for the read-only contract.

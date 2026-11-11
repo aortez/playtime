@@ -85,6 +85,8 @@ jobs:
           rustup toolchain install 1.94.1 --profile minimal --target x86_64-unknown-linux-musl
       - name: Exercise normal daemon, detached controller, client and workbench
         run: ./scripts/test-rust-service-e2e.sh --case normal
+      - name: Restart the daemon while its run's worker is paused
+        run: ./scripts/test-rust-service-e2e.sh --case lifecycle
 
   ui-snapshots:
     runs-on: ubuntu-24.04

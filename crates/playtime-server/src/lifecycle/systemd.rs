@@ -28,7 +28,9 @@ const SERVICE_IFACE: &str = "org.freedesktop.systemd1.Service";
 const DEADLINE: Duration = Duration::from_secs(5);
 /// At its wall time, a worker stops its own work, publishes and waits for the
 /// coordinator's stop. A systemd stop first is unexplained to the coordinator,
-/// so the runtime limit adds this margin, the same as the stop timeout.
+/// so the runtime limit adds this margin, the same as the stop timeout. Each
+/// observation checks a unit's limit against it, so a daemon built with another
+/// margin can't follow a worker that an earlier build started.
 pub const FINISH_MARGIN: Duration = Duration::from_secs(180);
 type Properties = Vec<(String, OwnedValue)>;
 

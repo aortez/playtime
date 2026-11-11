@@ -335,6 +335,89 @@ async fn cpu_supervisor_refuses_real_workshop_kind_before_any_files_or_processes
     ));
 }
 
+/// A restarted daemon's CPU supervisor adopts only the process its saved
+/// invocation names, and an adopted worker has exited once its pidfd says so.
+#[tokio::test]
+async fn cpu_supervisor_adopts_only_the_saved_worker_while_it_runs() {
+    use crate::daemon::test_supervisor::CpuTestSupervisor;
+    use crate::lifecycle::ports::Supervisor;
+    use playtime_worker_control::{boot_id, systemd::process_start, write_once};
+    /// Kills and reaps the stand-in worker even when an assertion fails.
+    struct Reaped(std::process::Child);
+    impl Drop for Reaped {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let root = Root::new();
+    let run = playtime_core::RunId::new("synthetic-restart").unwrap();
+    let child = Reaped(
+        std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap(),
+    );
+    let (pid, start) = (child.0.id(), process_start(child.0.id()).unwrap());
+    // Each case owns a private directory and invocation, as each launch does.
+    let case = |invocation: u8, saved: Option<serde_json::Value>| {
+        let mut launch = launch(&run, invocation);
+        launch.binding.boot_id = boot_id().unwrap();
+        launch.private_dir = root.0.join(invocation.to_string());
+        std::fs::create_dir(&launch.private_dir).unwrap();
+        launch.bootstrap = launch.private_dir.join("bootstrap.json");
+        write_once(&launch.bootstrap, b"{}").unwrap();
+        if let Some(saved) = saved {
+            let saved = json!({"pid": saved["pid"], "start_ticks": saved["start_ticks"],
+                "binding": saved.get("binding").cloned().unwrap_or(json!(launch.binding))});
+            write_once(
+                &launch.private_dir.join("cpu-test-invocation.json"),
+                &serde_json::to_vec(&saved).unwrap(),
+            )
+            .unwrap();
+        }
+        launch
+    };
+    let supervisor = CpuTestSupervisor::default();
+    let unsaved = case(5, None);
+    let reused = case(6, Some(json!({"pid": pid, "start_ticks": start + 1})));
+    let other = case(7, None);
+    let foreign = case(
+        8,
+        Some(json!({"pid": pid, "start_ticks": start, "binding": other.binding})),
+    );
+    for launch in [&unsaved, &reused, &foreign] {
+        assert!(supervisor.observe(launch).await.is_err());
+    }
+    let saved = case(9, Some(json!({"pid": pid, "start_ticks": start})));
+    // An earlier daemon's start leaves its invocation, so none starts again,
+    // even in a supervisor that hasn't adopted it.
+    assert!(matches!(
+        CpuTestSupervisor::default().start(&saved).await,
+        Err(Error::Uncertain)
+    ));
+    let running = supervisor.observe(&saved).await.unwrap().unwrap();
+    assert_eq!(
+        (running.main_pid, running.stopped, running.result.as_str()),
+        (pid, false, "running")
+    );
+    supervisor.stop(&saved, &running).await.unwrap();
+    // Not reaped yet, the exited worker keeps its PID and start time.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let exited = loop {
+        let observed = supervisor.observe(&saved).await.unwrap().unwrap();
+        if observed.stopped || std::time::Instant::now() >= deadline {
+            break observed;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!((exited.stopped, exited.result.as_str()), (true, "exited"));
+    // An exit names the saved worker only when its start time matches.
+    let reused = case(10, Some(json!({"pid": pid, "start_ticks": start + 1})));
+    assert!(supervisor.observe(&reused).await.is_err());
+    drop(child);
+}
+
 #[test]
 fn live_admission_is_busy_while_another_worker_holds_the_shared_lock() {
     let root = std::env::temp_dir().join(format!("pt72-lock-{}", std::process::id()));

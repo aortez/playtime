@@ -79,6 +79,7 @@ real worker, Docker, model-host, or recovery behavior.
 | Workbench | `./scripts/test-rust-ui-e2e.sh --backend fixture` | Workbench backend and launch recovery over scripted HTTP; also review pinned screenshots for visual changes |
 | Worker/package | `./scripts/test-rust-worker-package.sh` | Frozen static bundle, detached controller, prepared-writer handoff and package verification on CPU |
 | Daemon integration | `./scripts/test-rust-service-e2e.sh --case normal` | Real daemon, packaged controller, archives and clients with scripted effects and an explicit CPU test supervisor |
+| Daemon restart | `./scripts/test-rust-service-e2e.sh --case lifecycle` | The normal gate's run with the daemon killed and restarted while its worker is paused, and a cancellation saved before another restart; `--backend systemd` repeats it under user systemd |
 | Backend guard | `./scripts/test-rust-backend-guard.sh` | Private ownership/journal, dispatch fencing and independent stop/crash behavior with owned child processes |
 | Docker adapter | `./scripts/test-rust-docker-e2e.sh --case sandbox` | Real locked Docker sandbox, isolation, deadlines and exact owned cleanup |
 | Workspace capture | `./scripts/test-rust-docker-e2e.sh --case checkpoint` | Real stopped-workspace capture; additionally run the sandbox gate |
@@ -122,14 +123,15 @@ bounds are in [worker lifecycle](rust-worker-lifecycle.md#real-systemd-supervisi
 ## Gates that are not implemented
 
 The dedicated CLI/UI `--backend simulation` wrappers intentionally fail. The
-service `--case normal` gate works, but the broader client simulation acceptance
-still requires restart with a surviving worker, worker-loss recovery, and the
-associated failure matrix. There is no fixture fallback. Service `--case lifecycle`
-and `--case recovery` are not supported by the wrapper.
+service `--case normal` and `--case lifecycle` gates work, but the broader client
+simulation acceptance still requires worker-loss recovery and the associated
+failure matrix. There is no fixture fallback. Service `--case recovery` is not
+supported by the wrapper.
 
 Do not interpret this as an absence of Rust simulation or live execution. Those
-paths are covered by the implemented gates above. Automatic daemon reattachment
-and archive recovery remain unimplemented; the read-only
+paths are covered by the implemented gates above. A restarted daemon reattaches
+to a surviving worker ([daemon](rust-daemon.md#restarting-the-daemon)); archive
+recovery after worker loss remains unimplemented, and the read-only
 [recovery planner](rust-recovery-contract.md) grants no mutation authority.
 
 ## Workbench development
@@ -159,7 +161,8 @@ explains the bounded headless measurement and links the recorded result.
 - `foundation`: formatting, locked Clippy/workspace tests, CLI/UI fixture wrappers,
   and the frozen Python suite.
 - `worker-package`: the static worker package gate.
-- `service-normal`: the real daemon/controller gate with CPU test supervision.
+- `service-normal`: the real daemon/controller gate with CPU test supervision,
+  then its lifecycle (daemon restart) case.
 - `ui-snapshots`: reviewed screenshots using the pinned CPU Vulkan renderer.
 
 Docker, live-model, backend-guard, and opt-in real-systemd lifecycle gates run

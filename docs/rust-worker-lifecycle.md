@@ -18,9 +18,10 @@ coordination, ledger transactions, and supervisor operations.
 The [packaged worker](rust-worker-package.md) supports controller simulation,
 Docker/scripted-model and Docker/live-model execution. The lifecycle conformance
 harness uses a separate `supervision_fixture` worker with synthetic archive
-evidence. Its coordinator reattachment tests do not establish automatic daemon
-reattachment: production startup currently marks active runs reconciling and
-leaves them for operator resolution.
+evidence. Its coordinator reattachment tests cover the coordinator alone. On
+startup the [daemon](rust-daemon.md#restarting-the-daemon) marks the active run
+reconciling and follows it with the same refresh as a launch, which returns it
+to starting or running once the original worker authenticates again.
 
 ## Durable transitions
 
@@ -47,10 +48,9 @@ intent, delivery acknowledgment and last verified worker status. There are at mo
 operations. Once a coordinator operation is accepted, it belongs to a detached
 Tokio task, so dropping a caller does not roll back or abandon its commit.
 
-The diagram shows admission/control transitions, including reattachment supported
-by the coordinator fixture. Production daemon restart does not take the two
-reattachment transitions; completion and operator release are described in the
-[daemon guide](rust-daemon.md#results-and-safe-completion).
+The diagram shows admission/control transitions, including the two reattachment
+transitions a restarted daemon takes. Completion and operator release are
+described in the [daemon guide](rust-daemon.md#results-and-safe-completion).
 
 ```mermaid
 stateDiagram-v2
@@ -361,9 +361,9 @@ separate from the production package and service gates in [development](developm
 
 ## Recovery boundary
 
-Automatic daemon reattachment, exclusive takeover, recovery transactions, and the
-full crash/failure matrix remain incomplete. The read-only
-[recovery contract](rust-recovery-contract.md) does not implement an owned
+Exclusive takeover, recovery transactions, and the full crash/failure matrix
+remain incomplete; daemon reattachment to a surviving worker is implemented.
+The read-only [recovery contract](rust-recovery-contract.md) does not implement an owned
 `InvocationFence`, `HeldRecoveryAuthority`, or permission to mutate an archive.
 A serializable stopped observation cannot supply that authority. Operator release
 is a separate implemented path that verifies termination and resource cleanup,

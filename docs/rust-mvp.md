@@ -59,8 +59,8 @@ flowchart TB
 lifecycle. It loads the reviewed recipe catalog at startup, checks Docker, the
 locked image and the model's identity at startup and at each admission, and
 admits one run per data root. It serves a loopback-only HTTP API; clients read
-the endpoint and bearer token from `<root>/.playtime/connection.json`. Don't
-restart the daemon during a run: reattaching to a surviving worker is #59.
+the endpoint and bearer token from `<root>/.playtime/connection.json`. A
+restarted daemon reattaches to the run's surviving worker (#59).
 
 **Worker.** A static musl bundle (`playtime-worker`, built by `xtask
 bundle-worker`) runs as a user systemd unit, one per run. It takes the
@@ -122,7 +122,8 @@ of the model host (#67, #70).
 `./go.sh` builds the worker bundle and the binaries from its checkout, starts
 the daemon as the user unit `playtimed-go` with its data under
 `/home/data2/playtime`, and opens the workbench. The daemon keeps running when
-the workbench closes, and the script won't restart it while a run is going.
+the workbench closes, and the script won't restart it while a run is going,
+since a daemon from another build may not be able to follow the run.
 `./go.sh --no-build` reopens the workbench, `./go.sh --stop` stops the daemon
 between runs, and `./go.sh --help` lists its settings.
 
@@ -158,7 +159,8 @@ Rules for live runs:
   `systemctl --user list-units 'playtime-*' --state=active` lists no worker.
 - The owner stays off the model host while a run is live, and nothing changes
   the model host; identity checks are read-only metadata calls.
-- Don't restart the daemon during a run.
+- Don't rebuild the daemon during a run. If it restarts, bring it back before
+  the run's wall limit plus three minutes, when systemd ends the worker.
 - Recipe limits change only with the owner's review.
 - Keep every attempt as a record, including failed ones.
 
@@ -172,8 +174,9 @@ The released execution path does not include the following capabilities. Issue
 numbers identify their design discussions; priorities belong to the owner:
 
 - Host enforcement or the guard in the run path (#67, #68 as written, #70).
-- Automatic recovery and reattaching to a running worker after a daemon
-  restart (#43, #58, #59).
+- Automatic recovery of a run whose worker is gone (#43, #58). Such a run
+  keeps its archive and waits for `playtime runs release`, which refuses a run
+  from before a host reboot.
 - Remote access (#25), reports (#26), repeat and pilots (#27).
 - Research features (#2 to #15), including the launcher's recipe variations,
   parameter and model choice, seed upload and readiness checks (#2 to #7).

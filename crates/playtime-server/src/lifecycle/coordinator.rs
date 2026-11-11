@@ -227,6 +227,27 @@ impl Coordinator {
     pub async fn refresh(&self, run: RunId) -> Result<Admission> {
         self.inner.shared_refresh(run).await
     }
+    /// A restarted daemon that follows this run again while its worker may
+    /// still run marks the restart as control being resolved, so clients
+    /// don't take it for a run waiting for a release (#59). Any other record
+    /// is returned unchanged.
+    pub async fn reattaching(&self, run: RunId) -> Result<Admission> {
+        let expected = self.inner.ledger.get(&run).await?;
+        if expected.phase != Phase::Reconciling
+            || expected.reason != Some(Reason::CoordinatorRestarted)
+            || expected.supervisor.as_ref().is_some_and(|s| s.stopped)
+        {
+            return Ok(expected);
+        }
+        self.inner
+            .ledger
+            .compare_update(&expected, "reattaching", |record| {
+                record.reason = Some(Reason::ControlUncertain);
+                Ok(())
+            })
+            .await
+            .map(|(record, _)| record)
+    }
     /// Normal execution can release admission only after a persisted terminal
     /// confirmation, settled publication, successful cleanup and original-owner
     /// termination. Worker loss and interrupted evidence remain reserved.

@@ -169,7 +169,8 @@ a different test identity. Its application state is in memory, and each example
 invocation starts a fresh script. Do not use it as a persistent service or to
 recover receipts from an earlier invocation. Restart tests keep the same scripted
 backend outside the stopped HTTP server. They do not test daemon restart with
-an active packaged worker; automatic reattachment remains unimplemented.
+an active packaged worker; the service `--case lifecycle` gate does
+([daemon](rust-daemon.md#restarting-the-daemon)).
 
 ## Modules and application ownership
 
@@ -315,8 +316,9 @@ Any Origin is rejected. Host must be localhost, 127.0.0.1 or [::1] with a valid
 port, including a different local SSH-forward port. Forwarded headers are ignored.
 No permissive CORS headers or unauthenticated discovery endpoint exist.
 
-Rotate credentials only between runs, because automatic daemon reattachment is
-not implemented. Stop the API, replace its credential securely with a new 64-character
+Rotating the credential restarts the API. A run continues, because the restarted
+daemon reattaches to its worker, but connected clients need the new token. Stop
+the API, replace its credential securely with a new 64-character
 lowercase hex token (32 random bytes) in the same owned 0600 file, and restart.
 Stopping closes streams; old credentials then fail. Worker lifetime belongs to
 the application, not HTTP. Live rotation and remote setup remain #25.

@@ -18,7 +18,7 @@ playtime-server = { path = "../playtime-server" }
 async-trait.workspace = true
 serde.workspace = true
 tokio-util.workspace = true
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["event", "process"] }
 playtime-client.workspace = true
 playtime-local.workspace = true
 playtime-protocol.workspace = true

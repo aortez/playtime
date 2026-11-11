@@ -16,7 +16,7 @@ playtime-runner.workspace = true
 playtime-storage.workspace = true
 playtime-engine.workspace = true
 playtime-ollama.workspace = true
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["event", "process"] }
 serde.workspace = true
 serde_json.workspace = true
 utoipa.workspace = true

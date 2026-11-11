@@ -3,14 +3,18 @@ set -euo pipefail
 playtime_service_case=normal
 if [[ $# == 2 && $1 == --case && $2 == normal ]]; then
     playtime_service_case=normal
+elif [[ $# == 2 && $1 == --case && $2 == lifecycle ]]; then
+    playtime_service_case=lifecycle
+elif [[ $# == 4 && $1 == --case && $2 == lifecycle && $3 == --backend && $4 == systemd ]]; then
+    playtime_service_case=lifecycle-systemd
 elif [[ $# == 4 && $1 == --case && $2 == run-and-view && $3 == --backend && $4 == docker-scripted ]]; then
     playtime_service_case=run-and-view
 elif [[ $# == 4 && $1 == --case && $2 == run-and-view && $3 == --backend && $4 == live ]]; then
     playtime_service_case=live
 else
-    echo 'usage: ./scripts/test-rust-service-e2e.sh --case normal | --case run-and-view --backend docker-scripted|live' >&2
+    echo 'usage: ./scripts/test-rust-service-e2e.sh --case normal | --case lifecycle [--backend systemd] | --case run-and-view --backend docker-scripted|live' >&2
     echo 'The live backend uses PLAYTIME_LIVE_ENDPOINT (default http://oldman-bird.local:11434).' >&2
-    echo 'Restart/recovery remains a later integration gate.' >&2
+    echo 'Worker-loss recovery remains a later integration gate.' >&2
     exit 2
 fi
 playtime_live_endpoint=${PLAYTIME_LIVE_ENDPOINT:-http://oldman-bird.local:11434}
@@ -23,7 +27,7 @@ if [[ $playtime_service_case == live ]] \
 fi
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 playtime_service_root=$(mktemp -d "${TMPDIR:-/tmp}/playtime-service.XXXXXXXX")
-if [[ $playtime_service_case == normal ]]; then
+if [[ $playtime_service_case == normal || $playtime_service_case == lifecycle* ]]; then
     trap 'rm -rf -- "$playtime_service_root"' EXIT
 else
     echo "Run-and-view evidence: $playtime_service_root"
@@ -31,7 +35,7 @@ fi
 # Explicit build stage. Neither daemon admission nor worker execution runs Cargo.
 cargo run --locked -p xtask -- bundle-worker --output "$playtime_service_root/bundle"
 playtime_service_features=()
-if [[ $playtime_service_case != normal ]]; then
+if [[ $playtime_service_case != normal && $playtime_service_case != lifecycle* ]]; then
     playtime_service_features=(--features playtime-ui/ui-snapshots)
 fi
 cargo build --locked -p playtime-server -p playtime-cli -p playtime-ui --bin playtimed --bin playtime --example service-e2e "${playtime_service_features[@]}" --message-format=json-render-diagnostics > "$playtime_service_root/build.jsonl"
@@ -53,14 +57,18 @@ if any(name not in artifacts for name in required):
 args = [artifacts['service-e2e'], '--daemon', artifacts['playtimed'], '--cli', artifacts['playtime'], '--bundle', str(root / 'bundle')]
 if case == 'run-and-view':
     args += ['--docker-scripted']
+if case.startswith('lifecycle'):
+    args += ['--lifecycle']
+if case == 'lifecycle-systemd':
+    args += ['--systemd']
 if case == 'live':
     # Fixed endpoint text only; the daemon resolves and freezes its addresses.
     args += ['--live', sys.argv[3]]
-if case != 'normal':
+if case not in ('normal', 'lifecycle', 'lifecycle-systemd'):
     args += ['--screenshot', str(root / 'workbench.png'), '--evidence', str(root / 'evidence')]
 try:
     # Live runs twice: once from the CLI and once from the workbench.
-    result = subprocess.run(args, timeout={'normal': 120, 'run-and-view': 540, 'live': 900}[case])
+    result = subprocess.run(args, timeout={'normal': 120, 'lifecycle': 120, 'lifecycle-systemd': 180, 'run-and-view': 540, 'live': 900}[case])
     sys.exit(result.returncode)
 except subprocess.TimeoutExpired:
     sys.exit(f'{case} service gate exceeded its total deadline; ownership evidence is retained')
