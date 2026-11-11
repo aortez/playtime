@@ -164,9 +164,8 @@ Rules for live runs:
 - Recipe limits change only with the owner's review.
 - Keep every attempt as a record, including failed ones.
 
-See [development and test gates](development.md) for CI coverage, CPU simulation,
-Docker/live requirements, and the dedicated client simulation gates that still
-fail explicitly pending recovery integration.
+See [development and test gates](development.md) for CI coverage, CPU simulation
+and Docker/live requirements.
 
 ## Current limitations
 

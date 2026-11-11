@@ -17,12 +17,6 @@ async fn main() {
             }
         }
     }
-    if backend.as_deref() == Some("simulation") {
-        eprintln!(
-            "Simulation gate unavailable: #20's production playtimed/test-supervisor adapter, #42 archives, and worker-loss recovery, which isn't planned (#58), are required. No fixture fallback or skip."
-        );
-        std::process::exit(1);
-    }
     if backend.as_deref() != Some("fixture") || cli.is_none() || fixture.is_none() {
         eprintln!("usage: cli-e2e --backend fixture --cli PATH --fixture PATH");
         std::process::exit(2);

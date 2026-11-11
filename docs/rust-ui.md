@@ -6,9 +6,8 @@ The backend prepares bounded data outside rendering; the view model owns user
 selection, pending mutations, and stale-reply checks.
 
 For normal use, [go.sh](rust-mvp.md#run-it) builds and opens the workbench against
-the daemon. The dedicated UI simulation gate remains incomplete because it also
-requires restart/worker-loss recovery; it is separate from the working service
-and Docker/live run-and-view gates in [development](development.md).
+the daemon. The service and Docker/live run-and-view gates in
+[development](development.md) exercise it against the real daemon.
 
 ## Recipe authoring
 
@@ -485,11 +484,9 @@ through CLI and inspects through the desktop backend, then tests UI lost-reply
 recovery across closing/reopening. Assertions use public HTTP, never service
 archive files. Failure bundles allowlist diagnostics and redact credentials.
 
-The dedicated `./scripts/test-rust-ui-e2e.sh --backend simulation` command
-intentionally exits **1**. Its diagnostic names the original integration issues;
-normal production simulation and supervision now work through the separate
-service gate, but the full restart/worker-loss recovery matrix is incomplete.
-No fixture fallback or skip is permitted. See [gate scope](development.md#gates-that-are-not-implemented).
+The fixture gate isn't evidence about the real daemon; the service gate runs the
+same desktop backend against it. Worker-loss recovery isn't planned (#58); see
+[gate scope](development.md#gates-that-are-not-implemented).
 
 `tests/support/generated.rs` produces 100,000 records across 100 sessions, over
 10,000 activity rows and under 64 MiB serialized input. It includes Unicode,

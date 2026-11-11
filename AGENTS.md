@@ -83,7 +83,7 @@ the same handlers; see `docs/rust-daemon.md` and run
 `./scripts/test-rust-service-e2e.sh --case normal` for daemon integration changes,
 and `--case lifecycle` for daemon startup or restart changes. Its CPU test
 supervisor is explicitly separate from real systemd enforcement; worker-loss
-recovery and the full CLI/UI simulation gates remain incomplete.
+recovery isn't implemented and isn't planned (#58).
 `playtimed --docker-scripted` runs the frozen `docker-two-session` recipe in a
 packaged systemd worker with real Docker. See `docs/rust-docker-run-and-view.md`;
 run `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted`
@@ -100,19 +100,17 @@ durable launch receipts, cursor files and verified downloads belong in
 UI render loops. `playtime-test-support` owns native-client subprocess fixtures,
 isolated roots, readiness deadlines and owned-process cleanup. See
 `docs/rust-cli.md`; run `./scripts/test-rust-cli-e2e.sh --backend fixture` for CLI
-changes. The dedicated CLI simulation gate still fails pending full restart/recovery
-integration; the service-normal gate is separate. Never substitute fixtures
-or claim they establish the missing recovery behavior.
+changes. The service-normal gate runs the real CLI against the daemon; never
+substitute fixtures for it or claim they establish daemon behavior.
 `playtime-ui` owns egui presentation and a separate view model. Keep network,
 private files, JSON parsing, hashing, image decoding and memory diffs outside
 render callbacks. Use shared client receipts/downloads; closing or detaching the
 UI never cancels a run. Preserve generation/run identity checks and bounded
 history/image work. See `docs/rust-ui.md`; run the UI fixture wrapper for UI
 changes. Review screenshot differences using the pinned software Vulkan renderer;
-never silently skip or regenerate baselines. The dedicated UI simulation gate
-still fails pending full restart/recovery
-integration; service-normal and Docker/live gates exercise the implemented paths.
-Do not treat fixture tests as recovery evidence.
+never silently skip or regenerate baselines. Service-normal and Docker/live gates
+exercise the workbench against the real daemon; do not treat fixture tests as
+evidence for those paths.
 Commit `Cargo.lock`; ignore
 `target/`. Validate Rust changes with `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, and

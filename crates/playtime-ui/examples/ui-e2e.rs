@@ -153,17 +153,13 @@ async fn case(cli: &Path, fixture: &Path, scenario: &str) -> Result<()> {
 #[tokio::main]
 async fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.len() != 6 || args[0] != "--backend" || args[2] != "--cli" || args[4] != "--fixture" {
-        eprintln!("usage: ui-e2e --backend fixture|simulation --cli PATH --fixture PATH");
-        std::process::exit(2);
-    }
-    if args[1] == "simulation" {
-        eprintln!(
-            "Simulation gate unavailable: #42 archive driver is merged, but #20 production service and worker-loss recovery, which isn't planned (#58), are required. No fixture fallback; #22 remains open."
-        );
-        std::process::exit(1);
-    }
-    if args[1] != "fixture" {
+    if args.len() != 6
+        || args[0] != "--backend"
+        || args[1] != "fixture"
+        || args[2] != "--cli"
+        || args[4] != "--fixture"
+    {
+        eprintln!("usage: ui-e2e --backend fixture --cli PATH --fixture PATH");
         std::process::exit(2);
     }
     let suite = async {
