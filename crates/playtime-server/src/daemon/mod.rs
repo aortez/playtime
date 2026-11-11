@@ -180,10 +180,14 @@ impl Daemon {
         };
         for record in this.inner.coordinator.ledger().list().await? {
             // A saved boundary is historical confirmation, never a fresh claim
-            // of worker liveness. Active restart/recovery remains a later slice.
-            this.publish(record)
+            // of worker liveness. Only a refresh that authenticates the
+            // original worker makes the run current again.
+            this.publish(record.clone())
                 .await
                 .map_err(|_| life::Error::Uncertain)?;
+            if record.phase != Phase::Terminal && record.start_attempted {
+                tokio::spawn(this.clone().reattach(record));
+            }
         }
         Ok(this)
     }
@@ -333,6 +337,36 @@ impl Daemon {
             }
             return;
         }
+        self.follow(run).await;
+    }
+    /// Follows a run that an earlier daemon started, without preparing or
+    /// starting a worker again (#59). Each refresh authenticates the original
+    /// invocation through the supervisor and its private control socket before
+    /// the run is current again, and a saved cancellation is delivered again on
+    /// its own lane. A worker that stopped meanwhile stays reserved.
+    async fn reattach(self, record: Admission) {
+        // No worker outlives its boot, and a supervisor can't observe one from
+        // an earlier boot, so following such a run would only poll failures.
+        let boot = tokio::task::spawn_blocking(playtime_worker_control::boot_id).await;
+        let started = record.prepared.as_ref().map(|p| &p.binding.boot_id);
+        if !matches!(boot, Ok(Ok(boot)) if started == Some(&boot)) {
+            return;
+        }
+        if record.cancel_requested.is_some()
+            && record.stop_delivery != Some(life::StopDelivery::Stopped)
+        {
+            let this = self.clone();
+            let run = record.run_id.clone();
+            tokio::spawn(async move {
+                if let Ok(record) = this.inner.coordinator.cancel(run).await {
+                    this.publish_control(record).await;
+                }
+            });
+        }
+        self.follow(record.run_id).await;
+    }
+    async fn follow(self, run: RunId) {
+        let coordinator = &self.inner.coordinator;
         loop {
             let result = async {
                 let mut record = coordinator.refresh(run.clone()).await.map_err(lifecycle)?;

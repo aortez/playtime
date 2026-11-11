@@ -1,5 +1,21 @@
 # Rust compatibility and goldens
 
+## Daemon restart reattachment (#59, 2026-11-10)
+
+A restarted daemon now follows the active run whose worker start was submitted,
+with the refresh a launch starts, instead of leaving it reconciling. The run is
+current again only once its original invocation authenticates through the
+supervisor and the private control socket and its receipt extends the saved
+confirmation. A saved cancellation is delivered again, and an accepted stop is
+only observed. The daemon never prepares or starts another worker for the run,
+and doesn't follow one whose worker started on an earlier boot.
+The CPU test supervisor adopts a worker an earlier daemon started on this boot,
+through a pidfd and after checking its saved PID and kernel start time. The
+ledger schema, worker control protocol, API schemas and goldens are unchanged.
+The service wrapper gains `--case lifecycle`, which CI runs, and an opt-in
+`--case lifecycle --backend systemd`. `go.sh` now rebuilds and restarts the
+daemon during a run.
+
 ## Bounded tool-batch recovery and README assessments (2026-11-06)
 
 Continuous work now rejects an oversized tool batch without dispatching any

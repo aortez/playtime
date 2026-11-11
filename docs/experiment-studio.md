@@ -46,9 +46,10 @@ launch request selects a catalog recipe and preview revision; it does not yet
 accept newly authored definitions. The [workbench](rust-ui.md) already observes
 live execution and archived evidence.
 
-Automatic daemon reattachment and archive recovery remain incomplete. Manual
-experimentation can advance with that limitation visible. This phase must not
-claim restart-safe unattended execution or silently release uncertain work.
+A restarted daemon reattaches to a surviving worker, but archive recovery after
+worker loss remains incomplete. Manual experimentation can advance with that
+limitation visible. This phase must not claim unattended recovery from worker
+loss or silently release uncertain work.
 
 ## Experiment concepts
 

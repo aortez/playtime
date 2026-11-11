@@ -1,6 +1,7 @@
 //! Production-service process gates. Normal uses simulated workshop effects and
 //! an explicitly selected CPU supervisor; Docker uses real tools and systemd,
-//! with scripted model replies or the live locked model.
+//! with scripted model replies or the live locked model. Lifecycle is the normal
+//! gate with the daemon killed and restarted while the run's worker is paused.
 use crate::{Result, TestRoot, isolated, run_command};
 use playtime_client::{CheckpointIndexRead, Client, Observation, RetryPolicy};
 use playtime_core::{RunId, StopReason};
@@ -138,10 +139,25 @@ impl Backend {
         root: &TestRoot,
         bundle: &Path,
     ) -> Result<(Child, PathBuf, Client)> {
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(root.join("service"))?;
+        self.serve(daemon, root, bundle, "127.0.0.1:0", false).await
+    }
+    /// Start a daemon on the root's existing service directory. A simulation
+    /// uses the CPU test supervisor unless `systemd` selects the default one.
+    async fn serve(
+        self,
+        daemon: &Path,
+        root: &TestRoot,
+        bundle: &Path,
+        listen: &str,
+        systemd: bool,
+    ) -> Result<(Child, PathBuf, Client)> {
         let service = root.join("service");
-        std::fs::DirBuilder::new().mode(0o700).create(&service)?;
         let mut command = isolated(daemon, root);
         match self {
+            Self::Simulation if systemd => &mut command,
             Self::Simulation => command.arg("--cpu-test-supervisor"),
             Self::DockerScripted => command.arg("--docker-scripted"),
             Self::Live(endpoint) => {
@@ -149,7 +165,7 @@ impl Backend {
             }
         };
         command
-            .args(["--listen", "127.0.0.1:0", "--root"])
+            .args(["--listen", listen, "--root"])
             .arg(&service)
             .arg("--bundle")
             .arg(bundle)
@@ -184,6 +200,10 @@ pub struct NormalService {
     pub artifacts: Vec<Artifact>,
     /// The cancelled run released before the normal launch.
     pub released: Option<RunView>,
+    /// What the lifecycle gate saw across its daemon restart.
+    pub restart: Option<serde_json::Value>,
+    /// The simulation runs under user systemd, not the CPU test supervisor.
+    systemd: bool,
 }
 impl NormalService {
     pub async fn start(cli: &Path, daemon: &Path, bundle: &Path) -> Result<Self> {
@@ -287,11 +307,270 @@ impl NormalService {
             backend,
             artifacts: vec![],
             released,
+            restart: None,
+            systemd: false,
         };
         if !docker {
             this.verify(cli, &mut records).await?;
         }
         Ok(this)
+    }
+    /// The normal simulation, except that the daemon is killed while the run's
+    /// worker is paused, then restarted on the same root, port and bundle before
+    /// the worker resumes. The restarted daemon must follow that same worker to
+    /// normal completion, without preparing or starting another (#59). With
+    /// `systemd`, the workers are user systemd units, not CPU test children.
+    pub async fn start_restarted(
+        cli: &Path,
+        daemon: &Path,
+        bundle: &Path,
+        systemd: bool,
+    ) -> Result<Self> {
+        let backend = Backend::Simulation;
+        // Adopt the worker when its daemon dies. The kernel ends a paused
+        // process whose group that death orphans (SIGHUP), so the gate keeps
+        // the group attached by becoming the worker's parent.
+        rustix::process::set_child_subreaper(Some(rustix::process::getpid()))?;
+        let directory = std::env::temp_dir().join(format!(
+            "pt59-{}",
+            &playtime_local::Token::generate()?.expose()[..12]
+        ));
+        std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        let root = TestRoot(directory);
+        let cleanup = WorkerCleanup(root.join("service"));
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(root.join("service"))?;
+        let (mut child, connection, client) = backend
+            .serve(daemon, &root, bundle, "127.0.0.1:0", systemd)
+            .await?;
+        let mut records = Vec::new();
+        run_command(
+            cli,
+            &root,
+            Some(&connection),
+            [
+                "run",
+                backend.recipe(),
+                "--mode",
+                backend.mode(),
+                "--idempotency-key",
+                "normal-service-gate",
+                "--format",
+                "json",
+            ],
+            &mut records,
+        )
+        .await?
+        .expect(0)?;
+        let key = IdempotencyKey::new("normal-service-gate")?;
+        let run = client.lookup_key(&key).await?.run_id;
+        let workers = root.join("service/.playtime/workers");
+        let worker = PausedWorker::pause(&workers.join(run.as_str()), false, systemd).await?;
+        let (endpoint, _) = playtime_local::read_connection(&connection)?;
+        let listen = endpoint
+            .endpoint
+            .strip_prefix("http://")
+            .ok_or("unexpected daemon endpoint")?
+            .to_owned();
+        child.kill().await?;
+        child.wait().await?;
+        let (child, connection, restarted) = backend
+            .serve(daemon, &root, bundle, &listen, systemd)
+            .await?;
+        // The client from before the restart reaches the new daemon, which
+        // waits on the paused original worker rather than replacing it. The
+        // run stays reconciling until that worker authenticates again.
+        let paused = client.run(&run).await?;
+        if paused.orchestration.state != OrchestrationState::Reconciling {
+            return Err(format!(
+                "the run wasn't reconciling while its worker was paused: {:?}",
+                paused.orchestration
+            )
+            .into());
+        }
+        let acceptance = restarted.lookup_key(&key).await?;
+        if acceptance.run_id != run {
+            return Err("the launch key changed runs across the restart".into());
+        }
+        worker.resume()?;
+        let mut this = Self {
+            child,
+            _cleanup: cleanup,
+            root,
+            connection,
+            client: restarted,
+            run,
+            view: acceptance.run,
+            backend,
+            artifacts: vec![],
+            released: None,
+            restart: Some(json!({
+                "worker_pid": worker.pid,
+                "orchestration_while_paused": paused.orchestration,
+            })),
+            systemd,
+        };
+        this.verify(cli, &mut records).await?;
+        worker.exited().await?;
+        if worker.saved(&workers.join(this.run.as_str()))? != worker.pid {
+            return Err("the run finished on a different worker".into());
+        }
+        if std::fs::read_dir(&workers)?.count() != 1 {
+            return Err("the restarted daemon prepared another worker".into());
+        }
+        // Normal completion freed the slot without an operator release.
+        run_command(
+            cli,
+            &this.root,
+            Some(&this.connection),
+            [
+                "run",
+                backend.recipe(),
+                "--mode",
+                backend.mode(),
+                "--idempotency-key",
+                "after-restart-service-gate",
+                "--wait",
+                "--format",
+                "json",
+            ],
+            &mut records,
+        )
+        .await?
+        .expect(0)?;
+        this.cancel_across_restart(cli, daemon, bundle, &listen, &mut records)
+            .await?;
+        Ok(this)
+    }
+    /// A cancellation saved before the daemon dies is delivered again by the
+    /// restarted daemon, which stops the original worker. The run then waits
+    /// for a release, as any cancelled run does.
+    async fn cancel_across_restart(
+        &mut self,
+        cli: &Path,
+        daemon: &Path,
+        bundle: &Path,
+        listen: &str,
+        records: &mut Vec<serde_json::Value>,
+    ) -> Result<()> {
+        let key = "cancelled-across-restart";
+        run_command(
+            cli,
+            &self.root,
+            Some(&self.connection),
+            [
+                "run",
+                self.backend.recipe(),
+                "--mode",
+                self.backend.mode(),
+                "--idempotency-key",
+                key,
+                "--format",
+                "json",
+            ],
+            records,
+        )
+        .await?
+        .expect(0)?;
+        let run = self
+            .client
+            .lookup_key(&IdempotencyKey::new(key)?)
+            .await?
+            .run_id;
+        let directory = self
+            .root
+            .join("service/.playtime/workers")
+            .join(run.as_str());
+        // Paused only once it listens, so control requests wait on it.
+        let worker = PausedWorker::pause(&directory, true, self.systemd).await?;
+        let (client, id) = (self.client.clone(), run.clone());
+        let cancel = tokio::spawn(async move { client.cancel(&id).await });
+        // The ledger saves the request at once. Delivery to the paused worker
+        // waits out its five-second control deadline before the daemon asks
+        // the supervisor to stop it, so this daemon dies before that request.
+        sleep(Duration::from_secs(2)).await;
+        self.child.kill().await?;
+        self.child.wait().await?;
+        cancel.abort();
+        let (child, connection, client) = self
+            .backend
+            .serve(daemon, &self.root, bundle, listen, self.systemd)
+            .await?;
+        (self.child, self.connection, self.client) = (child, connection, client);
+        let saved = self.client.run(&run).await?.cancellation;
+        if saved.as_ref().map(|c| c.enforcement) != Some(Enforcement::Requested) {
+            return Err(format!("the dead daemon left this cancellation: {saved:?}").into());
+        }
+        // So only the restarted daemon can ask for this stop.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while self
+            .client
+            .run(&run)
+            .await?
+            .cancellation
+            .map(|c| c.enforcement)
+            != Some(Enforcement::StopAccepted)
+        {
+            if Instant::now() >= deadline {
+                return Err("the restarted daemon did not resume the cancellation".into());
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+        // systemd's stop sends SIGCONT after SIGTERM, which resumes it.
+        if !self.systemd {
+            worker.resume()?;
+        }
+        worker.exited().await?;
+        if worker.saved(&directory)? != worker.pid {
+            return Err("the cancelled run had a different worker".into());
+        }
+        let waited = run_command(
+            cli,
+            &self.root,
+            Some(&self.connection),
+            [
+                "runs",
+                "wait",
+                run.as_str(),
+                "--timeout",
+                "30s",
+                "--format",
+                "json",
+            ],
+            records,
+        )
+        .await?;
+        waited.expect(9)?;
+        run_command(
+            cli,
+            &self.root,
+            Some(&self.connection),
+            [
+                "runs",
+                "release",
+                run.as_str(),
+                "--reason",
+                "lifecycle gate: cancelled across a daemon restart",
+                "--format",
+                "json",
+            ],
+            records,
+        )
+        .await?
+        .expect(0)?;
+        let view = self.client.run(&run).await?;
+        if view.orchestration.state != OrchestrationState::Terminal
+            || view.orchestration.reason.as_deref() != Some("operator_released")
+            || view.cancellation.as_ref().map(|c| c.enforcement) != Some(Enforcement::Stopped)
+        {
+            return Err(format!("cancelled run ended wrongly: {view:?}").into());
+        }
+        println!(
+            "{}",
+            json!({"case":"lifecycle-cancel","run_id":run,"worker_pid":worker.pid,"orchestration":view.orchestration,"cancellation":view.cancellation})
+        );
+        Ok(())
     }
     /// While this run's worker holds the machine-wide live-model lock, a live
     /// admission through another daemon root, as from another checkout, gets
@@ -726,10 +1005,11 @@ impl NormalService {
         println!(
             "{}",
             json!({"case":match self.backend {
+                Backend::Simulation if self.restart.is_some() => "lifecycle",
                 Backend::Simulation => "normal",
                 Backend::DockerScripted => "run-and-view",
                 Backend::Live(_) => "live-run-and-view",
-            },"run_id":self.run,"frontier":final_frontier,"sessions":2,"known_tokens":usage.known_generated_tokens,"unknown_reserved_tokens":usage.unknown_reserved_tokens,"verified_artifacts":artifacts.len(),"copied_archive":true,"supervision":if self.backend.docker() { "real user systemd" } else { "CPU test; no systemd enforcement" },"released":self.released.as_ref().map(|r| json!({"run_id":r.run_id,"orchestration":r.orchestration,"cancellation":r.cancellation}))})
+            },"run_id":self.run,"frontier":final_frontier,"sessions":2,"known_tokens":usage.known_generated_tokens,"unknown_reserved_tokens":usage.unknown_reserved_tokens,"verified_artifacts":artifacts.len(),"copied_archive":true,"supervision":if self.backend.docker() || self.systemd { "real user systemd" } else { "CPU test; no systemd enforcement" },"released":self.released.as_ref().map(|r| json!({"run_id":r.run_id,"orchestration":r.orchestration,"cancellation":r.cancellation})),"restart":self.restart})
         );
         Ok(())
     }
@@ -967,6 +1247,94 @@ fn long_responses_streamed(
     }
     Ok((long, calls_only))
 }
+/// A simulation worker the harness paused through a pidfd, which names that
+/// exact process.
+struct PausedWorker {
+    pid: u32,
+    pidfd: rustix::fd::OwnedFd,
+    /// Its invocation record, from the CPU test supervisor or under systemd.
+    record: &'static str,
+}
+impl PausedWorker {
+    /// Pause the worker as soon as its invocation is recorded or, with
+    /// `listening`, once its control socket accepts connections.
+    async fn pause(directory: &Path, listening: bool, systemd: bool) -> Result<Self> {
+        let record = if systemd {
+            playtime_worker_control::systemd::IDENTITY_FILE
+        } else {
+            "cpu-test-invocation.json"
+        };
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Ok(pid) = Self::saved_pid(&directory.join(record))
+                && (!listening || Self::listening(&directory.join("control.sock")))
+            {
+                let (pid, start) = pid;
+                let pidfd = rustix::process::pidfd_open(
+                    rustix::process::Pid::from_raw(i32::try_from(pid)?).ok_or("invalid PID")?,
+                    rustix::process::PidfdFlags::empty(),
+                )?;
+                if playtime_worker_control::systemd::process_start(pid)? != start {
+                    return Err("the worker exited before the harness paused it".into());
+                }
+                rustix::process::pidfd_send_signal(&pidfd, rustix::process::Signal::STOP)?;
+                return Ok(Self { pid, pidfd, record });
+            }
+            if Instant::now() >= deadline {
+                return Err("worker start deadline".into());
+            }
+            sleep(Duration::from_millis(1)).await;
+        }
+    }
+    /// A listening Unix socket has the accepting flag in the kernel's table.
+    fn listening(socket: &Path) -> bool {
+        let Ok(socket) = std::fs::canonicalize(socket) else {
+            return false;
+        };
+        std::fs::read_to_string("/proc/net/unix").is_ok_and(|table| {
+            table.lines().any(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                fields.len() == 8 && fields[3] == "00010000" && Path::new(fields[7]) == socket
+            })
+        })
+    }
+    fn saved_pid(record: &Path) -> Result<(u32, u64)> {
+        let value: serde_json::Value = serde_json::from_slice(&std::fs::read(record)?)?;
+        Ok((
+            u32::try_from(value["pid"].as_u64().ok_or("missing PID")?)?,
+            value["start_ticks"].as_u64().ok_or("missing start")?,
+        ))
+    }
+    /// The PID recorded for the worker of this directory.
+    fn saved(&self, directory: &Path) -> Result<u32> {
+        Ok(Self::saved_pid(&directory.join(self.record))?.0)
+    }
+    fn resume(&self) -> Result<()> {
+        rustix::process::pidfd_send_signal(&self.pidfd, rustix::process::Signal::CONT)?;
+        Ok(())
+    }
+    /// The pidfd turns readable once this exact process exits.
+    async fn exited(&self) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let mut fds = [rustix::event::PollFd::new(
+                &self.pidfd,
+                rustix::event::PollFlags::IN,
+            )];
+            let now = rustix::event::Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            if rustix::event::poll(&mut fds, Some(&now))? == 1 {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("the original worker did not exit after completion".into());
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
 struct WorkerCleanup(PathBuf);
 impl Drop for WorkerCleanup {
     fn drop(&mut self) {
@@ -975,8 +1343,15 @@ impl Drop for WorkerCleanup {
         let Ok(entries) = std::fs::read_dir(self.0.join(".playtime/workers")) else {
             return;
         };
+        let records = [
+            "cpu-test-invocation.json",
+            playtime_worker_control::systemd::IDENTITY_FILE,
+        ];
         for entry in entries.flatten() {
-            let Ok(bytes) = std::fs::read(entry.path().join("cpu-test-invocation.json")) else {
+            let Some(bytes) = records
+                .iter()
+                .find_map(|record| std::fs::read(entry.path().join(record)).ok())
+            else {
                 continue;
             };
             let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {

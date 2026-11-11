@@ -153,9 +153,6 @@ if (( avail_kb < 20 * 1024 * 1024 )); then
 fi
 
 if (( build )); then
-    if daemon_active && worker_active; then
-        die "an experiment is running on this machine, so $unit can't be restarted with a new build; use --no-build to open the workbench on it"
-    fi
     if command -v rustup > /dev/null && ! rustup target list --installed 2> /dev/null | grep -q '^x86_64-unknown-linux-musl$'; then
         die "the worker bundle needs the musl target: rustup target add x86_64-unknown-linux-musl"
     fi
@@ -169,9 +166,10 @@ if (( build )); then
     # Keep the three newest bundles. Runs keep their own frozen copies.
     find "$data/bundles" -mindepth 1 -maxdepth 1 -type d | sort | head -n -3 | xargs -r rm -rf
     if daemon_active; then
-        # An experiment may have started while the build ran.
+        # The restarted daemon follows a running experiment from its worker,
+        # which keeps its own frozen copy of the old bundle.
         if worker_active; then
-            die "an experiment started on this machine during the build, so $unit keeps its old build; run $0 again after it ends"
+            say "An experiment is running on this machine; the restarted daemon picks it up from its worker."
         fi
         say "Restarting $unit with the new build."
         systemctl --user stop "$unit"

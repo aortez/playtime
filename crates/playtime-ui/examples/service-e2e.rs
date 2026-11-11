@@ -48,10 +48,20 @@ async fn main() -> Result<()> {
     let mut docker = false;
     let mut live: Option<&'static str> = None;
     let mut evidence: Option<PathBuf> = None;
+    let mut lifecycle = false;
+    let mut systemd = false;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         if flag == "--docker-scripted" {
             docker = true;
+            continue;
+        }
+        if flag == "--lifecycle" {
+            lifecycle = true;
+            continue;
+        }
+        if flag == "--systemd" {
+            systemd = true;
             continue;
         }
         if flag == "--live" {
@@ -76,10 +86,15 @@ async fn main() -> Result<()> {
     if screenshot.is_some() && !cfg!(feature = "ui-snapshots") {
         return Err("--screenshot requires --features ui-snapshots".into());
     }
+    if lifecycle && docker || systemd && !lifecycle {
+        return Err("--lifecycle runs the simulation only, and --systemd needs it".into());
+    }
     let mut service = if let Some(endpoint) = live {
         NormalService::start_live(&cli, &daemon, &bundle, endpoint).await?
     } else if docker {
         NormalService::start_docker(&cli, &daemon, &bundle).await?
+    } else if lifecycle {
+        NormalService::start_restarted(&cli, &daemon, &bundle, systemd).await?
     } else {
         NormalService::start(&cli, &daemon, &bundle).await?
     };

@@ -5,9 +5,10 @@ user-systemd worker. Its five model replies are scripted; its tools, session
 processes, workspace capture, archive publication and client downloads are real.
 The same controller and archive encoder also retain the existing simulation path.
 The [live-model path](rust-live-model.md) and [reviewed recipe catalog](rust-recipes.md)
-add real inference and seeds through this composition. Model-host enforcement,
-automatic image restoration, daemon restart reattachment, and archive recovery
-remain unimplemented.
+add real inference and seeds through this composition. A restarted daemon
+reattaches to a surviving worker ([daemon](rust-daemon.md#restarting-the-daemon)).
+Model-host enforcement, automatic image restoration and archive recovery remain
+unimplemented.
 
 ## Run it
 

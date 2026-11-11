@@ -11,8 +11,9 @@ prepared-writer handoff; catalog/API selection remains a later slice.
 `xtask` builds and verifies the static worker bundle. The
 [daemon](rust-daemon.md) owns public admission and the
 [lifecycle coordinator](rust-worker-lifecycle.md) owns systemd supervision. This
-guide covers packaging and the prepared-writer handoff; automatic reattachment
-and archive recovery remain unimplemented. See [development](development.md) for
+guide covers packaging and the prepared-writer handoff. A restarted daemon
+reattaches to a surviving worker; archive recovery after worker loss remains
+unimplemented. See [development](development.md) for
 how package, service, Docker/live, and recovery gates differ.
 
 ## Build and validate

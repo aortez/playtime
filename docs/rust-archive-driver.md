@@ -255,7 +255,8 @@ Run the [required workspace checks](development.md#required-checks-for-rust-chan
 The runner's scripted tests need no model, Docker, systemd, GPU, or active study.
 
 The [daemon](rust-daemon.md) connects worker confirmations and these archives to
-real clients. [Recovery planning](rust-recovery-contract.md) is read-only;
-automatic reconciliation and restart reattachment remain outside the run path.
+real clients and reattaches to a surviving worker after a restart.
+[Recovery planning](rust-recovery-contract.md) is read-only; automatic
+reconciliation after worker loss remains outside the run path.
 See [development](development.md) for the separate simulation, package, service,
 Docker, and live-model gates.

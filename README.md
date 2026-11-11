@@ -59,9 +59,12 @@ copy to keep an evidence root unchanged. Plain `./go.sh` continues to use the
 main root. `--no-build` reuses an already running daemon's configuration; run
 without it to apply target changes.
 
-Closing the workbench leaves the daemon and experiment running. Do not restart
-the daemon during a run: automatic reattachment is not implemented. For manual
-startup and CLI launch/cancel/release commands, see
+Closing the workbench leaves the daemon and experiment running. Restarting the
+daemon leaves the experiment running too: the restarted daemon picks the run up
+from its worker. A worker that no daemon has stopped ends at the run's wall
+limit plus three minutes; if no daemon has confirmed its end by then, the run
+waits for `playtime runs release`. For manual startup and CLI
+launch/cancel/release commands, see
 [Run it](docs/rust-mvp.md#run-it).
 
 ## Experiments and review

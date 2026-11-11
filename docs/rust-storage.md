@@ -102,8 +102,8 @@ Offline inspection takes a shared lock while selecting and validating the
 recovered marker, refusing an active writer. After confirmed process exit it can
 observe an old or newly published valid marker; that does not prove whether the
 failed caller received acknowledgment. Service ownership belongs to the lifecycle
-coordinator; automatic reattachment and controlled archive reconciliation are
-not implemented. There is no writer-resume or automatic repair API here. Readers never truncate/promote a suffix, skip a gap,
+coordinator, which reattaches to a surviving worker after a daemon restart;
+controlled archive reconciliation is not implemented. There is no writer-resume or automatic repair API here. Readers never truncate/promote a suffix, skip a gap,
 or repair a bad committed hash. When no terminal event commits, inspection says
 `incomplete_evidence`; usage then describes observed canonical settlements, not
 an assurance that every attempted request is accounted for.

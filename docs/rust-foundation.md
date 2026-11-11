@@ -23,9 +23,10 @@ owns admission and lifecycle coordination, separate from HTTP/auth modules.
 The service admits one active run per data root, with no queue or worker
 auto-restart. Each run has a separate Linux systemd user service. Closing a
 client does not cancel the worker. Restarting the daemon retains the reservation
-and marks active runs reconciling; automatic reattachment and worker-loss recovery
-are not implemented. Operator release requires verified termination and resource
-cleanup and does not repair the archive.
+and marks the active run reconciling until the restarted daemon authenticates its
+original worker again; worker-loss recovery is not implemented. Operator release
+requires verified termination and resource cleanup and does not repair the
+archive.
 
 Admission uses an exclusive `flock` on `<data-root>/.playtime/run.lock` and checks
 for legacy workers before handoff. Checking a PID or replacing the lock file is

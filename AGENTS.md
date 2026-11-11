@@ -80,9 +80,10 @@ receipts. See `docs/rust-http-api.md` for the application boundary and conforman
 tests. HTTP fixture tests use temporary roots and port zero, and must not launch
 experimental workers. `playtimed` supplies normal production simulation through
 the same handlers; see `docs/rust-daemon.md` and run
-`./scripts/test-rust-service-e2e.sh --case normal` for daemon integration changes.
-Its CPU test supervisor is explicitly separate from real systemd enforcement;
-restart/recovery and the full CLI/UI simulation gates remain incomplete.
+`./scripts/test-rust-service-e2e.sh --case normal` for daemon integration changes,
+and `--case lifecycle` for daemon startup or restart changes. Its CPU test
+supervisor is explicitly separate from real systemd enforcement; worker-loss
+recovery and the full CLI/UI simulation gates remain incomplete.
 `playtimed --docker-scripted` runs the frozen `docker-two-session` recipe in a
 packaged systemd worker with real Docker. See `docs/rust-docker-run-and-view.md`;
 run `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted`
