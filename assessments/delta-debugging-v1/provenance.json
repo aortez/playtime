@@ -22,5 +22,9 @@
     "total": 14,
     "deliverable_total": 1
   },
-  "adaptation": "Original Playtime implementation adapted from the cited question. API, bounds and output contract are pinned in TASK.md. Automated scores cover executable behavior; proofs and explanations require separate review."
+  "adaptation": "Original Playtime implementation adapted from the cited question. API, bounds and output contract are pinned in TASK.md. Automated scores cover executable behavior; proofs and explanations require separate review.",
+  "assessment_revision_9": {
+    "checker": "check-v9.py",
+    "change": "Predicate-rule violations fail the case even when the candidate catches the error raised inside fails."
+  }
 }

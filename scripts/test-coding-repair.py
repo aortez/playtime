@@ -43,13 +43,59 @@ class CodingRepairContract(unittest.TestCase):
                     self.assertNotEqual(checker.checker_identity(task_id, 2)["sha256"],
                                         checker.checker_identity(task_id, 3)["sha256"])
         with self.assertRaises(ValueError):
-            checker.load_task("ledger-repair-v1", 9)
+            checker.load_task("ledger-repair-v1", 10)
+
+    def test_each_revision_selects_its_pinned_checker_files(self):
+        manifest = json.loads((ROOT / "assessments/coding-repair-v1/revisions.json").read_text())
+        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(sorted(manifest["revisions"], key=int),
+                         [str(revision) for revision in checker.ASSESSMENT_REVISIONS])
+        for path, expected in manifest["files"].items():
+            with self.subTest(path=path):
+                self.assertEqual(checker.digest((ROOT / path).read_bytes()), expected)
+        for revision in checker.ASSESSMENT_REVISIONS:
+            pinned = manifest["revisions"][str(revision)]
+            catalog = checker.catalog_path(revision)
+            self.assertEqual(catalog.relative_to(ROOT).as_posix(), pinned["catalog"])
+            self.assertIn(pinned["catalog"], manifest["files"])
+            tasks = json.loads(catalog.read_text())["tasks"]
+            self.assertEqual(set(tasks), set(pinned["checkers"]))
+            for task_id in tasks:
+                with self.subTest(revision=revision, task=task_id):
+                    selected = [path.relative_to(ROOT).as_posix()
+                                for path in checker.checker_sources(task_id, revision)]
+                    self.assertEqual(selected, pinned["checkers"][task_id])
+                    self.assertLessEqual(set(selected), set(manifest["files"]))
+
+    def test_revision_9_pins_the_hash_seed_and_earlier_revisions_stay_isolated(self):
+        image = json.loads((ROOT / "environments/general.lock.json").read_text())["image_id"]
+        for revision, flags, seeded in ((8, ["-I"], False), (9, ["-P", "-s"], True)):
+            calls = []
+
+            def record(args, *unused, **options):
+                calls.append(args)
+                if args[:2] == ["docker", "create"]:
+                    raise FileNotFoundError("stop before creating a container")
+
+            with self.subTest(revision=revision), patch.object(checker, "command", side_effect=record):
+                report, code = checker.assess("ledger-repair-v1", ROOT / "seeds/ledger-repair-v1",
+                                              assessment_revision=revision)
+                self.assertEqual(code, 2)
+                create = next(args for args in calls if args[:2] == ["docker", "create"])
+                self.assertEqual(create[create.index(image) + 1:], [*flags, "/assessment/driver.py"])
+                self.assertEqual("PYTHONHASHSEED=0" in create, seeded)
+                if seeded:
+                    self.assertEqual(create[create.index("PYTHONHASHSEED=0") - 1], "--env")
 
     def test_frozen_inputs_and_original_checkers_match_provenance(self):
         for task_id, task in CATALOG.items():
             with self.subTest(task=task_id):
                 folder = ROOT / "assessments" / task_id
                 provenance = json.loads((folder / "provenance.json").read_text())
+                self.assertEqual(provenance["schema_version"], 1)
+                first = next(revision for revision in checker.ASSESSMENT_REVISIONS if task_id in
+                             json.loads(checker.catalog_path(revision).read_text())["tasks"])
+                self.assertEqual(provenance["assessment_revision"], first)
                 if "historical_checker_sha256" in provenance:
                     original = (folder / "historical-check.py").read_bytes()
                     self.assertEqual(hashlib.sha256(original).hexdigest(), provenance["historical_checker_sha256"])
@@ -61,6 +107,10 @@ class CodingRepairContract(unittest.TestCase):
                     self.assertEqual(hashlib.sha256(data).hexdigest(), expected)
                 for name, expected in provenance["reference_files"].items():
                     self.assertEqual(checker.digest((folder / "reference" / name).read_bytes()), expected)
+                if "archive_generator" in provenance:
+                    generator = folder / provenance["archive_generator"]
+                    self.assertEqual(checker.digest(generator.read_bytes()),
+                                     provenance["archive_generator_sha256"])
                 original_cases = [c for c in task["cases"] if c["id"] != "deferred_noop_write"]
                 self.assertEqual(len(original_cases), provenance["controls"]["total"])
                 self.assertEqual(len({case["id"] for case in task["cases"]}), len(task["cases"]))

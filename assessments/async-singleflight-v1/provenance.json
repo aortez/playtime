@@ -25,5 +25,9 @@
     "total": 11,
     "deliverable_total": 1
   },
-  "adaptation": "Task and reference bytes unchanged. Same acceptance cases and README regular-file presence rule. Adds registered candidate modules and private report transport through the shared offline assessment helper; execution outcomes remain separate."
+  "adaptation": "Task and reference bytes unchanged. Same acceptance cases and README regular-file presence rule. Adds registered candidate modules and private report transport through the shared offline assessment helper; execution outcomes remain separate.",
+  "assessment_revision_9": {
+    "checker": "check-v9.py",
+    "change": "Each case's warnings stay with that case, and its leftovers are collected before a pass is recorded."
+  }
 }

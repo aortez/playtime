@@ -1,0 +1,417 @@
+{
+  "schema_version": 1,
+  "description": "Checker inputs pinned for each assessment revision. scripts/test-coding-repair.py requires each revision to select exactly these files with these digests. The helper script is not pinned: it changes with each revision, and every report records its digest.",
+  "files": {
+    "assessments/async-singleflight-v1/check-v9.py": "8e1e41148c6785b71ba3fbc52d9a6234fa369446bdad237828d953026ed4e50d",
+    "assessments/async-singleflight-v1/check.py": "68e4c9fd163017fd066387a9ef0915d599ede1b4bc6de6178443913423867322",
+    "assessments/byte-range-repair-v1/check-v3.py": "d93894323681f569d8a5c8ba8553ad15bf7c865cfeeeb6a29e92e3e6f05cebcc",
+    "assessments/byte-range-repair-v1/check.py": "061be5fc416e57098556e73ee4f912f8285da770dbc8a73d1572d32751cdecc8",
+    "assessments/coding-repair-v1/assessment_support.py": "6be17274491699d1ebd35f2867ecc8030ec10debb1dabaf5a5c924ff69c3c05c",
+    "assessments/coding-repair-v1/catalog-v3.json": "8b1ee8a0c3550f346da054708d5c618885a08109e7763280a61c16f5273a6452",
+    "assessments/coding-repair-v1/catalog-v4.json": "3a7b632b6697f276c7cfe45e30e07a2a9e1c1967874c8484111e18a895b08ddf",
+    "assessments/coding-repair-v1/catalog-v5.json": "529960e4f6bee058d15d9cbc245fe6749a6370e61b7e0437dc4539541e41b876",
+    "assessments/coding-repair-v1/catalog-v6.json": "61eb3430704e81691f86f01b636f38c4b67f3b8cc5b96362a3432d9aaff1060b",
+    "assessments/coding-repair-v1/catalog-v7.json": "aeb8d3f0dad529012a6195553c1d19b6350c8df35f42e3041d1ae6db4a4857c7",
+    "assessments/coding-repair-v1/catalog-v8.json": "afca364d4f5f6587132733ffb628305d494a2cbdfa4feaf7416c84a885741824",
+    "assessments/coding-repair-v1/catalog-v9.json": "08fc7551c063e4e04ec16501590b9fbb4b6c37c7c0008194ef920faf99d7ffa2",
+    "assessments/coding-repair-v1/catalog.json": "11903ec17cb91297841af6b3c104f69cd9d9512f30468c328b443c851f662411",
+    "assessments/coding-repair-v1/driver-v4.py": "bf34a074cfd354205f8be5d1e7bc00e984706e4c69f6bdac494d1e95370a0ea5",
+    "assessments/coding-repair-v1/driver-v5.py": "c4ef5579b095d267b10505d0bf7d1eb557b98c1261521dd605defbbf6d3fe08c",
+    "assessments/coding-repair-v1/driver-v6.py": "c3a29905296cff353e949ee284e1f76dd8d10cb12abf9ff04c6c1c915f424aa8",
+    "assessments/coding-repair-v1/driver-v7.py": "c3a29905296cff353e949ee284e1f76dd8d10cb12abf9ff04c6c1c915f424aa8",
+    "assessments/coding-repair-v1/driver-v8.py": "96cce305ef1a9ed0d91e99afe8d22d0d4649219280bc0b07e50cc798f4998b44",
+    "assessments/coding-repair-v1/driver-v9.py": "23dbc851159eea90bcde11c4785f3aec1b21363bee815f7451caaf8659b55917",
+    "assessments/coding-repair-v1/driver.py": "5525b27867e5df9ad1b7d31124c17c29dc1ed09733ae466c9360ea77affe6fcb",
+    "assessments/context-policy-edit-v1/check.py": "62048695051f56952e1ebe8999a6750008251f4fd04eefa659c14c8fb87e67a8",
+    "assessments/crash-journal-v1/check.py": "80c67c53e908d426d89b9574ed116eb09c4012f012e4595289dc42bd5292d479",
+    "assessments/delta-debugging-v1/check-v9.py": "4ff63af29a978030904559857ffcbbb4aa1316bacde505a4c315436c62178067",
+    "assessments/delta-debugging-v1/check.py": "cb71f02f066818a1b42ababe33bd64051d9808746236656a523222c421d54138",
+    "assessments/dependency-planner-repair-v1/check-v3.py": "3af28a91104fcb82476f23994de9d2b1f1781f26abd2e5bdacc680ddc66103d5",
+    "assessments/dependency-planner-repair-v1/check.py": "cdcaf44c07678b2c8cbf21b2d83fe748d2702cc1ed60f26110fee2c603caa9a8",
+    "assessments/ledger-repair-v1/check.py": "3e51c807b2a5e11389e8b1db78cd447da5d1a3e78e0c8974372fd1a6aa587be6",
+    "assessments/linearizable-kv-v1/check-v7.py": "418c414f46b9ea681e0fae1f21b8395f4790ea25ca983e2d24e2d523c4cd0336",
+    "assessments/linearizable-kv-v1/check-v9.py": "1bf3b00b1b5da4559370659174323606abf08309a039f1484a6eb5b4c411a2af",
+    "assessments/linearizable-kv-v1/check.py": "19daa0fe03cce4014fd09b72b4a18d10a76335fe9eed3942825aaf0b38f1d21a",
+    "assessments/shortest-walk-v1/check.py": "3a552a7dd1e18d390a2b33722d38b41e93fdd287b797d46c22ed5709d2a88b8f",
+    "assessments/sql-tombstones-v1/check.py": "f5dd4ac9536754754f064cf84e9b756b8f2beb5e4c646520196736201aa8e06e",
+    "assessments/stable-quadratic-v1/check.py": "9df9076289677a89e66ed7da0601538917055aa946c30e0810632cffecaf8f7f",
+    "assessments/streaming-jsonlines-v1/check.py": "696d0a2a49b0646243f0723bba78e3cf76b69501a7e3c1d6a462d07588ed06ea"
+  },
+  "revisions": {
+    "2": {
+      "catalog": "assessments/coding-repair-v1/catalog.json",
+      "checkers": {
+        "ledger-repair-v1": [
+          "assessments/coding-repair-v1/driver.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/ledger-repair-v1/check.py"
+        ],
+        "dependency-planner-repair-v1": [
+          "assessments/coding-repair-v1/driver.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/dependency-planner-repair-v1/check.py"
+        ],
+        "byte-range-repair-v1": [
+          "assessments/coding-repair-v1/driver.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/byte-range-repair-v1/check.py"
+        ]
+      }
+    },
+    "3": {
+      "catalog": "assessments/coding-repair-v1/catalog-v3.json",
+      "checkers": {
+        "ledger-repair-v1": [
+          "assessments/coding-repair-v1/driver.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/ledger-repair-v1/check.py"
+        ],
+        "dependency-planner-repair-v1": [
+          "assessments/coding-repair-v1/driver.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/dependency-planner-repair-v1/check-v3.py"
+        ],
+        "byte-range-repair-v1": [
+          "assessments/coding-repair-v1/driver.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/byte-range-repair-v1/check-v3.py"
+        ]
+      }
+    },
+    "4": {
+      "catalog": "assessments/coding-repair-v1/catalog-v4.json",
+      "checkers": {
+        "ledger-repair-v1": [
+          "assessments/coding-repair-v1/driver-v4.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/ledger-repair-v1/check.py"
+        ],
+        "dependency-planner-repair-v1": [
+          "assessments/coding-repair-v1/driver-v4.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/dependency-planner-repair-v1/check-v3.py"
+        ],
+        "byte-range-repair-v1": [
+          "assessments/coding-repair-v1/driver-v4.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/byte-range-repair-v1/check-v3.py"
+        ],
+        "async-singleflight-v1": [
+          "assessments/coding-repair-v1/driver-v4.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/async-singleflight-v1/check.py"
+        ],
+        "streaming-jsonlines-v1": [
+          "assessments/coding-repair-v1/driver-v4.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/streaming-jsonlines-v1/check.py"
+        ],
+        "shortest-walk-v1": [
+          "assessments/coding-repair-v1/driver-v4.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/shortest-walk-v1/check.py"
+        ]
+      }
+    },
+    "5": {
+      "catalog": "assessments/coding-repair-v1/catalog-v5.json",
+      "checkers": {
+        "ledger-repair-v1": [
+          "assessments/coding-repair-v1/driver-v5.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/ledger-repair-v1/check.py"
+        ],
+        "dependency-planner-repair-v1": [
+          "assessments/coding-repair-v1/driver-v5.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/dependency-planner-repair-v1/check-v3.py"
+        ],
+        "byte-range-repair-v1": [
+          "assessments/coding-repair-v1/driver-v5.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/byte-range-repair-v1/check-v3.py"
+        ],
+        "async-singleflight-v1": [
+          "assessments/coding-repair-v1/driver-v5.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/async-singleflight-v1/check.py"
+        ],
+        "streaming-jsonlines-v1": [
+          "assessments/coding-repair-v1/driver-v5.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/streaming-jsonlines-v1/check.py"
+        ],
+        "shortest-walk-v1": [
+          "assessments/coding-repair-v1/driver-v5.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/shortest-walk-v1/check.py"
+        ],
+        "sql-tombstones-v1": [
+          "assessments/coding-repair-v1/driver-v5.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/sql-tombstones-v1/check.py"
+        ],
+        "delta-debugging-v1": [
+          "assessments/coding-repair-v1/driver-v5.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/delta-debugging-v1/check.py"
+        ],
+        "stable-quadratic-v1": [
+          "assessments/coding-repair-v1/driver-v5.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/stable-quadratic-v1/check.py"
+        ]
+      }
+    },
+    "6": {
+      "catalog": "assessments/coding-repair-v1/catalog-v6.json",
+      "checkers": {
+        "ledger-repair-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/ledger-repair-v1/check.py"
+        ],
+        "dependency-planner-repair-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/dependency-planner-repair-v1/check-v3.py"
+        ],
+        "byte-range-repair-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/byte-range-repair-v1/check-v3.py"
+        ],
+        "async-singleflight-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/async-singleflight-v1/check.py"
+        ],
+        "streaming-jsonlines-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/streaming-jsonlines-v1/check.py"
+        ],
+        "shortest-walk-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/shortest-walk-v1/check.py"
+        ],
+        "sql-tombstones-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/sql-tombstones-v1/check.py"
+        ],
+        "delta-debugging-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/delta-debugging-v1/check.py"
+        ],
+        "stable-quadratic-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/stable-quadratic-v1/check.py"
+        ],
+        "crash-journal-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/crash-journal-v1/check.py"
+        ],
+        "linearizable-kv-v1": [
+          "assessments/coding-repair-v1/driver-v6.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/linearizable-kv-v1/check.py"
+        ]
+      }
+    },
+    "7": {
+      "catalog": "assessments/coding-repair-v1/catalog-v7.json",
+      "checkers": {
+        "ledger-repair-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/ledger-repair-v1/check.py"
+        ],
+        "dependency-planner-repair-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/dependency-planner-repair-v1/check-v3.py"
+        ],
+        "byte-range-repair-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/byte-range-repair-v1/check-v3.py"
+        ],
+        "async-singleflight-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/async-singleflight-v1/check.py"
+        ],
+        "streaming-jsonlines-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/streaming-jsonlines-v1/check.py"
+        ],
+        "shortest-walk-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/shortest-walk-v1/check.py"
+        ],
+        "sql-tombstones-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/sql-tombstones-v1/check.py"
+        ],
+        "delta-debugging-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/delta-debugging-v1/check.py"
+        ],
+        "stable-quadratic-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/stable-quadratic-v1/check.py"
+        ],
+        "crash-journal-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/crash-journal-v1/check.py"
+        ],
+        "linearizable-kv-v1": [
+          "assessments/coding-repair-v1/driver-v7.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/linearizable-kv-v1/check-v7.py"
+        ]
+      }
+    },
+    "8": {
+      "catalog": "assessments/coding-repair-v1/catalog-v8.json",
+      "checkers": {
+        "ledger-repair-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/ledger-repair-v1/check.py"
+        ],
+        "dependency-planner-repair-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/dependency-planner-repair-v1/check-v3.py"
+        ],
+        "byte-range-repair-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/byte-range-repair-v1/check-v3.py"
+        ],
+        "async-singleflight-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/async-singleflight-v1/check.py"
+        ],
+        "streaming-jsonlines-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/streaming-jsonlines-v1/check.py"
+        ],
+        "shortest-walk-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/shortest-walk-v1/check.py"
+        ],
+        "sql-tombstones-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/sql-tombstones-v1/check.py"
+        ],
+        "delta-debugging-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/delta-debugging-v1/check.py"
+        ],
+        "stable-quadratic-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/stable-quadratic-v1/check.py"
+        ],
+        "crash-journal-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/crash-journal-v1/check.py"
+        ],
+        "linearizable-kv-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/linearizable-kv-v1/check-v7.py"
+        ],
+        "context-policy-edit-v1": [
+          "assessments/coding-repair-v1/driver-v8.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/context-policy-edit-v1/check.py"
+        ]
+      }
+    },
+    "9": {
+      "catalog": "assessments/coding-repair-v1/catalog-v9.json",
+      "checkers": {
+        "ledger-repair-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/ledger-repair-v1/check.py"
+        ],
+        "dependency-planner-repair-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/dependency-planner-repair-v1/check-v3.py"
+        ],
+        "byte-range-repair-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/byte-range-repair-v1/check-v3.py"
+        ],
+        "async-singleflight-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/async-singleflight-v1/check-v9.py"
+        ],
+        "streaming-jsonlines-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/streaming-jsonlines-v1/check.py"
+        ],
+        "shortest-walk-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/shortest-walk-v1/check.py"
+        ],
+        "sql-tombstones-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/sql-tombstones-v1/check.py"
+        ],
+        "delta-debugging-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/delta-debugging-v1/check-v9.py"
+        ],
+        "stable-quadratic-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/stable-quadratic-v1/check.py"
+        ],
+        "crash-journal-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/crash-journal-v1/check.py"
+        ],
+        "linearizable-kv-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/linearizable-kv-v1/check-v9.py"
+        ],
+        "context-policy-edit-v1": [
+          "assessments/coding-repair-v1/driver-v9.py",
+          "assessments/coding-repair-v1/assessment_support.py",
+          "assessments/context-policy-edit-v1/check.py"
+        ]
+      }
+    }
+  }
+}
