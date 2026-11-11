@@ -383,15 +383,10 @@ impl Coordinator {
             .inner
             .cancellations
             .run(run.clone(), move || async move {
-                // A worker that started on an earlier boot has stopped, and no
-                // supervisor can observe its unit, so nothing is left to
-                // cancel. The run keeps waiting for an operator release (#43).
-                // A boot that can't be read never holds back a stop.
+                // Without a worker that can run, nothing is left to cancel,
+                // and the run keeps waiting for an operator release.
                 let current = inner.ledger.get(&id).await?;
-                if let Some(prepared) = current.prepared.as_ref()
-                    && current.start_attempted
-                    && matches!(inner.later_boot(prepared).await, Ok(Some(_)))
-                {
+                if inner.no_worker_can_run(&current).await {
                     return Ok(current);
                 }
                 let now = inner.clock.now();
@@ -589,6 +584,24 @@ impl Inner {
             .await
             .map_err(|_| Error::Uncertain)??;
         Ok((boot != prepared.binding.boot_id).then_some(boot))
+    }
+    /// No worker for the run is running or can still start: none was
+    /// submitted and preparation no longer owns the run, the supervisor saw
+    /// the worker stop, or it started on an earlier boot (#43). These are the
+    /// cases in which a stop has nothing to do. A boot that can't be read
+    /// never counts, so it can't hold back a stop.
+    async fn no_worker_can_run(&self, admission: &Admission) -> bool {
+        if !admission.start_attempted {
+            // Only a run that is still preparing can submit its worker.
+            return admission.phase == Phase::Reconciling;
+        }
+        if admission.supervisor.as_ref().is_some_and(|s| s.stopped) {
+            return true;
+        }
+        match admission.prepared.as_ref() {
+            Some(prepared) => matches!(self.later_boot(prepared).await, Ok(Some(_))),
+            None => false,
+        }
     }
     async fn replay(&self, key: &str, request: &AdmissionRequest) -> Result<Option<Acceptance>> {
         let Some(admission) = self.ledger.lookup(key).await? else {

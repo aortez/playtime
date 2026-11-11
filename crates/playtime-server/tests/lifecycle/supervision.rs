@@ -12,6 +12,8 @@ struct ManagerFixture {
     diagnostics_failed: AtomicBool,
     lose_stop: AtomicBool,
     stops: AtomicUsize,
+    /// Every stop request, including those the manager refuses.
+    stop_calls: AtomicUsize,
     observes: AtomicUsize,
 }
 impl ManagerFixture {
@@ -33,6 +35,7 @@ impl ManagerFixture {
             diagnostics_failed: AtomicBool::new(false),
             lose_stop: AtomicBool::new(false),
             stops: AtomicUsize::new(0),
+            stop_calls: AtomicUsize::new(0),
             observes: AtomicUsize::new(0),
         }
     }
@@ -60,6 +63,7 @@ impl Supervisor for ManagerFixture {
         Ok(Some(self.observation.lock().unwrap().clone()))
     }
     async fn stop(&self, _: &PreparedLaunch, authenticated: &SupervisorObservation) -> Result<()> {
+        self.stop_calls.fetch_add(1, Ordering::SeqCst);
         if self.unavailable.load(Ordering::SeqCst) {
             return Err(Error::Uncertain);
         }
@@ -328,17 +332,104 @@ async fn cancel_leaves_a_run_from_an_earlier_boot_waiting_for_release() {
     let restarted = c.ledger().get(&ready.run_id).await.unwrap();
     assert_eq!(restarted.phase, Phase::Reconciling);
     assert_eq!(restarted.reason, Some(Reason::CoordinatorRestarted));
-    let observed = supervisor.observes.load(Ordering::SeqCst);
     let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
     assert_eq!(cancelled, restarted, "nothing is left to cancel");
     assert_eq!(c.ledger().get(&ready.run_id).await.unwrap(), restarted);
-    assert_eq!(supervisor.observes.load(Ordering::SeqCst), observed);
-    assert_eq!(supervisor.stops.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        supervisor.stop_calls.load(Ordering::SeqCst),
+        0,
+        "no supervisor can stop a unit from an earlier boot"
+    );
     let released = c
         .release(ready.run_id.clone(), "rebooted".into())
         .await
         .unwrap();
     assert_eq!(released.phase, Phase::Terminal);
+}
+
+/// A host whose boot ID can't be read.
+struct UnreadableBoot;
+impl Clock for UnreadableBoot {
+    fn now(&self) -> Stamp {
+        SystemClock.now()
+    }
+    fn boot_id(&self) -> Result<playtime_protocol::worker::ControlId> {
+        Err(Error::Uncertain)
+    }
+}
+
+#[tokio::test]
+async fn an_unreadable_boot_never_holds_back_a_stop() {
+    let root = Root::new();
+    let supervisor = Arc::new(ManagerFixture::new());
+    let c = coordinator_on(
+        &root.0,
+        archive(&root.0),
+        supervisor.clone(),
+        Arc::new(UnreadableBoot),
+    )
+    .await;
+    let accepted = admit(&c).await;
+    let ready = prepared(&c, &accepted).await;
+    c.begin(ready.run_id.clone()).await.unwrap();
+    let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
+    assert_eq!(
+        cancelled.cancel_delivery,
+        Some(CancelDelivery::WorkerAcknowledged)
+    );
+    assert_eq!(cancelled.stop_delivery, Some(StopDelivery::Accepted));
+    assert_eq!(supervisor.stops.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancel_leaves_a_run_that_never_started_a_worker_waiting_for_release() {
+    let root = Root::new();
+    let archive = archive(&root.0);
+    let supervisor = Arc::new(ManagerFixture::new());
+    let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
+    let accepted = admit(&c).await;
+    // The daemon stops before preparation submits a worker.
+    drop(c);
+    let c = coordinator(&root.0, archive, supervisor.clone()).await;
+    let restarted = c.ledger().get(&accepted.run_id).await.unwrap();
+    assert_eq!(restarted.phase, Phase::Reconciling);
+    assert!(!restarted.start_attempted);
+    let cancelled = c.cancel(accepted.run_id.clone()).await.unwrap();
+    assert_eq!(cancelled, restarted, "nothing is left to cancel");
+    assert_eq!(c.ledger().get(&accepted.run_id).await.unwrap(), restarted);
+    let released = c
+        .release(accepted.run_id.clone(), "never started".into())
+        .await
+        .unwrap();
+    assert_eq!(released.phase, Phase::Terminal);
+}
+
+#[tokio::test]
+async fn cancel_leaves_a_run_whose_worker_stopped_waiting_for_release() {
+    let root = Root::new();
+    let supervisor = Arc::new(ManagerFixture::new());
+    let c = coordinator(&root.0, archive(&root.0), supervisor.clone()).await;
+    let accepted = admit(&c).await;
+    let ready = prepared(&c, &accepted).await;
+    c.begin(ready.run_id.clone()).await.unwrap();
+    supervisor
+        .child
+        .terminate(ready.prepared.as_ref().unwrap())
+        .unwrap();
+    {
+        let mut observation = supervisor.observation.lock().unwrap();
+        observation.active_state = "unloaded".into();
+        observation.main_pid = 0;
+        observation.stopped = true;
+    }
+    after_refresh_floor().await;
+    let lost = c.refresh(ready.run_id.clone()).await.unwrap();
+    assert_eq!(lost.phase, Phase::Reconciling);
+    assert_eq!(lost.reason, Some(Reason::WorkerUnavailable));
+    assert!(lost.supervisor.as_ref().is_some_and(|s| s.stopped));
+    let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
+    assert_eq!(cancelled, lost, "nothing is left to cancel");
+    assert_eq!(c.ledger().get(&ready.run_id).await.unwrap(), lost);
 }
 
 #[tokio::test]

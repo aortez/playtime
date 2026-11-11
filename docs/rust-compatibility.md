@@ -1,15 +1,16 @@
 # Rust compatibility and goldens
 
-## Cancel after a host reboot (2026-11-10)
+## Cancel on a run with no worker left (2026-11-10)
 
-A cancel used to turn a run whose worker started on an earlier boot into
-`control_uncertain`: it couldn't reach the worker or observe its unit, and
-clients don't show that reason as waiting for a release. No process outlives its
-boot, so nothing is left to cancel. Cancel now returns such a run unchanged,
-still `coordinator_restarted` and waiting for a release, without recording an
-intent or asking the supervisor. When the boot ID can't be read, cancel goes
-ahead as before. The ledger, worker control, API schemas and goldens are
-unchanged.
+A cancel used to take a run out of waiting for a release when no worker for it
+could still run: none was ever started, the supervisor had seen it stop, or it
+started on an earlier boot. The cancel couldn't reach a worker, so it left the
+run cancelling, with reason `cancel_requested` or `control_uncertain`, which
+clients don't show as waiting for a release. Cancel now returns such a run
+unchanged, without recording an intent or asking the supervisor, and a plain
+`runs cancel` result adds the release command as `next`, like the observers. A
+boot ID that can't be read never counts as evidence, so it can't hold back a
+stop. The ledger, worker control, API schemas and goldens are unchanged.
 
 ## Release after a host reboot (#43, 2026-11-10)
 
