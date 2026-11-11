@@ -265,11 +265,11 @@ the run's wall limit plus three minutes, so a daemon back before then still
 confirms a finished run's end. No worker outlives a host reboot, so the daemon
 doesn't follow a run whose worker started on an earlier boot. That run stays
 reconciling until an operator releases it, and the reboot itself is the evidence
-that its worker stopped. Release it rather than cancel it: a cancel can't reach
-the worker and leaves the run `control_uncertain`, which clients don't show as
-waiting for a release, though release still works. A Docker run's stopped
-containers and volume outlive the reboot, so its release waits until they're
-removed (`docker rm`, `docker volume rm`); the refusal names each one.
+that its worker stopped. Nothing is left to cancel, so a cancel returns the run
+unchanged, and `runs cancel --wait` exits 9 with the release command. A Docker
+run's stopped containers and volume outlive the reboot, so its release waits
+until they're removed (`docker rm`, `docker volume rm`); the refusal names each
+one.
 
 ## Executable gate and remaining gates
 

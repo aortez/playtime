@@ -304,6 +304,44 @@ async fn release_takes_a_later_boot_as_proof_that_the_worker_stopped() {
 }
 
 #[tokio::test]
+async fn cancel_leaves_a_run_from_an_earlier_boot_waiting_for_release() {
+    let root = Root::new();
+    let archive = archive(&root.0);
+    let supervisor = Arc::new(ManagerFixture::new());
+    let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
+    let accepted = admit(&c).await;
+    let ready = prepared(&c, &accepted).await;
+    c.begin(ready.run_id.clone()).await.unwrap();
+    supervisor
+        .child
+        .terminate(ready.prepared.as_ref().unwrap())
+        .unwrap();
+    supervisor.unavailable.store(true, Ordering::SeqCst);
+    drop(c);
+    let c = coordinator_on(
+        &root.0,
+        archive,
+        supervisor.clone(),
+        Arc::new(Rebooted(random_id().unwrap())),
+    )
+    .await;
+    let restarted = c.ledger().get(&ready.run_id).await.unwrap();
+    assert_eq!(restarted.phase, Phase::Reconciling);
+    assert_eq!(restarted.reason, Some(Reason::CoordinatorRestarted));
+    let observed = supervisor.observes.load(Ordering::SeqCst);
+    let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
+    assert_eq!(cancelled, restarted, "nothing is left to cancel");
+    assert_eq!(c.ledger().get(&ready.run_id).await.unwrap(), restarted);
+    assert_eq!(supervisor.observes.load(Ordering::SeqCst), observed);
+    assert_eq!(supervisor.stops.load(Ordering::SeqCst), 0);
+    let released = c
+        .release(ready.run_id.clone(), "rebooted".into())
+        .await
+        .unwrap();
+    assert_eq!(released.phase, Phase::Terminal);
+}
+
+#[tokio::test]
 async fn diagnostic_failure_preserves_stop_acceptance_across_restart() {
     let root = Root::new();
     let archive = archive(&root.0);

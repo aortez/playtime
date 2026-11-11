@@ -383,6 +383,17 @@ impl Coordinator {
             .inner
             .cancellations
             .run(run.clone(), move || async move {
+                // A worker that started on an earlier boot has stopped, and no
+                // supervisor can observe its unit, so nothing is left to
+                // cancel. The run keeps waiting for an operator release (#43).
+                // A boot that can't be read never holds back a stop.
+                let current = inner.ledger.get(&id).await?;
+                if let Some(prepared) = current.prepared.as_ref()
+                    && current.start_attempted
+                    && matches!(inner.later_boot(prepared).await, Ok(Some(_)))
+                {
+                    return Ok(current);
+                }
                 let now = inner.clock.now();
                 let admission = inner
                     .ledger
@@ -493,11 +504,7 @@ impl Coordinator {
             let (supervisor, later_boot_id, absent_resources) = if admission.start_attempted {
                 let prepared = admission.prepared.as_ref().ok_or(Error::Uncertain)?;
                 let unit = &prepared.binding.unit;
-                let clock = inner.clock.clone();
-                let boot = tokio::task::spawn_blocking(move || clock.boot_id())
-                    .await
-                    .map_err(|_| Error::Uncertain)??;
-                let later_boot_id = (boot != prepared.binding.boot_id).then_some(boot);
+                let later_boot_id = inner.later_boot(prepared).await?;
                 let observation = if later_boot_id.is_some() {
                     // No supervisor can observe a unit from an earlier boot.
                     None
@@ -574,6 +581,15 @@ impl Coordinator {
 }
 
 impl Inner {
+    /// The current boot, when the worker started on an earlier one. No process
+    /// outlives its boot, so that worker has stopped.
+    async fn later_boot(&self, prepared: &PreparedLaunch) -> Result<Option<ControlId>> {
+        let clock = self.clock.clone();
+        let boot = tokio::task::spawn_blocking(move || clock.boot_id())
+            .await
+            .map_err(|_| Error::Uncertain)??;
+        Ok((boot != prepared.binding.boot_id).then_some(boot))
+    }
     async fn replay(&self, key: &str, request: &AdmissionRequest) -> Result<Option<Acceptance>> {
         let Some(admission) = self.ledger.lookup(key).await? else {
             return Ok(None);

@@ -198,7 +198,9 @@ The application adapter must implement these authority boundaries:
   do not consume keys. The adapter owns accepted work beyond the request lifetime.
 - `cancel` returns the original saved intent and its current enforcement state.
   A request acknowledgment does not mean that a process stopped. HTTP never
-  extends grace or infers an experimental outcome.
+  extends grace or infers an experimental outcome. A run whose worker started
+  on an earlier boot has nothing left to cancel, so it is returned unchanged,
+  with no new intent.
 - `release` is an explicit operator resolution. The adapter itself verifies the
   worker and resources; a refusal is `release_refused` with `details.remaining`.
   Adapters without it return `unsupported_capability`.
