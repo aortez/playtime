@@ -268,6 +268,31 @@ async fn late_status_poll_must_not_erase_acknowledged_cancellation() {
 }
 
 #[tokio::test]
+async fn a_cancel_with_no_worker_left_says_so() {
+    let mut app = common::demo(false).await;
+    let mut failed = app.model.run.as_ref().unwrap().value.clone();
+    failed.orchestration.state = OrchestrationState::Reconciling;
+    failed.orchestration.reason = Some("preparation_failed".into());
+    failed.cancellation = None;
+    assert!(awaiting_release(&failed));
+    app.model.apply(Reply {
+        tag: app.model.tag,
+        run: app.model.selected.clone(),
+        data: Data::Cancellation(Box::new(prepare_run(failed.clone()))),
+    });
+    assert_eq!(app.model.notice, "No worker is left to cancel");
+    app.model.apply(Reply {
+        tag: app.model.tag,
+        run: app.model.selected.clone(),
+        data: Data::Cancellation(Box::new(prepare_run(cancelled(failed)))),
+    });
+    assert_eq!(
+        app.model.notice,
+        "Cancellation intent acknowledged; inspect enforcement and cleanup below"
+    );
+}
+
+#[tokio::test]
 async fn late_cancel_reply_must_not_replace_newer_terminal_status() {
     let mut app = common::demo(false).await;
     let old = cancelled(app.model.run.as_ref().unwrap().value.clone());

@@ -611,7 +611,12 @@ pub async fn execute(
             if *wait {
                 return ctx.wait(run_id, true).await;
             }
-            output.emit("result", reply).await?;
+            // Like the observers, name the release a stopped run waits for.
+            let mut result = json!(reply);
+            if let Some(next) = observe::next_step(&reply.run) {
+                result["next"] = json!(next);
+            }
+            output.emit("result", result).await?;
         }
         Command::Runs(Runs::Release { run_id, reason }) => {
             output

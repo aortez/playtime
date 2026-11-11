@@ -197,14 +197,16 @@ log_limit. A remotely interrupted run is exit 10 when waiting, not signal exit 1
 
 A cancelled or failed run doesn't become terminal on its own. Once the daemon
 stops monitoring it (Reconciling with reason `worker_unavailable`,
-`coordinator_restarted` or `execution_failed`), `runs cancel --wait`, `runs wait`
-and `run --wait` return exit 9, and the result's `next` field gives the
-`playtime runs release RUN_ID --reason TEXT` command. The run summary adds a
-`Worker failure:` line with the worker's own account when it gave one. Reconciling with
-`control_uncertain` keeps waiting. A normal run doesn't pass through Reconciling:
-a starting worker that hasn't answered yet keeps its phase until its startup
-deadline, and a completed run stays Running while the daemon stops its unit
-(#93). `--follow` still waits for a terminal stream.
+`coordinator_restarted`, `execution_failed` or `preparation_failed`),
+`runs cancel --wait`, `runs wait` and `run --wait` return exit 9, and the
+result's `next` field gives the `playtime runs release RUN_ID --reason TEXT`
+command. A plain `runs cancel` result carries the same `next` field when the
+run waits for a release. The run summary adds a `Worker failure:` line with the
+worker's own account when it gave one. Reconciling with `control_uncertain`
+keeps waiting. A normal run doesn't pass through Reconciling: a starting worker
+that hasn't answered yet keeps its phase until its startup deadline, and a
+completed run stays Running while the daemon stops its unit (#93). `--follow`
+still waits for a terminal stream.
 Server error envelopes retain codes, safe details, and request IDs.
 
 `download_to_path_with_force` is reusable by the UI. It holds the selected parent

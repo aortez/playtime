@@ -1,5 +1,27 @@
 # Rust compatibility and goldens
 
+## Cancel on a run with no worker left (2026-11-10)
+
+A cancel used to take a run out of waiting for a release when no worker for it
+could still run: none was started and preparation had ended, the supervisor had
+seen it stop, or it started on an earlier boot. The cancel couldn't reach a
+worker, so it left the run cancelling, with reason `cancel_requested` or
+`control_uncertain`, which clients don't show as waiting for a release. Cancel
+now returns such a run unchanged, without recording an intent or asking the
+supervisor, and a plain `runs cancel` result adds the release command as
+`next`, like the observers. A boot ID that can't be read never counts as
+evidence, so it can't hold back a stop. When the supervisor sees the worker
+stop while a cancel is still trying to reach it, the run now stays
+`worker_unavailable`; the cancel used to replace that with `cancel_requested`
+or `control_uncertain`.
+
+Clients now also count a run whose preparation failed (`preparation_failed`) as
+waiting for a release. The CLI's observers exit 9 with the release command
+instead of waiting until their deadline, and the workbench shows the command
+and turns Cancel off. When a cancel had no worker left to cancel, the workbench
+now says so instead of reporting an acknowledged intent. The ledger, worker
+control, API schemas and goldens are unchanged.
+
 ## Release after a host reboot (#43, 2026-11-10)
 
 Operator release used to refuse a run whose worker started on an earlier boot,

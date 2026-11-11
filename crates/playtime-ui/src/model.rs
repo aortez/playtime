@@ -1409,10 +1409,13 @@ impl Model {
             Data::RunModel(model) => self.run_model = Some(model),
             Data::Cancellation(cancel) => {
                 self.cancellation = Mutation::Accepted;
-                self.notify(
-                    "Cancellation intent acknowledged; inspect enforcement and cleanup below",
-                    reply.run,
-                );
+                // A run with no worker left comes back without an intent.
+                let notice = if cancel.value.cancellation.is_some() {
+                    "Cancellation intent acknowledged; inspect enforcement and cleanup below"
+                } else {
+                    "No worker is left to cancel"
+                };
+                self.notify(notice, reply.run);
                 self.apply_run(*cancel);
             }
             Data::CancellationUnresolved(error) => {
@@ -1742,7 +1745,12 @@ pub fn awaiting_release(view: &RunView) -> bool {
     view.orchestration.state == OrchestrationState::Reconciling
         && matches!(
             view.orchestration.reason.as_deref(),
-            Some("worker_unavailable" | "coordinator_restarted" | "execution_failed")
+            Some(
+                "worker_unavailable"
+                    | "coordinator_restarted"
+                    | "execution_failed"
+                    | "preparation_failed"
+            )
         )
 }
 
