@@ -122,11 +122,10 @@ bounds are in [worker lifecycle](rust-worker-lifecycle.md#real-systemd-supervisi
 
 ## Gates that are not implemented
 
-The dedicated CLI/UI `--backend simulation` wrappers intentionally fail. The
-service `--case normal` and `--case lifecycle` gates work, but the broader client
-simulation acceptance still requires worker-loss recovery, which isn't planned
-(#58), and the associated failure matrix. There is no fixture fallback. Service `--case recovery` is not
-supported by the wrapper.
+Worker-loss recovery isn't planned (#58), so no gate covers it: the service
+wrapper doesn't support `--case recovery`, and the CLI and UI wrappers take only
+`--backend fixture`. The service `--case normal` and `--case lifecycle` gates run
+the real CLI binary and the workbench's backend and widgets against the daemon.
 
 Do not interpret this as an absence of Rust simulation or live execution. Those
 paths are covered by the implemented gates above. A restarted daemon reattaches

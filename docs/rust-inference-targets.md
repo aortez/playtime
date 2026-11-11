@@ -65,8 +65,7 @@ Named configurations require explicit selection. There is no automatic first
 machine or failover. The existing `--ollama-endpoint URL` daemon flag remains
 supported with its original unselected workflow; it is mutually exclusive with a
 nonempty named configuration. Target configuration changes require a daemon
-restart. Restarting does not migrate an active run or complete the deferred
-worker-loss/recovery functionality.
+restart. Restarting does not migrate an active run.
 
 ## Identity and retained requests
 

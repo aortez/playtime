@@ -9,7 +9,7 @@ or abandon a run. Those storage transactions and lifecycle integrations aren't
 implemented, and aren't planned (#58). The daemon's operator release is
 a separate lifecycle operation: it does not apply a recovery proposal or modify
 archive evidence. See [development](development.md#gates-that-are-not-implemented)
-for the incomplete restart/recovery acceptance gates.
+for gate scope.
 
 ## Preparation and execution
 

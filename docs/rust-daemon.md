@@ -204,7 +204,8 @@ intent, successful committed cleanup, a non-interrupted/non-infrastructure
 outcome, accepted supervisor stop and proven original-worker termination. The
 final guarded transaction rechecks the original owner and confirmed boundary,
 then releases the active slot. Pending, uncertain and interrupted runs remain
-reserved until automatic recovery exists or the operator releases them.
+reserved until the operator releases them; worker-loss recovery isn't planned
+(#58).
 
 A worker that reports a failed execution (status `failure`, see
 [worker lifecycle](rust-worker-lifecycle.md)) has nothing left to publish once
@@ -320,9 +321,8 @@ systemd` runs the same gate under user systemd; it is opt-in and not part of CI.
 There the worker records itself just before it listens, so the gate records
 whether it paused the worker in time instead of requiring it.
 
-`--case recovery` is not supported by the service wrapper. The dedicated CLI/UI
-`--backend simulation` gates still fail pending worker-loss recovery integration,
-even though the normal and lifecycle service gates above work.
-Operator release is implemented; it does not write a recovery settlement or
-complete the restart/crash failure matrix. See [development](development.md#gates-that-are-not-implemented)
-for gate scope and [recovery](rust-recovery-contract.md) for the read-only contract.
+`--case recovery` is not supported by the service wrapper; worker-loss recovery
+isn't planned (#58). Operator release is implemented; it does not write a
+recovery settlement or complete the restart/crash failure matrix. See
+[development](development.md#gates-that-are-not-implemented) for gate scope and
+[recovery](rust-recovery-contract.md) for the read-only contract.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $# != 2 || $1 != --backend || ( $2 != fixture && $2 != simulation ) ]]; then
-    echo 'usage: ./scripts/test-rust-ui-e2e.sh --backend fixture|simulation' >&2
+if [[ $# != 2 || $1 != --backend || $2 != fixture ]]; then
+    echo 'usage: ./scripts/test-rust-ui-e2e.sh --backend fixture' >&2
     exit 2
 fi
 playtime_backend=$2

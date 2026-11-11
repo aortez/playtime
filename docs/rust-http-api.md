@@ -382,8 +382,9 @@ The [normal daemon gate](rust-daemon.md#executable-gate-and-remaining-gates) use
 these same handlers and client with real lifecycle/archive adapters. Docker and
 live gates add native effects. The transport fixture's in-memory admission map
 does not prove SQLite durability, and its watch notifications do not prove
-authenticated worker publication. Restart and worker-loss recovery remain outside
-these implemented gates; see [development](development.md).
+authenticated worker publication. Only the service lifecycle gate covers a
+daemon restart, and worker-loss recovery isn't planned (#58); see
+[development](development.md).
 
 ## Recipe authoring v1
 

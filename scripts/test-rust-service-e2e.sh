@@ -14,7 +14,7 @@ elif [[ $# == 4 && $1 == --case && $2 == run-and-view && $3 == --backend && $4 =
 else
     echo 'usage: ./scripts/test-rust-service-e2e.sh --case normal | --case lifecycle [--backend systemd] | --case run-and-view --backend docker-scripted|live' >&2
     echo 'The live backend uses PLAYTIME_LIVE_ENDPOINT (default http://oldman-bird.local:11434).' >&2
-    echo 'Worker-loss recovery remains a later integration gate.' >&2
+    echo "Worker-loss recovery isn't planned (#58); no case covers it." >&2
     exit 2
 fi
 playtime_live_endpoint=${PLAYTIME_LIVE_ENDPOINT:-http://oldman-bird.local:11434}
