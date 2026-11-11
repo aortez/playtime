@@ -472,8 +472,10 @@ impl Coordinator {
     }
     /// Explicit operator release of a run that cannot reach normal completion.
     /// The daemon verifies that the original invocation stopped and that every
-    /// external resource is absent. It never modifies the archive: the last
-    /// published checkpoint stays authoritative and unknown usage stays unknown.
+    /// external resource is absent. A worker that started on an earlier boot
+    /// has stopped, since no process outlives its boot (#43). Release never
+    /// modifies the archive: the last published checkpoint stays authoritative
+    /// and unknown usage stays unknown.
     pub async fn release(&self, run: RunId, reason: String) -> Result<Admission> {
         if reason.trim().is_empty() || reason.len() > 512 || reason.chars().any(char::is_control) {
             return Err(Error::Invalid(
@@ -488,31 +490,43 @@ impl Coordinator {
             let mut present = Vec::new();
             // Start intent is durable before any submission, so without it no
             // worker or worker-owned resource can exist for this run.
-            let (supervisor, absent_resources) = if admission.start_attempted {
+            let (supervisor, later_boot_id, absent_resources) = if admission.start_attempted {
                 let prepared = admission.prepared.as_ref().ok_or(Error::Uncertain)?;
                 let unit = &prepared.binding.unit;
-                let observation = match inner.supervisor.observe(prepared).await {
-                    Ok(Some(observation)) => {
-                        if admission.supervisor.as_ref().is_some_and(|saved| {
-                            saved.manager_id != observation.manager_id
-                                || saved.cgroup != observation.cgroup
-                        }) {
-                            present.push(format!("{unit} no longer matches its saved identity"));
-                        } else if !observation.stopped {
-                            present.push(format!(
-                                "{unit} is {} with main PID {}",
-                                observation.active_state, observation.main_pid
-                            ));
+                let clock = inner.clock.clone();
+                let boot = tokio::task::spawn_blocking(move || clock.boot_id())
+                    .await
+                    .map_err(|_| Error::Uncertain)??;
+                let later_boot_id = (boot != prepared.binding.boot_id).then_some(boot);
+                let observation = if later_boot_id.is_some() {
+                    // No supervisor can observe a unit from an earlier boot.
+                    None
+                } else {
+                    match inner.supervisor.observe(prepared).await {
+                        Ok(Some(observation)) => {
+                            if admission.supervisor.as_ref().is_some_and(|saved| {
+                                saved.manager_id != observation.manager_id
+                                    || saved.cgroup != observation.cgroup
+                            }) {
+                                present
+                                    .push(format!("{unit} no longer matches its saved identity"));
+                            } else if !observation.stopped {
+                                present.push(format!(
+                                    "{unit} is {} with main PID {}",
+                                    observation.active_state, observation.main_pid
+                                ));
+                            }
+                            Some(observation)
                         }
-                        Some(observation)
-                    }
-                    Ok(None) => {
-                        present.push(format!("the supervisor cannot verify that {unit} stopped"));
-                        None
-                    }
-                    Err(error) => {
-                        present.push(format!("{unit} could not be observed: {error}"));
-                        None
+                        Ok(None) => {
+                            present
+                                .push(format!("the supervisor cannot verify that {unit} stopped"));
+                            None
+                        }
+                        Err(error) => {
+                            present.push(format!("{unit} could not be observed: {error}"));
+                            None
+                        }
                     }
                 };
                 let resources = match inner.archive.external_resources(&admission).await {
@@ -525,9 +539,9 @@ impl Coordinator {
                         Vec::new()
                     }
                 };
-                (observation, resources)
+                (observation, later_boot_id, resources)
             } else {
-                (None, Vec::new())
+                (None, None, Vec::new())
             };
             if !present.is_empty() {
                 return Err(Error::Refused(present));
@@ -536,6 +550,7 @@ impl Coordinator {
                 released: inner.clock.now(),
                 reason,
                 supervisor,
+                later_boot_id,
                 absent_resources,
             };
             let (record, applied) = inner

@@ -42,7 +42,8 @@ adopts the worker an earlier one started on this boot through a pidfd, opened
 while that exact process runs: its saved PID and kernel start time must match.
 Such a worker has exited once its pidfd says so, never because its PID is
 missing or reused. So a restarted daemon can't observe a worker that exited
-before the restart, and that run can't be released. The supervisor does not
+before the restart, and on the same boot that run can't be released. The
+supervisor does not
 claim systemd deadlines or cgroup enforcement. The capability response
 identifies this mode explicitly. A short absolute root avoids Unix socket path
 limits.
@@ -217,10 +218,13 @@ text, and still does after a release.
 
 `playtime runs release RUN_ID --reason TEXT` is that explicit operator path. The
 daemon refuses unless the run is not Terminal and, if a worker start was ever
-submitted, a fresh supervisor observation shows the original invocation stopped
-with an empty cgroup and every resource in the worker's Docker ownership journal
-is absent by exact name. Simulation workers own no external resources. It lists
-what remains and has no force option. Success records the time, reason and
+submitted, the original invocation has stopped and every resource in the
+worker's Docker ownership journal is absent by exact name. On the worker's own
+boot, a fresh supervisor observation must show the invocation stopped with an
+empty cgroup. A worker that started on an earlier boot has stopped, since no
+process outlives its boot, so the release records the current boot ID
+(`later_boot_id`) as that evidence instead (#43). Simulation workers own no
+external resources. It lists what remains and has no force option. Success records the time, reason and
 evidence, then sets Terminal with reason `operator_released`, which frees the
 slot. The archive is not modified: the last published checkpoint stays
 authoritative, unknown usage stays unknown, and the live stream ends as
@@ -259,8 +263,10 @@ since it never started a worker. A worker that the daemon hasn't stopped ends at
 the run's wall limit plus three minutes, so a daemon back before then still
 confirms a finished run's end. No worker outlives a host reboot, so the daemon
 doesn't follow a run whose worker started on an earlier boot. That run stays
-reconciling, and release refuses it for now, because the supervisor can't verify
-a unit from an earlier boot.
+reconciling until an operator releases it, and the reboot itself is the evidence
+that its worker stopped. A Docker run's stopped containers and volume outlive
+the reboot, though, so its release still waits until they're removed; the
+refusal names each one.
 
 ## Executable gate and remaining gates
 

@@ -1,5 +1,18 @@
 # Rust compatibility and goldens
 
+## Release after a host reboot (#43, 2026-11-10)
+
+Operator release used to refuse a run whose worker started on an earlier boot,
+because the supervisor can't observe a unit from an earlier boot. No process
+outlives its boot, so release now takes the changed boot ID as the evidence that
+the original invocation stopped. It doesn't ask the supervisor then, and the
+release record gains an optional `later_boot_id` holding the current boot ID,
+with `supervisor` left empty. Every resource in the worker's Docker ownership
+journal must still be absent. Older binaries ignore the new field, and ledger
+records without it read as before, so the ledger version stays 7. The `Clock`
+port gains `boot_id`, which reads the kernel's by default. Worker control, API
+schemas and goldens are unchanged.
+
 ## Daemon restart reattachment (#59, 2026-11-10)
 
 A restarted daemon now follows the active run whose worker start was submitted

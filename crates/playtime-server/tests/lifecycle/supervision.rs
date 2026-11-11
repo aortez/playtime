@@ -214,6 +214,70 @@ async fn release_requires_the_original_invocation_to_be_stopped() {
     assert_eq!(evidence.active_state, "unloaded");
 }
 
+/// The host after a reboot: the same clock, on another boot.
+struct Rebooted(playtime_protocol::worker::ControlId);
+impl Clock for Rebooted {
+    fn now(&self) -> Stamp {
+        SystemClock.now()
+    }
+    fn boot_id(&self) -> Result<playtime_protocol::worker::ControlId> {
+        Ok(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn release_takes_a_later_boot_as_proof_that_the_worker_stopped() {
+    let root = Root::new();
+    let archive = archive(&root.0);
+    let supervisor = Arc::new(ManagerFixture::new());
+    let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
+    let accepted = admit(&c).await;
+    let ready = prepared(&c, &accepted).await;
+    c.begin(ready.run_id.clone()).await.unwrap();
+    // A reboot ends the worker, and no supervisor can observe its unit after.
+    supervisor
+        .child
+        .terminate(ready.prepared.as_ref().unwrap())
+        .unwrap();
+    supervisor.unavailable.store(true, Ordering::SeqCst);
+    let refused = c.release(ready.run_id.clone(), "rebooted".into()).await;
+    assert!(
+        matches!(&refused, Err(Error::Refused(remaining))
+            if remaining.len() == 1 && remaining[0].contains("could not be observed")),
+        "on the worker's own boot, only the supervisor proves it stopped: {refused:?}"
+    );
+    drop(c);
+    let boot = random_id().unwrap();
+    let c = coordinator_on(
+        &root.0,
+        archive,
+        supervisor.clone(),
+        Arc::new(Rebooted(boot.clone())),
+    )
+    .await;
+    // Without the fixture's legacy compatibility pointer, only the ledger slot
+    // can block admission.
+    fs::remove_file(root.0.join(".playtime/active.json")).unwrap();
+    assert!(matches!(
+        c.admit(c.ledger().service_id().clone(), "second".into(), request())
+            .await,
+        Err(Error::Busy)
+    ));
+    let released = c
+        .release(ready.run_id.clone(), "rebooted".into())
+        .await
+        .unwrap();
+    assert_eq!(released.phase, Phase::Terminal);
+    assert_eq!(released.reason, Some(Reason::OperatorReleased));
+    let evidence = released.operator_release.unwrap();
+    assert_eq!(evidence.later_boot_id, Some(boot));
+    assert!(evidence.supervisor.is_none());
+    assert_eq!(supervisor.stops.load(Ordering::SeqCst), 0);
+    c.admit(c.ledger().service_id().clone(), "second".into(), request())
+        .await
+        .expect("the release frees the slot");
+}
+
 #[tokio::test]
 async fn diagnostic_failure_preserves_stop_acceptance_across_restart() {
     let root = Root::new();

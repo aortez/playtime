@@ -3,11 +3,15 @@ use super::{
 };
 use async_trait::async_trait;
 use playtime_core::UtcTime;
-use playtime_protocol::worker::{Receipt, Status};
+use playtime_protocol::worker::{ControlId, Receipt, Status};
 use playtime_worker_control::Endpoint;
 
 pub trait Clock: Send + Sync + 'static {
     fn now(&self) -> Stamp;
+    /// The boot that `Stamp::boot_ms` counts from. No process outlives it.
+    fn boot_id(&self) -> Result<ControlId> {
+        Ok(playtime_worker_control::boot_id()?)
+    }
 }
 pub struct SystemClock;
 impl Clock for SystemClock {

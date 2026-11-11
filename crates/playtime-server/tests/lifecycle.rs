@@ -2,7 +2,7 @@ use playtime_core::RunMode;
 use playtime_protocol::worker::{Command, WorkerState};
 use playtime_server::lifecycle::{
     fixture::{self, FixtureArchive, FixtureSupervisor},
-    ports::{ArchivePort, Supervisor, SystemClock},
+    ports::{ArchivePort, Clock, Supervisor, SystemClock},
     *,
 };
 use playtime_worker_control::{
@@ -78,6 +78,14 @@ async fn coordinator(
     archive: Arc<dyn ArchivePort>,
     supervisor: Arc<dyn Supervisor>,
 ) -> Coordinator {
+    coordinator_on(root, archive, supervisor, Arc::new(SystemClock)).await
+}
+async fn coordinator_on(
+    root: &Path,
+    archive: Arc<dyn ArchivePort>,
+    supervisor: Arc<dyn Supervisor>,
+    clock: Arc<dyn Clock>,
+) -> Coordinator {
     // Dropping the previous caller does not abort owned operations. A restart
     // waits for actual service exclusion instead of assuming immediate release.
     let ledger = tokio::time::timeout(Duration::from_secs(5), async {
@@ -95,7 +103,7 @@ async fn coordinator(
     })
     .await
     .expect("previous coordinator must release service exclusion");
-    Coordinator::new(ledger, archive, supervisor, Arc::new(SystemClock))
+    Coordinator::new(ledger, archive, supervisor, clock)
 }
 async fn admit(c: &Coordinator) -> Admission {
     c.admit(
