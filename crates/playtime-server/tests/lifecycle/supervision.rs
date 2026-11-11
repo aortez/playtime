@@ -198,7 +198,8 @@ async fn release_requires_the_original_invocation_to_be_stopped() {
     let refused = release().await;
     assert!(
         matches!(&refused, Err(Error::Refused(remaining))
-            if remaining.len() == 1 && remaining[0].ends_with("is active with main PID 1")),
+            if matches!(remaining.as_slice(),
+                [Remaining::WorkerRunning { state, main_pid: 1, .. }] if state == "active")),
         "a running unit keeps the slot: {refused:?}"
     );
     let cancelled = c.cancel(ready.run_id.clone()).await.unwrap();
@@ -221,7 +222,7 @@ async fn release_requires_the_original_invocation_to_be_stopped() {
     let refused = release().await;
     assert!(
         matches!(&refused, Err(Error::Refused(remaining))
-            if remaining[0].ends_with("no longer matches its saved identity")),
+            if matches!(remaining.as_slice(), [Remaining::WorkerReplaced { .. }])),
         "a stopped replacement is not the original invocation: {refused:?}"
     );
     supervisor.observation.lock().unwrap().cgroup = "/synthetic-manager".into();
@@ -248,10 +249,10 @@ impl Clock for Rebooted {
 #[tokio::test]
 async fn release_takes_a_later_boot_as_proof_that_the_worker_stopped() {
     let root = Root::new();
-    let resource = "container playtime-fake-agent-1";
+    let resource = fake_agent();
     let archive = Arc::new(ResidualArchive {
         inner: archive(&root.0),
-        present: Mutex::new(vec![format!("{resource} is present")]),
+        present: Mutex::new(vec![Remaining::ResourcePresent(resource.clone())]),
     });
     let supervisor = Arc::new(ManagerFixture::new());
     let c = coordinator(&root.0, archive.clone(), supervisor.clone()).await;
@@ -267,7 +268,10 @@ async fn release_takes_a_later_boot_as_proof_that_the_worker_stopped() {
     let refused = c.release(ready.run_id.clone(), "rebooted".into()).await;
     assert!(
         matches!(&refused, Err(Error::Refused(remaining))
-            if remaining.len() == 2 && remaining[0].contains("could not be observed")),
+        if matches!(remaining.as_slice(), [
+            Remaining::WorkerUnverified { error: Some(_), .. },
+            Remaining::ResourcePresent(_),
+        ])),
         "on the worker's own boot, only the supervisor proves it stopped: {refused:?}"
     );
     drop(c);
@@ -292,7 +296,7 @@ async fn release_takes_a_later_boot_as_proof_that_the_worker_stopped() {
     let refused = c.release(ready.run_id.clone(), "rebooted".into()).await;
     assert!(
         matches!(&refused, Err(Error::Refused(remaining))
-            if remaining == &vec![format!("{resource} is present")]),
+            if remaining == &vec![Remaining::ResourcePresent(resource.clone())]),
         "a remaining resource keeps the slot after a reboot too: {refused:?}"
     );
     assert_ne!(

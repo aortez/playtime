@@ -249,6 +249,24 @@ an uncertain invocation. The Python launcher checks the Rust ledger while
 holding the common flock, preserving exclusion during the reservation-to-worker
 handoff and after uncertain worker loss.
 
+A refusal, `release_refused`, gives a code for each thing that remains, plus
+the kind and name of any Docker resource it concerns. The full account,
+including any error text, goes only to the daemon's log (its stderr, which
+systemd keeps in the journal). The CLI prints one line per entry.
+
+| Code | What remains |
+| --- | --- |
+| `run_terminal` | Nothing: the run is already terminal |
+| `run_changed` | The run changed while the release verified it; retry |
+| `worker_running` | The worker's unit hasn't stopped |
+| `worker_replaced` | The unit no longer matches the invocation the daemon saved |
+| `worker_unverified` | The supervisor couldn't show that the unit stopped |
+| `docker_unavailable` | The daemon started without Docker, so it can't inspect the run's resources; its log says why |
+| `resources_unverified` | The run's Docker resources couldn't be listed, for example from an unreadable ownership journal |
+| `resource_present` | The named container or volume still exists |
+| `resource_mislabeled` | A resource with that name exists, but its labels differ from the run's |
+| `resource_uninspected` | Docker couldn't inspect the named resource |
+
 ## Restarting the daemon
 
 The ledger marks the active run reconciling (`coordinator_restarted`) when the
@@ -284,7 +302,9 @@ that its worker stopped. Nothing is left to cancel, so a cancel returns the run
 unchanged, and `runs cancel --wait` exits 9 with the release command. A Docker
 run's stopped containers and volume outlive the reboot, so its release waits
 until they're removed (`docker rm`, `docker volume rm`); the refusal names each
-one.
+one. A daemon started with a bundle that doesn't implement its Docker profile,
+such as an older root's own bundle, starts without Docker, so it refuses that
+release with `docker_unavailable`. Start it with a current bundle.
 
 ## Executable gate and remaining gates
 

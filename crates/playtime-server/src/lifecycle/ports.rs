@@ -58,7 +58,9 @@ pub trait ArchivePort: Send + Sync + 'static {
     }
 
     /// Operator release only: check every external resource the run's worker
-    /// may own, by exact identity. An error means the check was not possible.
+    /// may own, by exact identity. A check that couldn't be made goes in
+    /// `remaining` when it has its own reason, such as Docker being
+    /// unavailable; any other error means the resources couldn't be listed.
     async fn external_resources(&self, _admission: &Admission) -> Result<ExternalResources> {
         Err(super::Error::Invalid(
             "external resource verification is unsupported",

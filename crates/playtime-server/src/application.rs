@@ -60,7 +60,7 @@ impl ApiError {
             "backend_unavailable" => "Application backend is unavailable",
             "evidence_limit_exceeded" => "Evidence exceeds the advertised transport limit",
             "request_timeout" => "Request deadline exceeded",
-            "release_refused" => "The run still owns a worker or resources; see details",
+            "release_refused" => "The release was refused; see details",
             _ => "Internal service error",
         };
         Self(ErrorResponse {

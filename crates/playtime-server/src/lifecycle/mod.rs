@@ -27,8 +27,9 @@ pub enum Error {
     Conflict,
     ServiceMismatch,
     Uncertain,
-    /// An operator release found evidence that the run still owns something.
-    Refused(Vec<String>),
+    /// An operator release found evidence that the run still owns something,
+    /// or couldn't check.
+    Refused(Vec<Remaining>),
     Shared(std::sync::Arc<Error>),
     Supervisor(zbus::Error),
 }
@@ -44,7 +45,10 @@ impl std::fmt::Display for Error {
             Self::Conflict => f.write_str("idempotency key identifies a different request"),
             Self::ServiceMismatch => f.write_str("service identity mismatch"),
             Self::Uncertain => f.write_str("worker ownership unresolved"),
-            Self::Refused(remaining) => write!(f, "release refused: {}", remaining.join("; ")),
+            Self::Refused(remaining) => {
+                let accounts: Vec<String> = remaining.iter().map(ToString::to_string).collect();
+                write!(f, "release refused: {}", accounts.join("; "))
+            }
             Self::Shared(error) => error.fmt(f),
             Self::Supervisor(error) => write!(f, "systemd user supervisor: {error}"),
         }

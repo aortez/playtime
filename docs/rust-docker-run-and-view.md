@@ -42,6 +42,12 @@ test supervisor rejects real Docker capabilities; there is no fallback when
 systemd or the locked image is unavailable.
 
 The service checks Docker metadata and the locked image at startup and admission.
+If a startup check fails, the daemon still starts, without Docker, and its log
+(stderr) says why, as in `playtimed: started without Docker: locked Docker image
+unavailable`. It reports a live model it can't use the same way. Admission
+checks again, but a release uses only the Docker access the daemon started with,
+so it refuses a Docker run's release with `docker_unavailable` until the daemon
+restarts with Docker.
 It freezes the selected executable digest, canonical socket, daemon identity,
 image lock, embedded helper digests, bundle identity, configuration version,
 prompts, scripted replies and resource/storage/capture limits. The worker repeats

@@ -38,6 +38,7 @@ struct Inner {
     models: Option<Arc<crate::models::ModelBrowser>>,
     target_browsers: BTreeMap<String, Arc<crate::models::ModelBrowser>>,
     registrations: crate::registrations::Registry,
+    limitations: Vec<String>,
 }
 #[derive(Clone)]
 struct Published {
@@ -132,11 +133,17 @@ impl Daemon {
         archive.docker_options = docker.map(|(e, s)| (e.to_path_buf(), s.to_path_buf()));
         archive.live_endpoint = live.map(str::to_owned);
         archive.enable_recipes(recipes)?;
-        if let Some((executable, socket)) = docker {
-            tolerate_unavailable(archive.enable_docker(executable, socket).await)?;
+        let mut limitations = Vec::new();
+        if let Some((executable, socket)) = docker
+            && let Some(reason) =
+                tolerate_unavailable(archive.enable_docker(executable, socket).await)?
+        {
+            limitations.push(format!("started without Docker: {reason}"));
         }
-        if let Some(endpoint) = live {
-            tolerate_unavailable(archive.enable_live(endpoint).await)?;
+        if let Some(endpoint) = live
+            && let Some(reason) = tolerate_unavailable(archive.enable_live(endpoint).await)?
+        {
+            limitations.push(format!("started without the live model: {reason}"));
         }
         archive.add_targets(targets.targets).await?;
         let archive = Arc::new(archive);
@@ -176,6 +183,7 @@ impl Daemon {
                 target_browsers,
                 registrations,
                 catalog,
+                limitations,
             }),
         };
         // The active run comes first, so a worker waiting for its Begin or a
@@ -238,6 +246,10 @@ impl Daemon {
     }
     pub fn coordinator(&self) -> &Coordinator {
         &self.inner.coordinator
+    }
+    /// What the daemon started without, and why, for its log.
+    pub fn limitations(&self) -> &[String] {
+        &self.inner.limitations
     }
     async fn blocking<T: Send + 'static>(
         &self,
@@ -934,12 +946,14 @@ impl Application for Daemon {
             .await
             .map_err(|error| match error {
                 life::Error::Refused(remaining) => {
-                    let mut refused = ApiError::new("release_refused");
-                    refused
-                        .0
-                        .details
-                        .insert("remaining".into(), serde_json::json!(remaining));
-                    refused
+                    // The full account can hold error text, so only the log
+                    // gets it.
+                    let accounts: Vec<String> = remaining.iter().map(ToString::to_string).collect();
+                    eprintln!(
+                        "playtimed: release of {run} refused: {}",
+                        accounts.join("; ")
+                    );
+                    release_refused(&remaining)
                 }
                 life::Error::Invalid("release reason must be 1 to 512 printable bytes") => {
                     ApiError::new("invalid_parameters")
@@ -1107,19 +1121,49 @@ fn registration_browser(
         .cloned()
 }
 
-fn tolerate_unavailable(result: life::Result<()>) -> life::Result<()> {
+/// The daemon starts without Docker or the live model when either is
+/// unavailable. This returns why, for the daemon's log.
+fn tolerate_unavailable(result: life::Result<()>) -> life::Result<Option<&'static str>> {
     match result {
+        Ok(()) => Ok(None),
         Err(life::Error::Invalid(
-            "Docker readiness unavailable"
+            reason @ ("Docker readiness unavailable"
             | "locked Docker image unavailable"
             | "invalid Docker executable/socket selection"
             | "live model unavailable"
             | "live runs need the Docker workshop"
             | "bundle does not implement this daemon's frozen Docker profile"
-            | "bundle does not implement this daemon's live model profile",
-        )) => Ok(()),
-        other => other,
+            | "bundle does not implement this daemon's live model profile"),
+        )) => Ok(Some(reason)),
+        Err(other) => Err(other),
     }
+}
+/// A refused release's reply gives each entry's code and the Docker resource
+/// it names, at most 32 of them, with the count of any left out.
+fn release_refused(remaining: &[life::Remaining]) -> ApiError {
+    const SHOWN: usize = 32;
+    let entries: Vec<serde_json::Value> = remaining
+        .iter()
+        .take(SHOWN)
+        .map(|item| {
+            let mut entry = serde_json::json!({"code": item.code()});
+            // The error filter drops a whole list over one unsafe value.
+            if let Some(resource) = item.resource().filter(|r| valid_id(&r.name)) {
+                entry["kind"] = resource.kind.into();
+                entry["name"] = resource.name.clone().into();
+            }
+            entry
+        })
+        .collect();
+    let mut refused = ApiError::new("release_refused");
+    refused.0.details.insert("remaining".into(), entries.into());
+    if remaining.len() > SHOWN {
+        refused
+            .0
+            .details
+            .insert("omitted".into(), (remaining.len() - SHOWN).into());
+    }
+    refused
 }
 fn execution_unavailable(error: life::Error) -> ApiError {
     let reason = match error {

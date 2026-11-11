@@ -203,7 +203,11 @@ The application adapter must implement these authority boundaries:
   saw it stop, or it started on an earlier boot) is returned unchanged, with no
   new intent; the reply is still 202 while the run isn't terminal.
 - `release` is an explicit operator resolution. The adapter itself verifies the
-  worker and resources; a refusal is `release_refused` with `details.remaining`.
+  worker and resources; a refusal is `release_refused`. Each entry in
+  `details.remaining` has a `code` and, for a Docker resource, its `kind`
+  (`container` or `volume`) and `name`. A refusal lists at most 32 entries, and
+  `details.omitted` counts the rest. The
+  [daemon guide](rust-daemon.md#results-and-safe-completion) lists the codes.
   Adapters without it return `unsupported_capability`.
 - `run` supplies status separately from evidence and obtains the frontier and
   both anchors as one read. Unknown usage remains `None` or a typed unknown
@@ -235,7 +239,11 @@ kinds or observation fields.
 
 Every route is under `/api/v1`, authenticated, and returns `Cache-Control:
 no-store`. Authenticated replies identify the service in
-`X-Playtime-Service-ID`; errors include a generated request ID. All POSTs require
+`X-Playtime-Service-ID`; errors include a generated request ID. An error's
+`details` keep only identifiers (1 to 128 ASCII letters, digits, `_` and `-`),
+numbers, booleans and null, alone or in lists of up to 32 and records of up to
+8 identifier keys, two levels deep at most. The filter drops any other detail,
+and an error over 16 KiB keeps none. All POSTs require
 the same service header. A missing/malformed identity fails with 400 and a
 different identity with 409, before any application call.
 

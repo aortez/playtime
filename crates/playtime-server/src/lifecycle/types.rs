@@ -168,7 +168,123 @@ pub struct OperatorRelease {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ExternalResources {
     pub absent: Vec<String>,
-    pub present: Vec<String>,
+    /// What is still present, or couldn't be checked.
+    pub remaining: Vec<Remaining>,
+}
+
+/// One thing that keeps an operator release from going ahead: something the
+/// run's worker may still own, or a check that couldn't be made. Clients get
+/// its code and the Docker resource it names. The full account can hold error
+/// text, so only the daemon's log gets it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Remaining {
+    /// The run is already terminal.
+    RunTerminal,
+    /// The run changed while the release verified it.
+    RunChanged,
+    /// The worker's unit hasn't stopped.
+    WorkerRunning {
+        unit: String,
+        state: String,
+        main_pid: u32,
+    },
+    /// The unit no longer matches the invocation the daemon saved.
+    WorkerReplaced {
+        unit: String,
+    },
+    /// The supervisor couldn't show that the unit stopped.
+    WorkerUnverified {
+        unit: String,
+        error: Option<String>,
+    },
+    /// The daemon started without Docker, so it can't inspect the run's
+    /// Docker resources.
+    DockerUnavailable,
+    /// The run's Docker resources couldn't be listed.
+    ResourcesUnverified {
+        error: String,
+    },
+    ResourcePresent(Resource),
+    /// A resource with the run's name is present with other labels.
+    ResourceMislabeled(Resource),
+    ResourceUninspected {
+        resource: Resource,
+        error: String,
+    },
+}
+impl Remaining {
+    /// The stable code clients get.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::RunTerminal => "run_terminal",
+            Self::RunChanged => "run_changed",
+            Self::WorkerRunning { .. } => "worker_running",
+            Self::WorkerReplaced { .. } => "worker_replaced",
+            Self::WorkerUnverified { .. } => "worker_unverified",
+            Self::DockerUnavailable => "docker_unavailable",
+            Self::ResourcesUnverified { .. } => "resources_unverified",
+            Self::ResourcePresent(_) => "resource_present",
+            Self::ResourceMislabeled(_) => "resource_mislabeled",
+            Self::ResourceUninspected { .. } => "resource_uninspected",
+        }
+    }
+    pub fn resource(&self) -> Option<&Resource> {
+        match self {
+            Self::ResourcePresent(resource)
+            | Self::ResourceMislabeled(resource)
+            | Self::ResourceUninspected { resource, .. } => Some(resource),
+            _ => None,
+        }
+    }
+}
+impl std::fmt::Display for Remaining {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RunTerminal => f.write_str("run is already terminal"),
+            Self::RunChanged => f.write_str("the run changed during verification; retry"),
+            Self::WorkerRunning {
+                unit,
+                state,
+                main_pid,
+            } => write!(f, "{unit} is {state} with main PID {main_pid}"),
+            Self::WorkerReplaced { unit } => {
+                write!(f, "{unit} no longer matches its saved identity")
+            }
+            Self::WorkerUnverified { unit, error: None } => {
+                write!(f, "the supervisor cannot verify that {unit} stopped")
+            }
+            Self::WorkerUnverified {
+                unit,
+                error: Some(error),
+            } => write!(f, "{unit} could not be observed: {error}"),
+            Self::DockerUnavailable => {
+                f.write_str("Docker is not enabled, so the run's resources cannot be verified")
+            }
+            Self::ResourcesUnverified { error } => {
+                write!(f, "external resources could not be verified: {error}")
+            }
+            Self::ResourcePresent(resource) => write!(f, "{resource} is present"),
+            Self::ResourceMislabeled(resource) => {
+                write!(f, "{resource} is present with different labels")
+            }
+            Self::ResourceUninspected { resource, error } => {
+                write!(f, "{resource} could not be inspected: {error}")
+            }
+        }
+    }
+}
+
+/// A Docker resource a run's worker may own.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Resource {
+    /// `container` or `volume`.
+    pub kind: &'static str,
+    pub name: String,
+}
+impl std::fmt::Display for Resource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.kind, self.name)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

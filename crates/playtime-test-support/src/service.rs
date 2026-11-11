@@ -103,6 +103,35 @@ async fn cancel_and_release(
     {
         return Err("a released run must report an operator release".into());
     }
+    // A refused release says why, through the daemon's HTTP error filter.
+    let again = run_command(
+        cli,
+        root,
+        Some(connection),
+        [
+            "runs",
+            "release",
+            run.as_str(),
+            "--reason",
+            "service gate: released twice",
+            "--format",
+            "json",
+        ],
+        records,
+    )
+    .await?;
+    again.expect(5)?;
+    let refusal: serde_json::Value = again
+        .stderr
+        .split(|b| *b == b'\n')
+        .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
+        .find(|frame| frame["kind"] == "error")
+        .unwrap_or_default();
+    if refusal["data"]["code"] != "release_refused"
+        || refusal["data"]["details"]["remaining"] != json!([{"code": "run_terminal"}])
+    {
+        return Err(format!("a second release didn't say why it was refused: {refusal}").into());
+    }
     Ok(view)
 }
 
