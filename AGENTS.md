@@ -71,7 +71,7 @@ builds verified static bundles from a staged source snapshot. Preserve the same
 owned prepared writer through Begin, and never invoke Cargo during admission or
 worker execution. See `docs/rust-worker-package.md`; run
 `./scripts/test-rust-worker-package.sh` for worker/package changes. This CPU gate
-does not replace real systemd, Docker/live run-and-view, or restart/recovery gates.
+does not replace real systemd, Docker/live run-and-view, or daemon restart gates.
 `playtime-server` owns HTTP/auth in modules separate from lifecycle coordination;
 `playtime-client` owns native transport and acknowledged event reconnect.
 `playtime-local` shares credential/discovery file policy. Keep HTTP fixture
@@ -109,8 +109,9 @@ UI never cancels a run. Preserve generation/run identity checks and bounded
 history/image work. See `docs/rust-ui.md`; run the UI fixture wrapper for UI
 changes. Review screenshot differences using the pinned software Vulkan renderer;
 never silently skip or regenerate baselines. Service-normal and Docker/live gates
-exercise the workbench against the real daemon; do not treat fixture tests as
-evidence for those paths.
+exercise the workbench's backend and widgets against the real daemon; do not
+treat fixture tests, including their lost-launch recovery, as evidence for those
+paths.
 Commit `Cargo.lock`; ignore
 `target/`. Validate Rust changes with `cargo fmt --all -- --check`,
 `cargo clippy --workspace --all-targets --locked -- -D warnings`, and

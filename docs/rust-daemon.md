@@ -204,7 +204,8 @@ intent, successful committed cleanup, a non-interrupted/non-infrastructure
 outcome, accepted supervisor stop and proven original-worker termination. The
 final guarded transaction rechecks the original owner and confirmed boundary,
 then releases the active slot. Pending, uncertain and interrupted runs remain
-reserved until automatic recovery exists or the operator releases them.
+reserved until the operator releases them; worker-loss recovery isn't planned
+(#58).
 
 A worker that reports a failed execution (status `failure`, see
 [worker lifecycle](rust-worker-lifecycle.md)) has nothing left to publish once

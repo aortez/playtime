@@ -340,10 +340,9 @@ immutable saved revisions; launch never applies an unsaved override.
 
 `target/debug/playtime` (or `cargo run --locked -p playtime-cli -- …`) is the Rust
 API client. `./playtime` is the frozen Python launcher. The
-CLI works with the real daemon. Its fixture gate and the normal service gate
-are implemented; the dedicated CLI/UI simulation acceptance gates still fail
-pending full restart/recovery integration. See [the native client guide](rust-cli.md)
-and [development](development.md).
+CLI works with the real daemon. Its fixture gate and the normal and lifecycle
+service gates are implemented; worker-loss recovery isn't planned (#58). See
+[the native client guide](rust-cli.md) and [development](development.md).
 
 | Python behavior | Rust CLI behavior |
 | --- | --- |

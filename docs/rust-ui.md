@@ -7,7 +7,8 @@ selection, pending mutations, and stale-reply checks.
 
 For normal use, [go.sh](rust-mvp.md#run-it) builds and opens the workbench against
 the daemon. The service and Docker/live run-and-view gates in
-[development](development.md) exercise it against the real daemon.
+[development](development.md) exercise its backend and widgets against the real
+daemon.
 
 ## Recipe authoring
 

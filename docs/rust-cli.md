@@ -320,16 +320,17 @@ and verified downloads that preserve existing files and reject symlinks/corrupti
 Each case is bounded to 30 seconds and each suite to 180 seconds after build.
 Failures retain a bounded diagnostic bundle under `/tmp/playtime-cli-failure-*`
 containing command stdout/stderr and operation/ID traces. Credential files and
-client receipts are excluded and known test credentials are redacted.
+client receipts are excluded and known test credentials are redacted. None of
+this fixture validation requires a model, Docker daemon, GPU, or desktop.
 
 The [normal service gate](rust-daemon.md#executable-gate-and-remaining-gates)
 supplies the real daemon, controller, archives and client inspection, and its
-lifecycle case restarts the daemon under a surviving worker. Worker-loss
-recovery isn't planned (#58), so no CLI gate covers it; don't claim it from
-fixture or normal-path tests. A test supervisor is not a systemd smoke;
-[Worker lifecycle](rust-worker-lifecycle.md#real-systemd-supervision) documents
-the opt-in real-systemd boundary. None of this fixture validation requires
-a model, Docker daemon, GPU, or desktop.
+lifecycle case restarts the daemon under a surviving worker. Only the opt-in
+Docker run-and-view case exercises a workshop timeout or a lost worker.
+Worker-loss recovery isn't planned (#58), so no CLI gate covers it; don't claim
+it from fixture or normal-path tests. A test supervisor is not a systemd smoke:
+[worker lifecycle](rust-worker-lifecycle.md#real-systemd-supervision) documents
+the opt-in real-systemd boundary.
 
 ## Inference target selection
 
