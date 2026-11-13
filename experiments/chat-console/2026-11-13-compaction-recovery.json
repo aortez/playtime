@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-13",
+  "scope": "Explicit recovery of a real truncated first compaction, followed by the original pending user message. This is not a summary-fidelity benchmark.",
+  "profile": "framework-gyro-m-fast",
+  "source_session": "/home/oldman/.local/state/playtime-chat/session-4f0df1fa62ce39918de61dc1a8b4945699337bff52e096b628731975607f0572",
+  "recovered_session": "/home/oldman/.local/state/playtime-chat/session-752b66ff4d613b9e6b6f380bab8eea6b419aaebb1cc70bdce58399520ec837c0",
+  "raw_evidence": "/home/data2/playtime/chat-compaction-recovery-_mbeqe6f",
+  "source_unchanged": {
+    "unchanged": true,
+    "files": 14844,
+    "bytes": 5225923
+  },
+  "old_summary_cap": 2048,
+  "new_summary_cap": 4096,
+  "original_failure": {
+    "run_id": "turn-ce5fb53e9ea4e7484b0438b8a410bc6c0bc27e2a289b8bc14cf31fd4efa51ea5",
+    "mode": "live_smoke",
+    "reason": "compaction_failed",
+    "usage": {
+      "known_generated_tokens": 2048,
+      "unknown_reserved_tokens": 0,
+      "unknown_requests": 0,
+      "budget_charged_tokens": 2048,
+      "usage_complete": true
+    },
+    "model_calls": 1,
+    "tool_parse_errors": 0,
+    "sessions_started": 0,
+    "elapsed_ms": 91274,
+    "cleanup": {
+      "status": "complete"
+    },
+    "last_checkpoint": null,
+    "diagnostics": [
+      "summary requires explicit normal completion"
+    ]
+  },
+  "trigger": {
+    "estimate_basis": "input_bytes",
+    "input_bound": 133965,
+    "projected_with_generation": 142157,
+    "configured_context": 163840,
+    "trigger_percent": 75,
+    "summary_input_bound": 93356,
+    "measured_summary_prompt_tokens": 31255
+  },
+  "recovered_summary": {
+    "generated_tokens": 2153,
+    "prompt_tokens": 31255,
+    "finish_reason": "stop"
+  },
+  "result": {
+    "run_id": "turn-f0d4f08e1e8e3e0084216cc347434e93e987c9ca46520f5667a861d37a452e35",
+    "mode": "live_smoke",
+    "reason": "agent_finished",
+    "usage": {
+      "known_generated_tokens": 8833,
+      "unknown_reserved_tokens": 0,
+      "unknown_requests": 0,
+      "budget_charged_tokens": 8833,
+      "usage_complete": true
+    },
+    "model_calls": 7,
+    "tool_parse_errors": 0,
+    "sessions_started": 0,
+    "elapsed_ms": 270838,
+    "cleanup": {
+      "status": "complete"
+    },
+    "last_checkpoint": null,
+    "diagnostics": []
+  },
+  "launcher_result": {
+    "exit": 0,
+    "elapsed_seconds": 345.78955549999955
+  },
+  "owner_exit": {
+    "client_exit": 0,
+    "owner_exit": 0,
+    "exit": 0
+  },
+  "binary_sha256": "085b183de5dec65ee1cdc92806ae7c52ed3cbec299f568e2d4078385750048d8",
+  "postconditions": {
+    "saved_checkpoint": true,
+    "framework_status": "starts_on_launch",
+    "owned_project_containers": 0
+  },
+  "checks": [
+    "targeted harness/chat tests and Clippy",
+    "workspace Clippy",
+    "workspace tests with CARGO_INCREMENTAL=0",
+    "engine test-harness tests",
+    "runner workspace_probe tests",
+    "101 frozen Python tests, 6 skipped",
+    "owned live recovery and source checksum comparison"
+  ],
+  "build_note": "The first workspace test build hit a rustc incremental on-disk-cache assertion in playtime-server. The complete suite passed with incremental compilation disabled.",
+  "project_probe_files": "The continued local-model turn created/read .compaction/ test files in Notes; left uncommitted for the user to continue testing."
+}

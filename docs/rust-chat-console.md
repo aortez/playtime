@@ -56,7 +56,7 @@ cancels work; the driver does not continue editing invisibly.
 
 Defaults are the locked server context, 900 seconds per turn, 300 seconds per
 model call, 90 seconds per command, 8,192 output tokens per call, 32,768 generated
-tokens per turn, 2,048 summary tokens and 16 KiB per tool result. Supported
+tokens per turn, 4,096 summary tokens and 16 KiB per tool result. Supported
 overrides are listed by `--help`. `--context-tokens` can select a smaller harness
 allocation; it cannot exceed the locked server context. It does not reconfigure
 the server or claim a benchmark at its full context size.
@@ -120,12 +120,36 @@ Tools are never replayed from a saved transcript. Model requests with uncertain
 remote state fence further inference in that client; the external host owner must
 finish its server cleanup. Socket closure alone is not remote termination proof.
 
-**Interrupted or failed turns do not yet support automatic continuation.** Their
+**Interrupted or failed turns do not support automatic continuation.** Their
 partial text, usage uncertainty, inputs and records remain saved, and the session
 head stays active. A later open refuses it. Similarly, a crashed process can leave
 a private project `active` proposal; subsequent project admission refuses to edit
 until its exact container ownership has been reconciled. There is no automatic
-recovery command yet. Do not delete these markers simply to bypass the checks.
+general recovery command. Do not delete these markers simply to bypass the checks.
+
+One narrow failure has explicit recovery: a turn's first model request was a
+tool-free compaction, it completed with `length` at its summary cap, all usage is
+known, and owned cleanup completed. `--recover-compaction /absolute/old-session`
+validates its contiguous saved events and creates a **new** session from the last
+completed checkpoint. Only an increased `--summary-tokens` value may differ from
+the original configuration. The source stays fenced and unchanged; its rejected
+summary is never accepted as conversation memory. The console prints the pending
+user message so it can be submitted again, or `--prompt` supplies an explicit
+message to run. Other failures, work/tool requests, missing records, unknown usage
+and cleanup failures remain refused. Recovery does not reconcile a live server;
+the launcher must still acquire its normal exclusive host ownership.
+
+The old default was 2,048 summary tokens. Existing completed sessions created with
+that cap still require `--summary-tokens 2048` when reopening. New sessions use
+4,096; the higher cap gives a detailed summary room to finish, but is not a
+guarantee against truncation. `finish_reason=length` always remains a failed summary.
+
+The [November 13 recovery evidence](../experiments/chat-console/2026-11-13-compaction-recovery.json)
+captures the motivating live failure: the first summary stopped at 2,048 tokens.
+An explicit fork with a 4,096-token cap completed its summary normally at 2,153
+tokens, answered the pending message, and saved a resumable checkpoint. All
+14,844 original session files matched their pre-recovery checksums; the host
+helper restored Framework. Summary fidelity is a separate quality assessment.
 Graceful cancellation normally confirms container cleanup and releases the
 project, so a new conversation can be started after the inference owner finishes.
 

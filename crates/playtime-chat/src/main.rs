@@ -52,6 +52,10 @@ struct Args {
     /// Create or reopen this private session directory. Only completed turns resume.
     #[arg(long)]
     session: Option<PathBuf>,
+    /// Fork the last completed history after a truncated first compaction.
+    /// Raises the summary cap; keeps the failed session and all evidence intact.
+    #[arg(long, conflicts_with = "session")]
+    recover_compaction: Option<PathBuf>,
     /// Run one turn and exit; otherwise open basic interactive chat.
     #[arg(long)]
     prompt: Option<String>,
@@ -65,7 +69,7 @@ struct Args {
     tokens_per_call: u64,
     #[arg(long, default_value_t = 32768)]
     generated_tokens: u64,
-    #[arg(long, default_value_t = 2048)]
+    #[arg(long, default_value_t = 4096)]
     summary_tokens: u64,
     #[arg(long, default_value_t = 16384)]
     output_bytes: u32,
@@ -267,11 +271,14 @@ async fn main_run(args: Args) -> Result<()> {
     let session_path = std::fs::canonicalize(session_path)?;
     let project = args.workspace.clone();
     let state = private.clone();
-    let protected = vec![
+    let mut protected = vec![
         session_path.clone(),
         args.model_lock.clone(),
         args.image_lock.clone(),
     ];
+    if let Some(source) = &args.recover_compaction {
+        protected.push(source.clone());
+    }
     let directory = Arc::new(
         tokio::task::spawn_blocking(move || ProjectDirectory::open(&project, &state, &protected))
             .await??,
@@ -317,24 +324,35 @@ async fn main_run(args: Args) -> Result<()> {
             CancellationToken::new(),
         )
         .await?;
-    let mut session = Some({
+    let (initial_session, recovered_input) = {
         let p = session_path.clone();
         let c = config.clone();
+        let source = args.recover_compaction.clone();
         tokio::task::spawn_blocking(move || {
-            if p.join("config.json").exists() {
-                Session::open(&p, &c)
+            if let Some(source) = source {
+                let recovered = Session::recover_compaction(&source, &p, c)?;
+                Ok::<_, io::Error>((recovered.session, Some(recovered.pending_input)))
+            } else if p.join("config.json").exists() {
+                Session::open(&p, &c).map(|session| (session, None))
             } else {
-                Session::create(&p, c)
+                Session::create(&p, c).map(|session| (session, None))
             }
         })
         .await??
-    });
+    };
+    let mut session = Some(initial_session);
     eprintln!(
         "Playtime chat — {}\nSession: {}\nContext: {} tokens. Project tools: Docker, no network. /help for commands.",
         directory.root().path().display(),
         session_path.display(),
         config.parameters.limits.context_tokens
     );
+    if let Some(input) = recovered_input {
+        eprintln!(
+            "Recovered completed history into a new session; the failed source is unchanged.\nPending message (submit again when ready): {}",
+            clean(&input)
+        );
+    }
     let headless = args.prompt.is_some();
     let mut first = args.prompt.clone();
     let mut input = if headless {
@@ -423,6 +441,12 @@ async fn main_run(args: Args) -> Result<()> {
         interrupt_watch.abort();
         session = completed.session;
         if session.is_none() {
+            if completed.result.reason == playtime_core::StopReason::CompactionFailed {
+                eprintln!(
+                    "If this was the first call of the turn and its summary hit the output cap, use --recover-compaction {} with a larger --summary-tokens value. Recovery verifies the saved events and cleanup before creating a new session.",
+                    session_path.display()
+                );
+            }
             return Err(format!("turn stopped with {:?}; evidence retained at {}; interrupted turns cannot yet resume automatically",completed.result.reason,session_path.display()).into());
         }
         if headless || leave_after_turn {

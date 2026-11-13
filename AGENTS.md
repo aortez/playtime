@@ -40,7 +40,10 @@ and then `--backend live` sequentially; see `docs/rust-continuous-native.md`.
 `playtime-harness` wraps that controller for standalone chat turns and private
 saved conversations. Run `cargo test -p playtime-harness --locked` for its changes.
 Keep session state outside tool write roots, commit observations before dispatch,
-and never replay an unfinished turn. See `docs/rust-conversation.md`; its CPU
+and never replay an unfinished turn. The explicit compaction-recovery fork may
+carry only the last completed history after a fully observed, length-limited first
+summary and confirmed cleanup; it must preserve the fenced source and reject
+work/tool calls or uncertain/missing evidence. See `docs/rust-conversation.md`; its CPU
 fixtures do not establish Strata transport, host tools or a runnable console.
 `playtime-chat` supplies the asynchronous project driver and basic terminal client;
 it must use that same controller. Run `cargo test -p playtime-chat --locked` for

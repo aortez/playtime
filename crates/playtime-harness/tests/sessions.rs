@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use playtime_core::{RunMode, Sha256Digest, StopReason};
+use playtime_core::{RequestPurpose, RunId, RunMode, Sha256Digest, StopReason};
 use playtime_engine::{
     chat::ConversationConfig,
     compaction::CompactionSettings,
@@ -94,6 +94,197 @@ fn read_records(root: &Root) -> Vec<Record> {
     }
     records.sort_by_key(|r| r.sequence);
     records
+}
+
+fn truncated_first_compaction() -> (Root, ConversationConfig, RunId) {
+    let root = Root::new();
+    let mut config = config();
+    config.compaction.recent_exchanges = 0;
+    config.compaction.trigger_percent = 60;
+    let mut turn = Session::create(&root.0, config.clone())
+        .unwrap()
+        .begin("Investigate the parser.".into(), SequentialIds, 0)
+        .unwrap();
+    let mut now = 0;
+    complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+    answer(&mut turn, &mut now, &"checked details ".repeat(600));
+    let session = turn.finish().unwrap();
+    let mut turn = session
+        .begin("Now fix it.".into(), SequentialIds, 0)
+        .unwrap();
+    now = 0;
+    complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+    let EffectKind::Model(request) = &turn.pending().unwrap().kind else {
+        panic!("expected summary")
+    };
+    assert_eq!(request.purpose, RequestPurpose::Compaction);
+    complete(
+        &mut turn,
+        &mut now,
+        Outcome::ModelCompleted {
+            response: ModelResponse {
+                message: json!({"role":"assistant","content":"unfinished summary"}),
+                done: true,
+                generated_tokens: Some(config.compaction.summary_tokens.get()),
+                prompt_tokens: Some(4000),
+            },
+            finish_reason: "length".into(),
+        },
+    );
+    complete(&mut turn, &mut now, Outcome::Cleaned(vec![]));
+    assert_eq!(turn.result().unwrap().reason, StopReason::CompactionFailed);
+    let failed = turn.id().clone();
+    drop(turn);
+    (root, config, failed)
+}
+
+#[test]
+fn truncated_first_compaction_forks_intact_history_and_can_finish_with_more_headroom() {
+    let (source, config, failed) = truncated_first_compaction();
+    let source_head = fs::read(source.0.join("head.json")).unwrap();
+    let destination = Root::new();
+    let mut updated = config.clone();
+    updated.compaction.summary_tokens = 512.try_into().unwrap();
+    let recovered =
+        Session::recover_compaction(&source.0, &destination.0, updated.clone()).unwrap();
+    assert_eq!(recovered.pending_input, "Now fix it.");
+    assert_eq!(fs::read(source.0.join("head.json")).unwrap(), source_head);
+    assert!(Session::open(&source.0, &config).is_err());
+    let old = recovered.session.checkpoint().unwrap().clone();
+    assert!(
+        !serde_json::to_string(&old)
+            .unwrap()
+            .contains("unfinished summary")
+    );
+    assert!(
+        serde_json::to_string(&old)
+            .unwrap()
+            .contains("checked details")
+    );
+    assert!(destination.0.join("recovery.json").exists());
+    let mut turn = recovered
+        .session
+        .begin(recovered.pending_input, SequentialIds, 0)
+        .unwrap();
+    assert_ne!(turn.id(), &failed);
+    let mut now = 0;
+    complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+    let EffectKind::Model(request) = &turn.pending().unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(request.purpose, RequestPurpose::Compaction);
+    assert_eq!(request.maximum_tokens, 512);
+    complete(
+        &mut turn,
+        &mut now,
+        Outcome::ModelCompleted {
+            response: ModelResponse {
+                message: json!({"role":"assistant","content":"The parser needs a delimiter check."}),
+                done: true,
+                generated_tokens: Some(20),
+                prompt_tokens: Some(4000),
+            },
+            finish_reason: "stop".into(),
+        },
+    );
+    let EffectKind::Model(request) = &turn.pending().unwrap().kind else {
+        panic!()
+    };
+    assert_eq!(request.purpose, RequestPurpose::Work);
+    assert_eq!(request.messages.last().unwrap()["content"], "Now fix it.");
+    answer(&mut turn, &mut now, "Fixed and checked.");
+    drop(turn.finish().unwrap());
+    let reopened = Session::open(&destination.0, &updated).unwrap();
+    assert_eq!(reopened.checkpoint().unwrap().history.compactions, 1);
+}
+
+#[test]
+fn compaction_recovery_rejects_uncertainty_changed_identity_and_missing_or_unsafe_records() {
+    for case in [
+        "same_cap",
+        "workspace",
+        "unknown_usage",
+        "cleanup",
+        "missing_batch",
+        "work_request",
+        "tools",
+        "request_tools",
+        "missing_result",
+    ] {
+        let (source, config, failed) = truncated_first_compaction();
+        let destination = Root::new();
+        let mut updated = config.clone();
+        updated.compaction.summary_tokens = 512.try_into().unwrap();
+        let result_path = source.0.join(format!("result-{failed}.json"));
+        match case {
+            "same_cap" => updated = config.clone(),
+            "workspace" => updated.workspace = Sha256Digest::new("3".repeat(64)).unwrap(),
+            "unknown_usage" | "cleanup" => {
+                let mut result: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&result_path).unwrap()).unwrap();
+                if case == "unknown_usage" {
+                    result["usage"]["unknown_requests"] = json!(1);
+                } else {
+                    result["cleanup"] = json!({"status":"failed","errors":["still running"]});
+                }
+                fs::write(result_path, serde_json::to_vec(&result).unwrap()).unwrap();
+            }
+            "missing_result" => fs::remove_file(result_path).unwrap(),
+            _ => {
+                let path = fs::read_dir(&source.0)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+                    .find(|p| {
+                        p.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(&format!("events-{failed}-"))
+                            && fs::read_to_string(p)
+                                .unwrap()
+                                .contains("\"kind\":\"model_request\"")
+                    })
+                    .unwrap();
+                if case == "missing_batch" {
+                    fs::remove_file(path).unwrap();
+                } else {
+                    let mut records: Vec<Record> = fs::read_to_string(&path)
+                        .unwrap()
+                        .lines()
+                        .map(|line| serde_json::from_str(line).unwrap())
+                        .collect();
+                    let record = records
+                        .iter_mut()
+                        .find(|r| r.kind == "model_request")
+                        .unwrap();
+                    if case == "work_request" {
+                        record.data["purpose"] = json!("work");
+                    }
+                    if case == "tools" {
+                        record.kind = "tool_request".into();
+                    }
+                    if case == "request_tools" {
+                        record.data["tools"] = json!([{"name":"exec"}]);
+                    }
+                    fs::write(
+                        path,
+                        records
+                            .iter()
+                            .map(|r| serde_json::to_string(r).unwrap() + "\n")
+                            .collect::<String>(),
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        assert!(
+            Session::recover_compaction(&source.0, &destination.0, updated).is_err(),
+            "{case}"
+        );
+        assert!(
+            !destination.0.exists(),
+            "{case} created destination before validating source"
+        );
+    }
 }
 
 #[test]

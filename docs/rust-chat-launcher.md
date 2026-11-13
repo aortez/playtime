@@ -47,7 +47,17 @@ another project with `--workspace /absolute/path`. The console prints its privat
 session directory; pass `--session /that/directory` and the same project/settings
 to reopen a completed conversation. `/paste` starts multiline input, `/end`
 submits it and `/quit` exits. Ctrl-C or `/stop` cancels a turn and waits for cleanup;
-interrupted sessions remain fenced. See the console guide for tool limits.
+interrupted sessions remain fenced. A truncated first compaction with confirmed
+cleanup can be explicitly recovered into a new session:
+
+```sh
+codex-launcher playtime-framework-fast --recover-compaction /absolute/old-session --summary-tokens 4096
+```
+
+This preserves the original evidence and displays the pending message for you to
+resubmit. It does not accept the cut-off summary. See the console guide for the
+exact recovery conditions and tool limits. Completed sessions created with the
+previous 2,048-token summary cap need `--summary-tokens 2048` when reopening.
 
 The launcher's effort picker does not translate settings for this independent
 program. Effort is part of the reviewed model lock. Extra CLI arguments pass

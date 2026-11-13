@@ -80,9 +80,22 @@ Opening a session with an active turn fails rather than replaying uncertain tool
 or silently reverting to the previous checkpoint. Inputs, partial history and any
 final result remain for inspection. Reopening recovers private files; it does not
 produce an archive writer receipt or establish that a previous caller received a
-commit acknowledgment. Interrupted-turn reconciliation is not implemented.
+commit acknowledgment. General interrupted-turn reconciliation is not implemented.
 Completed sessions reopen with the same configuration; a changed
 model, workspace, policy, schema or malformed history is rejected.
+
+`Session::recover_compaction` is an explicit, separate-session exception for a
+fully observed first compaction that stopped at its output cap before any work
+request. It requires one known-usage model call, a `length` completion, confirmed
+cleanup, and contiguous saved records from the previous checkpoint through the
+terminal observation. Any work/tool request, other event kind, missing record or
+uncertainty is refused. Only the summary cap may increase in the new config.
+The old checkpoint's history is copied without the rejected summary; request and
+observation ordinals advance past the failed attempt. `recovery.json` records
+provenance, the failed result and pending input, preserving its cost in the source
+evidence. The original session stays fenced. Publication starts with a fenced new
+head so an incomplete fork cannot reopen as an empty ready conversation. This
+operation grants no server or tool authority and does not submit the pending input.
 
 ## Shared context planner
 

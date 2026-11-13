@@ -12,6 +12,9 @@ use playtime_engine::{
 use playtime_local::{PrivateDirectory, Token};
 use serde::{Deserialize, Serialize};
 
+mod recovery;
+pub use recovery::RecoveredCompaction;
+
 const CONFIG_BYTES: u64 = 1024 * 1024;
 
 fn invalid(message: impl ToString) -> io::Error {
