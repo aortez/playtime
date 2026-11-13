@@ -9,9 +9,9 @@ with Playtime experiments. It requires no Playtime daemon or workbench.
 This is the initial implementation of
 [#210](https://github.com/aortez/playtime/issues/210), with the project execution
 portion of [#208](https://github.com/aortez/playtime/issues/208). It is an opt-in
-developer client. The launcher entry and automatic inference-host ownership
-handoff remain [codex-launcher #14](https://github.com/aortez/codex-launcher/issues/14).
-Do not replace working Codex profiles with this command yet.
+developer client. The [launcher guide](rust-chat-launcher.md) describes the first
+Framework fast preset for [codex-launcher #14](https://github.com/aortez/codex-launcher/issues/14).
+Use its separate pilot entry alongside working Codex profiles.
 
 ## Running
 

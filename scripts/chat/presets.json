@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "framework-gyro-m-fast": {
+      "host": "framework",
+      "ssh_options": [],
+      "helper": ".local/lib/codex-framework-gyro/gyro-session.py",
+      "state_parent": ".local/state/codex-framework-gyro",
+      "model_lock": "framework-strata-gyro-m-fast-v1.lock.json",
+      "startup_timeout": 930,
+      "cleanup_timeout": 160
+    }
+  }
+}

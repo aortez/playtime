@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-13",
+  "scope": "Installed codex-launcher to owned Framework Strata and local project tools; integration and interruption smoke, not a coding-quality comparison or full-context benchmark.",
+  "launcher_entry": "playtime-framework-fast",
+  "model_profile": "framework-gyro-m-fast",
+  "model_lock": "models/framework-strata-gyro-m-fast-v1.lock.json",
+  "server_context_tokens": 163840,
+  "harness_context_tokens": 32768,
+  "source": "Playtime 301739b plus this launcher wrapper; codex-launcher ff42129 plus standalone harness entries. Uncommitted development builds at test time.",
+  "installed_sha256": {
+    "playtime-chat": "02d8e16022bda9a41ad68444af452b302e66ef59974edd2c40876f2f23e72190",
+    "run-strata.py": "f16a9b1075ef5e70972ae08f4c0860fdf16da20e8e27c156c2d00972dbd88959",
+    "verify-strata-host.py": "f153266be4143891304c44f46a6889221f0f686b8e77b91c8f9a943e3e59eb83",
+    "framework-strata-gyro-m-fast-v1.lock.json": "23a6e5577ebaf3ca3bcb8743bcdd512c040af3ff685322ef51b07a7279388d50",
+    "general.lock.json": "f783fb8987c289c8beefb02b682dfa67f85081f5766a6a1f39a00de327efac82",
+    "presets.json": "4f701f603bf2307f7cbde8b52a8602efdd257a600036eb385bd2271b8fc4047a"
+  },
+  "project_edit": {
+    "result": {
+      "cleanup": {
+        "status": "complete"
+      },
+      "diagnostics": [],
+      "elapsed_ms": 13814,
+      "last_checkpoint": null,
+      "mode": "live_smoke",
+      "model_calls": 5,
+      "reason": "agent_finished",
+      "run_id": "turn-35dab70c1ecee6f951593f459b757238aa9df3547b25e409db44c65f06d1f88e",
+      "sessions_started": 0,
+      "tool_parse_errors": 0,
+      "usage": {
+        "budget_charged_tokens": 413,
+        "known_generated_tokens": 413,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      }
+    },
+    "tool_calls": 6,
+    "launch": {
+      "argv": [
+        "codex-launcher",
+        "playtime-framework-fast",
+        "--prompt",
+        "Read AGENTS.md and inspect the project. Fix cart.total so it handles quantities correctly. Run the existing tests and report the result. Do not edit the tests.",
+        "--context-tokens",
+        "32768",
+        "--wall-seconds",
+        "120",
+        "--tokens-per-call",
+        "2048",
+        "--generated-tokens",
+        "8192",
+        "--json"
+      ],
+      "exit": 0,
+      "elapsed_seconds": 84.41956208699958
+    },
+    "host_verified": true,
+    "host_evidence_directory": "/home/oldman/.local/state/playtime-launcher/20261113T132056-wje6oa10",
+    "owner_exit": {
+      "client_exit": 0,
+      "owner_exit": 0,
+      "exit": 0
+    },
+    "verification_seconds": 46.1,
+    "tests_run": 4,
+    "tests_passed": 4,
+    "independent_tests": "python3 -m unittest -v",
+    "final_source": "def total(items):\n    \"\"\"Sum (unit price, quantity) pairs.\"\"\"\n    return sum(price * quantity for price, quantity in items)\n"
+  },
+  "interruption": {
+    "result": {
+      "cleanup": {
+        "status": "complete"
+      },
+      "diagnostics": [],
+      "elapsed_ms": 2633,
+      "last_checkpoint": null,
+      "mode": "live_smoke",
+      "model_calls": 1,
+      "reason": "interrupted",
+      "run_id": "turn-f31192a8444af7a47513496797ad227bc5a19eca5fe546b255b263a86445969d",
+      "sessions_started": 0,
+      "tool_parse_errors": 0,
+      "usage": {
+        "budget_charged_tokens": 4096,
+        "known_generated_tokens": 0,
+        "unknown_requests": 1,
+        "unknown_reserved_tokens": 4096,
+        "usage_complete": false
+      }
+    },
+    "tool_calls": 0,
+    "launch": {
+      "argv": [
+        "codex-launcher",
+        "playtime-framework-fast",
+        "--workspace",
+        "/home/data2/playtime/chat-launcher-smoke-dq7abv_o/project",
+        "--prompt",
+        "Without using tools, reason carefully about five approaches for making the small cart module extensible. Discuss detailed tradeoffs, then give a recommendation.",
+        "--context-tokens",
+        "32768",
+        "--wall-seconds",
+        "120",
+        "--tokens-per-call",
+        "4096",
+        "--generated-tokens",
+        "8192",
+        "--json"
+      ],
+      "exit": 130,
+      "cancelled_after_delta": false,
+      "cancel_to_owner_exit_seconds": null,
+      "elapsed_seconds": 71.29376011299973
+    },
+    "host_verified": true,
+    "host_evidence_directory": "/home/oldman/.local/state/playtime-launcher/20261113T132258-lcx2rl7m",
+    "owner_exit": {
+      "client_exit": 1,
+      "owner_exit": 0,
+      "exit": 130
+    },
+    "verification_seconds": 45.9,
+    "signal_observer": {
+      "wrapper_pid": 1324658,
+      "signal": "SIGINT",
+      "trigger": {
+        "chunk": {
+          "item_id": "rs_f73cd14a825f46c3ba5cf89508d5f772",
+          "thinking": "The"
+        },
+        "type": "chunk"
+      },
+      "cancel_to_wrapper_exit_seconds": 2.0032571369993093,
+      "wrapper_exited": true
+    },
+    "signal_observer_note": "A separate observer sent SIGINT on the first normalized thinking chunk. The primary runner only recognized an unnormalized delta event and did not send a signal; its cancellation timing fields are unset.",
+    "session_head": {
+      "schema_version": 1,
+      "configuration": "6bd48d5a913f830dbfe3bdc2969cbfc301edad9e072a4d437826cca0e0092edd",
+      "checkpoint": null,
+      "active_turn": "turn-f31192a8444af7a47513496797ad227bc5a19eca5fe546b255b263a86445969d"
+    }
+  },
+  "postconditions": {
+    "framework_status": "starts_on_launch",
+    "helper_reported_ollama_restored": true,
+    "remaining_project_containers": 0
+  },
+  "cpu_checks": {
+    "launcher_unit_tests": 86,
+    "launcher_headless_tests": 27,
+    "launcher_fmt_and_clippy": "passed",
+    "owner_wrapper_tests": 10
+  },
+  "raw_evidence_directory": "/home/data2/playtime/chat-launcher-smoke-dq7abv_o"
+}

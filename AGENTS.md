@@ -48,7 +48,13 @@ its changes. Keep model deadlines and cancellation independent of record fsync,
 never dispatch after a failed observation commit, and run owned cleanup on every
 exit path. Its Strata endpoint must be held and verified by the external host
 owner. See `docs/rust-chat-console.md`; saved completed sessions resume, interrupted
-turns remain fenced, and launcher-managed server startup is a separate integration.
+turns remain fenced, and launcher-managed server startup stays outside the client.
+The owner wrapper and installer live under `scripts/chat/` and
+`scripts/install-chat-launcher.sh`; see `docs/rust-chat-launcher.md`. For changes,
+run `python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v`, then an
+explicitly owned live smoke for host handoff changes. Status must remain read-only,
+busy hosts must be refused, and actual host artifacts must match the reviewed
+model lock before starting the client. Keep the host owned through tool cleanup.
 `playtime-strata` adapts the installed stateless Responses API to shared model
 requests; it never owns a model server or executes tools. Freeze the endpoint's
 model/template/settings plus independently verified host artifacts, keep missing
