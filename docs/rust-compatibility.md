@@ -1,5 +1,17 @@
 # Rust compatibility and goldens
 
+## Stateless Strata transport (#207, 2026-11-13)
+
+The new `playtime-strata` crate translates shared model requests and canonical
+assistant/tool history to the installed Strata Responses API. It preserves
+reasoning, call IDs and measured usage, checks streamed output against the final
+snapshot, and rejects incomplete tool arguments before dispatch. Cancellation or
+disconnect never claims remote termination or triggers an automatic resend.
+Version-1 locks bind backend artifacts, template, context and explicit inference
+settings. The separate live developer smoke drives a saved chat turn in an owned
+Docker workshop. Existing experiment profiles, Ollama adapters, API schemas and
+behavioral goldens are unchanged. See [Strata transport](rust-strata.md).
+
 ## Saved compacting chat turns (#208, 2026-11-13)
 
 The new `Controller::chat` entry point ends a turn on an explicitly completed,

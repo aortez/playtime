@@ -42,6 +42,13 @@ saved conversations. Run `cargo test -p playtime-harness --locked` for its chang
 Keep session state outside tool write roots, commit observations before dispatch,
 and never replay an unfinished turn. See `docs/rust-conversation.md`; its CPU
 fixtures do not establish Strata transport, host tools or a runnable console.
+`playtime-strata` adapts the installed stateless Responses API to shared model
+requests; it never owns a model server or executes tools. Freeze the endpoint's
+model/template/settings plus independently verified host artifacts, keep missing
+usage unknown, and never replay an ambiguous request. Run its CPU fixtures and
+the explicitly owned live workshop smoke sequentially for transport changes;
+see `docs/rust-strata.md`. Socket closure and terminal SSE events are observations,
+not remote termination authority. A fixture or HIP smoke does not qualify CUDA.
 `playtime-storage` owns synchronous portable archive I/O. Preserve its distinction
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`

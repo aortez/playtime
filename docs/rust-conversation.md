@@ -6,7 +6,9 @@ private, incremental persistence without `playtimed`, an experiment recipe or
 archive publication. This implements the conversation and storage portion of
 [#208](https://github.com/aortez/playtime/issues/208).
 
-Strata transport, the bounded workspace adapter and the
+[Strata transport](rust-strata.md) now exercises a saved chat turn with native
+model/tool/follow-up requests in an isolated Docker workshop. The reusable
+interactive workspace driver and the
 [chat console](https://github.com/aortez/playtime/issues/210) still need their
 implementation. There is no runnable chat binary yet. These libraries execute
 no command or model request themselves, and do not enable host execution in

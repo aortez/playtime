@@ -85,6 +85,7 @@ real worker, Docker, model-host, or recovery behavior.
 | Workspace capture | `./scripts/test-rust-docker-e2e.sh --case checkpoint` | Real stopped-workspace capture; additionally run the sandbox gate |
 | Native effects/Docker profile/run-and-view | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted` | Real systemd worker and Docker, scripted model, archive and client review |
 | Live model path | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend live` | The live Ollama path, streaming, persistence, review and cleanup |
+| Strata transport | `cargo test -p playtime-strata --locked`, then the [owned workshop smoke](rust-strata.md#live-smoke) | Synthetic HTTP/SSE failure fixtures, then the actual endpoint with a saved chat turn, uid-1000 tools, follow-up and local cancellation |
 | Continuous native execution | `./scripts/test-rust-continuous.sh --backend docker-scripted`, then `--backend live` | One real systemd/Docker workshop across compactions, final capture, purpose accounting and exact cleanup; live defaults to reviewed local Qwen, or `PLAYTIME_CONTINUOUS_MODEL=gpt-oss:120b` selects reviewed Framework High reasoning |
 | Saved continuous recipes | `./scripts/test-rust-registered-model.sh --continuous` | Real API/workbench save, revision, launch/replay, compactions, final file and purpose accounting on local Qwen |
 | Registered-model execution | `./scripts/test-rust-registered-model.sh` | Additional real Qwen API/workbench smoke, exact selection and replay; does not replace the original live gate |

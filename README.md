@@ -101,6 +101,7 @@ instructions for running the Rust controller.
 - [Experiment studio design and next phase plan](docs/experiment-studio.md) (draft)
 - [Repository working rules](AGENTS.md)
 - [CLI commands and connection settings](docs/rust-cli.md)
+- [Reusable compacting conversations](docs/rust-conversation.md) and [Strata transport](docs/rust-strata.md)
 - [Workbench behavior and screenshots](docs/rust-ui.md)
 - [Compatibility rules and reviewed behavior changes](docs/rust-compatibility.md)
 

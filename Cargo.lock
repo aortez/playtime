@@ -3530,6 +3530,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "playtime-strata"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "playtime-core",
+ "playtime-docker",
+ "playtime-engine",
+ "playtime-harness",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "playtime-test-support"
 version = "0.1.0"
 dependencies = [
