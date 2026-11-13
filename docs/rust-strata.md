@@ -132,7 +132,9 @@ disposable workspace, and it does not implement console input, SIGINT policy,
 an editable project workspace or automatic remote reconciliation. A persistence
 failure leaves the session fenced and runs outer owned-workshop cleanup. Docker's
 absolute lifetime and the model task's deadline continue independently of fsync.
-The console/launcher work remains in #210 and codex-launcher #14.
+The separate [project console](rust-chat-console.md) now supplies an async driver
+and editable project tools for #210. Launcher-managed startup remains in
+codex-launcher #14.
 
 ## Recorded Framework result (2026-11-13)
 
@@ -152,7 +154,8 @@ absent, the owned server stopped, and the helper restored Ollama successfully.
 The initial Bird startup check reported its RTX 3090 unavailable to the NVIDIA
 driver, so that attempt did not run CUDA inference. A later retry on the same
 date found both GPUs and passed the fast-profile smoke below. No reboot or GPU
-repair was performed by these tests. A usable console remains outstanding.
+repair was performed by these tests. Later project-console evidence is recorded
+in the [console guide](rust-chat-console.md#framework-fast-profile-smoke-november-13).
 
 ## Preferred fast profiles (2026-11-13)
 

@@ -3338,6 +3338,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "playtime-chat"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "playtime-core",
+ "playtime-docker",
+ "playtime-engine",
+ "playtime-harness",
+ "playtime-local",
+ "playtime-protocol",
+ "playtime-strata",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "playtime-cli"
 version = "0.1.0"
 dependencies = [
@@ -3386,6 +3406,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
+ "playtime-local",
  "playtime-protocol",
  "rustix 1.1.4",
  "serde",

@@ -90,7 +90,22 @@ pub fn volume(p: &Proposal) -> Value {
 #[derive(Default)]
 pub struct Journal {
     pub proposals: Mutex<Vec<Proposal>>,
+    pub projects: Mutex<Vec<project::ProjectProposal>>,
     pub fail: Mutex<bool>,
+}
+#[async_trait::async_trait]
+impl project::ProjectJournal for Journal {
+    async fn commit(&self, p: &project::ProjectProposal) -> Result<()> {
+        if *self.fail.lock().unwrap() {
+            return Err(Error {
+                failure: Failure::Journal,
+                operation: "synthetic_journal",
+                detail: "injected",
+            });
+        }
+        self.projects.lock().unwrap().push(p.clone());
+        Ok(())
+    }
 }
 #[async_trait::async_trait]
 impl OwnershipJournal for Journal {
@@ -118,6 +133,7 @@ pub struct State {
     pub deadlines: Vec<Instant>,
     pub volumes: BTreeMap<String, Value>,
     pub containers: BTreeMap<String, Value>,
+    pub projects: BTreeMap<String, project::ProjectProposal>,
     pub available: bool,
     pub changed: bool,
     pub fault: Option<(&'static str, Injection)>,
@@ -131,6 +147,7 @@ impl Default for State {
             deadlines: vec![],
             volumes: BTreeMap::new(),
             containers: BTreeMap::new(),
+            projects: BTreeMap::new(),
             available: true,
             changed: false,
             fault: None,
@@ -206,6 +223,27 @@ impl Transport for Fake {
                 s.next_id += 1;
                 s.containers.insert(id.clone(), container(p, &id, false));
                 Outcome::completed(id.into_bytes())
+            }
+            Operation::CreateProject(p) => {
+                assert!(
+                    self.journal.projects.lock().unwrap().contains(p),
+                    "project mutation before durable intent"
+                );
+                let id = format!("{:064x}", s.next_id);
+                s.next_id += 1;
+                let mut v = container(&p.container, &id, false);
+                v["Config"]["Labels"] = json!(p.labels());
+                v["HostConfig"]["Mounts"] = json!([{"Type":"bind","Source":p.root.path(),"Target":"/work","BindOptions":{"Propagation":"rprivate","NonRecursive":true}}]);
+                v["Mounts"] = json!([{"Type":"bind","Source":p.root.path(),"Destination":"/work","Mode":"","RW":true,"Propagation":"rprivate"}]);
+                s.containers.insert(id.clone(), v);
+                s.projects.insert(id.clone(), p.clone());
+                Outcome::completed(id.into_bytes())
+            }
+            Operation::ProjectProbe(id) => {
+                let root = serde_json::to_value(&s.projects[id].root).unwrap();
+                response(
+                    json!({"device":root["device"],"inode":root["inode"],"uid":1000,"gid":1000,"writable":true}),
+                )
             }
             Operation::Start(id) => {
                 let v = s.containers.get_mut(id).unwrap();

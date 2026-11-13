@@ -1,5 +1,17 @@
 # Rust compatibility and goldens
 
+## Project chat console (#208/#210, 2026-11-13)
+
+`playtime-chat` adds a standalone async driver and terminal client over the
+existing saved-turn controller. Its optional JSON event envelope is version 1;
+it is not the daemon API or an archive receipt. The separate Docker project
+profile binds one explicit persistent directory, with private ownership and
+crash fencing. It shares container lifecycle checks with the experiment sandbox
+without changing its volume, capture, worker profile or record formats. Existing
+conversation checkpoints still require completed turns and confirmed cleanup;
+interrupted-turn continuation is not introduced. No existing golden is regenerated.
+See [project chat](rust-chat-console.md).
+
 ## Stateless Strata transport (#207, 2026-11-13)
 
 The new `playtime-strata` crate translates shared model requests and canonical

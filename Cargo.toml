@@ -4,6 +4,7 @@ members = [
     "crates/playtime-protocol",
     "crates/playtime-engine",
     "crates/playtime-harness",
+    "crates/playtime-chat",
     "crates/playtime-storage",
     "crates/playtime-server",
     "crates/playtime-client",

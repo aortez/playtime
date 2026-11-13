@@ -8,6 +8,12 @@ intent barriers and the daemon. [Live-model execution](rust-live-model.md) uses
 the same sandbox with Ollama. This guide owns sandbox contracts, not admission
 or archive recovery authority.
 
+The separate [`project` adapter](rust-chat-console.md#project-tools) supports real
+editing in a selected local project. It shares transport, container verification
+and lifecycle reconciliation with this sandbox, while retaining files on the host.
+It creates no experiment volume or checkpoint and does not provide a project disk
+quota. Run its additional `--case project` gate when changing that profile.
+
 ## Supported selection and readiness
 
 The supported profile requires a local rootful Linux amd64 Docker Engine, API 1.41+

@@ -28,6 +28,7 @@ pub enum Operation {
     VolumeInspect(String),
     CreateVolume(Proposal),
     CreateContainer(Proposal),
+    CreateProject(crate::project::ProjectProposal),
     Start(String),
     RemoveContainer(String),
     RemoveVolume(String),
@@ -36,6 +37,7 @@ pub enum Operation {
         payload: Vec<u8>,
     },
     Probe(String),
+    ProjectProbe(String),
     Export {
         id: String,
         profile: crate::capture::CaptureProfile,
@@ -56,11 +58,13 @@ impl Operation {
             Self::VolumeInspect(_) => "volume_inspect",
             Self::CreateVolume(_) => "volume_create",
             Self::CreateContainer(_) => "container_create",
+            Self::CreateProject(_) => "project_create",
             Self::Start(_) => "container_start",
             Self::RemoveContainer(_) => "container_remove",
             Self::RemoveVolume(_) => "volume_remove",
             Self::Bridge { .. } => "tool",
             Self::Probe(_) => "helper_identity",
+            Self::ProjectProbe(_) => "project_identity",
             Self::Export { .. } => "workspace_export",
             Self::Memory { .. } => "outgoing_memory",
             Self::Mounts(_) => "volume_mounts",
@@ -111,7 +115,7 @@ impl Operation {
                     crate::capture::MEMORY_READER
                 },
             ],
-            Self::Probe(id) => vec![
+            Self::Probe(id) | Self::ProjectProbe(id) => vec![
                 "container",
                 "exec",
                 "--user",
@@ -124,7 +128,11 @@ impl Operation {
                 "-S",
                 "-B",
                 "-c",
-                PROBE,
+                if matches!(self, Self::ProjectProbe(_)) {
+                    crate::project::PROBE
+                } else {
+                    PROBE
+                },
             ],
             Self::Mounts(volume) => {
                 return vec![
@@ -152,7 +160,8 @@ impl Operation {
                 args.push(p.name.clone());
                 return args;
             }
-            Self::CreateContainer(p) => return create_args(p),
+            Self::CreateContainer(p) => return create_args(p, None),
+            Self::CreateProject(p) => return create_args(&p.container, Some(p)),
         };
         args.into_iter().map(str::to_owned).collect()
     }
@@ -179,7 +188,7 @@ fn labels(args: &mut Vec<String>, p: &Proposal) {
         args.extend(["--label".into(), format!("{key}={value}")]);
     }
 }
-fn create_args(p: &Proposal) -> Vec<String> {
+fn create_args(p: &Proposal, project: Option<&crate::project::ProjectProposal>) -> Vec<String> {
     let l = &p.limits;
     let (memory, pids) = if p.role == Role::Holder {
         (64 * 1024 * 1024, 64)
@@ -241,13 +250,25 @@ fn create_args(p: &Proposal) -> Vec<String> {
         "--tmpfs".into(),
         format!("/tmp:{}", l.tmpfs()),
         "--mount".into(),
-        format!("type=volume,src={},dst=/work,volume-nocopy", p.volume),
+        match project {
+            Some(project) => format!(
+                "type=bind,src={},dst=/work,bind-recursive=disabled,bind-propagation=rprivate",
+                project.root.path().display()
+            ),
+            None => format!("type=volume,src={},dst=/work,volume-nocopy", p.volume),
+        },
         "--env".into(),
         format!("PLAYTIME_SEED={}", l.seed),
         "--env".into(),
         format!("PYTHONHASHSEED={}", l.seed),
     ]);
     labels(&mut args, p);
+    if let Some(project) = project {
+        args.extend([
+            "--label".into(),
+            format!("io.playtime.project={}", project.digest()),
+        ]);
+    }
     args.extend([
         p.image.clone(),
         "-I".into(),

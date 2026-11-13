@@ -11,6 +11,10 @@ The Rust daemon, CLI, and workbench reached their MVP in v0.1.0. The
 and current limitations. The Python controller is frozen; `./playtime` is its
 legacy launcher, while `target/debug/playtime` is the Rust client.
 
+The opt-in [project chat console](docs/rust-chat-console.md) uses the shared
+compacting harness with Strata and persistent project tools. It currently requires
+a caller-owned inference endpoint; launcher-managed startup is the next step.
+
 ## Start
 
 The production path requires Linux x86-64, a working systemd user manager with

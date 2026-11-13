@@ -86,6 +86,7 @@ impl Engine {
         let operation = op.name();
         let resource = match &op {
             Operation::CreateVolume(p) | Operation::CreateContainer(p) => Some(p.name.clone()),
+            Operation::CreateProject(p) => Some(p.container.name.clone()),
             Operation::ImageInspect(id)
             | Operation::ContainerInspect(id)
             | Operation::VolumeInspect(id)
@@ -93,6 +94,7 @@ impl Engine {
             | Operation::RemoveContainer(id)
             | Operation::RemoveVolume(id)
             | Operation::Probe(id)
+            | Operation::ProjectProbe(id)
             | Operation::Mounts(id)
             | Operation::Export { id, .. }
             | Operation::Memory { id, .. }
@@ -101,7 +103,10 @@ impl Engine {
         };
         let returns_resource = matches!(
             op,
-            Operation::CreateVolume(_) | Operation::CreateContainer(_) | Operation::Start(_)
+            Operation::CreateVolume(_)
+                | Operation::CreateContainer(_)
+                | Operation::CreateProject(_)
+                | Operation::Start(_)
         );
         let result = self.transport.execute(op, deadline, cancel).await;
         let acknowledged_resource = if returns_resource && result.success() {
@@ -470,6 +475,14 @@ pub(crate) fn verify_volume(value: &Value, p: &Proposal) -> Result<()> {
 }
 
 pub(crate) fn verify_container(value: &Value, p: &Proposal) -> Result<String> {
+    verify_container_mount(value, p, None)
+}
+
+pub(crate) fn verify_container_mount(
+    value: &Value,
+    p: &Proposal,
+    project: Option<&crate::project::ProjectProposal>,
+) -> Result<String> {
     let bad = || {
         Error::new(
             Failure::Conflict,
@@ -492,7 +505,7 @@ pub(crate) fn verify_container(value: &Value, p: &Proposal) -> Result<String> {
     if value["Name"] != format!("/{}", p.name)
         || value["Image"] != p.image
         || c["Image"] != p.image
-        || c["Labels"] != json!(p.labels())
+        || c["Labels"] != json!(project.map_or_else(|| p.labels(), |p| p.labels()))
         || c["Entrypoint"] != json!([PYTHON])
         || c["Cmd"]
             != json!([
@@ -560,39 +573,43 @@ pub(crate) fn verify_container(value: &Value, p: &Proposal) -> Result<String> {
             return Err(bad());
         }
     }
-    let mounts = h["Mounts"]
-        .as_array()
-        .filter(|a| a.len() == 1)
-        .ok_or_else(bad)?;
-    if mounts[0]["Type"] != "volume"
-        || mounts[0]["Source"] != p.volume
-        || mounts[0]["Target"] != "/work"
-        || !matches!(mounts[0].get("ReadOnly"), None | Some(Value::Bool(false)))
-        || mounts[0]["VolumeOptions"]["NoCopy"] != true
-        || !empty(&mounts[0]["VolumeOptions"]["DriverConfig"])
-        || !mounts[0].as_object().is_some_and(|o| {
-            o.keys().all(|k| {
-                ["Type", "Source", "Target", "ReadOnly", "VolumeOptions"].contains(&k.as_str())
+    if let Some(project) = project {
+        project.verify_mount(value)?;
+    } else {
+        let mounts = h["Mounts"]
+            .as_array()
+            .filter(|a| a.len() == 1)
+            .ok_or_else(bad)?;
+        if mounts[0]["Type"] != "volume"
+            || mounts[0]["Source"] != p.volume
+            || mounts[0]["Target"] != "/work"
+            || !matches!(mounts[0].get("ReadOnly"), None | Some(Value::Bool(false)))
+            || mounts[0]["VolumeOptions"]["NoCopy"] != true
+            || !empty(&mounts[0]["VolumeOptions"]["DriverConfig"])
+            || !mounts[0].as_object().is_some_and(|o| {
+                o.keys().all(|k| {
+                    ["Type", "Source", "Target", "ReadOnly", "VolumeOptions"].contains(&k.as_str())
+                })
             })
-        })
-        || !mounts[0]["VolumeOptions"].as_object().is_some_and(|o| {
-            o.keys()
-                .all(|k| ["NoCopy", "DriverConfig"].contains(&k.as_str()))
-        })
-    {
-        return Err(bad());
-    }
-    let mounts = value["Mounts"]
-        .as_array()
-        .filter(|a| a.len() == 1)
-        .ok_or_else(bad)?;
-    if mounts[0]["Type"] != "volume"
-        || mounts[0]["Name"] != p.volume
-        || mounts[0]["Destination"] != "/work"
-        || mounts[0]["Driver"] != "local"
-        || mounts[0]["RW"] != true
-    {
-        return Err(bad());
+            || !mounts[0]["VolumeOptions"].as_object().is_some_and(|o| {
+                o.keys()
+                    .all(|k| ["NoCopy", "DriverConfig"].contains(&k.as_str()))
+            })
+        {
+            return Err(bad());
+        }
+        let mounts = value["Mounts"]
+            .as_array()
+            .filter(|a| a.len() == 1)
+            .ok_or_else(bad)?;
+        if mounts[0]["Type"] != "volume"
+            || mounts[0]["Name"] != p.volume
+            || mounts[0]["Destination"] != "/work"
+            || mounts[0]["Driver"] != "local"
+            || mounts[0]["RW"] != true
+        {
+            return Err(bad());
+        }
     }
     // Running state is checked separately for each lifecycle operation.
     let networks = value["NetworkSettings"]["Networks"]

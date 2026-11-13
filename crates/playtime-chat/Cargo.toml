@@ -1,0 +1,25 @@
+[package]
+name = "playtime-chat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+playtime-core.workspace = true
+playtime-protocol.workspace = true
+playtime-engine = { path = "../playtime-engine" }
+playtime-harness.workspace = true
+playtime-local.workspace = true
+playtime-docker.workspace = true
+playtime-strata.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+tokio-util.workspace = true
+
+[lints]
+workspace = true

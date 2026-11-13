@@ -42,6 +42,13 @@ saved conversations. Run `cargo test -p playtime-harness --locked` for its chang
 Keep session state outside tool write roots, commit observations before dispatch,
 and never replay an unfinished turn. See `docs/rust-conversation.md`; its CPU
 fixtures do not establish Strata transport, host tools or a runnable console.
+`playtime-chat` supplies the asynchronous project driver and basic terminal client;
+it must use that same controller. Run `cargo test -p playtime-chat --locked` for
+its changes. Keep model deadlines and cancellation independent of record fsync,
+never dispatch after a failed observation commit, and run owned cleanup on every
+exit path. Its Strata endpoint must be held and verified by the external host
+owner. See `docs/rust-chat-console.md`; saved completed sessions resume, interrupted
+turns remain fenced, and launcher-managed server startup is a separate integration.
 `playtime-strata` adapts the installed stateless Responses API to shared model
 requests; it never owns a model server or executes tools. Freeze the endpoint's
 model/template/settings plus independently verified host artifacts, keep missing
@@ -74,6 +81,12 @@ and aggregate cleanup bounds. See `docs/rust-docker.md`; explicitly run
 `./scripts/test-rust-docker-e2e.sh --case sandbox` for adapter changes when the
 locked local environment is available. The
 sandbox gate is not checkpoint publication or production run-and-view evidence.
+The separate `playtime-docker::project` profile mounts one explicit project at
+`/work`; it never changes the experiment volume/capture profile. It enforces the
+same process/network limits, but has no aggregate project disk quota. Keep its
+exclusive lease, durable unresolved-container marker and session state outside
+the project. Also run `./scripts/test-rust-docker-e2e.sh --case project` for that
+profile; cleanup must preserve project files and never clear an uncertain create.
 Stopped-workspace capture owns bounded unextracted candidates, not writer receipts.
 See `docs/rust-workspace-capture.md`; run the additional Docker `--case checkpoint`
 gate for capture changes. Keep embedded helper digests tied to the frozen worker

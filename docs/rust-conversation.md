@@ -7,10 +7,9 @@ archive publication. This implements the conversation and storage portion of
 [#208](https://github.com/aortez/playtime/issues/208).
 
 [Strata transport](rust-strata.md) now exercises a saved chat turn with native
-model/tool/follow-up requests in an isolated Docker workshop. The reusable
-interactive workspace driver and the
-[chat console](https://github.com/aortez/playtime/issues/210) still need their
-implementation. There is no runnable chat binary yet. These libraries execute
+model/tool/follow-up requests in an isolated Docker workshop. The
+[project chat console](rust-chat-console.md) now drives saved turns through
+Strata and a separate persistent-project Docker adapter. These libraries execute
 no command or model request themselves, and do not enable host execution in
 existing experiments.
 
@@ -34,8 +33,8 @@ observations but cannot complete the turn successfully. Known usage stays known;
 an interrupted request still carries its unknown reservation.
 
 Each turn prepares its owned workspace and ends with cleanup. Chat does not request
-an experiment workspace capture or invent a publication receipt. The future
-workspace adapter must preserve editable files while stopping owned processes at
+an experiment workspace capture or invent a publication receipt. The project
+workspace adapter preserves editable files while stopping owned processes at
 the turn boundary; process continuity is only within a turn. Existing archived
 continuous runs retain their capture/publication lifecycle.
 

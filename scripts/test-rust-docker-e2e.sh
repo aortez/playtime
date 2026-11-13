@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $# -ne 2 || $1 != --case || ( $2 != sandbox && $2 != checkpoint ) ]]; then
-    echo 'usage: ./scripts/test-rust-docker-e2e.sh --case sandbox|checkpoint' >&2
+if [[ $# -ne 2 || $1 != --case || ( $2 != sandbox && $2 != checkpoint && $2 != project ) ]]; then
+    echo 'usage: ./scripts/test-rust-docker-e2e.sh --case sandbox|checkpoint|project' >&2
     echo 'Production composition (#24 D3) remains a separate gate.' >&2
     exit 2
 fi
