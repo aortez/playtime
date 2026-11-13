@@ -3,6 +3,7 @@ members = [
     "crates/playtime-core",
     "crates/playtime-protocol",
     "crates/playtime-engine",
+    "crates/playtime-harness",
     "crates/playtime-storage",
     "crates/playtime-server",
     "crates/playtime-client",
@@ -30,6 +31,7 @@ publish = false
 playtime-core = { path = "crates/playtime-core" }
 playtime-protocol = { path = "crates/playtime-protocol" }
 playtime-engine = { path = "crates/playtime-engine" }
+playtime-harness = { path = "crates/playtime-harness" }
 playtime-storage = { path = "crates/playtime-storage" }
 playtime-local = { path = "crates/playtime-local" }
 playtime-client = { path = "crates/playtime-client" }
@@ -78,7 +80,9 @@ opt-level = 3
 debug = 1
 [profile.test.package.playtime-runner]
 debug = 1
-# Versioned archive DTOs also contribute substantial test-image type metadata.
+# Shared controller and archive types also contribute test-image type metadata.
+[profile.test.package.playtime-engine]
+debug = "line-tables-only"
 [profile.test.package.playtime-protocol]
 debug = "line-tables-only"
 # The live worker also links an HTTP client. Third-party dependencies keep line

@@ -3408,6 +3408,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "playtime-harness"
+version = "0.1.0"
+dependencies = [
+ "playtime-core",
+ "playtime-engine",
+ "playtime-local",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "playtime-local"
 version = "0.1.0"
 dependencies = [

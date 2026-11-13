@@ -40,6 +40,31 @@ pub(super) struct Failures {
 }
 
 impl Failures {
+    pub fn saved(&self) -> playtime_protocol::conversation::FailureHistory {
+        playtime_protocol::conversation::FailureHistory {
+            records: self.records.iter().cloned().collect(),
+            omitted: self.omitted,
+        }
+    }
+
+    pub fn restore(
+        saved: &playtime_protocol::conversation::FailureHistory,
+    ) -> Result<Self, playtime_core::InvalidValue> {
+        let result = Self {
+            records: saved.records.clone().into(),
+            omitted: saved.omitted,
+        };
+        if result.records.len() > MAX_RECORDS
+            || result
+                .message()
+                .as_ref()
+                .is_some_and(|m| encoded_size(m) > MAX_MESSAGE_BYTES)
+        {
+            return Err(playtime_core::InvalidValue("invalid saved failure history"));
+        }
+        Ok(result)
+    }
+
     pub fn observe(
         &mut self,
         request_id: &RequestId,

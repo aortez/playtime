@@ -1,5 +1,17 @@
 # Rust compatibility and goldens
 
+## Saved compacting chat turns (#208, 2026-11-13)
+
+The new `Controller::chat` entry point ends a turn on an explicitly completed,
+nonempty plain reply, then cleans up without experiment capture/publication.
+`playtime-harness` persists private history and completed-turn checkpoints using
+version-1 types in `playtime_protocol::conversation`. Saved state binds the
+model/workspace/configuration and continues observation/request numbering. Resume
+accepts only complete exchanges and successful cleanup; active or uncertain turns
+remain fenced. The new mode is not registered as an experiment recipe or worker
+profile. Existing memento/continuous records, snapshots and behavioral goldens are
+unchanged. See [the conversation contract](rust-conversation.md).
+
 ## Shared compaction context planner (#208, 2026-11-13)
 
 The continuous policy now uses `playtime_engine::conversation::ContextPolicy`

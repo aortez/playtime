@@ -186,3 +186,8 @@ and explicit simulated publication acknowledgments. No host command or model cal
 runs in this CPU gate. The separate [continuous native gate](rust-continuous-native.md)
 checks actual process continuity and final publication. The saved-recipe
 API/workbench gate additionally verifies the immutable authoring and launch path.
+
+The standalone [chat/session contract](rust-conversation.md) also runs
+`cargo test -p playtime-harness --locked`. Its CPU fixtures exercise the real
+private-file policy, incremental writes and crash fencing around the same
+controller. They do not establish a working Strata adapter, native tools or console.

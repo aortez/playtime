@@ -35,6 +35,31 @@ pub fn summary_transcript(
     conversation: &[Value],
     instructions: &str,
 ) -> Vec<Value> {
+    transcript(prompt, summary, conversation, instructions, "controller")
+}
+
+pub(crate) fn chat_summary_transcript(
+    prompt: &str,
+    summary: Option<&str>,
+    conversation: &[Value],
+    instructions: &str,
+) -> Vec<Value> {
+    transcript(
+        prompt,
+        summary,
+        conversation,
+        instructions,
+        "user or controller notice",
+    )
+}
+
+fn transcript(
+    prompt: &str,
+    summary: Option<&str>,
+    conversation: &[Value],
+    instructions: &str,
+    user_label: &str,
+) -> Vec<Value> {
     let mut text = format!("The agent's task:\n{prompt}");
     if let Some(summary) = summary {
         text.push_str(&format!("\n\n{summary}"));
@@ -63,7 +88,7 @@ pub fn summary_transcript(
                 "\n\n[{} result]\n{content}",
                 message["tool_name"].as_str().unwrap_or("unknown")
             )),
-            _ => text.push_str(&format!("\n\n[controller]\n{content}")),
+            _ => text.push_str(&format!("\n\n[{user_label}]\n{content}")),
         }
     }
     text.push_str(&format!("\n\n{instructions}"));
@@ -175,7 +200,29 @@ pub struct CompactionConfig {
     pub initial_files: FileIndex,
 }
 
-impl CompactionConfig {
+/// Policy inputs shared by archived runs and standalone chat turns. Archive
+/// references belong to the lifecycle adapter, not to conversation planning.
+pub(crate) struct PolicyConfig {
+    pub parameters: CommonParameters,
+    pub protocol: String,
+    pub prompt: String,
+    pub inventory: String,
+    pub settings: CompactionSettings,
+}
+
+impl From<&CompactionConfig> for PolicyConfig {
+    fn from(config: &CompactionConfig) -> Self {
+        Self {
+            parameters: config.parameters.clone(),
+            protocol: config.protocol.clone(),
+            prompt: config.prompt.clone(),
+            inventory: config.inventory.clone(),
+            settings: config.settings.clone(),
+        }
+    }
+}
+
+impl PolicyConfig {
     pub(crate) fn work_reserve(&self) -> u64 {
         work_reserve(&self.parameters.limits, &self.settings)
     }

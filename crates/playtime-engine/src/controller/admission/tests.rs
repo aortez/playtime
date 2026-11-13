@@ -379,7 +379,7 @@ fn successful_finish_and_next_session_require_actual_publication() {
             .unwrap();
         controller.pump();
         let snapshot = Snapshot {
-            workspace: controller.config.initial_workspace.clone(),
+            workspace: controller.config.initial_workspace.clone().unwrap(),
             files: controller
                 .config
                 .memento

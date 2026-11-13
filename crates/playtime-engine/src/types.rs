@@ -34,39 +34,43 @@ pub struct WorkspaceConfig {
 
 pub(crate) struct RuntimeConfig {
     pub parameters: playtime_core::CommonParameters,
-    pub initial_workspace: ContentRef,
+    pub initial_workspace: Option<ContentRef>,
     pub memento: Option<ControllerConfig>,
     pub workspace: Option<WorkspaceConfig>,
-    pub compaction: Option<crate::compaction::CompactionConfig>,
+    pub compaction: Option<crate::compaction::PolicyConfig>,
+    pub conversation: Option<crate::chat::Boundary>,
 }
 
 impl RuntimeConfig {
     pub fn memento(config: ControllerConfig) -> Self {
         Self {
             parameters: config.parameters.common(),
-            initial_workspace: config.initial_workspace.clone(),
+            initial_workspace: Some(config.initial_workspace.clone()),
             memento: Some(config),
             workspace: None,
             compaction: None,
+            conversation: None,
         }
     }
     #[cfg(feature = "test-harness")]
     pub fn workspace(config: WorkspaceConfig) -> Self {
         Self {
             parameters: config.parameters.clone(),
-            initial_workspace: config.initial_workspace.clone(),
+            initial_workspace: Some(config.initial_workspace.clone()),
             memento: None,
             workspace: Some(config),
             compaction: None,
+            conversation: None,
         }
     }
     pub fn compaction(config: crate::compaction::CompactionConfig) -> Self {
         Self {
             parameters: config.parameters.clone(),
-            initial_workspace: config.initial_workspace.clone(),
+            initial_workspace: Some(config.initial_workspace.clone()),
             memento: None,
             workspace: None,
-            compaction: Some(config),
+            compaction: Some((&config).into()),
+            conversation: None,
         }
     }
 }
@@ -145,13 +149,31 @@ pub struct Checkpoint {
 /// External tools need a confirmed bridge reply; expiration is infrastructure
 /// uncertainty, never synthetic process-termination evidence. Simulation retains
 /// its historical timer behavior. The owner freezes this policy with its profile.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ToolPolicy {
     #[default]
     Simulation,
     ConfirmedExternal {
         return_overhead_ms: u64,
     },
+}
+
+impl ToolPolicy {
+    pub(crate) fn validate(
+        self,
+        limits: &playtime_core::CommonLimits,
+    ) -> Result<(), playtime_core::InvalidValue> {
+        if let Self::ConfirmedExternal { return_overhead_ms } = self
+            && (return_overhead_ms == 0
+                || return_overhead_ms >= limits.command_seconds.get().saturating_mul(1000))
+        {
+            return Err(playtime_core::InvalidValue(
+                "invalid external command return allowance",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// ID creation is injected; sampling randomness is solely the configured seed

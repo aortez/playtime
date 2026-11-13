@@ -10,7 +10,7 @@ use super::failures::{Failures, ModelErrorSource, ToolResultSource};
 use super::{Inference, Proposal, View, parse_retry_notice};
 use crate::{
     ModelFailure, ModelResponse, ToolRequest,
-    compaction::{CompactionConfig, summary_transcript},
+    compaction::{PolicyConfig, summary_transcript},
     context::{ContextWindow, encoded_size, fit_tool_result_with_notice, message, tool_message},
     conversation::{Budget, ContextPolicy, History, Plan},
 };
@@ -60,7 +60,56 @@ pub(crate) struct Compaction {
 }
 
 impl Compaction {
-    pub fn new(config: &CompactionConfig) -> Result<Self, playtime_core::InvalidValue> {
+    pub fn resume(
+        &mut self,
+        saved: &playtime_protocol::conversation::History,
+        input: &str,
+    ) -> Result<(), playtime_core::InvalidValue> {
+        self.root = saved.root.clone();
+        self.summary = saved.summary.clone();
+        self.failures = Failures::restore(&saved.failures)?;
+        self.exchanges = saved
+            .exchanges
+            .iter()
+            .map(|e| {
+                Ok(Exchange {
+                    request_id: e.request_id.clone(),
+                    messages: e.messages.clone(),
+                    failures: Failures::restore(&e.failures)?,
+                })
+            })
+            .collect::<Result<_, playtime_core::InvalidValue>>()?;
+        self.ordinal = saved.compactions;
+        self.notices.push(message("user", input));
+        Ok(())
+    }
+
+    pub fn saved(&self) -> Option<playtime_protocol::conversation::History> {
+        if self.current.is_some()
+            || !self.calls.is_empty()
+            || !self.notices.is_empty()
+            || self.pending_failures.message().is_some()
+        {
+            return None;
+        }
+        Some(playtime_protocol::conversation::History {
+            root: self.root.clone(),
+            summary: self.summary.clone(),
+            failures: self.failures.saved(),
+            exchanges: self
+                .exchanges
+                .iter()
+                .map(|e| playtime_protocol::conversation::Exchange {
+                    request_id: e.request_id.clone(),
+                    messages: e.messages.clone(),
+                    failures: e.failures.saved(),
+                })
+                .collect(),
+            compactions: self.ordinal,
+        })
+    }
+
+    pub fn new(config: &PolicyConfig) -> Result<Self, playtime_core::InvalidValue> {
         Ok(Self {
             context_policy: ContextPolicy::new(
                 config.parameters.limits.clone(),
@@ -118,7 +167,12 @@ impl Compaction {
         messages
     }
 
-    fn summary_messages(&self, older: usize, config: &CompactionConfig) -> Vec<Value> {
+    fn summary_messages(
+        &self,
+        older: usize,
+        config: &PolicyConfig,
+        interactive: bool,
+    ) -> Vec<Value> {
         if config.settings.recent_exchanges == 0 {
             // Nothing bounds the bytes of the next response, which joins this
             // summary. Extending the measured work prefix lets server usage
@@ -141,7 +195,12 @@ impl Compaction {
                     .flat_map(|exchange| exchange.messages.clone()),
             )
             .collect();
-        summary_transcript(
+        let render = if interactive {
+            crate::compaction::chat_summary_transcript
+        } else {
+            summary_transcript
+        };
+        render(
             &config.prompt,
             self.summary
                 .as_ref()
@@ -178,6 +237,7 @@ impl Compaction {
         let history = CompactionHistory {
             policy: self,
             config: view.config.compaction.as_ref().unwrap(),
+            interactive: view.config.conversation.is_some(),
         };
         let facts = view.facts;
         let budget = Budget {
@@ -407,7 +467,9 @@ impl Compaction {
     pub fn after_response(&mut self, view: View<'_>) {
         // A retried request left no response, so it adds no exchange.
         if let Some(exchange) = self.current.take() {
-            if exchange.messages.last().unwrap()["role"] == "assistant" {
+            if exchange.messages.last().unwrap()["role"] == "assistant"
+                && view.config.conversation.is_none()
+            {
                 let config = view.config.compaction.as_ref().unwrap();
                 self.notices.push(message(
                     "user",
@@ -436,10 +498,94 @@ impl Compaction {
     }
 }
 
+pub(crate) fn validate_chat_history(
+    config: &crate::chat::ConversationConfig,
+    history: &playtime_protocol::conversation::History,
+) -> Result<(), playtime_core::InvalidValue> {
+    use playtime_core::InvalidValue;
+    let invalid = || InvalidValue("saved chat history contains an invalid or incomplete exchange");
+    let text = |m: &Value, role: &str| {
+        m["role"] == role && m["content"].is_string() && m.get("tool_calls").is_none()
+    };
+    if history.root.len() != 2
+        || history.root[0]
+            != message(
+                "system",
+                format!("{}\n\n{}", config.instructions, config.inventory),
+            )
+        || !text(&history.root[1], "user")
+        || history.root[1]["content"]
+            .as_str()
+            .unwrap()
+            .trim()
+            .is_empty()
+        || history
+            .summary
+            .as_ref()
+            .is_some_and(|s| !text(s, "assistant"))
+        || history.exchanges.is_empty()
+    {
+        return Err(invalid());
+    }
+    Failures::restore(&history.failures)?;
+    let mut ids = std::collections::BTreeSet::new();
+    for exchange in &history.exchanges {
+        if !ids.insert(&exchange.request_id) {
+            return Err(invalid());
+        }
+        Failures::restore(&exchange.failures)?;
+        let mut messages = exchange.messages.iter().peekable();
+        while messages.peek().is_some_and(|m| text(m, "user")) {
+            messages.next();
+        }
+        let response = messages.next().ok_or_else(invalid)?;
+        if !crate::validation::valid_message(response) {
+            return Err(invalid());
+        }
+        let calls = response["tool_calls"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        if calls.len() > 8 {
+            return Err(invalid());
+        }
+        for call in calls {
+            let result = messages.next().ok_or_else(invalid)?;
+            if !text(result, "tool")
+                || !call["function"]["name"].is_string()
+                || result["tool_name"] != call["function"]["name"]
+            {
+                return Err(invalid());
+            }
+        }
+        if messages.next().is_some() {
+            return Err(invalid());
+        }
+    }
+    let final_message = history
+        .exchanges
+        .last()
+        .unwrap()
+        .messages
+        .last()
+        .ok_or_else(invalid)?;
+    if final_message["role"] != "assistant"
+        || final_message["content"]
+            .as_str()
+            .is_none_or(|c| c.trim().is_empty())
+        || final_message["tool_calls"]
+            .as_array()
+            .is_some_and(|c| !c.is_empty())
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 /// Supplies complete exchanges and preserved facts to the shared planner.
 struct CompactionHistory<'a> {
     policy: &'a Compaction,
-    config: &'a CompactionConfig,
+    config: &'a PolicyConfig,
+    interactive: bool,
 }
 
 impl History for CompactionHistory<'_> {
@@ -456,6 +602,7 @@ impl History for CompactionHistory<'_> {
     }
 
     fn summary_messages(&self, older: usize) -> Vec<Value> {
-        self.policy.summary_messages(older, self.config)
+        self.policy
+            .summary_messages(older, self.config, self.interactive)
     }
 }
