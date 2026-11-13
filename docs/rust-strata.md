@@ -37,8 +37,9 @@ conversation's `model` digest.
 The reviewed source profile is Strata engine 0.1.57 / 0.1.58 with
 `serve/responses.py` SHA-256
 `aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b`.
-Both installed copies had these bytes; only the Framework HIP target has been
-qualified live here. A newer source/version needs review and new evidence.
+Both installed copies had these bytes. Framework HIP and Bird CUDA have now
+passed the live tool/follow-up and cancellation smoke with DFlash2 enabled.
+A newer source/version needs review and new evidence.
 
 Sampler settings are explicit on every request: temperature, top-p/top-k/min-p,
 repetition/presence/frequency penalties, penalty window and the controller's seed.
@@ -148,6 +149,38 @@ benchmark. Cancellation preserved partial output and unknown usage; later status
 showed zero in-flight requests and an idle slot. Workshop resources were confirmed
 absent, the owned server stopped, and the helper restored Ollama successfully.
 
-Bird's existing startup check reported its RTX 3090 unavailable to the NVIDIA
-driver. No CUDA inference or reboot was attempted in this work; CUDA qualification
-and a usable console remain outstanding.
+The initial Bird startup check reported its RTX 3090 unavailable to the NVIDIA
+driver, so that attempt did not run CUDA inference. A later retry on the same
+date found both GPUs and passed the fast-profile smoke below. No reboot or GPU
+repair was performed by these tests. A usable console remains outstanding.
+
+## Preferred fast profiles (2026-11-13)
+
+Use `framework-gyro-m-fast` for the Framework pilot and `bird-gyro-m-fast` for
+Bird's initial harness work, per the user's preference. These are the existing
+host-owned presets with DFlash2 enabled and medium work thinking. Framework
+allocates 163,840 context tokens; Bird allocates 131,072. Keep these distinct
+from the earlier drafting-off lock and use a new saved conversation when the
+model lock/settings change. The non-fast preset remains available for comparison.
+
+The [Framework fast report](../experiments/strata-adapter/2026-11-13-framework-fast-smoke.json)
+and [lock](../models/framework-strata-gyro-m-fast-v1.lock.json) identify HIP
+engine 0.1.58 and the actual DFlash2 pack/arguments. Its two model calls and one
+real `read_file` call finished in 6.135 seconds with 113 generated tokens and
+complete usage accounting. Reported decode rates were 50.1 and 63.7 tokens/second,
+compared with 28.2 and 28.1 in the earlier drafting-off smoke. Cancellation passed,
+the server was observed idle, owned workshop resources were removed, and the
+helper stopped its server and restored Ollama.
+
+The [Bird fast report](../experiments/strata-adapter/2026-11-13-bird-fast-smoke.json)
+and [lock](../models/bird-strata-gyro-m-fast-v1.lock.json) record CUDA engine
+0.1.57, both the RTX 4090 and RTX 3090 loaded, and the actual drafter arguments
+and file hashes. Its two model calls and one real `read_file` call finished in
+3.536 seconds with 118 generated tokens and complete usage accounting. Reported
+decode rates were 131.5 and 197.8 tokens/second. Cancellation passed, the server
+was observed idle, owned workshop resources were removed, and the helper stopped
+its server, restored the original 450/420 W limits and restarted idle Ollama.
+
+These short, sampled responses use different generated text and random file
+contents. Their timing is integration evidence, not a controlled speedup ratio,
+a populated-context test or an accuracy comparison.

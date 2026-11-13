@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "identity": {
+    "model": "qwen3.8-flash-next-gyro-gyro-m",
+    "engine": "0.1.58",
+    "context_tokens": 163840,
+    "model_path": "/home/oldman/Strata-data/models/gyro-Gyro-M/Qwen3.8-Flash-Next-Gyro-M-TQ2_0.gguf",
+    "template_sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce",
+    "defaults": {
+      "n_predict": -1,
+      "temperature": 1.0,
+      "top_k": 20,
+      "top_p": 0.95
+    },
+    "template_capabilities": {
+      "supports_parallel_tool_calls": true,
+      "supports_preserve_reasoning": true,
+      "supports_system_role": true,
+      "supports_tool_calls": true,
+      "supports_tools": true
+    },
+    "shared_settings": {
+      "defaults": {},
+      "shared": false
+    }
+  },
+  "host": {
+    "backend": "hip",
+    "quantization": "TQ2_0",
+    "engine_sha256": "1f22831cc4b017d4fa8e4662537e54125387abd829cacd939f9a3796b6a88e05",
+    "artifacts_manifest_sha256": "82cb9d98c7f5b21c5055b2057aefcb448e909f5c312b3ee35a8a63a9fcf2a851",
+    "launch_configuration_sha256": "d8ff6da0179287aa7df74b3481cf108db4b67b019e94873b3a9b3107b943b59d",
+    "responses_source_sha256": "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b"
+  },
+  "settings": {
+    "thinking": "medium",
+    "summary_thinking": "none",
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "penalty_last_n": 64
+  }
+}
