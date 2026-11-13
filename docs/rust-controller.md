@@ -98,6 +98,11 @@ cargo test -p playtime-runner --features test-harness --test workspace_probe --l
 
 ## Continuous compaction policy
 
+Context-fit decisions, summary scheduling and replacement checks use the shared
+[conversation planner](rust-conversation.md). The controller still owns admission,
+dispatch, accounting and cleanup, and the policy retains the transcript and
+failure history.
+
 `Controller::continuous` runs `continuous_compaction_v1` through the shared
 controller and effect dispatcher. The packaged worker supports an explicit
 [continuous native profile](rust-continuous-native.md); recipe/API/workbench

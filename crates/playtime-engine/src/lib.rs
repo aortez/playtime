@@ -8,6 +8,7 @@ pub mod compaction;
 mod context;
 mod control;
 mod controller;
+pub mod conversation;
 pub mod evidence;
 mod policy;
 pub mod simulation;

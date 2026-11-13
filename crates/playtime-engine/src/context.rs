@@ -103,7 +103,7 @@ pub(crate) fn calibrated_tokens(
 }
 
 #[derive(Default)]
-pub(crate) struct ContextWindow {
+pub struct ContextWindow {
     messages: Vec<Value>,
     tools: Vec<Value>,
     tokens: Option<u64>,

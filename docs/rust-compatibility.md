@@ -1,5 +1,15 @@
 # Rust compatibility and goldens
 
+## Shared compaction context planner (#208, 2026-11-13)
+
+The continuous policy now uses `playtime_engine::conversation::ContextPolicy`
+for context-fit decisions, summary scheduling and replacement checks. The same
+component accepts a caller-owned transcript and common limits without workshop
+or archive configuration. Runtime admission, tool dispatch, failure history,
+summary validation and publication remain in the existing controller/policy.
+The compaction records and their golden remain unchanged; this extraction adds
+no wire format, saved-session format or new execution mode.
+
 ## Release refusal reasons (#204, 2026-11-10)
 
 A refused release used to reach clients with empty details: the daemon put

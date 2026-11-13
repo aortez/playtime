@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU64;
 
-use playtime_core::{CommonParameters, InvalidValue};
+use playtime_core::{CommonLimits, CommonParameters, InvalidValue};
 use playtime_protocol::archive::ContentRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -127,6 +127,12 @@ impl TryFrom<&playtime_protocol::api::CompactionSettings> for CompactionSettings
 impl CompactionSettings {
     pub fn validate(&self, parameters: &CommonParameters) -> Result<(), InvalidValue> {
         parameters.validate()?;
+        self.validate_limits(&parameters.limits)
+    }
+
+    /// Validate conversation settings without requiring a workshop or archive.
+    pub fn validate_limits(&self, limits: &CommonLimits) -> Result<(), InvalidValue> {
+        limits.validate()?;
         if self.schema_version != 1 {
             return Err(InvalidValue("unsupported compaction settings version"));
         }
@@ -135,7 +141,7 @@ impl CompactionSettings {
                 "compaction requires trigger 1..99 and retention 0..32",
             ));
         }
-        if self.summary_tokens > parameters.limits.tokens_per_call {
+        if self.summary_tokens > limits.tokens_per_call {
             return Err(InvalidValue(
                 "summary cap exceeds the accepted per-call allocation",
             ));
@@ -171,13 +177,17 @@ pub struct CompactionConfig {
 
 impl CompactionConfig {
     pub(crate) fn work_reserve(&self) -> u64 {
-        CompactionSettings::safety_margin(self.parameters.limits.context_tokens.get())
-            .saturating_add(self.settings.summary_tokens.get())
-            .saturating_add(encoded_size(
-                &json!({"role":"user", "content":self.settings.instructions}),
-            ))
-            .saturating_add(self.parameters.limits.output_bytes.get())
+        work_reserve(&self.parameters.limits, &self.settings)
     }
+}
+
+pub(crate) fn work_reserve(limits: &CommonLimits, settings: &CompactionSettings) -> u64 {
+    CompactionSettings::safety_margin(limits.context_tokens.get())
+        .saturating_add(settings.summary_tokens.get())
+        .saturating_add(encoded_size(
+            &json!({"role":"user", "content":settings.instructions}),
+        ))
+        .saturating_add(limits.output_bytes.get())
 }
 
 pub(crate) fn tools(allow_finish_run: bool) -> Vec<Value> {

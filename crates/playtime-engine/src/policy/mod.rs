@@ -211,8 +211,8 @@ impl Policy {
     pub fn compaction(
         config: &crate::compaction::CompactionConfig,
     ) -> Result<Self, playtime_core::InvalidValue> {
-        let policy = compaction::Compaction::new(config);
-        if !policy.initial_fits(config) {
+        let policy = compaction::Compaction::new(config)?;
+        if !policy.initial_fits() {
             return Err(playtime_core::InvalidValue(
                 "initial compaction context cannot fit below the trigger with its required reserves",
             ));
