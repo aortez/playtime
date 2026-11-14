@@ -76,6 +76,15 @@ else:
         self.write_program(self.package / "playtime-chat", r'''
 import json, os, pathlib, signal, sys, time
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
+if '--select-session' in sys.argv:
+    assert not (root / 'started').exists(), 'picker must precede SSH ownership'
+    (root / 'picked').write_text(json.dumps(sys.argv[1:]))
+    mode = os.environ.get('FIXTURE_MODE')
+    if mode == 'picker-failure':
+        sys.exit(2)
+    print(json.dumps({'session': str(root / 'saved-session') if mode == 'picker-resume' else None,
+                      'cancelled': mode == 'picker-cancel'}))
+    sys.exit(0)
 (root / 'client').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd()}))
 if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
     def stop(*args):
@@ -108,6 +117,36 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         self.assertFalse((self.root / 'started').exists())
         self.assertFalse((self.root / 'verified').exists())
         self.assertFalse((self.root / 'client').exists())
+
+    def test_picker_resumes_before_host_start_and_preserves_context(self):
+        result = self.run_fixture("picker-resume", "--sessions", "--full-verify", "--workspace", "/chosen/project", "--context-tokens", "65536")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        picked = json.loads((self.root / 'picked').read_text())
+        self.assertIn('/chosen/project', picked)
+        self.assertIn('65536', picked)
+        client = json.loads((self.root / 'client').read_text())['argv']
+        self.assertEqual(client[-2:], ['--session', str(self.root / 'saved-session')])
+        self.assertTrue((self.root / 'restored').exists())
+
+    def test_picker_cancel_and_failure_never_start_host(self):
+        for mode, expected in [('picker-cancel', 0), ('picker-failure', 1)]:
+            result = self.run_fixture(mode, '--sessions')
+            self.assertEqual(result.returncode, expected, result.stderr)
+            self.assertTrue((self.root / 'picked').exists())
+            self.assertFalse((self.root / 'started').exists())
+            self.assertFalse((self.root / 'client').exists())
+
+    def test_explicit_sessions_and_headless_calls_skip_picker(self):
+        for args in [('--session', '/saved'), ('--prompt', '--sessions')]:
+            result = self.run_fixture('', *args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((self.root / 'picked').exists())
+
+    def test_picker_new_conversation_has_no_session_override(self):
+        result = self.run_fixture('', '--sessions')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        client = json.loads((self.root / 'client').read_text())['argv']
+        self.assertNotIn('--session', client)
 
     def test_exact_handoff_preserves_project_and_arguments_then_restores(self):
         result = self.run_fixture("", "--prompt", "literal ; $(stuff)")

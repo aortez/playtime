@@ -82,6 +82,10 @@ impl PrivateDirectory {
     pub fn lock(&self) -> io::Result<File> {
         lock(&self.0, OsStr::new(".lock"))
     }
+    /// Acquire the same private lease without waiting behind another client.
+    pub fn try_lock(&self) -> io::Result<File> {
+        lock_for(&self.0, OsStr::new(".lock"), std::time::Duration::ZERO)
+    }
     fn name(name: &str) -> io::Result<&OsStr> {
         if name.is_empty() || name.starts_with('.') || name.contains('/') || name.contains('\0') {
             return Err(invalid());
@@ -126,6 +130,9 @@ pub fn lock_private(path: &Path) -> io::Result<File> {
     lock(&directory, path.file_name().ok_or_else(invalid)?)
 }
 fn lock(directory: &Directory, name: &OsStr) -> io::Result<File> {
+    lock_for(directory, name, std::time::Duration::from_secs(5))
+}
+fn lock_for(directory: &Directory, name: &OsStr, wait: std::time::Duration) -> io::Result<File> {
     let file = File::from(openat(
         &directory.0,
         name,
@@ -143,7 +150,7 @@ fn lock(directory: &Directory, name: &OsStr) -> io::Result<File> {
     }
     directory.0.sync_all()?;
     // Bounded contention avoids wedging a caller behind a hung peer.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + wait;
     loop {
         match file.try_lock() {
             Ok(()) => return Ok(file),
@@ -152,8 +159,16 @@ fn lock(directory: &Directory, name: &OsStr) -> io::Result<File> {
             }
             Err(std::fs::TryLockError::WouldBlock) => {
                 return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "client state lock timeout",
+                    if wait.is_zero() {
+                        io::ErrorKind::WouldBlock
+                    } else {
+                        io::ErrorKind::TimedOut
+                    },
+                    if wait.is_zero() {
+                        "client state lock is held"
+                    } else {
+                        "client state lock timeout"
+                    },
                 ));
             }
             Err(std::fs::TryLockError::Error(e)) => return Err(e),

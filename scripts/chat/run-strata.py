@@ -89,11 +89,12 @@ def check_host(report, lock):
 
 
 def session(preset, profile, args):
-    started_at = time.monotonic()
     # Wrapper flags precede chat arguments, so a prompt whose text is literally
     # "--full-verify" remains an ordinary prompt value.
-    full_verify = args[:1] == ["--full-verify"]
-    if full_verify:
+    full_verify = force_picker = False
+    while args[:1] in (["--full-verify"], ["--sessions"]):
+        full_verify |= args[0] == "--full-verify"
+        force_picker |= args[0] == "--sessions"
         args = args[1:]
     for arg in args:
         if arg.split("=", 1)[0] in ("--endpoint", "--model-lock", "--image-lock"):
@@ -108,8 +109,29 @@ def session(preset, profile, args):
         raise RuntimeError("playtime-chat is not installed beside this wrapper")
     if args in (["--help"], ["-h"], ["--version"], ["-V"]):
         if args in (["--help"], ["-h"]):
-            print("Launcher option (before chat arguments): --full-verify rehashes all model files.", flush=True)
+            print("Launcher options (before chat arguments): --full-verify rehashes model files; "
+                  "--sessions opens the local session picker. Interactive launches pick by default.", flush=True)
         return subprocess.call([str(executable), *args])
+    client_args = [str(executable), "--model-lock", str(lock_path), "--image-lock", str(image_path)]
+    options = {arg.split("=", 1)[0] for arg in args}
+    if options & {"--select-session", "--list-sessions"} and not options & {"--prompt", "--session", "--recover-compaction"}:
+        return subprocess.call([*client_args, *args])
+    explicit = bool(options & {"--session", "--recover-compaction", "--prompt"})
+    if force_picker and explicit:
+        raise RuntimeError("--sessions cannot be combined with --session, --recover-compaction or --prompt")
+    if force_picker or (sys.stdin.isatty() and not explicit):
+        try:
+            picked = subprocess.run([*client_args, "--select-session", *args],
+                                    stdout=subprocess.PIPE, text=True, check=True)
+        except KeyboardInterrupt:
+            return 130
+        choice = json.loads(picked.stdout)
+        if choice["cancelled"]:
+            return 0
+        if choice["session"] is not None:
+            args = [*args, "--session", choice["session"]]
+    # Startup timings exclude time spent choosing a conversation.
+    started_at = time.monotonic()
     verifier = (PACKAGE / "verify-strata-host.py").read_bytes()
     evidence = private_run_directory()
     log(f"session evidence: {evidence}")

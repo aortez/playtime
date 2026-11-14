@@ -63,6 +63,25 @@ codex-launcher playtime-bird-fast
 codex-launcher playtime-framework-fast --prompt 'Inspect the project and explain its tests.' --json
 ```
 
+Interactive launches show a local session picker **before starting the model**.
+Choose `0` (or Enter) for a new conversation, a numbered resumable session, or
+`q` to cancel. The list shows the last user message and age for recent sessions
+with the selected workspace and model identity. Sessions with changed settings,
+unfinished turns, corrupt checkpoints, or a held lease cannot be selected.
+Unfinished turns require separate inspection/recovery; the picker never replays
+them. Explicit `--session`, `--recover-compaction`, and headless `--prompt` calls
+bypass selection. Use a leading `--sessions` to request the picker explicitly:
+
+```sh
+codex-launcher playtime-bird-fast --sessions --workspace /absolute/project
+```
+
+Discovery checks at most 200 recent directories and displays up to 20 matches
+under `--state-dir` (default `~/.local/state/playtime-chat`). Sessions saved
+elsewhere remain available through `--session`. `--list-sessions` emits the same
+catalog as JSON without starting inference. Selection validates the saved
+checkpoint, and normal startup validates it again after acquiring the host.
+
 The current directory becomes `/work` in the tool container. Explicitly select
 another project with `--workspace /absolute/path`. The console prints its private
 session directory; pass `--session /that/directory` and the same project/settings
@@ -85,7 +104,7 @@ Start a new conversation when switching hosts.
 
 The launcher's effort picker does not translate settings for this independent
 program. Effort is part of the reviewed model lock. The wrapper accepts a leading
-`--full-verify` before any chat arguments; remaining CLI arguments pass unchanged
+`--full-verify` and/or `--sessions` before any chat arguments; remaining CLI arguments pass unchanged
 to `playtime-chat`. Endpoint, model-lock and image-lock overrides are refused
 because this preset owns them. Existing Codex profiles keep their own configuration
 and effort controls.
@@ -94,7 +113,7 @@ and effort controls.
 
 `scripts/chat/run-strata.py` owns an SSH forward and the installed remote helper
 for the whole chat session. The helper takes its exclusive host lease and refuses
-busy Strata/Ollama/GPU workloads. Menu status checks call only its read-only
+busy Strata/GPU workloads. Menu status checks call only its read-only
 `--status` path; they never start or hash a model.
 
 After startup, the wrapper reads the helper's own session location and runs the
@@ -138,15 +157,28 @@ verification failure stops the local client; unconfirmed host restoration return
 failure. The remote helper's existing heartbeat watchdog handles lost owners.
 EOF and a terminal SSE event alone are not treated as remote termination proof.
 
-The installer includes both reviewed fast model locks. Bird's helper restores its
-original GPU power limits and Ollama state on exit; Framework restores its Ollama
-state. No other active inference session is evicted to make a test run.
+The installer includes both reviewed fast model locks. Both helpers stop their
+owned Strata server on exit; Bird also restores its original GPU power limits.
+Ollama was retired on both hosts on November 13, 2026, including the helpers'
+stop/restart hooks. It is not restarted when a console exits. No other active
+inference session is evicted to make a test run.
 
 Run the CPU fixtures without contacting a host:
 
 ```sh
 python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v
 ```
+
+## Session picker check (November 13, 2026)
+
+The installed launcher was exercised through a real terminal: cancel before
+model startup, select Bird's saved session, and select a new Framework
+conversation. Both live conversations completed a file-reading turn and closed
+cleanly. The menus appeared in 0.03–0.08 seconds; model startup followed selection.
+Bird resumed the previous completed checkpoint. Both hosts ended idle with
+Ollama absent, no running owned project containers, and Bird's original 450/420 W
+limits restored. This is a session/lifecycle check, not a harness benchmark.
+See [the recorded evidence](../experiments/chat-console/2026-11-13-session-picker.json).
 
 They exercise refusal, handoff and cleanup with fake SSH and client processes.
 Real project tool behavior, server configuration and restoration require the

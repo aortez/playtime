@@ -37,8 +37,8 @@ use tokio_util::sync::CancellationToken;
 )]
 struct Args {
     /// Loopback endpoint held through the host's exclusive session helper.
-    #[arg(long)]
-    endpoint: String,
+    #[arg(long, required_unless_present_any = ["select_session", "list_sessions"])]
+    endpoint: Option<String>,
     /// Reviewed identity lock. The server owner must verify its host artifacts.
     #[arg(long)]
     model_lock: PathBuf,
@@ -52,6 +52,12 @@ struct Args {
     /// Create or reopen this private session directory. Only completed turns resume.
     #[arg(long)]
     session: Option<PathBuf>,
+    /// Pick a compatible saved conversation locally, without starting inference.
+    #[arg(long, conflicts_with_all = ["session", "recover_compaction", "prompt", "list_sessions", "endpoint"])]
+    select_session: bool,
+    /// List recent compatible sessions as JSON without contacting inference.
+    #[arg(long, conflicts_with_all = ["session", "recover_compaction", "prompt", "endpoint"])]
+    list_sessions: bool,
     /// Fork the last completed history after a truncated first compaction.
     /// Raises the summary cap; keeps the failed session and all evidence intact.
     #[arg(long, conflicts_with = "session")]
@@ -248,13 +254,16 @@ async fn read_prompt(
 }
 async fn main_run(args: Args) -> Result<()> {
     let shutdown = CancellationToken::new();
-    let signal_cancel = shutdown.clone();
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
-    tokio::spawn(async move {
-        tokio::select! {_=terminate.recv()=>(),_=hangup.recv()=>()};
-        signal_cancel.cancel();
-    });
+    if !(args.select_session || args.list_sessions) {
+        let signal_cancel = shutdown.clone();
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
+        tokio::spawn(async move {
+            tokio::select! {_=terminate.recv()=>(),_=hangup.recv()=>()};
+            signal_cancel.cancel();
+        });
+    }
     let private = args.state_dir.clone().unwrap_or(
         std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -267,15 +276,19 @@ async fn main_run(args: Args) -> Result<()> {
         .session
         .clone()
         .unwrap_or(private.join(format!("session-{}", Token::generate()?.expose())));
-    PrivateDirectory::open(&session_path, true)?;
-    let session_path = std::fs::canonicalize(session_path)?;
+    let local_selection = args.select_session || args.list_sessions;
+    let session_path = if local_selection {
+        session_path
+    } else {
+        PrivateDirectory::open(&session_path, true)?;
+        std::fs::canonicalize(session_path)?
+    };
     let project = args.workspace.clone();
     let state = private.clone();
-    let mut protected = vec![
-        session_path.clone(),
-        args.model_lock.clone(),
-        args.image_lock.clone(),
-    ];
+    let mut protected = vec![args.model_lock.clone(), args.image_lock.clone()];
+    if !local_selection {
+        protected.push(session_path.clone());
+    }
     if let Some(source) = &args.recover_compaction {
         protected.push(source.clone());
     }
@@ -295,7 +308,30 @@ async fn main_run(args: Args) -> Result<()> {
         seed: 1042,
     };
     let config = config(&args, &lock, &image, &directory, &limits)?;
-    let mut client = Client::new(Endpoint::parse(&args.endpoint)?, lock, Default::default())?;
+    if local_selection {
+        let entries = playtime_chat::sessions::catalog(&private, &config)?;
+        if args.list_sessions {
+            println!("{}", serde_json::to_string(&entries)?);
+        } else {
+            eprintln!(
+                "Playtime sessions — {}\nModel: {}",
+                clean(&directory.root().path().display().to_string()),
+                clean(&lock.identity.model)
+            );
+            let choice = playtime_chat::sessions::select(
+                &entries,
+                &mut io::stdin().lock(),
+                &mut io::stderr().lock(),
+            )?;
+            println!("{}", serde_json::to_string(&choice)?);
+        }
+        return Ok(());
+    }
+    let mut client = Client::new(
+        Endpoint::parse(args.endpoint.as_deref().ok_or("missing endpoint")?)?,
+        lock,
+        Default::default(),
+    )?;
     client
         .verify(
             Instant::now() + Duration::from_secs(20),

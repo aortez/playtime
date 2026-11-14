@@ -34,7 +34,12 @@ target/debug/playtime-chat \
 The default state root is `~/.local/state/playtime-chat`, outside the selected
 project. `--state-dir` changes it; use one consistent state root for all consoles
 so their project leases contend. A new private session directory is printed on
-startup. To reopen a completed session, pass `--session /absolute/session` and
+startup. Launcher-managed interactive starts offer a local session picker before
+inference starts; see [the launcher guide](rust-chat-launcher.md). Direct
+`playtime-chat --select-session` and `--list-sessions` modes require the same
+model/image locks, workspace and limits, but no endpoint. They emit a JSON choice
+or catalog and exit without connecting to Docker or a model. To reopen a completed
+session, pass `--session /absolute/session` and
 the same model, workspace and allocation settings. A changed config is rejected.
 The executable, image/model locks, session and private state must be outside the
 project. When editing Playtime itself, install the binary and copy its reviewed

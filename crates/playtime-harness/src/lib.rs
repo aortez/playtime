@@ -71,8 +71,25 @@ impl Session {
     }
 
     pub fn open(path: &Path, expected: &ConversationConfig) -> io::Result<Self> {
+        Self::open_inner(path, expected, false)
+    }
+
+    /// Validate a saved session without waiting for a live console's lease.
+    pub fn try_open(path: &Path, expected: &ConversationConfig) -> io::Result<Self> {
+        Self::open_inner(path, expected, true)
+    }
+
+    fn open_inner(
+        path: &Path,
+        expected: &ConversationConfig,
+        nonblocking: bool,
+    ) -> io::Result<Self> {
         let directory = PrivateDirectory::open(path, false)?;
-        let lock = directory.lock()?;
+        let lock = if nonblocking {
+            directory.try_lock()?
+        } else {
+            directory.lock()?
+        };
         let config: ConversationConfig =
             serde_json::from_slice(&directory.read("config.json", CONFIG_BYTES)?)?;
         let head: Head = serde_json::from_slice(&directory.read("head.json", 4096)?)?;
