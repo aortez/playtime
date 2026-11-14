@@ -502,10 +502,26 @@ pub(crate) fn verify_container_mount(
     } else {
         (l.memory_bytes, l.pids)
     };
+    let labels_match = if let Some(project) = project {
+        // Development images inherit descriptive labels from their base images.
+        // Require the complete Playtime ownership namespace exactly; unrelated
+        // image metadata does not establish or invalidate container ownership.
+        let expected = project.labels();
+        c["Labels"].as_object().is_some_and(|actual| {
+            expected
+                .iter()
+                .all(|(key, value)| actual.get(key) == Some(&json!(value)))
+                && actual
+                    .keys()
+                    .all(|key| !key.starts_with("io.playtime.") || expected.contains_key(key))
+        })
+    } else {
+        c["Labels"] == json!(p.labels())
+    };
     if value["Name"] != format!("/{}", p.name)
         || value["Image"] != p.image
         || c["Image"] != p.image
-        || c["Labels"] != json!(project.map_or_else(|| p.labels(), |p| p.labels()))
+        || !labels_match
         || c["Entrypoint"] != json!([PYTHON])
         || c["Cmd"]
             != json!([

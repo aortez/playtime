@@ -89,6 +89,11 @@ catalog as JSON without starting inference. `--inspect-interrupted PATH` likewis
 prints the validated report locally without acquiring the host. Selection validates the saved
 checkpoint, and normal startup validates it again after acquiring the host.
 
+Projects can supply a prepared `.devcontainer/devcontainer.json` environment.
+Run `--prepare-environment` explicitly before its first use; normal launches only
+verify and select it. See [project environments](rust-project-environments.md) for
+the supported definition, offline image contract and saved-session behavior.
+
 The current directory becomes `/work` in the tool container. Explicitly select
 another project with `--workspace /absolute/path`. The console prints its private
 session directory; pass `--session /that/directory` and the same project/settings

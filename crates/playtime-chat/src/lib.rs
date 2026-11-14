@@ -1,5 +1,6 @@
 //! Async effect driver and terminal-client adapters for the shared chat harness.
 //! No alternate agent loop or compaction policy lives here.
+pub mod environment;
 pub mod native;
 pub mod runtime;
 pub mod sessions;

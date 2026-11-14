@@ -91,11 +91,25 @@ def check_host(report, lock):
 def session(preset, profile, args):
     # Wrapper flags precede chat arguments, so a prompt whose text is literally
     # "--full-verify" remains an ordinary prompt value.
+    import project_environment
+
     full_verify = force_picker = False
-    while args[:1] in (["--full-verify"], ["--sessions"]):
-        full_verify |= args[0] == "--full-verify"
-        force_picker |= args[0] == "--sessions"
-        args = args[1:]
+    environment = None
+    while args:
+        if args[0] in ("--full-verify", "--sessions"):
+            full_verify |= args[0] == "--full-verify"
+            force_picker |= args[0] == "--sessions"
+            args = args[1:]
+        elif args[0] == "--environment":
+            if len(args) < 2 or environment is not None:
+                raise RuntimeError("--environment needs one selection")
+            environment, args = args[1], args[2:]
+        elif args[0] == "--prepare-environment":
+            if full_verify or force_picker or environment is not None:
+                raise RuntimeError("environment preparation accepts only --workspace")
+            return subprocess.call([sys.executable, str(PACKAGE / "project_environment.py"), *args[1:]])
+        else:
+            break
     for arg in args:
         if arg.split("=", 1)[0] in ("--endpoint", "--model-lock", "--image-lock"):
             raise RuntimeError(f"{arg.split('=', 1)[0]} is owned by this preset")
@@ -111,10 +125,13 @@ def session(preset, profile, args):
         if args in (["--help"], ["-h"]):
             print("Launcher options (before chat arguments): --full-verify rehashes model files; "
                   "--sessions opens the local session picker. --stop-server releases an idle warm model. "
+                  "--prepare-environment builds the project devcontainer; --environment general|LOCK selects an environment. "
                   "Interactive launches pick by default.", flush=True)
         return subprocess.call([str(executable), *args])
     if args == ["--stop-server"]:
         return subprocess.call(ssh(preset) + remote(preset, "python3", preset["helper"], "--stop"), stdin=subprocess.DEVNULL)
+    image_path = project_environment.resolve(args, PACKAGE, environment)
+    json.loads(image_path.read_text())
     client_args = [str(executable), "--model-lock", str(lock_path), "--image-lock", str(image_path)]
     options = {arg.split("=", 1)[0] for arg in args}
     if options & {"--select-session", "--list-sessions", "--inspect-interrupted"} and not options & {"--prompt", "--session", "--recover-compaction", "--recover-interrupted"}:
@@ -259,7 +276,7 @@ def session(preset, profile, args):
         (evidence / "timings.json").write_text(json.dumps(timings, indent=2) + "\n")
         log(f"verified in {verification_seconds:.1f}s; {stats['reused_files']} cached, "
             f"{stats['hashed_files']} hashed ({stats['hashed_bytes'] / 1e9:.2f} GB read); "
-            f"starting {profile} chat in {Path.cwd()}")
+            f"starting {profile} chat in {project_environment.workspace_arguments(args)[0]}")
         child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
                                   "--model-lock", str(lock_path), "--image-lock", str(image_path), *args])
         while child.poll() is None:

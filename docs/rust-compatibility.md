@@ -1709,3 +1709,19 @@ CPU fixtures cover first/subsequent turns, known/unknown/not-dispatched tools,
 missing/mismatched evidence, source immutability, one-time notice delivery, and the
 launcher handoff. These do not establish recovery from unrecorded process crashes
 or remote inference termination. No engine policy, workshop image, or golden changes.
+
+## Project-owned chat environments
+
+The standalone launcher can explicitly prepare a project-defined development
+image and select it for chat. The derived image keeps the existing tool bridge
+and Docker execution controls. Its observed inventory and exact image ID become
+part of the conversation configuration; new sessions retain a private environment
+lock. Explicit restart and recovery use that saved image even after another image
+is prepared. Legacy sessions retain the original general-workshop inventory.
+
+The project Docker profile now permits descriptive base-image labels while
+requiring the entire `io.playtime.*` ownership namespace exactly. The experiment
+profile retains exact whole-label matching. Core policies, experiment images,
+completed checkpoint formats and committed goldens are unchanged.
+See `rust-project-environments.md` for validation and the
+deliberately limited Dev Containers support.

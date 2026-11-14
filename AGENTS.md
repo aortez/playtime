@@ -62,6 +62,11 @@ run `python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v`, then an
 explicitly owned live smoke for host handoff changes. Status must remain read-only,
 busy hosts must be refused, and actual host artifacts must match the reviewed
 model lock before starting the client. Keep the host owned through tool cleanup.
+Project-owned development images use explicit preparation; see
+`docs/rust-project-environments.md`. Normal launches must never build images or
+execute repository lifecycle hooks. Preserve saved environment locks and the
+legacy general-workshop inventory. Validate new images with actual project builds
+and an owned chat/restart smoke, in addition to the bridge probe and fixtures.
 `playtime-strata` adapts the installed stateless Responses API to shared model
 requests; it never owns a model server or executes tools. Freeze the endpoint's
 model/template/settings plus independently verified host artifacts, keep missing

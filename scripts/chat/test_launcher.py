@@ -24,7 +24,7 @@ class LauncherTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.package = self.root / "package"
         self.package.mkdir()
-        for name in ("run-strata.py", "verify-strata-host.py", "presets.json"):
+        for name in ("run-strata.py", "verify-strata-host.py", "project_environment.py", "presets.json"):
             shutil.copyfile(SOURCE / name, self.package / name)
         self.lock = {"identity": {"model": "fixture", "context_tokens": 163840}, "host": {"digest": "reviewed"}}
         (self.package / "framework-strata-gyro-m-fast-v1.lock.json").write_text(json.dumps(self.lock))
@@ -132,10 +132,12 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         self.assertFalse((self.root / 'client').exists())
 
     def test_picker_resumes_before_host_start_and_preserves_context(self):
-        result = self.run_fixture("picker-resume", "--sessions", "--full-verify", "--workspace", "/chosen/project", "--context-tokens", "65536")
+        chosen = self.root / "chosen-project"
+        chosen.mkdir()
+        result = self.run_fixture("picker-resume", "--sessions", "--full-verify", "--workspace", str(chosen), "--context-tokens", "65536")
         self.assertEqual(result.returncode, 0, result.stderr)
         picked = json.loads((self.root / 'picked').read_text())
-        self.assertIn('/chosen/project', picked)
+        self.assertIn(str(chosen), picked)
         self.assertIn('65536', picked)
         client = json.loads((self.root / 'client').read_text())['argv']
         self.assertEqual(client[-2:], ['--session', str(self.root / 'saved-session')])
@@ -152,6 +154,35 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         result = self.run_fixture('', '--inspect-interrupted', '/stopped-session')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.root / 'inspected').exists())
+        self.assertFalse((self.root / 'started').exists())
+
+    def test_unprepared_project_environment_fails_before_host_ownership(self):
+        directory = self.root / '.devcontainer'
+        directory.mkdir()
+        (directory / 'devcontainer.json').write_text(json.dumps({'image':'fixture:local'}))
+        result = self.run_fixture('', '--prompt', 'hello')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('not prepared', result.stderr)
+        self.assertFalse((self.root / 'started').exists())
+        self.assertFalse((self.root / 'client').exists())
+
+    def test_saved_environment_is_forwarded_to_the_client(self):
+        session = self.root / 'saved'
+        session.mkdir(mode=0o700)
+        (session / 'config.json').write_text('{}')
+        lock = session / 'environment.lock.json'
+        lock.write_text('{}')
+        lock.chmod(0o600)
+        project = self.root / 'project'
+        project.mkdir()
+        result = self.run_fixture('', '--workspace', str(project), '--session', str(session), '--prompt', 'hello')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads((self.root / 'client').read_text())['argv']
+        self.assertEqual(argv[argv.index('--image-lock') + 1], str(lock))
+
+    def test_environment_preparation_help_does_not_touch_inference(self):
+        result = self.run_fixture('', '--prepare-environment', '--help')
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.root / 'started').exists())
 
     def test_picker_cancel_and_failure_never_start_host(self):
