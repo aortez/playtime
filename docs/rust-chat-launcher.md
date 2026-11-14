@@ -20,10 +20,12 @@ Install from this checkout on the workstation where the project lives:
 This builds the release client and installs the binary, wrapper, verifier and
 reviewed locks under `~/.local/lib/playtime-chat`, outside the writable project.
 It requires Python 3.11+ on both ends and the locked local Docker workshop image.
-Framework uses the existing `framework` SSH alias and its Gyro session helper.
+Framework uses the existing `framework` SSH alias and its Gyro owner helpers.
 Bird uses `oldman@oldman-bird.local`, `~/.ssh/id_ed25519_oldman_bird_codex` and its
-existing `.local/lib/codex-gyro/gyro-session.py` helper.
-It does not install or update the remote helper, model or engine.
+existing `.local/lib/codex-gyro/gyro-session.py` helper. Each host also needs
+`warm-session.py` beside that helper; the source is Notes'
+`agents/strata-warm-session.py`. The Notes profile installers deploy both files.
+The Playtime installer does not update remote helpers, models or engines.
 
 Use a codex-launcher build that supports standalone `[[harness]]` entries. Add
 these tables to `~/.codex/codex-launcher.toml` (or the same file in `CODEX_HOME`):
@@ -111,9 +113,12 @@ and effort controls.
 
 ## Inference ownership and verification
 
-`scripts/chat/run-strata.py` owns an SSH forward and the installed remote helper
-for the whole chat session. The helper takes its exclusive host lease and refuses
-busy Strata/GPU workloads. Menu status checks call only its read-only
+`scripts/chat/run-strata.py` owns an SSH forward and an exclusive client connection
+to the host's warm supervisor for the whole chat session. The supervisor keeps
+the original Gyro helper alive, holding its existing exclusive host lease even
+between clients. One client at a time may use it. An idle matching profile is
+reused; an idle different profile is stopped through its original helper before
+starting the requested one. Active clients cannot be evicted. Menu status checks use the read-only
 `--status` path; they never start or hash a model.
 
 After startup, the wrapper reads the helper's own session location and runs the
@@ -151,14 +156,33 @@ records model readiness, verification and total time to starting the client;
 `host.json` also records hashed/reused file and byte counts. Startup messages show
 the phase durations without needing to pipe the interactive prompt through `ts`.
 Remote helper logs keep their existing location. The host stays owned while the
-console shuts down local tools, with up to 45 seconds for graceful client cleanup. Closing the
-helper's stdin then asks it to stop its server and restore the host. Lost SSH or
-verification failure stops the local client; unconfirmed host restoration returns
-failure. The remote helper's existing heartbeat watchdog handles lost owners.
+console shuts down local tools, with up to 45 seconds for graceful client cleanup.
+Only a zero client exit with confirmed cleanup sends `GYRO_RELEASE` before EOF.
+The supervisor then verifies that no inference request remains and parks the
+model. EOF without that release, lost SSH, verification failure or failed client
+cleanup stops the owned server. The original helper's watchdog still handles
+supervisor loss; the supervisor cannot outlive that lease by merely discovering
+a listening endpoint. Uncertain helper cleanup fences subsequent admission.
 EOF and a terminal SSE event alone are not treated as remote termination proof.
 
-The installer includes both reviewed fast model locks. Both helpers stop their
-owned Strata server on exit; Bird also restores its original GPU power limits.
+The default is **30 minutes after the client closes**, rather than a timeout
+inside an open chat. Warm status appears as `ready`. Idle expiry or explicit stop
+closes the original helper, which stops its owned server and restores Bird's GPU
+power limits. Until then GPU/RAM allocations and the serving power limits remain
+in place. No model settings or accuracy tradeoff is introduced. To release an
+idle host immediately (an active chat makes this command refuse):
+
+```sh
+codex-launcher playtime-bird-fast --stop-server
+codex-launcher playtime-framework-fast --stop-server
+```
+
+The host's private `warm/policy.json` under its existing helper state directory
+contains `{"idle_seconds":1800}`. Zero means retain until explicit stop or profile
+switch. The policy is read on each clean release. An unavailable idle-status probe
+defers expiry and retries; it never authorizes interrupting an unknown request.
+
+The installer includes both reviewed fast model locks.
 Ollama was retired on both hosts on November 13, 2026, including the helpers'
 stop/restart hooks. It is not restarted when a console exits. No other active
 inference session is evicted to make a test run.
@@ -168,6 +192,11 @@ Run the CPU fixtures without contacting a host:
 ```sh
 python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v
 ```
+
+The warm supervisor's subprocess/socket ownership tests live in Notes at
+`agents/test_strata_warm_session.py`; the Codex wrapper uses the same supervisor
+and clean-release protocol. Framework's live cold/warm launches and explicit stop
+are recorded in [warm-session evidence](../experiments/chat-console/2026-11-13-warm-session.json).
 
 ## Session picker check (November 13, 2026)
 

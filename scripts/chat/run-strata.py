@@ -110,8 +110,11 @@ def session(preset, profile, args):
     if args in (["--help"], ["-h"], ["--version"], ["-V"]):
         if args in (["--help"], ["-h"]):
             print("Launcher options (before chat arguments): --full-verify rehashes model files; "
-                  "--sessions opens the local session picker. Interactive launches pick by default.", flush=True)
+                  "--sessions opens the local session picker. --stop-server releases an idle warm model. "
+                  "Interactive launches pick by default.", flush=True)
         return subprocess.call([str(executable), *args])
+    if args == ["--stop-server"]:
+        return subprocess.call(ssh(preset) + remote(preset, "python3", preset["helper"], "--stop"), stdin=subprocess.DEVNULL)
     client_args = [str(executable), "--model-lock", str(lock_path), "--image-lock", str(image_path)]
     options = {arg.split("=", 1)[0] for arg in args}
     if options & {"--select-session", "--list-sessions"} and not options & {"--prompt", "--session", "--recover-compaction"}:
@@ -140,7 +143,7 @@ def session(preset, profile, args):
         port = reservation.getsockname()[1]
     command = ssh(preset) + ["-o", "ExitOnForwardFailure=yes", "-L", f"127.0.0.1:{port}:127.0.0.1:8080"]
     command += remote(preset, "python3", preset["helper"], profile)
-    owner = child = verification = None
+    owner = child = verification = heartbeats = None
     events = queue.Queue(maxsize=256)
     stopped = threading.Event()
     failed = threading.Event()
@@ -187,8 +190,9 @@ def session(preset, profile, args):
             transcript.flush()
             if channel == "stderr":
                 print(line, end="", file=sys.stderr, flush=True)
-                prefix = f"Gyro-M: starting {profile}; logs: "
-                if line.startswith(prefix):
+                prefixes = [f"Gyro-M: {verb} {profile}; logs: " for verb in ("starting", "reusing")]
+                prefix = next((p for p in prefixes if line.startswith(p)), None)
+                if prefix:
                     state_dir = line[len(prefix):].strip()
                     path = Path(state_dir)
                     if not path.is_absolute() or not re.fullmatch(r"\d{8}T\d{6}Z-\d+", path.name):
@@ -209,7 +213,8 @@ def session(preset, profile, args):
                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
         for channel in ("stdout", "stderr"):
             threading.Thread(target=receive, args=(getattr(owner, channel), channel), daemon=True).start()
-        threading.Thread(target=heartbeat, daemon=True).start()
+        heartbeats = threading.Thread(target=heartbeat, daemon=True)
+        heartbeats.start()
         deadline = time.monotonic() + preset["startup_timeout"]
         while ready is None or state_dir is None:
             drain()
@@ -265,7 +270,8 @@ def session(preset, profile, args):
         log(str(error))
     finally:
         # Keep the owner heartbeats alive until local tool cleanup has had its
-        # full grace period. EOF then asks the authoritative helper to restore.
+        # full grace period. Only successful, confirmed cleanup permits parking;
+        # every other EOF asks the owner to shut the model down.
         for sig in previous:
             signal.signal(sig, signal.SIG_IGN)
         for process, grace in ((verification, 5), (child, CLIENT_CLEANUP_TIMEOUT)):
@@ -275,8 +281,15 @@ def session(preset, profile, args):
                 log(f"local child cleanup was not confirmed: {error}")
                 result = 1
         stopped.set()
+        if heartbeats is not None:
+            heartbeats.join(timeout=2)
+            if heartbeats.is_alive():
+                result = 1
         if owner is not None:
             try:
+                if result == 0 and child is not None and child.returncode == 0 and not failed.is_set() and not signals:
+                    owner.stdin.write("GYRO_RELEASE\n")
+                    owner.stdin.flush()
                 owner.stdin.close()
             except (OSError, ValueError):
                 pass

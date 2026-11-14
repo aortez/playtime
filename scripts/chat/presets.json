@@ -4,7 +4,7 @@
     "bird-gyro-m-fast": {
       "host": "oldman@oldman-bird.local",
       "ssh_options": ["-i", "~/.ssh/id_ed25519_oldman_bird_codex"],
-      "helper": ".local/lib/codex-gyro/gyro-session.py",
+      "helper": ".local/lib/codex-gyro/warm-session.py",
       "state_parent": ".local/state/codex-gyro",
       "model_lock": "bird-strata-gyro-m-fast-v1.lock.json",
       "startup_timeout": 630,
@@ -13,7 +13,7 @@
     "framework-gyro-m-fast": {
       "host": "framework",
       "ssh_options": [],
-      "helper": ".local/lib/codex-framework-gyro/gyro-session.py",
+      "helper": ".local/lib/codex-framework-gyro/warm-session.py",
       "state_parent": ".local/state/codex-framework-gyro",
       "model_lock": "framework-strata-gyro-m-fast-v1.lock.json",
       "startup_timeout": 930,

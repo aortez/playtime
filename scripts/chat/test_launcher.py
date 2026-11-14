@@ -38,7 +38,9 @@ import json, os, pathlib, select, shlex, sys, time
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
 args = shlex.split(sys.argv[-1])
 mode = os.environ.get('FIXTURE_MODE', '')
-if '--status' in args:
+if '--stop' in args:
+    (root / 'stop-warm').touch()
+elif '--status' in args:
     (root / 'status').touch()
     (root / 'status-args').write_text(json.dumps(sys.argv[1:]))
     print(json.dumps({'state': 'starts_on_launch'}))
@@ -62,13 +64,18 @@ else:
     profile = args[-1]
     bird = profile == 'bird-gyro-m-fast'
     state = '.local/state/codex-gyro' if bird else '.local/state/codex-framework-gyro'
-    print('Gyro-M: starting ' + profile + '; logs: ' + str(root / state / '20261113T123456Z-123'), file=sys.stderr, flush=True)
+    verb = 'reusing' if mode == 'warm' else 'starting'
+    print('Gyro-M: ' + verb + ' ' + profile + '; logs: ' + str(root / state / '20261113T123456Z-123'), file=sys.stderr, flush=True)
     print('GYRO_READY ' + json.dumps({'model':'fixture', 'context':131072 if bird else 163840, 'drafting':'dflash2'}), flush=True)
     while True:
         if mode == 'owner-loss' and (root / 'client').exists():
             sys.exit(1)
-        if select.select([sys.stdin], [], [], .05)[0] and not sys.stdin.readline():
-            break
+        if select.select([sys.stdin], [], [], .05)[0]:
+            line = sys.stdin.readline()
+            if not line:
+                break
+            with (root / 'owner-input').open('a') as received:
+                received.write(line)
     (root / 'restored').touch()
     if mode == 'restore-failure':
         sys.exit(1)
@@ -148,6 +155,24 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         client = json.loads((self.root / 'client').read_text())['argv']
         self.assertNotIn('--session', client)
 
+    def test_warm_handoff_is_verified_and_explicitly_released(self):
+        result = self.run_fixture('warm', '--prompt', 'hello')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'verified').exists())
+        self.assertIn('GYRO_RELEASE\n', (self.root / 'owner-input').read_text())
+
+    def test_failed_verification_never_parks_the_model(self):
+        result = self.run_fixture('mismatch', '--prompt', 'hello')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('GYRO_RELEASE', (self.root / 'owner-input').read_text())
+
+    def test_manual_stop_does_not_start_an_owner_or_client(self):
+        result = self.run_fixture('', '--stop-server')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'stop-warm').exists())
+        self.assertFalse((self.root / 'started').exists())
+        self.assertFalse((self.root / 'client').exists())
+
     def test_exact_handoff_preserves_project_and_arguments_then_restores(self):
         result = self.run_fixture("", "--prompt", "literal ; $(stuff)")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -172,7 +197,7 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         owner = json.loads((self.root / 'owner-args').read_text())
         self.assertIn('oldman@oldman-bird.local', owner)
         self.assertEqual(owner[owner.index('-i') + 1], str(self.root / '.ssh/id_ed25519_oldman_bird_codex'))
-        self.assertIn('.local/lib/codex-gyro/gyro-session.py bird-gyro-m-fast', owner[-1])
+        self.assertIn('.local/lib/codex-gyro/warm-session.py bird-gyro-m-fast', owner[-1])
         verify_args = json.loads((self.root / 'verify-args').read_text())
         self.assertEqual(json.loads(verify_args[verify_args.index('--expected-host') + 1]), self.bird_lock['host'])
         child = json.loads((self.root / 'client').read_text())
@@ -186,7 +211,7 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         self.assertEqual(result.returncode, 0, result.stderr)
         arguments = json.loads((self.root / 'status-args').read_text())
         self.assertIn('oldman@oldman-bird.local', arguments)
-        self.assertIn('.local/lib/codex-gyro/gyro-session.py --status bird-gyro-m-fast', arguments[-1])
+        self.assertIn('.local/lib/codex-gyro/warm-session.py --status bird-gyro-m-fast', arguments[-1])
         self.assertFalse((self.root / 'started').exists())
         self.assertFalse((self.root / 'verified').exists())
 
