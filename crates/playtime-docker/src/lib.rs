@@ -3,6 +3,7 @@
 mod bridge;
 pub mod capture;
 mod engine;
+pub mod project;
 mod sandbox;
 pub mod transport;
 mod types;

@@ -1,0 +1,193 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-13",
+  "scope": "Installed local session picker, cancellation without model startup, Bird saved-session resume and Framework new conversation, tool reads and owned cleanup after Ollama retirement. No quality or harness benchmark.",
+  "base_commit": "148afb1e0680af66323376a286c1026261019d47",
+  "source_sha256": {
+    "crates/playtime-chat/src/main.rs": "5b942f16d07de9816a390085cd9cf712e61384b27f70c096037e83ee8fe1afe7",
+    "crates/playtime-chat/src/sessions.rs": "2ca99d990568d6c7fea5f49caa468dc0a882549d1ae6129d434f96d861ac9a76",
+    "crates/playtime-harness/src/lib.rs": "69672a3e68d20777af97f560c16f0119e82ced81ba6e091624c65c622b0468a9",
+    "crates/playtime-local/src/state.rs": "433e5521dec37c967a4cec9f7ab2ac910ffa31103442410bb788391516215cf6",
+    "scripts/chat/run-strata.py": "4cba1cc5066f8f9981e748b668433672d8e080d437e2a1144b8588ddbf6394b6"
+  },
+  "raw_evidence": "/home/data2/playtime/chat-session-picker-grjygl55",
+  "cases": {
+    "cancel": {
+      "picker_seconds": 0.07873073999871849,
+      "exit": 0,
+      "elapsed_seconds": 0.0921472839982016,
+      "command": [
+        "/home/oldman/.local/bin/codex-launcher",
+        "playtime-framework-fast",
+        "--workspace",
+        "/home/data2/playtime/chat-session-picker-grjygl55/workspace",
+        "--state-dir",
+        "/home/data2/playtime/chat-session-picker-grjygl55/state",
+        "--wall-seconds",
+        "120"
+      ],
+      "mode": "cancel"
+    },
+    "bird-resume": {
+      "picker_seconds": 0.07834879800066119,
+      "ready_seconds": 40.62557778400151,
+      "turn_finished_seconds": 44.562170961002266,
+      "exit": 0,
+      "elapsed_seconds": 47.96100991700223,
+      "command": [
+        "/home/oldman/.local/bin/codex-launcher",
+        "playtime-bird-fast",
+        "--workspace",
+        "/home/data2/playtime/chat-launcher-bird-337_lrpu/workspace",
+        "--state-dir",
+        "/home/data2/playtime/chat-launcher-bird-337_lrpu/state",
+        "--wall-seconds",
+        "120"
+      ],
+      "mode": "bird-resume",
+      "launcher_evidence": "/home/oldman/.local/state/playtime-launcher/20261113T180705-7ikp1giu",
+      "session": "/home/data2/playtime/chat-launcher-bird-337_lrpu/state/session-446eb43328b49b56c1e1d5a70d353eb3c362e19d9871b8712be306a995f5ce24",
+      "launcher_exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      },
+      "timings": {
+        "model_ready_seconds": 39.72792790800304,
+        "verification_seconds": 0.6036287520000769,
+        "launcher_ready_seconds": 40.3315866970006,
+        "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 17,
+          "reused_bytes": 125888360842,
+          "hashed_files": 2,
+          "hashed_bytes": 307718629,
+          "cache_saved": true
+        }
+      },
+      "completed_turn": "turn-45548765195276d9eecd4345d9a478cd9f3bb3adf2cbac50b48de0c8496a8c5b",
+      "result": {
+        "run_id": "turn-45548765195276d9eecd4345d9a478cd9f3bb3adf2cbac50b48de0c8496a8c5b",
+        "mode": "live_smoke",
+        "reason": "agent_finished",
+        "usage": {
+          "known_generated_tokens": 119,
+          "unknown_reserved_tokens": 0,
+          "unknown_requests": 0,
+          "budget_charged_tokens": 119,
+          "usage_complete": true
+        },
+        "model_calls": 2,
+        "tool_parse_errors": 0,
+        "sessions_started": 0,
+        "elapsed_ms": 3905,
+        "cleanup": {
+          "status": "complete"
+        },
+        "last_checkpoint": null,
+        "diagnostics": []
+      },
+      "resumed_previous_checkpoint": "turn-2c5108ca0639fbe205e52bae7aafa4b793289192185213c1587f87afe0bfe27c",
+      "cleanup_message": "Gyro-M: server stopped; power limits restored."
+    },
+    "framework-new": {
+      "picker_seconds": 0.03363395400083391,
+      "ready_seconds": 22.466014703000837,
+      "turn_finished_seconds": 28.03113311100242,
+      "exit": 0,
+      "elapsed_seconds": 29.881340326999634,
+      "command": [
+        "/home/oldman/.local/bin/codex-launcher",
+        "playtime-framework-fast",
+        "--workspace",
+        "/home/data2/playtime/chat-session-picker-grjygl55/workspace",
+        "--state-dir",
+        "/home/data2/playtime/chat-session-picker-grjygl55/state",
+        "--wall-seconds",
+        "120"
+      ],
+      "mode": "framework-new",
+      "launcher_evidence": "/home/oldman/.local/state/playtime-launcher/20261113T180753-r64y533v",
+      "session": "/home/data2/playtime/chat-session-picker-grjygl55/state/session-b81b9f2297531e5e433766914206e20a8eb63ba98a806bf14249e50f0d2f13b6",
+      "launcher_exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      },
+      "timings": {
+        "model_ready_seconds": 21.797691592000774,
+        "verification_seconds": 0.4056860009986849,
+        "launcher_ready_seconds": 22.203408009998384,
+        "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 15,
+          "reused_bytes": 93801934994,
+          "hashed_files": 2,
+          "hashed_bytes": 52388709,
+          "cache_saved": true
+        }
+      },
+      "completed_turn": "turn-d1eee7e3bfcea48cdabe295070b07c796ad2575212cb7c83d9fe34f93ced48c5",
+      "result": {
+        "run_id": "turn-d1eee7e3bfcea48cdabe295070b07c796ad2575212cb7c83d9fe34f93ced48c5",
+        "mode": "live_smoke",
+        "reason": "agent_finished",
+        "usage": {
+          "known_generated_tokens": 84,
+          "unknown_reserved_tokens": 0,
+          "unknown_requests": 0,
+          "budget_charged_tokens": 84,
+          "usage_complete": true
+        },
+        "model_calls": 2,
+        "tool_parse_errors": 0,
+        "sessions_started": 0,
+        "elapsed_ms": 5543,
+        "cleanup": {
+          "status": "complete"
+        },
+        "last_checkpoint": null,
+        "diagnostics": []
+      },
+      "cleanup_message": "Gyro-M: server stopped; Framework released."
+    }
+  },
+  "postconditions": {
+    "framework": {
+      "ollama_unit": "not-found",
+      "ollama_executable": null,
+      "port_8080_open": false,
+      "port_11434_open": false,
+      "status": {
+        "state": "starts_on_launch",
+        "message": "launching starts Gyro-M on Framework",
+        "context_window": 163840,
+        "drafting": "dflash2"
+      }
+    },
+    "bird": {
+      "ollama_unit": "not-found",
+      "ollama_executable": null,
+      "port_8080_open": false,
+      "port_11434_open": false,
+      "gpu_power_and_memory": [
+        "NVIDIA GeForce RTX 4090, 450.00, 6",
+        "NVIDIA GeForce RTX 3090, 420.00, 6"
+      ],
+      "status": {
+        "state": "starts_on_launch",
+        "message": "launching starts Gyro-M on Bird",
+        "context_window": 131072,
+        "drafting": "dflash2"
+      }
+    },
+    "owned_running_project_containers": 0
+  },
+  "checks": [
+    "chat, harness and local crate tests passed",
+    "29 launcher/verifier CPU tests passed",
+    "101 frozen Python tests run, 6 skipped",
+    "workspace fmt and clippy passed",
+    "workspace tests passed on repeat; initial UI model_registration timeout passed isolated and on the complete rerun"
+  ]
+}

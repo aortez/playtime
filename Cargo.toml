@@ -3,6 +3,8 @@ members = [
     "crates/playtime-core",
     "crates/playtime-protocol",
     "crates/playtime-engine",
+    "crates/playtime-harness",
+    "crates/playtime-chat",
     "crates/playtime-storage",
     "crates/playtime-server",
     "crates/playtime-client",
@@ -14,6 +16,7 @@ members = [
     "crates/playtime-worker-control",
     "crates/playtime-worker",
     "crates/playtime-ollama",
+    "crates/playtime-strata",
     "crates/playtime-backend-guard",
     "crates/playtime-docker",
     "xtask",
@@ -30,6 +33,7 @@ publish = false
 playtime-core = { path = "crates/playtime-core" }
 playtime-protocol = { path = "crates/playtime-protocol" }
 playtime-engine = { path = "crates/playtime-engine" }
+playtime-harness = { path = "crates/playtime-harness" }
 playtime-storage = { path = "crates/playtime-storage" }
 playtime-local = { path = "crates/playtime-local" }
 playtime-client = { path = "crates/playtime-client" }
@@ -40,6 +44,7 @@ playtime-worker = { path = "crates/playtime-worker" }
 playtime-docker = { path = "crates/playtime-docker" }
 # Plain HTTP by default; members add the "tls" feature for HTTPS endpoints.
 playtime-ollama = { path = "crates/playtime-ollama", default-features = false }
+playtime-strata = { path = "crates/playtime-strata" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 utoipa = "=6.0.0"
@@ -78,7 +83,9 @@ opt-level = 3
 debug = 1
 [profile.test.package.playtime-runner]
 debug = 1
-# Versioned archive DTOs also contribute substantial test-image type metadata.
+# Shared controller and archive types also contribute test-image type metadata.
+[profile.test.package.playtime-engine]
+debug = "line-tables-only"
 [profile.test.package.playtime-protocol]
 debug = "line-tables-only"
 # The live worker also links an HTTP client. Third-party dependencies keep line

@@ -47,6 +47,19 @@ messages/tools, derived output allowance, and frozen context reserve. Context
 rejection preserves the existing early-handoff/skip behavior and strict boundary
 comparison.
 
+When a tool result is shortened for context, status and provenance remain in the
+payload: exit status, timeout, duration, upstream truncation flags, file offsets
+and base64-withholding metadata. Every supplied text field remains present,
+including empty stderr. Diagnostics get space before stdout or file content.
+Shortened fields end with an explicit tail-dropped marker, and
+`context_omitted_bytes` records the UTF-8 bytes removed from each field at this
+stage (zero for a field kept whole). These counts exclude upstream tool caps and
+base64 withholding; `output_truncated`, `truncated` and `base64` still describe
+those stages. The fully serialized tool message, including markers and metadata,
+must fit its allowance. The redundant policy notice can be omitted at tight
+limits; mandatory status is never discarded to make room for text. The archive
+continues to keep the original tool result separately.
+
 The runtime also owns global request/seed ordering, reservation and settlement,
 absolute deadlines, cancellation, dispatch identities, durable control facts,
 checkpoint publication, and cleanup. A proposed successful finish requires a
@@ -97,6 +110,11 @@ cargo test -p playtime-runner --features test-harness --test workspace_probe --l
 ```
 
 ## Continuous compaction policy
+
+Context-fit decisions, summary scheduling and replacement checks use the shared
+[conversation planner](rust-conversation.md). The controller still owns admission,
+dispatch, accounting and cleanup, and the policy retains the transcript and
+failure history.
 
 `Controller::continuous` runs `continuous_compaction_v1` through the shared
 controller and effect dispatcher. The packaged worker supports an explicit

@@ -10,13 +10,14 @@ use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 
 #[derive(Clone, Debug)]
-struct Resource {
-    proposal: Proposal,
-    id: Option<String>,
-    create: CreateState,
+pub(crate) struct Resource {
+    pub(crate) proposal: Proposal,
+    pub(crate) id: Option<String>,
+    pub(crate) create: CreateState,
+    project: Option<crate::project::ProjectProposal>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CreateState {
+pub(crate) enum CreateState {
     NotDispatched,
     // The daemon may publish this resource after a successful absence query.
     Pending,
@@ -30,7 +31,17 @@ impl Resource {
             proposal,
             id: None,
             create: CreateState::NotDispatched,
+            project: None,
         }
+    }
+    pub(crate) fn project(proposal: crate::project::ProjectProposal) -> Self {
+        Self {
+            project: Some(proposal.clone()),
+            ..Self::new(proposal.container)
+        }
+    }
+    pub(crate) fn verify(&self, actual: &serde_json::Value) -> Result<String> {
+        crate::engine::verify_container_mount(actual, &self.proposal, self.project.as_ref())
     }
     async fn create(
         &mut self,
@@ -39,9 +50,13 @@ impl Resource {
         cancel: CancellationToken,
     ) -> Result<Outcome> {
         engine.check(deadline, cancel.clone()).await?;
-        let operation = match self.proposal.role {
-            Role::Volume => Operation::CreateVolume(self.proposal.clone()),
-            Role::Holder | Role::Agent => Operation::CreateContainer(self.proposal.clone()),
+        let operation = if let Some(project) = &self.project {
+            Operation::CreateProject(project.clone())
+        } else {
+            match self.proposal.role {
+                Role::Volume => Operation::CreateVolume(self.proposal.clone()),
+                Role::Holder | Role::Agent => Operation::CreateContainer(self.proposal.clone()),
+            }
         };
         // Mark before dispatch: dropped futures retain uncertainty. Only an
         // explicit transport non-dispatch proof can restore NotDispatched.
@@ -671,7 +686,7 @@ impl Sandbox {
         Cleanup { resources }
     }
 }
-fn report(resource: &Resource, result: Result<()>) -> ResourceOutcome {
+pub(crate) fn report(resource: &Resource, result: Result<()>) -> ResourceOutcome {
     let role = resource.proposal.role;
     let name = resource.proposal.name.clone();
     if resource.create == CreateState::NotDispatched {
@@ -696,7 +711,7 @@ fn acknowledgement(outcome: &Outcome, expected: &str, operation: &'static str) -
     }
     Ok(())
 }
-async fn create_container(
+pub(crate) async fn create_container(
     engine: &crate::Engine,
     resource: &mut Resource,
     deadline: Instant,
@@ -731,7 +746,6 @@ async fn create_container(
         .to_owned();
     resource.id = Some(id.clone());
     resource.create = CreateState::Established;
-    let p = &resource.proposal;
     let actual = engine
         .container(&id, deadline, cancel.clone())
         .await?
@@ -742,7 +756,7 @@ async fn create_container(
                 "created container absent",
             )
         })?;
-    if verify_container(&actual, p)? != id
+    if resource.verify(&actual)? != id
         || actual["State"]["Status"] != "created"
         || actual["State"]["Running"] != false
     {
@@ -766,7 +780,7 @@ async fn create_container(
                 "started container absent",
             )
         })?;
-    if verify_container(&actual, p)? != id || actual["State"]["Running"] != true {
+    if resource.verify(&actual)? != id || actual["State"]["Running"] != true {
         return Err(Error::new(
             Failure::Fenced,
             "container_start",
@@ -775,7 +789,7 @@ async fn create_container(
     }
     Ok(())
 }
-async fn remove_container(
+pub(crate) async fn remove_container(
     engine: &crate::Engine,
     resource: &mut Resource,
     deadline: Instant,
@@ -789,7 +803,7 @@ async fn remove_container(
     let Some(actual) = engine.container(target, deadline, cancel.clone()).await? else {
         return resource.confirm_absence("container_remove");
     };
-    let id = verify_container(&actual, &resource.proposal)?;
+    let id = resource.verify(&actual)?;
     if resource.id.as_ref().is_some_and(|old| old != &id) {
         return Err(Error::new(
             Failure::Conflict,

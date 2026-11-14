@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-13",
+  "scope": "Framework owned cold/warm reuse and manual stop; no quality benchmark. Bird installed without interrupting its active chat; CUDA warm timing is not yet measured.",
+  "raw_evidence": "/home/data2/playtime/chat-warm-tln23olu",
+  "supervisor_source": "/home/data/workspace/notes/agents/strata-warm-session.py",
+  "idle_seconds": 1800,
+  "cases": {
+    "framework-cold": {
+      "launcher_evidence": "/home/oldman/.local/state/playtime-launcher/20261113T183624-no_o5xm5",
+      "timings": {
+        "model_ready_seconds": 21.81700887199986,
+        "verification_seconds": 0.3038391690024582,
+        "launcher_ready_seconds": 22.120882906001498,
+        "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 15,
+          "reused_bytes": 93801934994,
+          "hashed_files": 2,
+          "hashed_bytes": 52388709,
+          "cache_saved": true
+        }
+      },
+      "exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      },
+      "engine_pid": 14406,
+      "host": {
+        "backend": "hip",
+        "quantization": "TQ2_0",
+        "engine_sha256": "1f22831cc4b017d4fa8e4662537e54125387abd829cacd939f9a3796b6a88e05",
+        "artifacts_manifest_sha256": "82cb9d98c7f5b21c5055b2057aefcb448e909f5c312b3ee35a8a63a9fcf2a851",
+        "launch_configuration_sha256": "d8ff6da0179287aa7df74b3481cf108db4b67b019e94873b3a9b3107b943b59d",
+        "responses_source_sha256": "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b"
+      }
+    },
+    "framework-warm": {
+      "launcher_evidence": "/home/oldman/.local/state/playtime-launcher/20261113T183730-milyophw",
+      "timings": {
+        "model_ready_seconds": 0.30123068999819225,
+        "verification_seconds": 0.3006898480016389,
+        "launcher_ready_seconds": 0.6019387019987334,
+        "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 15,
+          "reused_bytes": 93801934994,
+          "hashed_files": 2,
+          "hashed_bytes": 52388709,
+          "cache_saved": true
+        }
+      },
+      "exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      },
+      "engine_pid": 14406,
+      "host": {
+        "backend": "hip",
+        "quantization": "TQ2_0",
+        "engine_sha256": "1f22831cc4b017d4fa8e4662537e54125387abd829cacd939f9a3796b6a88e05",
+        "artifacts_manifest_sha256": "82cb9d98c7f5b21c5055b2057aefcb448e909f5c312b3ee35a8a63a9fcf2a851",
+        "launch_configuration_sha256": "d8ff6da0179287aa7df74b3481cf108db4b67b019e94873b3a9b3107b943b59d",
+        "responses_source_sha256": "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b"
+      }
+    },
+    "framework-final-cold": {
+      "launcher_evidence": "/home/oldman/.local/state/playtime-launcher/20261113T184518-cmdu2yc9",
+      "timings": {
+        "model_ready_seconds": 22.016792367998278,
+        "verification_seconds": 0.4009787359973416,
+        "launcher_ready_seconds": 22.417804557000636,
+        "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 15,
+          "reused_bytes": 93801934994,
+          "hashed_files": 2,
+          "hashed_bytes": 52388709,
+          "cache_saved": true
+        }
+      },
+      "exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      },
+      "engine_pid": 14960,
+      "host": {
+        "backend": "hip",
+        "quantization": "TQ2_0",
+        "engine_sha256": "1f22831cc4b017d4fa8e4662537e54125387abd829cacd939f9a3796b6a88e05",
+        "artifacts_manifest_sha256": "82cb9d98c7f5b21c5055b2057aefcb448e909f5c312b3ee35a8a63a9fcf2a851",
+        "launch_configuration_sha256": "d8ff6da0179287aa7df74b3481cf108db4b67b019e94873b3a9b3107b943b59d",
+        "responses_source_sha256": "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b"
+      }
+    },
+    "framework-final-warm": {
+      "launcher_evidence": "/home/oldman/.local/state/playtime-launcher/20261113T184544-1hzrz9k5",
+      "timings": {
+        "model_ready_seconds": 0.4013518909996492,
+        "verification_seconds": 0.3011042589932913,
+        "launcher_ready_seconds": 0.7024848849978298,
+        "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 15,
+          "reused_bytes": 93801934994,
+          "hashed_files": 2,
+          "hashed_bytes": 52388709,
+          "cache_saved": true
+        }
+      },
+      "exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      },
+      "engine_pid": 14960,
+      "host": {
+        "backend": "hip",
+        "quantization": "TQ2_0",
+        "engine_sha256": "1f22831cc4b017d4fa8e4662537e54125387abd829cacd939f9a3796b6a88e05",
+        "artifacts_manifest_sha256": "82cb9d98c7f5b21c5055b2057aefcb448e909f5c312b3ee35a8a63a9fcf2a851",
+        "launch_configuration_sha256": "d8ff6da0179287aa7df74b3481cf108db4b67b019e94873b3a9b3107b943b59d",
+        "responses_source_sha256": "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b"
+      }
+    }
+  },
+  "manual_stop_log": "Gyro-M: client disconnected; restoring Framework.\nGyro-M: server stopped; Framework released.\n",
+  "postconditions": {
+    "framework": {
+      "state": "ready",
+      "message": "framework-gyro-m-fast is warm; launching reuses it",
+      "context_window": 163840,
+      "drafting": "dflash2"
+    },
+    "bird": {
+      "state": "busy",
+      "message": "Bird is in use: bird-gyro-m-fast"
+    }
+  },
+  "checks": [
+    "8 supervisor/Codex subprocess/socket tests passed",
+    "8 existing owner/status tests passed",
+    "32 Playtime launcher/verifier tests passed",
+    "101 frozen Python tests run, 6 skipped"
+  ],
+  "final_supervisor_sha256": "63c12cd160132441b6686d432e4fe2009b483c2765529ee31d8620edb1436a8c",
+  "source_note": "The final cold/warm pair used this supervisor digest. The initial pair and explicit-stop check preceded idle-probe and startup-order hardening."
+}

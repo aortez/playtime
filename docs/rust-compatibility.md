@@ -1,5 +1,74 @@
 # Rust compatibility and goldens
 
+## Empty chat sessions omitted from discovery (2026-11-13)
+
+The chat picker and `--list-sessions` omit sessions with neither a completed
+checkpoint nor an active turn. Their files remain intact, and explicit
+`--session` access still works. Completed and interrupted conversations retain
+their existing validation and resume rules. Saved-state schemas, model inputs
+and behavioral goldens are unchanged.
+
+## Explicit tool-result context truncation (2026-11-13)
+
+Oversized tool results now retain timing, upstream truncation flags and empty
+stderr. Shortened text fields include tail-dropped markers and the additive
+`context_omitted_bytes` map counts only UTF-8 bytes removed by context fitting.
+Diagnostics retain priority, and both markers and metadata count against the
+existing serialized-message allowance. Complete results are unchanged. This is
+an intentional change to model-visible tool payloads across the shared policies;
+archive envelopes and saved-session schemas are unchanged. The controller test
+now covers four results at the minimum allowance, with unabridged evidence and
+upstream flags preserved. No behavioral golden is regenerated.
+The [Framework smoke](../experiments/chat-console/2026-11-13-context-truncation.json)
+verified the delivered payload and Gyro-M's report of the flags, timing, empty
+stderr and exact context-stage omission count.
+
+## Project chat console (#208/#210, 2026-11-13)
+
+`playtime-chat` adds a standalone async driver and terminal client over the
+existing saved-turn controller. Its optional JSON event envelope is version 1;
+it is not the daemon API or an archive receipt. The separate Docker project
+profile binds one explicit persistent directory, with private ownership and
+crash fencing. It shares container lifecycle checks with the experiment sandbox
+without changing its volume, capture, worker profile or record formats. Existing
+conversation checkpoints still require completed turns and confirmed cleanup;
+interrupted-turn continuation is not introduced. No existing golden is regenerated.
+See [project chat](rust-chat-console.md).
+
+## Stateless Strata transport (#207, 2026-11-13)
+
+The new `playtime-strata` crate translates shared model requests and canonical
+assistant/tool history to the installed Strata Responses API. It preserves
+reasoning, call IDs and measured usage, checks streamed output against the final
+snapshot, and rejects incomplete tool arguments before dispatch. Cancellation or
+disconnect never claims remote termination or triggers an automatic resend.
+Version-1 locks bind backend artifacts, template, context and explicit inference
+settings. The separate live developer smoke drives a saved chat turn in an owned
+Docker workshop. Existing experiment profiles, Ollama adapters, API schemas and
+behavioral goldens are unchanged. See [Strata transport](rust-strata.md).
+
+## Saved compacting chat turns (#208, 2026-11-13)
+
+The new `Controller::chat` entry point ends a turn on an explicitly completed,
+nonempty plain reply, then cleans up without experiment capture/publication.
+`playtime-harness` persists private history and completed-turn checkpoints using
+version-1 types in `playtime_protocol::conversation`. Saved state binds the
+model/workspace/configuration and continues observation/request numbering. Resume
+accepts only complete exchanges and successful cleanup; active or uncertain turns
+remain fenced. The new mode is not registered as an experiment recipe or worker
+profile. Existing memento/continuous records, snapshots and behavioral goldens are
+unchanged. See [the conversation contract](rust-conversation.md).
+
+## Shared compaction context planner (#208, 2026-11-13)
+
+The continuous policy now uses `playtime_engine::conversation::ContextPolicy`
+for context-fit decisions, summary scheduling and replacement checks. The same
+component accepts a caller-owned transcript and common limits without workshop
+or archive configuration. Runtime admission, tool dispatch, failure history,
+summary validation and publication remain in the existing controller/policy.
+The compaction records and their golden remain unchanged; this extraction adds
+no wire format, saved-session format or new execution mode.
+
 ## Release refusal reasons (#204, 2026-11-10)
 
 A refused release used to reach clients with empty details: the daemon put

@@ -47,6 +47,8 @@ jobs:
       - run: ./scripts/test-rust-cli-e2e.sh --backend fixture
       - run: ./scripts/test-rust-ui-e2e.sh --backend fixture
       - run: python3 -m unittest discover -s tests -v
+      - name: Check standalone chat launcher and artifact verification
+        run: python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v
       - name: Report runner resources
         if: always()
         run: |

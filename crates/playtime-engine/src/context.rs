@@ -103,7 +103,7 @@ pub(crate) fn calibrated_tokens(
 }
 
 #[derive(Default)]
-pub(crate) struct ContextWindow {
+pub struct ContextWindow {
     messages: Vec<Value>,
     tools: Vec<Value>,
     tokens: Option<u64>,
@@ -292,11 +292,15 @@ pub(crate) fn fit_tool_result_with_notice(
     }
     let mut limited = json!({
         "context_truncated": true,
+        "context_omitted_bytes": {},
         "notice": notice
     });
     for key in [
         "exit_code",
         "timed_out",
+        "duration_seconds",
+        "output_truncated",
+        "truncated",
         "bytes_written",
         "offset_bytes",
         "size_bytes",
@@ -306,31 +310,63 @@ pub(crate) fn fit_tool_result_with_notice(
             limited[key] = value.clone();
         }
     }
-    for key in ["error", "stderr", "stdout", "content"] {
-        if let Some(text) = result.get(key).and_then(Value::as_str) {
-            let boundaries: Vec<usize> = text
-                .char_indices()
-                .map(|(i, _)| i)
-                .chain([text.len()])
-                .collect();
-            let (mut low, mut high) = (0, boundaries.len() - 1);
-            while low < high {
-                let middle = (low + high).div_ceil(2);
-                limited[key] = json!(&text[..boundaries[middle]]);
-                if encoded_size(&tool_message(name, &limited)) <= maximum {
-                    low = middle;
-                } else {
-                    high = middle - 1;
-                }
-            }
-            if low > 0 {
-                limited[key] = json!(&text[..boundaries[low]]);
-            } else {
-                limited.as_object_mut().unwrap().remove(key);
-            }
+    let fields: Vec<_> = ["error", "stderr", "stdout", "content", "path"]
+        .into_iter()
+        .filter_map(|key| result.get(key).and_then(Value::as_str).map(|s| (key, s)))
+        .collect();
+    // Reserve every field before allocating text. An empty stderr must remain
+    // distinguishable from one whose diagnostics were omitted.
+    for &(key, text) in &fields {
+        set_context_text(&mut limited, key, "", text.len());
+        if encoded_size(&json!(text)) <= encoded_size(&limited[key]) {
+            set_context_text(&mut limited, key, text, 0);
         }
     }
+    if encoded_size(&tool_message(name, &limited)) > maximum {
+        // The inline markers already explain the loss; status takes priority
+        // over the redundant policy notice at the minimum result allowance.
+        limited.as_object_mut().unwrap().remove("notice");
+    }
+    // If mandatory metadata alone cannot fit, leave it intact. Admission's
+    // minimum covers workshop results; the controller rejects an oversized
+    // envelope instead of delivering it beyond the frozen allowance.
+    for (key, text) in fields {
+        set_context_text(&mut limited, key, text, 0);
+        if encoded_size(&tool_message(name, &limited)) <= maximum {
+            continue;
+        }
+        let boundaries: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+        if boundaries.is_empty() {
+            continue;
+        }
+        let (mut low, mut high) = (0, boundaries.len() - 1);
+        while low < high {
+            let middle = (low + high).div_ceil(2);
+            // Reserve the original count's digits while searching. Updating
+            // the actual count here can shrink both marker and metadata at a
+            // power of ten, making the encoded size non-monotonic.
+            set_context_text(&mut limited, key, &text[..boundaries[middle]], text.len());
+            if encoded_size(&tool_message(name, &limited)) <= maximum {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        let retained = boundaries[low];
+        set_context_text(&mut limited, key, &text[..retained], text.len() - retained);
+    }
     limited
+}
+
+fn set_context_text(result: &mut Value, key: &str, prefix: &str, omitted: usize) {
+    result["context_omitted_bytes"][key] = json!(omitted);
+    result[key] = if omitted == 0 {
+        json!(prefix)
+    } else {
+        json!(format!(
+            "{prefix}\n[... {omitted} UTF-8 bytes omitted from context; tail dropped]"
+        ))
+    };
 }
 
 #[cfg(test)]
@@ -436,18 +472,102 @@ mod tests {
         assert_eq!(canonical(&fixture["value"]), fixture["expected"]);
     }
 
+    fn assert_context_excerpt(original: &Value, fitted: &Value, key: &str) {
+        let before = original[key].as_str().unwrap();
+        let after = fitted[key].as_str().unwrap();
+        let omitted = fitted["context_omitted_bytes"][key].as_u64().unwrap() as usize;
+        if omitted == 0 {
+            assert_eq!(after, before);
+        } else {
+            let marker =
+                format!("\n[... {omitted} UTF-8 bytes omitted from context; tail dropped]");
+            let retained = after.strip_suffix(&marker).expect("visible tail marker");
+            assert!(before.starts_with(retained));
+            assert_eq!(retained.len() + omitted, before.len());
+        }
+    }
+
+    #[test]
+    fn fitting_keeps_complete_results_unchanged() {
+        let original = json!({"exit_code":0,"stdout":"ok\n","stderr":"",
+            "timed_out":false,"duration_seconds":0.001,"output_truncated":false});
+        let maximum = encoded_size(&tool_message("exec", &original));
+        assert_eq!(fit_tool_result("exec", original.clone(), maximum), original);
+    }
+
+    #[test]
+    fn context_cut_preserves_upstream_truncation_timing_and_empty_stderr() {
+        // The workshop already capped this output; its boolean cannot tell us
+        // how many bytes it discarded. Our count describes only the next cut.
+        let original = json!({"exit_code":0,"stdout":"x".repeat(16384),"stderr":"",
+            "timed_out":false,"duration_seconds":0.001,"output_truncated":true});
+        let fitted = fit_tool_result_with_notice(
+            "exec",
+            original.clone(),
+            16384,
+            "Tool output shortened to fit the exchange allowance.",
+        );
+        assert!(encoded_size(&tool_message("exec", &fitted)) <= 16384);
+        assert_eq!(fitted["context_truncated"], true);
+        for key in [
+            "exit_code",
+            "timed_out",
+            "duration_seconds",
+            "output_truncated",
+            "stderr",
+        ] {
+            assert_eq!(fitted[key], original[key]);
+        }
+        assert_context_excerpt(&original, &fitted, "stdout");
+        assert_context_excerpt(&original, &fitted, "stderr");
+        assert!(fitted["context_omitted_bytes"]["stdout"].as_u64().unwrap() > 0);
+        assert_eq!(fitted["context_omitted_bytes"]["stderr"], 0);
+    }
+
+    #[test]
+    fn stderr_diagnostics_take_priority_over_stdout() {
+        let original = json!({"exit_code":1,"stdout":"x".repeat(16384),
+            "stderr":"fatal: missing input\n","timed_out":false,
+            "duration_seconds":0.125,"output_truncated":true});
+        let fitted = fit_tool_result("exec", original.clone(), 512);
+        assert!(encoded_size(&tool_message("exec", &fitted)) <= 512);
+        assert_eq!(fitted["stderr"], original["stderr"]);
+        assert_context_excerpt(&original, &fitted, "stderr");
+        assert_context_excerpt(&original, &fitted, "stdout");
+    }
+
+    #[test]
+    fn context_cut_preserves_read_slice_and_base64_provenance() {
+        let original = json!({"content":format!("{}\n{}", "a+/b".repeat(1000), "é😀".repeat(1000)),
+            "offset_bytes":400,"truncated":true});
+        let guarded = withhold_base64(original);
+        for maximum in [512, 1024] {
+            let fitted = fit_tool_result("read_file", guarded.clone(), maximum);
+            assert!(encoded_size(&tool_message("read_file", &fitted)) <= maximum);
+            for key in ["offset_bytes", "truncated", "base64"] {
+                assert_eq!(fitted[key], guarded[key]);
+            }
+            assert_context_excerpt(&guarded, &fitted, "content");
+        }
+    }
+
     #[test]
     fn unicode_and_nested_tool_output_keep_the_python_byte_bound() {
         assert_eq!(
             canonical(&json!({"😀": "é\u{7f}"})),
             "{\"\\ud83d\\ude00\":\"\\u00e9\\u007f\"}"
         );
-        let original = json!({"stdout": "\"\\\n\0😀".repeat(1000), "stderr": "failure ".repeat(1000), "exit_code": 1, "timed_out": false});
-        for maximum in [512, 1024, 12000] {
+        let original = json!({"stdout": "\"\\\n\0😀".repeat(1000), "stderr": "failure ".repeat(1000),
+            "exit_code": 1, "timed_out": true, "duration_seconds": 30.001, "output_truncated": true});
+        for maximum in (512..768).chain([1024, 12000]) {
             let fitted = fit_tool_result("exec", original.clone(), maximum);
             assert!(encoded_size(&tool_message("exec", &fitted)) <= maximum);
             assert_eq!(fitted["exit_code"], 1);
-            assert_eq!(fitted["timed_out"], false);
+            assert_eq!(fitted["timed_out"], true);
+            assert_eq!(fitted["duration_seconds"], 30.001);
+            assert_eq!(fitted["output_truncated"], true);
+            assert_context_excerpt(&original, &fitted, "stdout");
+            assert_context_excerpt(&original, &fitted, "stderr");
         }
     }
 

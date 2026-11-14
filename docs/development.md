@@ -75,6 +75,8 @@ real worker, Docker, model-host, or recovery behavior.
 
 | Change | Command | What it exercises |
 | --- | --- | --- |
+| Project chat driver | `cargo test -p playtime-chat --locked` | Shared controller, saved follow-up, cancellation, failed persistence and cleanup through synthetic effects |
+| Persistent project tools | `./scripts/test-rust-docker-e2e.sh --case project` | Actual project edits, uid-1000 bridge, filesystem/network boundaries, cancellation, cleanup and retained files |
 | CLI/shared client | `./scripts/test-rust-cli-e2e.sh --backend fixture` | Actual CLI subprocesses over scripted authenticated HTTP; receipts, reconnect, output and downloads |
 | Workbench | `./scripts/test-rust-ui-e2e.sh --backend fixture` | Workbench backend and launch recovery over scripted HTTP; also review pinned screenshots for visual changes |
 | Worker/package | `./scripts/test-rust-worker-package.sh` | Frozen static bundle, detached controller, prepared-writer handoff and package verification on CPU |
@@ -85,6 +87,8 @@ real worker, Docker, model-host, or recovery behavior.
 | Workspace capture | `./scripts/test-rust-docker-e2e.sh --case checkpoint` | Real stopped-workspace capture; additionally run the sandbox gate |
 | Native effects/Docker profile/run-and-view | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend docker-scripted` | Real systemd worker and Docker, scripted model, archive and client review |
 | Live model path | `./scripts/test-rust-service-e2e.sh --case run-and-view --backend live` | The live Ollama path, streaming, persistence, review and cleanup |
+| Strata transport | `cargo test -p playtime-strata --locked`, then the [owned workshop smoke](rust-strata.md#live-smoke) | Synthetic HTTP/SSE failure fixtures, then the actual endpoint with a saved chat turn, uid-1000 tools, follow-up and local cancellation |
+| Chat launcher ownership | `python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v`, then an owned [launcher smoke](rust-chat-launcher.md) | Status without startup, busy refusal, exact model lock, argument handoff, interruption/SSH loss and host restoration |
 | Continuous native execution | `./scripts/test-rust-continuous.sh --backend docker-scripted`, then `--backend live` | One real systemd/Docker workshop across compactions, final capture, purpose accounting and exact cleanup; live defaults to reviewed local Qwen, or `PLAYTIME_CONTINUOUS_MODEL=gpt-oss:120b` selects reviewed Framework High reasoning |
 | Saved continuous recipes | `./scripts/test-rust-registered-model.sh --continuous` | Real API/workbench save, revision, launch/replay, compactions, final file and purpose accounting on local Qwen |
 | Registered-model execution | `./scripts/test-rust-registered-model.sh` | Additional real Qwen API/workbench smoke, exact selection and replay; does not replace the original live gate |
@@ -186,3 +190,8 @@ and explicit simulated publication acknowledgments. No host command or model cal
 runs in this CPU gate. The separate [continuous native gate](rust-continuous-native.md)
 checks actual process continuity and final publication. The saved-recipe
 API/workbench gate additionally verifies the immutable authoring and launch path.
+
+The standalone [chat/session contract](rust-conversation.md) also runs
+`cargo test -p playtime-harness --locked`. Its CPU fixtures exercise the real
+private-file policy, incremental writes and crash fencing around the same
+controller. They do not establish a working Strata adapter, native tools or console.

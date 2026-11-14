@@ -1,0 +1,379 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-13",
+  "source_commit": "354f0c9",
+  "scope": "native fast-profile transport/tool/cancellation smoke; short prompts, not a long-context or accuracy benchmark",
+  "raw_evidence_root": "/home/data2/playtime/strata-fast-bird-20261113T195124Z",
+  "model_lock": "../../models/bird-strata-gyro-m-fast-v1.lock.json",
+  "target": {
+    "host": "oldman-bird",
+    "profile": "bird-gyro-m-fast",
+    "backend": "cuda",
+    "engine": "0.1.57",
+    "quantization": "TQ2_0",
+    "context_tokens": 131072,
+    "drafting": "dflash2",
+    "thinking": "medium",
+    "kv": "int8",
+    "draft": "dflash2",
+    "draft_fallback": "none",
+    "draft_model": "/home/oldman/Strata-data/dflash2/qwen3.8-flash-next-dflash2.q4_0-selq4.pack",
+    "spec": "6",
+    "draft_conf": "0.35",
+    "suffix_draft_argument": null,
+    "ple_io_argument": null,
+    "route_prior": "0",
+    "route_tail_skip": "0"
+  },
+  "artifacts": [
+    {
+      "path": "/home/oldman/.local/share/strata/terminal/0.1.57/data/expert-profile.bin",
+      "size": 196632,
+      "sha256": "8f59b4aa8873209dff11c11e37bcda9529a1335b724a1afeea37bf6388975baf"
+    },
+    {
+      "path": "/home/oldman/Strata-data/dflash2/draft_vocab.bin",
+      "size": 425196,
+      "sha256": "b1e1d3a7a9e4bf862dcd5923ce661fb59bbd07907e594df5cf86a62ac235cb91"
+    },
+    {
+      "path": "/home/oldman/Strata-data/dflash2/qwen3.8-flash-next-dflash2.q4_0-selq4.pack",
+      "size": 339694592,
+      "sha256": "4a42b98220ea7880664002c8edda1563aecbae754b762a2e2f31b2b91ee93ecd"
+    },
+    {
+      "path": "/home/oldman/Strata-data/models/gyro-Gyro-M/Qwen3.8-Flash-Next-Gyro-M-TQ2_0.gguf",
+      "size": 91965774272,
+      "sha256": "7aa36d15131d255179ab6c87fa9c9f81a0b541fc9e81e959d4c3e29eb20feb5f"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/compat-bf16.json",
+      "size": 38964,
+      "sha256": "530795824395e0a8be7ddbefbac38b4b132fa404334c7f2822324437611785db"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/conversions.json",
+      "size": 165322,
+      "sha256": "7bee4aaac1ed60879d11824e4546b2d912292cb065f2b8c7fa645cfc7867c23b"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/dense.bin",
+      "size": 1485688320,
+      "sha256": "e9588a855a18984a01c4202eaa295fb7211b341d49c440b0f203b5c310048954"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/experts.bin",
+      "size": 32086425600,
+      "sha256": "ed227e050a2f55a54526ea89b70ce31c1a0985e403bef13591fec2e71457adf7"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/experts.bin.src.json",
+      "size": 248,
+      "sha256": "f07c2adcefd2e02b688c6ae6ce2f597c3829b618ad84c38029f7f96eb5f7dff2"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/hadamard.txt",
+      "size": 8938,
+      "sha256": "0ac6508d90038f53cb193cc91ae9c06e9352f154861f2777dcdba842be89668d"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/index.txt",
+      "size": 93547,
+      "sha256": "c73dbe59d5f2d6751be3f790e9c94149efa6484cfc0d2fa2391ddeb590f9ec28"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/native_experts.txt",
+      "size": 3454,
+      "sha256": "539406ff662d2189c0fa6061fd8e38fd208cce0944c2d7afb8095956dc2d6368"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/tokenizer/chat_template.jinja",
+      "size": 9993,
+      "sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/tokenizer/merges.txt",
+      "size": 3353258,
+      "sha256": "4ba698529766c7a2f5052083ea10cdf2485577f5237a332ee291054eb11e3332"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/tokenizer/token_type.json",
+      "size": 744960,
+      "sha256": "5088c8c298fc06af8382ddb3b76c888703ac2634e82263b97eedcc2ad202738b"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/tokenizer/tokenizer.json",
+      "size": 541,
+      "sha256": "c0bd435efbc6c3b28964b47999afe16c4ad268c7c7c4e8cb3af410796a6f30bf"
+    },
+    {
+      "path": "/home/oldman/Strata-data/packs/gyro-gyro-m/tokenizer/vocab.json",
+      "size": 5737005,
+      "sha256": "4ba64f0332abcfb0b600b7df1537d1e836e68009d5fb7cdb77339738dc6365c4"
+    }
+  ],
+  "engine_argv": [
+    "/home/oldman/.local/share/strata/components/engine/0.1.57-linux-x86_64-cuda-cuda13/strata",
+    "--serve",
+    "--pack",
+    "/home/oldman/Strata-data/packs/gyro-gyro-m",
+    "--native",
+    "/home/oldman/Strata-data/models/gyro-Gyro-M/Qwen3.8-Flash-Next-Gyro-M-TQ2_0.gguf",
+    "--ple-gguf",
+    "/home/oldman/Strata-data/models/gyro-Gyro-M/Qwen3.8-Flash-Next-Gyro-M-TQ2_0.gguf",
+    "--expert-profile",
+    "/home/oldman/.local/share/strata/terminal/0.1.57/data/expert-profile.bin",
+    "--expert-cache",
+    "auto",
+    "--prefill",
+    "auto",
+    "--max-context",
+    "131072",
+    "--kv",
+    "int8",
+    "--resident-experts",
+    "--draft",
+    "dflash2",
+    "--draft-model",
+    "/home/oldman/Strata-data/dflash2/qwen3.8-flash-next-dflash2.q4_0-selq4.pack",
+    "--draft-fallback",
+    "none",
+    "--mtp-draft-vocab",
+    "/home/oldman/Strata-data/dflash2/draft_vocab.bin",
+    "--spec",
+    "6",
+    "--draft-conf",
+    "0.35",
+    "--layer-split",
+    "auto"
+  ],
+  "launch_environment": {
+    "STRATA_NO_ACQUIRE": "1",
+    "STRATA_RUNTIME_PROFILE": "launch-codex-bird-gyro-m-fast",
+    "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+    "CUDA_VISIBLE_DEVICES": "1,0",
+    "STRATA_ROUTE_PRIOR": "0",
+    "STRATA_ROUTE_TAIL_SKIP": "0",
+    "STRATA_GDN_TC": "1",
+    "STRATA_GDN_CONVL2": "2"
+  },
+  "conversation": {
+    "model_calls": 2,
+    "tool_calls": 1,
+    "result": {
+      "cleanup": {
+        "status": "complete"
+      },
+      "diagnostics": [],
+      "elapsed_ms": 3536,
+      "last_checkpoint": null,
+      "mode": "live_smoke",
+      "model_calls": 2,
+      "reason": "agent_finished",
+      "run_id": "turn-d5584b98d820c9433c6fed7009d2f95a745e4b5bf8268ee56e0d49b5d2487176",
+      "sessions_started": 0,
+      "tool_parse_errors": 0,
+      "usage": {
+        "budget_charged_tokens": 118,
+        "known_generated_tokens": 118,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+      }
+    }
+  },
+  "requests": [
+    {
+      "completion": "tool_calls",
+      "usage": {
+        "generated_tokens": 57,
+        "prompt_tokens": 544
+      },
+      "reasoning_tokens": 28,
+      "cached_input_tokens": 0,
+      "timings": {
+        "cache_n": 0,
+        "draft_n": 80,
+        "draft_n_accepted": 35,
+        "predicted_ms": 433.5,
+        "predicted_n": 57,
+        "predicted_per_second": 131.5,
+        "predicted_per_token_ms": 7.605,
+        "prompt_ms": 824.3,
+        "prompt_n": 544,
+        "prompt_per_second": 660.0,
+        "prompt_per_token_ms": 1.515
+      }
+    },
+    {
+      "completion": "stop",
+      "usage": {
+        "generated_tokens": 61,
+        "prompt_tokens": 657
+      },
+      "reasoning_tokens": 17,
+      "cached_input_tokens": 600,
+      "timings": {
+        "cache_n": 600,
+        "draft_n": 63,
+        "draft_n_accepted": 45,
+        "predicted_ms": 308.4,
+        "predicted_n": 61,
+        "predicted_per_second": 197.8,
+        "predicted_per_token_ms": 5.056,
+        "prompt_ms": 225.2,
+        "prompt_n": 57,
+        "prompt_per_second": 253.1,
+        "prompt_per_token_ms": 3.951
+      }
+    }
+  ],
+  "cancellation": {
+    "completion": {
+      "Err": {
+        "detail": "request cancelled locally; remote termination is unconfirmed",
+        "generated_tokens": null,
+        "kind": "cancelled"
+      }
+    },
+    "remote": "uncertain",
+    "partial_items": 1,
+    "observed_at": "2026-11-13T19:57:03.186188+00:00",
+    "activity_after": {
+      "requests": 4,
+      "in_flight": 0,
+      "last_request_at": 1794599783
+    },
+    "slots_after": [
+      {
+        "id": 0,
+        "n_ctx": 131072,
+        "is_processing": false,
+        "n_prompt_tokens": 34
+      }
+    ],
+    "termination_authority": "separate owned helper stop, not HTTP disconnect"
+  },
+  "workshop_cleanup": {
+    "resources": [
+      {
+        "name": "playtime-f425e1c83a43b94bbb66562f5f418498-agent-0",
+        "role": "agent",
+        "state": "confirmed_absent"
+      },
+      {
+        "name": "playtime-f425e1c83a43b94bbb66562f5f418498-holder-0",
+        "role": "holder",
+        "state": "confirmed_absent"
+      },
+      {
+        "name": "playtime-f425e1c83a43b94bbb66562f5f418498-volume-0",
+        "role": "volume",
+        "state": "confirmed_absent"
+      }
+    ]
+  },
+  "server_cleanup": [
+    {
+      "command": [
+        "/home/oldman/.local/bin/strata",
+        "launch",
+        "--stop",
+        "--preset",
+        "codex-bird-gyro-m-fast",
+        "--output",
+        "json"
+      ],
+      "returncode": 0,
+      "stdout": "Stopped codex-bird-gyro-m-fast.\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "sudo",
+        "-n",
+        "nvidia-smi",
+        "-i",
+        "GPU-08abdd4f-ec73-9117-136f-0291e25c316f",
+        "-pl",
+        "450.00"
+      ],
+      "returncode": 0,
+      "stdout": "Power limit for GPU 00000000:01:00.0 was set to 450.00 W from 350.00 W.\n\nWarning: persistence mode is disabled on device 00000000:01:00.0. See the Known Issues section of the nvidia-smi(1) man page for more information. Run with [--help | -h] switch to get more information on how to enable persistence mode.\nAll done.\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "sudo",
+        "-n",
+        "nvidia-smi",
+        "-i",
+        "GPU-f5b89802-ae8c-6afd-9ecb-7aafba5b55f8",
+        "-pl",
+        "420.00"
+      ],
+      "returncode": 0,
+      "stdout": "Power limit for GPU 00000000:0B:00.0 was set to 420.00 W from 300.00 W.\n\nWarning: persistence mode is disabled on device 00000000:0B:00.0. See the Known Issues section of the nvidia-smi(1) man page for more information. Run with [--help | -h] switch to get more information on how to enable persistence mode.\nAll done.\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "sudo",
+        "-n",
+        "systemctl",
+        "start",
+        "ollama"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "owner_exit": {
+    "returncode": 0,
+    "elapsed_s": 342.48062279199985
+  },
+  "gpus_loaded": [
+    [
+      "0",
+      "NVIDIA GeForce RTX 4090",
+      "GPU-08abdd4f-ec73-9117-136f-0291e25c316f",
+      "22501 MiB",
+      "350.00 W",
+      "41"
+    ],
+    [
+      "1",
+      "NVIDIA GeForce RTX 3090",
+      "GPU-f5b89802-ae8c-6afd-9ecb-7aafba5b55f8",
+      "22143 MiB",
+      "300.00 W",
+      "46"
+    ]
+  ],
+  "gpus_restored": [
+    [
+      "0",
+      "NVIDIA GeForce RTX 4090",
+      "GPU-08abdd4f-ec73-9117-136f-0291e25c316f",
+      "6 MiB",
+      "450.00 W",
+      "42"
+    ],
+    [
+      "1",
+      "NVIDIA GeForce RTX 3090",
+      "GPU-f5b89802-ae8c-6afd-9ecb-7aafba5b55f8",
+      "6 MiB",
+      "420.00 W",
+      "45"
+    ]
+  ],
+  "failed_attempts": [
+    {
+      "attempt": "host-evidence.json",
+      "error": "KeyError: backend; older CUDA launcher lacks backend field; fixed collector derives backend from actual executable path before hashing",
+      "model_requests_sent": 0
+    }
+  ]
+}

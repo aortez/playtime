@@ -195,7 +195,7 @@ impl<I: IdSource> Controller<I> {
         tools: ToolPolicy,
     ) -> Result<Self, InvalidValue> {
         config.settings.validate(&config.parameters)?;
-        let policy = Policy::compaction(&config)?;
+        let policy = Policy::compaction(&(&config).into())?;
         Self::configured(
             RuntimeConfig::compaction(config),
             policy,
@@ -205,6 +205,63 @@ impl<I: IdSource> Controller<I> {
             now_ms,
             tools,
         )
+    }
+
+    /// One bounded user turn, without an experiment archive or synthetic
+    /// publication. The adapter still owns workspace preparation and cleanup.
+    pub fn chat(
+        config: crate::chat::ConversationConfig,
+        turn: crate::chat::ConversationTurn,
+        run_id: RunId,
+        ids: I,
+        now_ms: u64,
+    ) -> Result<Self, InvalidValue> {
+        if turn
+            .previous
+            .as_ref()
+            .is_some_and(|s| s.completed_turn == run_id)
+        {
+            return Err(InvalidValue("a follow-up needs a new turn identity"));
+        }
+        let runtime = config.runtime(&turn.input, turn.previous.as_ref())?;
+        let policy = Policy::chat(
+            runtime.compaction.as_ref().unwrap(),
+            turn.previous.as_ref().map(|s| &s.history),
+            &turn.input,
+        )?;
+        Self::configured(
+            runtime,
+            policy,
+            run_id,
+            config.mode,
+            ids,
+            now_ms,
+            config.tool_policy,
+        )
+    }
+
+    /// In-flight, interrupted and cleanup-uncertain turns have no resumable
+    /// checkpoint. Callers must also durably commit the accompanying records.
+    pub fn conversation_checkpoint(&self) -> Option<crate::chat::ConversationCheckpoint> {
+        let boundary = self.config.conversation.as_ref()?;
+        let result = self.result.as_ref()?;
+        if result.reason != StopReason::AgentFinished || result.cleanup != CleanupOutcome::Complete
+        {
+            return None;
+        }
+        let saved = crate::chat::ConversationCheckpoint {
+            schema_version: 1,
+            configuration: boundary.configuration.clone(),
+            completed_turn: self.run_id.clone(),
+            next_sequence: self.sequence,
+            next_request: boundary
+                .request_offset
+                .checked_add(self.model_calls)?
+                .checked_add(1)?,
+            history: self.policy.saved_chat()?,
+        };
+        (serde_json::to_vec(&saved).ok()?.len() <= crate::chat::MAX_CHECKPOINT_BYTES)
+            .then_some(saved)
     }
 
     fn configured(
@@ -217,18 +274,7 @@ impl<I: IdSource> Controller<I> {
         tool_policy: ToolPolicy,
     ) -> Result<Self, InvalidValue> {
         config.parameters.validate()?;
-        if let ToolPolicy::ConfirmedExternal { return_overhead_ms } = tool_policy
-            && (return_overhead_ms == 0
-                || return_overhead_ms
-                    >= config
-                        .parameters
-                        .limits
-                        .command_seconds
-                        .get()
-                        .saturating_mul(1000))
-        {
-            return Err(InvalidValue("invalid external command return allowance"));
-        }
+        tool_policy.validate(&config.parameters.limits)?;
         let limits = &config.parameters.limits;
         let deadline_ms = limits
             .wall_seconds
@@ -242,6 +288,7 @@ impl<I: IdSource> Controller<I> {
                 .checked_mul(1000)
                 .ok_or(InvalidValue("operation timeout overflows milliseconds"))?;
         }
+        let sequence = config.conversation.as_ref().map_or(1, |c| c.next_sequence);
         let mut controller = Self {
             config,
             tool_policy,
@@ -263,7 +310,7 @@ impl<I: IdSource> Controller<I> {
             controls: Vec::new(),
             request_context: None,
             publication: None,
-            sequence: 1,
+            sequence,
             log_used: 0,
             log_exhausted: false,
             totals: UsageTotals::default(),
@@ -307,7 +354,7 @@ impl<I: IdSource> Controller<I> {
         );
         if let Some(config) = &controller.config.compaction {
             controller.emit("compaction_configured", json!({
-                "harness":crate::compaction::HARNESS,
+                "harness":if controller.config.conversation.is_some() { crate::chat::HARNESS } else { crate::compaction::HARNESS },
                 "settings":config.settings,
                 "safety_margin":crate::compaction::CompactionSettings::safety_margin(config.parameters.limits.context_tokens.get()),
                 "work_context_reserve":config.work_reserve()
@@ -710,11 +757,12 @@ impl<I: IdSource> Controller<I> {
             self.control(ControlFact::EffectNotDispatched(effect));
         }
         self.pending = None;
-        self.stage = if self.active && !self.checkpoint_attempted {
-            Stage::Checkpoint
-        } else {
-            Stage::Cleaning
-        };
+        self.stage =
+            if self.active && !self.checkpoint_attempted && self.config.conversation.is_none() {
+                Stage::Checkpoint
+            } else {
+                Stage::Cleaning
+            };
     }
 
     /// Charge a dispatched model request's wall time to the model, once.
@@ -882,9 +930,10 @@ impl<I: IdSource> Controller<I> {
             workspace: self
                 .last_checkpoint
                 .as_ref()
-                .map_or(&self.config.initial_workspace, |checkpoint| {
-                    &checkpoint.snapshot.workspace
-                })
+                .map_or(
+                    self.config.initial_workspace.as_ref().unwrap(),
+                    |checkpoint| &checkpoint.snapshot.workspace,
+                )
                 .clone(),
             memory: memory.clone(),
             evidence: evidence.clone(),
@@ -966,7 +1015,16 @@ impl<I: IdSource> Controller<I> {
         }
         let timeout_ms = limits.model_seconds.get() * 1000;
         let call = self.model_calls + 1;
-        let id = self.ids.request(call);
+        let ordinal = self
+            .config
+            .conversation
+            .as_ref()
+            .map_or(Some(call), |c| c.request_offset.checked_add(call));
+        let Some(ordinal) = ordinal else {
+            self.stop(StopReason::InfrastructureFailure);
+            return;
+        };
+        let id = self.ids.request(ordinal);
         if !self.seen_requests.insert(id.clone()) {
             self.diagnostic("ID source repeated a request ID");
             self.stop(StopReason::InfrastructureFailure);
@@ -1172,6 +1230,29 @@ impl<I: IdSource> Controller<I> {
                 }
             }
         }
+        let chat_work =
+            self.config.conversation.is_some() && request.purpose == RequestPurpose::Work;
+        let chat_final = chat_work
+            && response.message["tool_calls"]
+                .as_array()
+                .is_none_or(Vec::is_empty);
+        if chat_work
+            && (!matches!(finish_reason, Some("stop" | "tool_calls"))
+                || (chat_final && finish_reason != Some("stop")))
+        {
+            self.diagnostic("chat requires explicit normal completion; partial output is retained in observations");
+            self.stop(StopReason::IncompleteModelResponse);
+            return;
+        }
+        if chat_final
+            && response.message["content"]
+                .as_str()
+                .is_none_or(|c| c.trim().is_empty())
+        {
+            self.diagnostic("chat final reply has no answer content");
+            self.stop(StopReason::InvalidCompletion);
+            return;
+        }
         if response.message["tool_calls"]
             .as_array()
             .is_some_and(|calls| calls.len() > 8)
@@ -1197,6 +1278,16 @@ impl<I: IdSource> Controller<I> {
                 request.request_id,
                 response,
             );
+            if chat_final {
+                self.after_response(true);
+                self.finished = true;
+                self.ended = true;
+                self.stop(if self.log_exhausted {
+                    StopReason::LogLimit
+                } else {
+                    StopReason::AgentFinished
+                });
+            }
         }
     }
 
@@ -1542,13 +1633,14 @@ impl<I: IdSource> Controller<I> {
     fn complete(&mut self, effect: EffectKind, outcome: Outcome) {
         match (effect, outcome) {
             (EffectKind::StartWorkspace, Outcome::WorkspaceStarted) => {
-                self.control(ControlFact::WorkspaceStarted {
-                    workspace: self.config.initial_workspace.clone(),
-                });
-                self.emit(
-                    "workspace_started",
-                    json!({"workspace": self.config.initial_workspace}),
-                );
+                if let Some(workspace) = self.config.initial_workspace.clone() {
+                    self.control(ControlFact::WorkspaceStarted {
+                        workspace: workspace.clone(),
+                    });
+                    self.emit("workspace_started", json!({"workspace": workspace}));
+                } else {
+                    self.emit("conversation_workspace_started", json!({}));
+                }
                 self.policy.workspace_started();
                 self.phase_to(RunPhase::Working);
             }

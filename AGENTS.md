@@ -37,6 +37,34 @@ Compaction-policy changes also run
 its deterministic controller gate does not establish native process continuity.
 Native compaction changes also run `./scripts/test-rust-continuous.sh --backend docker-scripted`
 and then `--backend live` sequentially; see `docs/rust-continuous-native.md`.
+`playtime-harness` wraps that controller for standalone chat turns and private
+saved conversations. Run `cargo test -p playtime-harness --locked` for its changes.
+Keep session state outside tool write roots, commit observations before dispatch,
+and never replay an unfinished turn. The explicit compaction-recovery fork may
+carry only the last completed history after a fully observed, length-limited first
+summary and confirmed cleanup; it must preserve the fenced source and reject
+work/tool calls or uncertain/missing evidence. See `docs/rust-conversation.md`; its CPU
+fixtures do not establish Strata transport, host tools or a runnable console.
+`playtime-chat` supplies the asynchronous project driver and basic terminal client;
+it must use that same controller. Run `cargo test -p playtime-chat --locked` for
+its changes. Keep model deadlines and cancellation independent of record fsync,
+never dispatch after a failed observation commit, and run owned cleanup on every
+exit path. Its Strata endpoint must be held and verified by the external host
+owner. See `docs/rust-chat-console.md`; saved completed sessions resume, interrupted
+turns remain fenced, and launcher-managed server startup stays outside the client.
+The owner wrapper and installer live under `scripts/chat/` and
+`scripts/install-chat-launcher.sh`; see `docs/rust-chat-launcher.md`. For changes,
+run `python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v`, then an
+explicitly owned live smoke for host handoff changes. Status must remain read-only,
+busy hosts must be refused, and actual host artifacts must match the reviewed
+model lock before starting the client. Keep the host owned through tool cleanup.
+`playtime-strata` adapts the installed stateless Responses API to shared model
+requests; it never owns a model server or executes tools. Freeze the endpoint's
+model/template/settings plus independently verified host artifacts, keep missing
+usage unknown, and never replay an ambiguous request. Run its CPU fixtures and
+the explicitly owned live workshop smoke sequentially for transport changes;
+see `docs/rust-strata.md`. Socket closure and terminal SSE events are observations,
+not remote termination authority. A fixture or HIP smoke does not qualify CUDA.
 `playtime-storage` owns synchronous portable archive I/O. Preserve its distinction
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`
@@ -62,6 +90,12 @@ and aggregate cleanup bounds. See `docs/rust-docker.md`; explicitly run
 `./scripts/test-rust-docker-e2e.sh --case sandbox` for adapter changes when the
 locked local environment is available. The
 sandbox gate is not checkpoint publication or production run-and-view evidence.
+The separate `playtime-docker::project` profile mounts one explicit project at
+`/work`; it never changes the experiment volume/capture profile. It enforces the
+same process/network limits, but has no aggregate project disk quota. Keep its
+exclusive lease, durable unresolved-container marker and session state outside
+the project. Also run `./scripts/test-rust-docker-e2e.sh --case project` for that
+profile; cleanup must preserve project files and never clear an uncertain create.
 Stopped-workspace capture owns bounded unextracted candidates, not writer receipts.
 See `docs/rust-workspace-capture.md`; run the additional Docker `--case checkpoint`
 gate for capture changes. Keep embedded helper digests tied to the frozen worker

@@ -21,6 +21,7 @@ use crate::{
     evidence::Evidence,
 };
 
+pub(crate) use compaction::validate_chat_history;
 pub(crate) use failures::{ModelErrorSource, ToolResultSource};
 pub(crate) use memento::Memento;
 pub use memento::SessionInput;
@@ -204,15 +205,35 @@ pub(crate) enum Policy {
 }
 
 impl Policy {
+    pub fn chat(
+        config: &crate::compaction::PolicyConfig,
+        saved: Option<&playtime_protocol::conversation::History>,
+        input: &str,
+    ) -> Result<Self, playtime_core::InvalidValue> {
+        let mut policy = Self::compaction(config)?;
+        if let (Self::Compaction(p), Some(saved)) = (&mut policy, saved) {
+            p.resume(saved, input)?;
+        }
+        Ok(policy)
+    }
+
+    pub fn saved_chat(&self) -> Option<playtime_protocol::conversation::History> {
+        if let Self::Compaction(policy) = self {
+            policy.saved()
+        } else {
+            None
+        }
+    }
+
     #[cfg(feature = "test-harness")]
     pub fn probe() -> Self {
         Self::Probe(probe::Probe::default())
     }
     pub fn compaction(
-        config: &crate::compaction::CompactionConfig,
+        config: &crate::compaction::PolicyConfig,
     ) -> Result<Self, playtime_core::InvalidValue> {
-        let policy = compaction::Compaction::new(config);
-        if !policy.initial_fits(config) {
+        let policy = compaction::Compaction::new(config)?;
+        if !policy.initial_fits() {
             return Err(playtime_core::InvalidValue(
                 "initial compaction context cannot fit below the trigger with its required reserves",
             ));

@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU64;
 
-use playtime_core::{CommonParameters, InvalidValue};
+use playtime_core::{CommonLimits, CommonParameters, InvalidValue};
 use playtime_protocol::archive::ContentRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -35,6 +35,31 @@ pub fn summary_transcript(
     conversation: &[Value],
     instructions: &str,
 ) -> Vec<Value> {
+    transcript(prompt, summary, conversation, instructions, "controller")
+}
+
+pub(crate) fn chat_summary_transcript(
+    prompt: &str,
+    summary: Option<&str>,
+    conversation: &[Value],
+    instructions: &str,
+) -> Vec<Value> {
+    transcript(
+        prompt,
+        summary,
+        conversation,
+        instructions,
+        "user or controller notice",
+    )
+}
+
+fn transcript(
+    prompt: &str,
+    summary: Option<&str>,
+    conversation: &[Value],
+    instructions: &str,
+    user_label: &str,
+) -> Vec<Value> {
     let mut text = format!("The agent's task:\n{prompt}");
     if let Some(summary) = summary {
         text.push_str(&format!("\n\n{summary}"));
@@ -63,7 +88,7 @@ pub fn summary_transcript(
                 "\n\n[{} result]\n{content}",
                 message["tool_name"].as_str().unwrap_or("unknown")
             )),
-            _ => text.push_str(&format!("\n\n[controller]\n{content}")),
+            _ => text.push_str(&format!("\n\n[{user_label}]\n{content}")),
         }
     }
     text.push_str(&format!("\n\n{instructions}"));
@@ -127,6 +152,12 @@ impl TryFrom<&playtime_protocol::api::CompactionSettings> for CompactionSettings
 impl CompactionSettings {
     pub fn validate(&self, parameters: &CommonParameters) -> Result<(), InvalidValue> {
         parameters.validate()?;
+        self.validate_limits(&parameters.limits)
+    }
+
+    /// Validate conversation settings without requiring a workshop or archive.
+    pub fn validate_limits(&self, limits: &CommonLimits) -> Result<(), InvalidValue> {
+        limits.validate()?;
         if self.schema_version != 1 {
             return Err(InvalidValue("unsupported compaction settings version"));
         }
@@ -135,7 +166,7 @@ impl CompactionSettings {
                 "compaction requires trigger 1..99 and retention 0..32",
             ));
         }
-        if self.summary_tokens > parameters.limits.tokens_per_call {
+        if self.summary_tokens > limits.tokens_per_call {
             return Err(InvalidValue(
                 "summary cap exceeds the accepted per-call allocation",
             ));
@@ -169,15 +200,41 @@ pub struct CompactionConfig {
     pub initial_files: FileIndex,
 }
 
-impl CompactionConfig {
-    pub(crate) fn work_reserve(&self) -> u64 {
-        CompactionSettings::safety_margin(self.parameters.limits.context_tokens.get())
-            .saturating_add(self.settings.summary_tokens.get())
-            .saturating_add(encoded_size(
-                &json!({"role":"user", "content":self.settings.instructions}),
-            ))
-            .saturating_add(self.parameters.limits.output_bytes.get())
+/// Policy inputs shared by archived runs and standalone chat turns. Archive
+/// references belong to the lifecycle adapter, not to conversation planning.
+pub(crate) struct PolicyConfig {
+    pub parameters: CommonParameters,
+    pub protocol: String,
+    pub prompt: String,
+    pub inventory: String,
+    pub settings: CompactionSettings,
+}
+
+impl From<&CompactionConfig> for PolicyConfig {
+    fn from(config: &CompactionConfig) -> Self {
+        Self {
+            parameters: config.parameters.clone(),
+            protocol: config.protocol.clone(),
+            prompt: config.prompt.clone(),
+            inventory: config.inventory.clone(),
+            settings: config.settings.clone(),
+        }
     }
+}
+
+impl PolicyConfig {
+    pub(crate) fn work_reserve(&self) -> u64 {
+        work_reserve(&self.parameters.limits, &self.settings)
+    }
+}
+
+pub(crate) fn work_reserve(limits: &CommonLimits, settings: &CompactionSettings) -> u64 {
+    CompactionSettings::safety_margin(limits.context_tokens.get())
+        .saturating_add(settings.summary_tokens.get())
+        .saturating_add(encoded_size(
+            &json!({"role":"user", "content":settings.instructions}),
+        ))
+        .saturating_add(limits.output_bytes.get())
 }
 
 pub(crate) fn tools(allow_finish_run: bool) -> Vec<Value> {

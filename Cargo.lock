@@ -3338,6 +3338,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "playtime-chat"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "playtime-core",
+ "playtime-docker",
+ "playtime-engine",
+ "playtime-harness",
+ "playtime-local",
+ "playtime-protocol",
+ "playtime-strata",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "playtime-cli"
 version = "0.1.0"
 dependencies = [
@@ -3386,6 +3406,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "getrandom 0.4.3",
+ "playtime-local",
  "playtime-protocol",
  "rustix 1.1.4",
  "serde",
@@ -3405,6 +3426,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "playtime-harness"
+version = "0.1.0"
+dependencies = [
+ "playtime-core",
+ "playtime-engine",
+ "playtime-local",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3516,6 +3548,24 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "playtime-strata"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "playtime-core",
+ "playtime-docker",
+ "playtime-engine",
+ "playtime-harness",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-13",
+  "scope": "Installed Bird launcher entry, real project exec calls, saved-conversation reopening after server restart, cached verification and normal owned cleanup. Short prompts; not a long-context, compaction or quality benchmark.",
+  "entry": {
+    "name": "playtime-bird-fast",
+    "harness": "Playtime",
+    "description": "Project chat on Bird with the tested Gyro-M fast preset.",
+    "launch": [
+      "~/.local/lib/playtime-chat/run-strata.py",
+      "bird-gyro-m-fast"
+    ],
+    "status": [
+      "~/.local/lib/playtime-chat/run-strata.py",
+      "--status",
+      "bird-gyro-m-fast"
+    ],
+    "model": "qwen3.8-flash-next-gyro-gyro-m",
+    "provider": "Strata on Bird",
+    "context_window": 131072,
+    "effort": "medium",
+    "tools": "project Docker; no external network"
+  },
+  "profile": "bird-gyro-m-fast",
+  "model_lock": "../../models/bird-strata-gyro-m-fast-v1.lock.json",
+  "host_identity": {
+    "backend": "cuda",
+    "quantization": "TQ2_0",
+    "engine_sha256": "9980139c6119dec0de3801aa5233b7f33b50bc814917cae24a7a098fcafbbe63",
+    "artifacts_manifest_sha256": "82317b8e5f45cce0fed265d91f5a4d5c79f9292c8942ecd4c9ead029b2cb0173",
+    "launch_configuration_sha256": "e658d45a732bebd8ddb23e8faecd3114c8c765bd109d50122d33de3d40468cc1",
+    "responses_source_sha256": "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b"
+  },
+  "harness_context_tokens": 131072,
+  "drafting": "dflash2",
+  "raw_evidence": "/home/data2/playtime/chat-launcher-bird-337_lrpu",
+  "session": "/home/data2/playtime/chat-launcher-bird-337_lrpu/state/session-446eb43328b49b56c1e1d5a70d353eb3c362e19d9871b8712be306a995f5ce24",
+  "cases": {
+    "first": {
+      "launcher_evidence": "/home/oldman/.local/state/playtime-launcher/20261113T171948-7bpnqb12",
+      "remote_helper_evidence": "/home/oldman/.local/state/codex-gyro/20261114T011948Z-9393",
+      "timings": {
+        "model_ready_seconds": 39.44518831200185,
+        "verification_seconds": 80.27501986599964,
+        "launcher_ready_seconds": 119.72024991700164,
+        "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 0,
+          "reused_bytes": 0,
+          "hashed_files": 19,
+          "hashed_bytes": 126196079471,
+          "cache_saved": true
+        }
+      },
+      "launch_result": {
+        "exit": 0,
+        "elapsed_seconds": 126.14895862499907
+      },
+      "result": {
+        "cleanup": {
+          "status": "complete"
+        },
+        "diagnostics": [],
+        "elapsed_ms": 3082,
+        "last_checkpoint": null,
+        "mode": "live_smoke",
+        "model_calls": 2,
+        "reason": "agent_finished",
+        "run_id": "turn-abf5488233f4c08e27b4e1ddc28592ec7d7ac138daccfb737849b1e9d03b2bce",
+        "sessions_started": 0,
+        "tool_parse_errors": 0,
+        "usage": {
+          "budget_charged_tokens": 149,
+          "known_generated_tokens": 149,
+          "unknown_requests": 0,
+          "unknown_reserved_tokens": 0,
+          "usage_complete": true
+        }
+      },
+      "tool_results": [
+        {
+          "duration_seconds": 0.005,
+          "exit_code": 0,
+          "output_truncated": false,
+          "stderr": "",
+          "stdout": "BIRD_RESUME_3498dbec92bf69de",
+          "timed_out": false
+        }
+      ],
+      "reply": "BIRD_RESUME_3498dbec92bf69de\n\nWrote that exact text to `/work/bird-note.txt` and verified it by printing the file contents.",
+      "owner_exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      },
+      "initial_host_state": {
+        "profile": "bird-gyro-m-fast",
+        "preset": "codex-bird-gyro-m-fast",
+        "power_limits": [
+          [
+            "GPU-08abdd4f-ec73-9117-136f-0291e25c316f",
+            "450.00"
+          ],
+          [
+            "GPU-f5b89802-ae8c-6afd-9ecb-7aafba5b55f8",
+            "420.00"
+          ]
+        ],
+        "ollama_active": true
+      },
+      "restoration_exit_codes": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "resume": {
+      "launcher_evidence": "/home/oldman/.local/state/playtime-launcher/20261113T172328-esplp699",
+      "remote_helper_evidence": "/home/oldman/.local/state/codex-gyro/20261114T012329Z-10172",
+      "timings": {
+        "model_ready_seconds": 35.42858931599767,
+        "verification_seconds": 0.4010652229990228,
+        "launcher_ready_seconds": 35.82968528700076,
+        "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 17,
+          "reused_bytes": 125888360842,
+          "hashed_files": 2,
+          "hashed_bytes": 307718629,
+          "cache_saved": true
+        }
+      },
+      "launch_result": {
+        "exit": 0,
+        "elapsed_seconds": 41.36248355600037
+      },
+      "result": {
+        "cleanup": {
+          "status": "complete"
+        },
+        "diagnostics": [],
+        "elapsed_ms": 2706,
+        "last_checkpoint": null,
+        "mode": "live_smoke",
+        "model_calls": 2,
+        "reason": "agent_finished",
+        "run_id": "turn-2c5108ca0639fbe205e52bae7aafa4b793289192185213c1587f87afe0bfe27c",
+        "sessions_started": 0,
+        "tool_parse_errors": 0,
+        "usage": {
+          "budget_charged_tokens": 106,
+          "known_generated_tokens": 106,
+          "unknown_requests": 0,
+          "unknown_reserved_tokens": 0,
+          "usage_complete": true
+        }
+      },
+      "tool_results": [
+        {
+          "duration_seconds": 0.001,
+          "exit_code": 0,
+          "output_truncated": false,
+          "stderr": "",
+          "stdout": "BIRD_RESUME_3498dbec92bf69de",
+          "timed_out": false
+        }
+      ],
+      "reply": "BIRD_RESUME_3498dbec92bf69de\n\nThat is the exact contents of `/work/bird-note.txt`; the file was not modified.",
+      "owner_exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      },
+      "initial_host_state": {
+        "profile": "bird-gyro-m-fast",
+        "preset": "codex-bird-gyro-m-fast",
+        "power_limits": [
+          [
+            "GPU-08abdd4f-ec73-9117-136f-0291e25c316f",
+            "450.00"
+          ],
+          [
+            "GPU-f5b89802-ae8c-6afd-9ecb-7aafba5b55f8",
+            "420.00"
+          ]
+        ],
+        "ollama_active": true
+      },
+      "restoration_exit_codes": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "resume_checks": {
+    "previous_marker_in_resumed_model_history": true,
+    "marker_not_repeated_in_new_prompt": true,
+    "project_file_retained": true,
+    "both_turn_checkpoints_retained": true,
+    "active_turn": null
+  },
+  "postconditions": {
+    "bird_status": "starts_on_launch",
+    "power_limits_watts": [
+      450,
+      420
+    ],
+    "gpu_memory_mib": [
+      6,
+      6
+    ],
+    "ollama_active": true,
+    "owned_project_containers": 0,
+    "existing_launcher_entries_preserved": true
+  },
+  "checks": [
+    "25 launcher/verifier CPU tests passed",
+    "101 frozen Python tests run, 6 skipped",
+    "installed codex-launcher show confirms Bird entry and 131072 context",
+    "first owned CUDA project turn completed",
+    "same saved session reopened through a second owned server launch with cached verification",
+    "both helper cleanups returned zero for server stop, both GPU power-limit restores and Ollama restart"
+  ]
+}
