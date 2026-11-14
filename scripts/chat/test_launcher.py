@@ -41,10 +41,14 @@ if '--status' in args:
     print(json.dumps({'state': 'starts_on_launch'}))
 elif args[1] == '-':
     sys.stdin.read()
+    (root / 'verify-args').write_text(json.dumps(args))
     (root / 'verified').touch()
     if mode == 'verify-failure':
         sys.exit(1)
-    print(json.dumps({'host': {'digest': 'changed' if mode == 'mismatch' else 'reviewed'}}))
+    print(json.dumps({'host': {'digest': 'changed' if mode == 'mismatch' else 'reviewed'},
+                      'verification': {'reused_files': 0 if '--full-verify' in args else 15,
+                                       'hashed_files': 17 if '--full-verify' in args else 2,
+                                       'hashed_bytes': 100}}))
 else:
     (root / 'started').touch()
     if mode == 'busy':
@@ -108,6 +112,34 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         self.assertNotIn('--profile', child['argv'])
         self.assertTrue((self.root / 'verified').exists())
         self.assertTrue((self.root / 'restored').exists())
+        verify_args = json.loads((self.root / 'verify-args').read_text())
+        self.assertEqual(json.loads(verify_args[verify_args.index('--expected-host') + 1]), self.lock['host'])
+        timings = json.loads(next((self.root / '.local/state/playtime-launcher').glob('*/timings.json')).read_text())
+        self.assertGreaterEqual(timings['launcher_ready_seconds'], timings['model_ready_seconds'] + timings['verification_seconds'])
+        self.assertEqual(timings['verification']['reused_files'], 15)
+
+    def test_full_verification_is_forwarded_only_to_verifier(self):
+        result = self.run_fixture('', '--full-verify', '--prompt', 'hello')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        verify_args = json.loads((self.root / 'verify-args').read_text())
+        self.assertIn('--full-verify', verify_args)
+        child = json.loads((self.root / 'client').read_text())
+        self.assertNotIn('--full-verify', child['argv'])
+        self.assertEqual(child['argv'][-2:], ['--prompt', 'hello'])
+        self.assertIn('0 cached, 17 hashed', result.stderr)
+
+    def test_full_verify_literal_prompt_is_not_a_wrapper_option(self):
+        result = self.run_fixture('', '--prompt', '--full-verify')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('--full-verify', json.loads((self.root / 'verify-args').read_text()))
+        child = json.loads((self.root / 'client').read_text())
+        self.assertEqual(child['argv'][-2:], ['--prompt', '--full-verify'])
+
+    def test_help_explains_full_verification_without_startup(self):
+        result = self.run_fixture('', '--help')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--full-verify', result.stdout)
+        self.assertFalse((self.root / 'started').exists())
 
     def test_mismatched_artifacts_never_start_client_and_restore(self):
         result = self.run_fixture('mismatch')

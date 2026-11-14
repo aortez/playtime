@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-13",
+  "scope": "Owned full-verification and cached startup through the installed codex-launcher entry, with the same project-tool smoke. This measures launcher readiness, not generation throughput or model quality.",
+  "profile": "framework-gyro-m-fast",
+  "harness_context_tokens": 65536,
+  "server_context_tokens": 163840,
+  "raw_evidence": "/home/data2/playtime/chat-hash-cache-e8hdp023",
+  "host_identity": {
+    "backend": "hip",
+    "quantization": "TQ2_0",
+    "engine_sha256": "1f22831cc4b017d4fa8e4662537e54125387abd829cacd939f9a3796b6a88e05",
+    "artifacts_manifest_sha256": "82cb9d98c7f5b21c5055b2057aefcb448e909f5c312b3ee35a8a63a9fcf2a851",
+    "launch_configuration_sha256": "d8ff6da0179287aa7df74b3481cf108db4b67b019e94873b3a9b3107b943b59d",
+    "responses_source_sha256": "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b"
+  },
+  "installed_script_sha256": {
+    "run-strata.py": "5dbab8d3a4c106805cddd4596a19ce2cc9a131cc4cf9d4d047f3b0dfa84fb145",
+    "verify-strata-host.py": "a58fab05154ea795e7e3895c9fb91daf7dff92027af7b8071fc831e611131a80"
+  },
+  "client_binary_sha256": "66a1135e35c7c298a99771c8c6061ea2b7fe86f3765a51e62ea099959be03157",
+  "cases": {
+    "full-checked": {
+      "evidence": "/home/oldman/.local/state/playtime-launcher/20261113T165842-d2sdxg45",
+      "timings": {
+        "model_ready_seconds": 19.973002852999343,
+        "verification_seconds": 45.92356972200287,
+        "launcher_ready_seconds": 65.89662032499837,
+        "verification": {
+          "mode": "full",
+          "reused_files": 0,
+          "reused_bytes": 0,
+          "hashed_files": 17,
+          "hashed_bytes": 93854323703,
+          "cache_saved": true
+        }
+      },
+      "launch_result": {
+        "exit": 0,
+        "elapsed_seconds": 73.25428824700066
+      },
+      "result": {
+        "cleanup": {
+          "status": "complete"
+        },
+        "diagnostics": [],
+        "elapsed_ms": 5438,
+        "last_checkpoint": null,
+        "mode": "live_smoke",
+        "model_calls": 2,
+        "reason": "agent_finished",
+        "run_id": "turn-55ee06e886c0df4d75bcfb4d857aa3bbac5f33cdcbff957300d5d6b95bb16ff9",
+        "sessions_started": 0,
+        "tool_parse_errors": 0,
+        "usage": {
+          "budget_charged_tokens": 66,
+          "known_generated_tokens": 66,
+          "unknown_requests": 0,
+          "unknown_reserved_tokens": 0,
+          "usage_complete": true
+        }
+      },
+      "tool_result": {
+        "duration_seconds": 0.003,
+        "exit_code": 0,
+        "output_truncated": false,
+        "stderr": "",
+        "stdout": "CACHE_OK",
+        "timed_out": false
+      },
+      "owner_exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      }
+    },
+    "cached": {
+      "evidence": "/home/oldman/.local/state/playtime-launcher/20261113T170020-bkwlscsk",
+      "timings": {
+        "model_ready_seconds": 20.54357337900001,
+        "verification_seconds": 0.3008463500009384,
+        "launcher_ready_seconds": 20.84445799199966,
+        "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 15,
+          "reused_bytes": 93801934994,
+          "hashed_files": 2,
+          "hashed_bytes": 52388709,
+          "cache_saved": true
+        }
+      },
+      "launch_result": {
+        "exit": 0,
+        "elapsed_seconds": 27.484040223000193
+      },
+      "result": {
+        "cleanup": {
+          "status": "complete"
+        },
+        "diagnostics": [],
+        "elapsed_ms": 4746,
+        "last_checkpoint": null,
+        "mode": "live_smoke",
+        "model_calls": 2,
+        "reason": "agent_finished",
+        "run_id": "turn-e3f20fa42e8691efbfbb760b4011cc6746dfcbf90f04febb1accc2aee026dc4b",
+        "sessions_started": 0,
+        "tool_parse_errors": 0,
+        "usage": {
+          "budget_charged_tokens": 58,
+          "known_generated_tokens": 58,
+          "unknown_requests": 0,
+          "unknown_reserved_tokens": 0,
+          "usage_complete": true
+        }
+      },
+      "tool_result": {
+        "duration_seconds": 0.001,
+        "exit_code": 0,
+        "output_truncated": false,
+        "stderr": "",
+        "stdout": "CACHE_OK",
+        "timed_out": false
+      },
+      "owner_exit": {
+        "client_exit": 0,
+        "owner_exit": 0,
+        "exit": 0
+      }
+    }
+  },
+  "comparison": {
+    "launcher_seconds_saved": 45.052162332998705,
+    "verification_seconds_saved": 45.62272337200193,
+    "artifact_bytes_reused": 93801934994
+  },
+  "postconditions": {
+    "framework_status": "starts_on_launch",
+    "owned_project_containers": 0,
+    "remote_cache_populated": true
+  },
+  "initial_attempt": {
+    "evidence": "/home/oldman/.local/state/playtime-launcher/20261113T165610-ubm30wmi",
+    "client_exit": 1,
+    "owner_exit": 0,
+    "reason": "Full verification succeeded, then the chat client refused a group-writable temporary fixture parent. Repeated with a mode-0700 fixture parent; no product code change was needed."
+  },
+  "checks": [
+    "23 launcher/verifier tests passed, including metadata invalidation, full-mode bypass, malformed/unsafe cache handling, process/config/source checks and owner lifecycle fixtures",
+    "101 frozen Python tests run, 6 skipped",
+    "installed launcher full verification and cached project-tool smoke both completed with confirmed cleanup"
+  ],
+  "limitations": [
+    "Reused hashes trust unchanged local filesystem metadata; use --full-verify to detect content corruption that preserves metadata.",
+    "This comparison used fresh short chat sessions; saved-session reopening latency is not measured."
+  ]
+}

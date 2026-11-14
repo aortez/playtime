@@ -89,6 +89,12 @@ def check_host(report, lock):
 
 
 def session(preset, profile, args):
+    started_at = time.monotonic()
+    # Wrapper flags precede chat arguments, so a prompt whose text is literally
+    # "--full-verify" remains an ordinary prompt value.
+    full_verify = args[:1] == ["--full-verify"]
+    if full_verify:
+        args = args[1:]
     for arg in args:
         if arg.split("=", 1)[0] in ("--endpoint", "--model-lock", "--image-lock"):
             raise RuntimeError(f"{arg.split('=', 1)[0]} is owned by this preset")
@@ -101,6 +107,8 @@ def session(preset, profile, args):
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise RuntimeError("playtime-chat is not installed beside this wrapper")
     if args in (["--help"], ["-h"], ["--version"], ["-V"]):
+        if args in (["--help"], ["-h"]):
+            print("Launcher option (before chat arguments): --full-verify rehashes all model files.", flush=True)
         return subprocess.call([str(executable), *args])
     verifier = (PACKAGE / "verify-strata-host.py").read_bytes()
     evidence = private_run_directory()
@@ -188,12 +196,17 @@ def session(preset, profile, args):
                 raise TimeoutError("owned model startup deadline exceeded")
             time.sleep(.1)
         check_ready(ready, lock)
-        log("verifying running engine and model artifacts against the tested lock…")
+        model_ready_seconds = time.monotonic() - started_at
+        mode = "full hashing" if full_verify else "reuse hashes of unchanged files"
+        log(f"model ready in {model_ready_seconds:.1f}s; verifying artifacts ({mode})…")
         start = time.monotonic()
         with (evidence / "verify-input.py").open("xb") as source:
             source.write(verifier)
         with (evidence / "verify-input.py").open("rb") as source, (evidence / "host.json").open("xb") as report, (evidence / "verify.log").open("xb") as errors:
-            verification = subprocess.Popen(ssh(preset) + remote(preset, "python3", "-", state_dir),
+            verify_args = ["python3", "-", state_dir, "--expected-host", json.dumps(lock["host"])]
+            if full_verify:
+                verify_args.append("--full-verify")
+            verification = subprocess.Popen(ssh(preset) + remote(preset, *verify_args),
                                             stdin=source, stdout=report, stderr=errors, start_new_session=True)
             while verification.poll() is None:
                 drain()
@@ -203,9 +216,19 @@ def session(preset, profile, args):
                 time.sleep(.1)
             if verification.returncode:
                 raise RuntimeError(f"host verification failed; see {evidence / 'verify.log'}")
-        check_host(json.loads((evidence / "host.json").read_text()), lock)
+        report = json.loads((evidence / "host.json").read_text())
+        check_host(report, lock)
         healthy()
-        log(f"verified in {time.monotonic() - start:.1f}s; starting {profile} chat in {Path.cwd()}")
+        verification_seconds = time.monotonic() - start
+        stats = report["verification"]
+        timings = {"model_ready_seconds": model_ready_seconds,
+                   "verification_seconds": verification_seconds,
+                   "launcher_ready_seconds": time.monotonic() - started_at,
+                   "verification": stats}
+        (evidence / "timings.json").write_text(json.dumps(timings, indent=2) + "\n")
+        log(f"verified in {verification_seconds:.1f}s; {stats['reused_files']} cached, "
+            f"{stats['hashed_files']} hashed ({stats['hashed_bytes'] / 1e9:.2f} GB read); "
+            f"starting {profile} chat in {Path.cwd()}")
         child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
                                   "--model-lock", str(lock_path), "--image-lock", str(image_path), *args])
         while child.poll() is None:

@@ -60,10 +60,11 @@ exact recovery conditions and tool limits. Completed sessions created with the
 previous 2,048-token summary cap need `--summary-tokens 2048` when reopening.
 
 The launcher's effort picker does not translate settings for this independent
-program. Effort is part of the reviewed model lock. Extra CLI arguments pass
-unchanged to `playtime-chat`; endpoint, model-lock and image-lock overrides are
-refused because this preset owns them. Existing Codex profiles keep their own
-configuration and effort controls.
+program. Effort is part of the reviewed model lock. The wrapper accepts a leading
+`--full-verify` before any chat arguments; remaining CLI arguments pass unchanged
+to `playtime-chat`. Endpoint, model-lock and image-lock overrides are refused
+because this preset owns them. Existing Codex profiles keep their own configuration
+and effort controls.
 
 ## Inference ownership and verification
 
@@ -73,17 +74,41 @@ busy Strata/Ollama/GPU workloads. Menu status checks call only its read-only
 `--status` path; they never start or hash a model.
 
 After startup, the wrapper reads the helper's own session location and runs the
-bundled verifier over SSH. It hashes the actual engine executable, model/drafter
-artifacts and Responses source; records actual argv, relevant environment and
-launch configuration; and requires an exact match with the committed model lock.
-The console separately verifies the endpoint/template/settings identity. The
-wrapper never rewrites a lock to accept a changed engine. All artifact bytes are
-read on each launch in this first version; this adds startup time but does not
-affect generation throughput. Status checks do not do this work.
+bundled verifier over SSH. It records actual argv, relevant environment and launch
+configuration, hashes the engine executable and Responses source on every launch,
+and requires an exact match with the committed model lock. The console separately
+verifies the endpoint/template/settings identity. The wrapper never rewrites a
+lock to accept a changed engine.
 
-Local evidence is private under `~/.local/state/playtime-launcher`. Remote helper
-logs keep their existing location. The host stays owned while the console shuts
-down local tools, with up to 45 seconds for graceful client cleanup. Closing the
+Model/drafter files can reuse hashes from the inference host's private
+`~/.cache/playtime-chat/strata-hashes-v1-<reviewed-host-digest>.json`. Each launch
+enumerates the current files and checks their device, inode, size, nanosecond
+mtime and ctime. A missing or changed entry is hashed again. The verifier checks
+the opened file against its pathname and rechecks all identities before publishing
+the cache. Only a report matching the reviewed lock can publish it, using an
+atomic replacement with mode 0600 in a caller-owned 0700 directory. Malformed or
+unsafe caches fall back to hashing; a cache write failure does not invalidate an
+otherwise matching report.
+
+The first launch reads all artifacts. Later launches reuse checksums for unchanged
+files; this trusts local filesystem metadata and does not check for corruption
+that leaves that metadata unchanged. Force a fresh content check with:
+
+```sh
+codex-launcher playtime-framework-fast --full-verify --workspace /absolute/project
+```
+
+Place `--full-verify` immediately after the preset, before chat arguments. A
+successful full check refreshes the cache. Normal verification still checks the
+current process/settings and exact reviewed manifest, even when all model hashes
+are reused. Status checks never start a model or populate the cache.
+
+Local evidence is private under `~/.local/state/playtime-launcher`. `timings.json`
+records model readiness, verification and total time to starting the client;
+`host.json` also records hashed/reused file and byte counts. Startup messages show
+the phase durations without needing to pipe the interactive prompt through `ts`.
+Remote helper logs keep their existing location. The host stays owned while the
+console shuts down local tools, with up to 45 seconds for graceful client cleanup. Closing the
 helper's stdin then asks it to stop its server and restore the host. Lost SSH or
 verification failure stops the local client; unconfirmed host restoration returns
 failure. The remote helper's existing heartbeat watchdog handles lost owners.
@@ -114,3 +139,12 @@ seconds. A separate SIGINT during reasoning stopped the client, cleaned up its
 project container and restored Framework in about two seconds. Both runs used a
 32K harness budget with the server still allocated 160K; these are integration
 smokes, not full-context throughput or coding-quality comparisons.
+
+The subsequent [cache comparison](../experiments/chat-console/2026-11-13-cached-verification.json)
+used the installed launcher for a full check and a cached check, each followed by
+the same successful project-tool smoke and confirmed host restoration. Time to
+starting the chat client fell from 65.9 to 20.8 seconds; verification fell from
+45.9 to 0.3 seconds. The cached launch reused all 15 model/drafter file hashes
+(93.8 GB) while freshly hashing the engine and Responses source (52.4 MB).
+These are fresh-session startup measurements, not saved-history reopening or
+generation benchmarks. The cache remains populated for subsequent normal launches.
