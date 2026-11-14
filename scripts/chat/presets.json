@@ -1,6 +1,15 @@
 {
   "schema_version": 1,
   "profiles": {
+    "bird-gyro-m-fast": {
+      "host": "oldman@oldman-bird.local",
+      "ssh_options": ["-i", "~/.ssh/id_ed25519_oldman_bird_codex"],
+      "helper": ".local/lib/codex-gyro/gyro-session.py",
+      "state_parent": ".local/state/codex-gyro",
+      "model_lock": "bird-strata-gyro-m-fast-v1.lock.json",
+      "startup_timeout": 630,
+      "cleanup_timeout": 110
+    },
     "framework-gyro-m-fast": {
       "host": "framework",
       "ssh_options": [],

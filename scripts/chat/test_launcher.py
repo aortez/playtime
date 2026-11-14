@@ -28,6 +28,8 @@ class LauncherTests(unittest.TestCase):
             shutil.copyfile(SOURCE / name, self.package / name)
         self.lock = {"identity": {"model": "fixture", "context_tokens": 163840}, "host": {"digest": "reviewed"}}
         (self.package / "framework-strata-gyro-m-fast-v1.lock.json").write_text(json.dumps(self.lock))
+        self.bird_lock = {"identity": {"model": "fixture", "context_tokens": 131072}, "host": {"digest": "bird-reviewed"}}
+        (self.package / "bird-strata-gyro-m-fast-v1.lock.json").write_text(json.dumps(self.bird_lock))
         (self.package / "general.lock.json").write_text("{}")
         self.bin = self.root / "bin"
         self.bin.mkdir()
@@ -38,6 +40,7 @@ args = shlex.split(sys.argv[-1])
 mode = os.environ.get('FIXTURE_MODE', '')
 if '--status' in args:
     (root / 'status').touch()
+    (root / 'status-args').write_text(json.dumps(sys.argv[1:]))
     print(json.dumps({'state': 'starts_on_launch'}))
 elif args[1] == '-':
     sys.stdin.read()
@@ -45,17 +48,22 @@ elif args[1] == '-':
     (root / 'verified').touch()
     if mode == 'verify-failure':
         sys.exit(1)
-    print(json.dumps({'host': {'digest': 'changed' if mode == 'mismatch' else 'reviewed'},
+    reviewed = 'bird-reviewed' if 'oldman@oldman-bird.local' in sys.argv else 'reviewed'
+    print(json.dumps({'host': {'digest': 'changed' if mode == 'mismatch' else reviewed},
                       'verification': {'reused_files': 0 if '--full-verify' in args else 15,
                                        'hashed_files': 17 if '--full-verify' in args else 2,
                                        'hashed_bytes': 100}}))
 else:
     (root / 'started').touch()
+    (root / 'owner-args').write_text(json.dumps(sys.argv[1:]))
     if mode == 'busy':
         print('Another session owns Framework', file=sys.stderr)
         sys.exit(1)
-    print('Gyro-M: starting framework-gyro-m-fast; logs: ' + str(root / '.local/state/codex-framework-gyro/20261113T123456Z-123'), file=sys.stderr, flush=True)
-    print('GYRO_READY ' + json.dumps({'model':'fixture', 'context':163840, 'drafting':'dflash2'}), flush=True)
+    profile = args[-1]
+    bird = profile == 'bird-gyro-m-fast'
+    state = '.local/state/codex-gyro' if bird else '.local/state/codex-framework-gyro'
+    print('Gyro-M: starting ' + profile + '; logs: ' + str(root / state / '20261113T123456Z-123'), file=sys.stderr, flush=True)
+    print('GYRO_READY ' + json.dumps({'model':'fixture', 'context':131072 if bird else 163840, 'drafting':'dflash2'}), flush=True)
     while True:
         if mode == 'owner-loss' and (root / 'client').exists():
             sys.exit(1)
@@ -117,6 +125,31 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         timings = json.loads(next((self.root / '.local/state/playtime-launcher').glob('*/timings.json')).read_text())
         self.assertGreaterEqual(timings['launcher_ready_seconds'], timings['model_ready_seconds'] + timings['verification_seconds'])
         self.assertEqual(timings['verification']['reused_files'], 15)
+
+    def test_bird_handoff_uses_its_host_key_helper_context_and_lock(self):
+        result = subprocess.run(self.command('bird-gyro-m-fast', '--prompt', 'hello'),
+                                env=self.env, cwd=self.root, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        owner = json.loads((self.root / 'owner-args').read_text())
+        self.assertIn('oldman@oldman-bird.local', owner)
+        self.assertEqual(owner[owner.index('-i') + 1], str(self.root / '.ssh/id_ed25519_oldman_bird_codex'))
+        self.assertIn('.local/lib/codex-gyro/gyro-session.py bird-gyro-m-fast', owner[-1])
+        verify_args = json.loads((self.root / 'verify-args').read_text())
+        self.assertEqual(json.loads(verify_args[verify_args.index('--expected-host') + 1]), self.bird_lock['host'])
+        child = json.loads((self.root / 'client').read_text())
+        self.assertEqual(child['argv'][child['argv'].index('--model-lock') + 1],
+                         str(self.package / 'bird-strata-gyro-m-fast-v1.lock.json'))
+        self.assertTrue((self.root / 'restored').exists())
+
+    def test_bird_status_uses_its_helper_without_starting_a_server(self):
+        result = subprocess.run(self.command('--status', 'bird-gyro-m-fast'), env=self.env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = json.loads((self.root / 'status-args').read_text())
+        self.assertIn('oldman@oldman-bird.local', arguments)
+        self.assertIn('.local/lib/codex-gyro/gyro-session.py --status bird-gyro-m-fast', arguments[-1])
+        self.assertFalse((self.root / 'started').exists())
+        self.assertFalse((self.root / 'verified').exists())
 
     def test_full_verification_is_forwarded_only_to_verifier(self):
         result = self.run_fixture('', '--full-verify', '--prompt', 'hello')

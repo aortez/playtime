@@ -1,9 +1,15 @@
 # Launching project chat from codex-launcher
 
-The first pilot entry is `playtime-framework-fast`. It runs the standalone
-[project chat console](rust-chat-console.md) with Framework's reviewed Gyro-M
-DFlash2 preset, 163,840 server context tokens, medium work thinking and no
-summary thinking. Codex does not participate in the agent loop.
+The launcher runs the standalone [project chat console](rust-chat-console.md)
+with the host's reviewed Gyro-M DFlash2 preset:
+
+| Entry | Inference host | Server context |
+| --- | --- | --- |
+| `playtime-framework-fast` | Framework, HIP | 163,840 tokens |
+| `playtime-bird-fast` | Bird, CUDA on the 4090 and 3090 | 131,072 tokens |
+
+Both use medium work thinking and no summary thinking. Codex does not participate
+in the agent loop. Project tools run on the workstation that launches the console.
 
 Install from this checkout on the workstation where the project lives:
 
@@ -13,12 +19,14 @@ Install from this checkout on the workstation where the project lives:
 
 This builds the release client and installs the binary, wrapper, verifier and
 reviewed locks under `~/.local/lib/playtime-chat`, outside the writable project.
-It requires Python 3.11+ on both ends, the existing `framework` SSH alias and
-remote Gyro session helper, plus the locked local Docker workshop image.
+It requires Python 3.11+ on both ends and the locked local Docker workshop image.
+Framework uses the existing `framework` SSH alias and its Gyro session helper.
+Bird uses `oldman@oldman-bird.local`, `~/.ssh/id_ed25519_oldman_bird_codex` and its
+existing `.local/lib/codex-gyro/gyro-session.py` helper.
 It does not install or update the remote helper, model or engine.
 
 Use a codex-launcher build that supports standalone `[[harness]]` entries. Add
-this table to `~/.codex/codex-launcher.toml` (or the same file in `CODEX_HOME`):
+these tables to `~/.codex/codex-launcher.toml` (or the same file in `CODEX_HOME`):
 
 ```toml
 [[harness]]
@@ -32,12 +40,25 @@ provider = "Strata on Framework"
 context_window = 163840
 effort = "medium"
 tools = "project Docker; no external network"
+
+[[harness]]
+name = "playtime-bird-fast"
+harness = "Playtime"
+description = "Project chat on Bird with the tested Gyro-M fast preset."
+launch = ["~/.local/lib/playtime-chat/run-strata.py", "bird-gyro-m-fast"]
+status = ["~/.local/lib/playtime-chat/run-strata.py", "--status", "bird-gyro-m-fast"]
+model = "qwen3.8-flash-next-gyro-gyro-m"
+provider = "Strata on Bird"
+context_window = 131072
+effort = "medium"
+tools = "project Docker; no external network"
 ```
 
 From the project directory, select that entry in the menu, or run:
 
 ```sh
 codex-launcher playtime-framework-fast
+codex-launcher playtime-bird-fast
 # One turn, with optional machine-readable event output:
 codex-launcher playtime-framework-fast --prompt 'Inspect the project and explain its tests.' --json
 ```
@@ -58,6 +79,9 @@ This preserves the original evidence and displays the pending message for you to
 resubmit. It does not accept the cut-off summary. See the console guide for the
 exact recovery conditions and tool limits. Completed sessions created with the
 previous 2,048-token summary cap need `--summary-tokens 2048` when reopening.
+Saved conversations remain bound to their model lock and settings: resume a Bird
+session with the Bird entry, and a Framework session with the Framework entry.
+Start a new conversation when switching hosts.
 
 The launcher's effort picker does not translate settings for this independent
 program. Effort is part of the reviewed model lock. The wrapper accepts a leading
@@ -114,10 +138,9 @@ verification failure stops the local client; unconfirmed host restoration return
 failure. The remote helper's existing heartbeat watchdog handles lost owners.
 EOF and a terminal SSE event alone are not treated as remote termination proof.
 
-The installer currently includes only Framework's tested fast preset. Bird's
-transport qualification does not establish this console ownership path; add its
-entry only after an owned end-to-end test. No other active inference session is
-evicted to make a test run.
+The installer includes both reviewed fast model locks. Bird's helper restores its
+original GPU power limits and Ollama state on exit; Framework restores its Ollama
+state. No other active inference session is evicted to make a test run.
 
 Run the CPU fixtures without contacting a host:
 
@@ -148,3 +171,13 @@ starting the chat client fell from 65.9 to 20.8 seconds; verification fell from
 (93.8 GB) while freshly hashing the engine and Responses source (52.4 MB).
 These are fresh-session startup measurements, not saved-history reopening or
 generation benchmarks. The cache remains populated for subsequent normal launches.
+
+The [Bird launcher check](../experiments/chat-console/2026-11-13-launcher-bird-fast.json)
+qualified `playtime-bird-fast` at its full 131,072-token allocation. A short first
+turn wrote and read a project file; a second launch reopened the same saved
+conversation and read the file using the retained history. Both turns completed,
+and both helper exits restored the original 450/420 W limits and active Ollama.
+The initial artifact check took 80.3 seconds; the cached check took 0.4 seconds,
+with 35.8 seconds total to starting the resumed chat client. This exercises the
+CUDA console, tools, resume and normal cleanup; it does not measure a populated
+128K context or coding quality.
