@@ -133,6 +133,7 @@ impl Session {
                 active_turn: Some(failed.clone()),
             },
             checkpoint: None,
+            interruption: None,
         };
         session.directory.write_new("config.json", &config_bytes)?;
         session

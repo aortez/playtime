@@ -37,7 +37,7 @@ use tokio_util::sync::CancellationToken;
 )]
 struct Args {
     /// Loopback endpoint held through the host's exclusive session helper.
-    #[arg(long, required_unless_present_any = ["select_session", "list_sessions"])]
+    #[arg(long, required_unless_present_any = ["select_session", "list_sessions", "inspect_interrupted"])]
     endpoint: Option<String>,
     /// Reviewed identity lock. The server owner must verify its host artifacts.
     #[arg(long)]
@@ -53,15 +53,24 @@ struct Args {
     #[arg(long)]
     session: Option<PathBuf>,
     /// Pick a compatible saved conversation locally, without starting inference.
-    #[arg(long, conflicts_with_all = ["session", "recover_compaction", "prompt", "list_sessions", "endpoint"])]
+    #[arg(long, conflicts_with_all = ["session", "recover_compaction", "recover_interrupted", "inspect_interrupted", "prompt", "list_sessions", "endpoint"])]
     select_session: bool,
     /// List recent compatible sessions as JSON without contacting inference.
-    #[arg(long, conflicts_with_all = ["session", "recover_compaction", "prompt", "endpoint"])]
+    #[arg(long, conflicts_with_all = ["session", "recover_compaction", "recover_interrupted", "inspect_interrupted", "prompt", "endpoint"])]
     list_sessions: bool,
     /// Fork the last completed history after a truncated first compaction.
     /// Raises the summary cap; keeps the failed session and all evidence intact.
     #[arg(long, conflicts_with = "session")]
     recover_compaction: Option<PathBuf>,
+    /// Inspect a stopped turn locally; does not start inference or execute tools.
+    #[arg(long, conflicts_with_all = ["session", "recover_compaction", "recover_interrupted", "prompt", "endpoint"])]
+    inspect_interrupted: Option<PathBuf>,
+    /// Fork completed history and an interruption report; never replay tools.
+    #[arg(long, conflicts_with_all = ["session", "recover_compaction", "prompt"])]
+    recover_interrupted: Option<PathBuf>,
+    /// Accept that tools without results may have partially changed project files.
+    #[arg(long, requires = "recover_interrupted")]
+    acknowledge_uncertain_tools: bool,
     /// Run one turn and exit; otherwise open basic interactive chat.
     #[arg(long)]
     prompt: Option<String>,
@@ -226,7 +235,7 @@ async fn read_prompt(
             "/quit" | "/exit" => return Ok(None),
             "/help" => {
                 println!(
-                    "Enter a message. /paste then /end accepts multiple lines. /stop or Ctrl-C stops a running turn. /quit exits. Completed turns can be reopened with --session; interrupted turns remain fenced."
+                    "Enter a message. /paste then /end accepts multiple lines. /stop or Ctrl-C stops a running turn. /quit exits. Completed turns can be reopened with --session; stopped turns can be inspected with --inspect-interrupted and explicitly forked with --recover-interrupted."
                 );
             }
             "/paste" => {
@@ -254,7 +263,7 @@ async fn read_prompt(
 }
 async fn main_run(args: Args) -> Result<()> {
     let shutdown = CancellationToken::new();
-    if !(args.select_session || args.list_sessions) {
+    if !(args.select_session || args.list_sessions || args.inspect_interrupted.is_some()) {
         let signal_cancel = shutdown.clone();
         let mut terminate =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -276,7 +285,8 @@ async fn main_run(args: Args) -> Result<()> {
         .session
         .clone()
         .unwrap_or(private.join(format!("session-{}", Token::generate()?.expose())));
-    let local_selection = args.select_session || args.list_sessions;
+    let local_selection =
+        args.select_session || args.list_sessions || args.inspect_interrupted.is_some();
     let session_path = if local_selection {
         session_path
     } else {
@@ -289,7 +299,14 @@ async fn main_run(args: Args) -> Result<()> {
     if !local_selection {
         protected.push(session_path.clone());
     }
-    if let Some(source) = &args.recover_compaction {
+    for source in [
+        &args.recover_compaction,
+        &args.recover_interrupted,
+        &args.inspect_interrupted,
+    ]
+    .into_iter()
+    .flatten()
+    {
         protected.push(source.clone());
     }
     let directory = Arc::new(
@@ -308,6 +325,11 @@ async fn main_run(args: Args) -> Result<()> {
         seed: 1042,
     };
     let config = config(&args, &lock, &image, &directory, &limits)?;
+    if let Some(source) = &args.inspect_interrupted {
+        let report = Session::inspect_interrupted(source, &config)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if local_selection {
         let entries = playtime_chat::sessions::catalog(&private, &config)?;
         if args.list_sessions {
@@ -320,6 +342,7 @@ async fn main_run(args: Args) -> Result<()> {
             );
             let choice = playtime_chat::sessions::select(
                 &entries,
+                &config,
                 &mut io::stdin().lock(),
                 &mut io::stderr().lock(),
             )?;
@@ -364,10 +387,15 @@ async fn main_run(args: Args) -> Result<()> {
         let p = session_path.clone();
         let c = config.clone();
         let source = args.recover_compaction.clone();
+        let interrupted = args.recover_interrupted.clone();
+        let acknowledged = args.acknowledge_uncertain_tools;
         tokio::task::spawn_blocking(move || {
             if let Some(source) = source {
                 let recovered = Session::recover_compaction(&source, &p, c)?;
                 Ok::<_, io::Error>((recovered.session, Some(recovered.pending_input)))
+            } else if let Some(source) = interrupted {
+                Session::recover_interrupted(&source, &p, c, acknowledged)
+                    .map(|session| (session, None))
             } else if p.join("config.json").exists() {
                 Session::open(&p, &c).map(|session| (session, None))
             } else {
@@ -376,6 +404,12 @@ async fn main_run(args: Args) -> Result<()> {
         })
         .await??
     };
+    if let Some(report) = initial_session.pending_recovery() {
+        eprintln!(
+            "{}\nRecovered into a new session; the source is unchanged. Enter a fresh instruction when ready. No commands or messages have been replayed.",
+            clean(&report.context()?)
+        );
+    }
     let mut session = Some(initial_session);
     eprintln!(
         "Playtime chat — {}\nSession: {}\nContext: {} tokens. Project tools: Docker, no network. /help for commands.",
@@ -483,7 +517,11 @@ async fn main_run(args: Args) -> Result<()> {
                     session_path.display()
                 );
             }
-            return Err(format!("turn stopped with {:?}; evidence retained at {}; interrupted turns cannot yet resume automatically",completed.result.reason,session_path.display()).into());
+            eprintln!(
+                "Use the session picker recovery action, or --inspect-interrupted {} followed by --recover-interrupted with the same settings. Missing cleanup evidence stays blocked.",
+                session_path.display()
+            );
+            return Err(format!("turn stopped with {:?}; evidence retained at {}; no tools will be automatically replayed",completed.result.reason,session_path.display()).into());
         }
         if headless || leave_after_turn {
             break;

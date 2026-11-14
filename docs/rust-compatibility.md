@@ -1693,3 +1693,19 @@ listing, so the definition fingerprint stays the reviewed one; any added, missin
 or changed line still fails. The raw `/api/show` response keeps Ollama's order.
 No lock, fingerprint, wire/schema or golden changes, and existing registrations
 stay valid.
+
+## Explicit chat interruption forks
+
+Stopped chat turns remain fenced. The standalone harness adds a separate explicit
+fork after contiguous terminal records and confirmed project cleanup, with unknown
+tool outcomes requiring acknowledgment. `interruption.json` retains bounded evidence
+and provenance; the next new user turn records `raw_user_input` and `recovery_context`
+alongside its effective input. Completed checkpoints and the narrow first-compaction
+recovery format are unchanged. Existing sessions still open with their original
+configuration. Picker JSON gains `recover_interrupted` and
+`acknowledge_uncertain_tools`; only explicit recovery selections set them.
+
+CPU fixtures cover first/subsequent turns, known/unknown/not-dispatched tools,
+missing/mismatched evidence, source immutability, one-time notice delivery, and the
+launcher handoff. These do not establish recovery from unrecorded process crashes
+or remote inference termination. No engine policy, workshop image, or golden changes.

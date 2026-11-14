@@ -167,7 +167,7 @@ fn hides_empty_sessions_without_deleting_evidence_and_preserves_nonempty_states(
         + 1;
     let input = format!("{busy}\n{ready}\n");
     let mut output = Vec::new();
-    let chosen = select(&entries, &mut input.as_bytes(), &mut output).unwrap();
+    let chosen = select(&entries, &expected, &mut input.as_bytes(), &mut output).unwrap();
     assert_eq!(chosen.session.unwrap(), root.0.join("ready"));
     assert!(
         String::from_utf8(output)
@@ -180,7 +180,7 @@ fn hides_empty_sessions_without_deleting_evidence_and_preserves_nonempty_states(
 #[test]
 fn new_cancel_and_eof_do_not_choose_an_existing_session() {
     for (input, cancelled) in [("\n", false), ("0\n", false), ("q\n", true), ("", true)] {
-        let choice = select(&[], &mut input.as_bytes(), &mut Vec::new()).unwrap();
+        let choice = select(&[], &config(), &mut input.as_bytes(), &mut Vec::new()).unwrap();
         assert_eq!(choice.cancelled, cancelled);
         assert!(choice.session.is_none());
     }
@@ -202,4 +202,59 @@ fn corrupt_checkpoint_is_not_resumable() {
     let entries = catalog(&root.0, &config).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].state, State::Unavailable);
+}
+
+#[test]
+fn recovery_picker_inspects_and_requires_explicit_confirmation_without_modifying_source() {
+    let root = Root::new();
+    let config = config();
+    let source = root.0.join("stopped");
+    let mut turn = Session::create(&source, config.clone())
+        .unwrap()
+        .begin("Inspect the project.".into(), SequentialIds, 0)
+        .unwrap();
+    turn.advance(0, Input::Cancel).unwrap();
+    let effect_id = turn.pending().unwrap().id;
+    turn.advance(0, Input::Dispatched { effect_id }).unwrap();
+    turn.advance(
+        1,
+        Input::Complete {
+            effect_id,
+            outcome: Outcome::Cleaned(vec![]),
+        },
+    )
+    .unwrap();
+    drop(turn);
+    let before = fs::read(source.join("head.json")).unwrap();
+    let entries = catalog(&root.0, &config).unwrap();
+    assert_eq!(entries[0].state, State::Interrupted);
+    let mut output = Vec::new();
+    let choice = select(&entries, &config, &mut b"r1\n\nq\n".as_slice(), &mut output).unwrap();
+    assert!(choice.cancelled);
+    assert!(
+        String::from_utf8(output)
+            .unwrap()
+            .contains("replays nothing")
+    );
+    let choice = select(
+        &entries,
+        &config,
+        &mut b"r1\nrecover\n".as_slice(),
+        &mut Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(choice.recover_interrupted, Some(source.clone()));
+    assert!(choice.session.is_none());
+    assert!(!choice.acknowledge_uncertain_tools);
+    assert_eq!(fs::read(source.join("head.json")).unwrap(), before);
+    let destination = root.0.join("recovered");
+    drop(Session::recover_interrupted(&source, &destination, config.clone(), false).unwrap());
+    let entries = catalog(&root.0, &config).unwrap();
+    let entry = entries.iter().find(|e| e.path == destination).unwrap();
+    assert_eq!(
+        entry.state,
+        State::Ready,
+        "unused recovery is not an empty session"
+    );
+    assert_eq!(entry.preview, "Inspect the project.");
 }

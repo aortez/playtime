@@ -117,11 +117,11 @@ def session(preset, profile, args):
         return subprocess.call(ssh(preset) + remote(preset, "python3", preset["helper"], "--stop"), stdin=subprocess.DEVNULL)
     client_args = [str(executable), "--model-lock", str(lock_path), "--image-lock", str(image_path)]
     options = {arg.split("=", 1)[0] for arg in args}
-    if options & {"--select-session", "--list-sessions"} and not options & {"--prompt", "--session", "--recover-compaction"}:
+    if options & {"--select-session", "--list-sessions", "--inspect-interrupted"} and not options & {"--prompt", "--session", "--recover-compaction", "--recover-interrupted"}:
         return subprocess.call([*client_args, *args])
-    explicit = bool(options & {"--session", "--recover-compaction", "--prompt"})
+    explicit = bool(options & {"--session", "--recover-compaction", "--recover-interrupted", "--prompt"})
     if force_picker and explicit:
-        raise RuntimeError("--sessions cannot be combined with --session, --recover-compaction or --prompt")
+        raise RuntimeError("--sessions cannot be combined with --session, recovery options or --prompt")
     if force_picker or (sys.stdin.isatty() and not explicit):
         try:
             picked = subprocess.run([*client_args, "--select-session", *args],
@@ -133,6 +133,10 @@ def session(preset, profile, args):
             return 0
         if choice["session"] is not None:
             args = [*args, "--session", choice["session"]]
+        if choice.get("recover_interrupted") is not None:
+            args = [*args, "--recover-interrupted", choice["recover_interrupted"]]
+            if choice.get("acknowledge_uncertain_tools"):
+                args.append("--acknowledge-uncertain-tools")
     # Startup timings exclude time spent choosing a conversation.
     started_at = time.monotonic()
     verifier = (PACKAGE / "verify-strata-host.py").read_bytes()

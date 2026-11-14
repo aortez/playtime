@@ -12,6 +12,8 @@ use playtime_engine::{
 use playtime_local::{PrivateDirectory, Token};
 use serde::{Deserialize, Serialize};
 
+mod interruption;
+pub use interruption::{InterruptionReport, ToolObservation};
 mod recovery;
 pub use recovery::RecoveredCompaction;
 
@@ -39,6 +41,7 @@ pub struct Session {
     config: ConversationConfig,
     head: Head,
     checkpoint: Option<ConversationCheckpoint>,
+    interruption: Option<interruption::Interruption>,
 }
 
 impl Session {
@@ -67,6 +70,7 @@ impl Session {
             config,
             head,
             checkpoint: None,
+            interruption: None,
         })
     }
 
@@ -121,12 +125,14 @@ impl Session {
                 Ok(saved)
             })
             .transpose()?;
+        let interruption = interruption::Interruption::read(&directory, &head.configuration)?;
         Ok(Self {
             directory,
             _lock: lock,
             config,
             head,
             checkpoint,
+            interruption,
         })
     }
 
@@ -137,6 +143,17 @@ impl Session {
     pub fn begin<I: IdSource>(mut self, input: String, ids: I, now_ms: u64) -> io::Result<Turn<I>> {
         let run_id =
             RunId::new(format!("turn-{}", Token::generate()?.expose())).map_err(invalid)?;
+        let raw_input = input;
+        if raw_input.trim().is_empty() || raw_input.len() > playtime_engine::chat::MAX_USER_BYTES {
+            return Err(invalid(
+                "a new nonempty user message of at most 256 KiB is required",
+            ));
+        }
+        let recovery_context = self.pending_recovery().map(|r| r.context()).transpose()?;
+        let input = recovery_context.as_ref().map_or_else(
+            || raw_input.clone(),
+            |notice| format!("{notice}\n[New user message]\n{raw_input}"),
+        );
         let controller = Controller::chat(
             self.config.clone(),
             ConversationTurn {
@@ -152,6 +169,7 @@ impl Session {
             &format!("input-{run_id}.json"),
             &serde_json::to_vec(&serde_json::json!({
                 "schema_version":1, "turn":run_id, "previous":self.head.checkpoint, "input":input,
+                "raw_user_input":raw_input, "recovery_context":recovery_context,
             }))?,
         )?;
         self.head.active_turn = Some(run_id.clone());

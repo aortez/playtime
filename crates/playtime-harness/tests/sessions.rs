@@ -485,3 +485,315 @@ fn a_large_checkpoint_is_immutable_and_does_not_hit_the_small_head_replace_limit
     drop(turn.finish().unwrap());
     assert!(Session::open(&root.0, &config).is_ok());
 }
+
+fn interrupted_tool(previous: bool, disposition: &str) -> (Root, ConversationConfig, RunId) {
+    let root = Root::new();
+    let config = config();
+    let mut session = Session::create(&root.0, config.clone()).unwrap();
+    let mut now = 0;
+    if previous {
+        let mut turn = session
+            .begin("Remember bluejay.".into(), SequentialIds, now)
+            .unwrap();
+        complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+        answer(&mut turn, &mut now, "The previous answer is bluejay.");
+        session = turn.finish().unwrap();
+    }
+    let mut turn = session
+        .begin("Update the file.".into(), SequentialIds, 0)
+        .unwrap();
+    now = 0;
+    complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+    complete(
+        &mut turn,
+        &mut now,
+        Outcome::ModelCompleted {
+            response: ModelResponse {
+                message: json!({"role":"assistant","content":"unfinished work", "tool_calls":[{"function":{"name":"write_file","arguments":{"path":"a","content":"new contents"}}}]}),
+                done: true,
+                generated_tokens: Some(20),
+                prompt_tokens: None,
+            },
+            finish_reason: "tool_calls".into(),
+        },
+    );
+    match disposition {
+        "observed" => complete(&mut turn, &mut now, Outcome::Tool(json!({"ok": true}))),
+        "unknown" | "cleanup_failed" => {
+            let effect_id = turn.pending().unwrap().id;
+            turn.advance(now, Input::Dispatched { effect_id }).unwrap();
+        }
+        "not_dispatched" => (),
+        _ => panic!(),
+    }
+    turn.advance(now, Input::Cancel).unwrap();
+    complete(
+        &mut turn,
+        &mut now,
+        Outcome::Cleaned(if disposition == "cleanup_failed" {
+            vec!["still running".into()]
+        } else {
+            vec![]
+        }),
+    );
+    let id = turn.id().clone();
+    assert_eq!(turn.result().unwrap().reason, StopReason::Interrupted);
+    drop(turn);
+    (root, config, id)
+}
+
+#[test]
+fn interrupted_recovery_carries_history_and_observations_once_without_replaying() {
+    for previous in [false, true] {
+        for disposition in ["observed", "unknown", "not_dispatched"] {
+            let (source, config, _) = interrupted_tool(previous, disposition);
+            let before: Vec<_> = fs::read_dir(&source.0)
+                .unwrap()
+                .map(|e| {
+                    let path = e.unwrap().path();
+                    (path.clone(), fs::read(path).unwrap())
+                })
+                .collect();
+            let report = Session::inspect_interrupted(&source.0, &config).unwrap();
+            assert_eq!(
+                report.uncertain_tools,
+                usize::from(disposition == "unknown")
+            );
+            assert_eq!(report.tool_requests, 1);
+            assert_eq!(report.pending_input.text, "Update the file.");
+            let value = serde_json::to_value(&report.tools[0]).unwrap();
+            assert_eq!(
+                value["observation"],
+                match disposition {
+                    "observed" => "result_observed",
+                    "unknown" => "outcome_unknown",
+                    _ => "not_dispatched",
+                }
+            );
+            let destination = Root::new();
+            if disposition == "unknown" {
+                assert!(
+                    Session::recover_interrupted(&source.0, &destination.0, config.clone(), false)
+                        .is_err()
+                );
+                assert!(!destination.0.exists());
+            }
+            let recovered =
+                Session::recover_interrupted(&source.0, &destination.0, config.clone(), true)
+                    .unwrap();
+            assert_eq!(recovered.checkpoint().is_some(), previous);
+            drop(recovered);
+            let recovered = Session::open(&destination.0, &config).unwrap();
+            assert!(recovered.pending_recovery().is_some());
+            assert!(
+                read_records(&destination).is_empty(),
+                "fork dispatched effects"
+            );
+            assert!(recovered.begin(" ".into(), SequentialIds, 0).is_err());
+            let recovered = Session::open(&destination.0, &config).unwrap();
+            let mut turn = recovered
+                .begin(
+                    "Inspect current files before continuing.".into(),
+                    SequentialIds,
+                    0,
+                )
+                .unwrap();
+            let id = turn.id().clone();
+            let mut now = 0;
+            complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+            let EffectKind::Model(request) = &turn.pending().unwrap().kind else {
+                panic!()
+            };
+            let content = request.messages.last().unwrap()["content"]
+                .as_str()
+                .unwrap();
+            assert!(content.contains("[Interrupted-session recovery]"));
+            assert!(content.ends_with("Inspect current files before continuing."));
+            assert!(!content.contains("unfinished work"));
+            if previous {
+                assert!(
+                    serde_json::to_string(&request.messages)
+                        .unwrap()
+                        .contains("bluejay")
+                );
+            }
+            let input: serde_json::Value = serde_json::from_slice(
+                &fs::read(destination.0.join(format!("input-{id}.json"))).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                input["raw_user_input"],
+                "Inspect current files before continuing."
+            );
+            answer(&mut turn, &mut now, "Checked the current state.");
+            let recovered = turn.finish().unwrap();
+            assert!(recovered.pending_recovery().is_none());
+            let mut turn = recovered.begin("Next.".into(), SequentialIds, 0).unwrap();
+            now = 0;
+            complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+            let EffectKind::Model(request) = &turn.pending().unwrap().kind else {
+                panic!()
+            };
+            assert_eq!(request.messages.last().unwrap()["content"], "Next.");
+            for (path, bytes) in before {
+                assert_eq!(fs::read(path).unwrap(), bytes);
+            }
+            assert!(Session::open(&source.0, &config).is_err());
+        }
+    }
+}
+
+#[test]
+fn interrupted_recovery_rejects_live_missing_inconsistent_and_unclean_evidence() {
+    for case in [
+        "cleanup_failed",
+        "missing_result",
+        "missing_batch",
+        "wrong_result",
+        "wrong_sequence",
+        "unknown_event",
+        "wrong_tool_reference",
+        "settings",
+        "locked",
+    ] {
+        let (source, mut config, failed) = interrupted_tool(
+            true,
+            if case == "cleanup_failed" {
+                case
+            } else {
+                "unknown"
+            },
+        );
+        let directory = playtime_local::PrivateDirectory::open(&source.0, false).unwrap();
+        let _lock = (case == "locked").then(|| directory.try_lock().unwrap());
+        match case {
+            "missing_result" => {
+                fs::remove_file(source.0.join(format!("result-{failed}.json"))).unwrap()
+            }
+            "wrong_result" => {
+                let path = source.0.join(format!("result-{failed}.json"));
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                value["model_calls"] = json!(20);
+                fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+            }
+            "missing_batch" | "wrong_sequence" | "unknown_event" | "wrong_tool_reference" => {
+                let path = fs::read_dir(&source.0)
+                    .unwrap()
+                    .map(|e| e.unwrap().path())
+                    .find(|p| {
+                        p.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(&format!("events-{failed}-"))
+                            && fs::read_to_string(p)
+                                .unwrap()
+                                .contains("\"kind\":\"tool_dispatch\"")
+                    })
+                    .unwrap();
+                if case == "missing_batch" {
+                    fs::remove_file(path).unwrap();
+                } else {
+                    let mut records: Vec<Record> = fs::read_to_string(&path)
+                        .unwrap()
+                        .lines()
+                        .map(|l| serde_json::from_str(l).unwrap())
+                        .collect();
+                    let record = records
+                        .iter_mut()
+                        .find(|r| r.kind == "tool_dispatch")
+                        .unwrap();
+                    match case {
+                        "wrong_sequence" => record.sequence += 1,
+                        "unknown_event" => record.kind = "future_effect".into(),
+                        _ => record.data["request_sequence"] = json!(999999),
+                    }
+                    fs::write(
+                        path,
+                        records
+                            .iter()
+                            .map(|r| serde_json::to_string(r).unwrap() + "\n")
+                            .collect::<String>(),
+                    )
+                    .unwrap();
+                }
+            }
+            "settings" => config.instructions.push_str(" Changed."),
+            _ => (),
+        }
+        let destination = Root::new();
+        assert!(
+            Session::recover_interrupted(&source.0, &destination.0, config, true).is_err(),
+            "{case}"
+        );
+        assert!(!destination.0.exists(), "{case}");
+    }
+}
+
+#[test]
+fn interruption_during_inference_preserves_unknown_usage_and_never_submits_pending_input() {
+    let source = Root::new();
+    let config = config();
+    let mut turn = Session::create(&source.0, config.clone())
+        .unwrap()
+        .begin("Investigate.".into(), SequentialIds, 0)
+        .unwrap();
+    let mut now = 0;
+    complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+    let effect_id = turn.pending().unwrap().id;
+    turn.advance(now, Input::Dispatched { effect_id }).unwrap();
+    turn.advance(now, Input::Cancel).unwrap();
+    complete(&mut turn, &mut now, Outcome::Cleaned(vec![]));
+    drop(turn);
+    let report = Session::inspect_interrupted(&source.0, &config).unwrap();
+    assert_eq!(report.unknown_model_requests, 1);
+    assert_eq!(report.uncertain_tools, 0);
+    let destination = Root::new();
+    let recovered = Session::recover_interrupted(&source.0, &destination.0, config, false).unwrap();
+    assert!(recovered.checkpoint().is_none());
+    assert!(read_records(&destination).is_empty());
+}
+
+#[test]
+fn repeated_interruption_keeps_new_input_separate_from_earlier_recovery() {
+    let (source, config, _) = interrupted_tool(true, "unknown");
+    let fork = Root::new();
+    let recovered = Session::recover_interrupted(&source.0, &fork.0, config.clone(), true).unwrap();
+    let mut turn = recovered
+        .begin("Review the partial edit.".into(), SequentialIds, 0)
+        .unwrap();
+    let mut now = 0;
+    complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+    turn.advance(now, Input::Cancel).unwrap();
+    complete(&mut turn, &mut now, Outcome::Cleaned(vec![]));
+    drop(turn);
+    let report = Session::inspect_interrupted(&fork.0, &config).unwrap();
+    assert_eq!(report.pending_input.text, "Review the partial edit.");
+    assert!(
+        report
+            .earlier_recovery
+            .unwrap()
+            .text
+            .contains("outcome_unknown")
+    );
+}
+
+#[test]
+fn long_interrupted_input_has_a_bounded_preview_and_explicit_omission_count() {
+    let source = Root::new();
+    let mut config = config();
+    config.parameters.limits.context_tokens = 65536.try_into().unwrap();
+    let input = "é".repeat(3000);
+    let mut turn = Session::create(&source.0, config.clone())
+        .unwrap()
+        .begin(input.clone(), SequentialIds, 0)
+        .unwrap();
+    turn.advance(0, Input::Cancel).unwrap();
+    let mut now = 0;
+    complete(&mut turn, &mut now, Outcome::Cleaned(vec![]));
+    drop(turn);
+    let report = Session::inspect_interrupted(&source.0, &config).unwrap();
+    assert_eq!(report.pending_input.text.len(), 4096);
+    assert_eq!(report.pending_input.omitted_bytes, input.len() - 4096);
+    assert!(report.context().unwrap().contains("omitted_bytes"));
+}

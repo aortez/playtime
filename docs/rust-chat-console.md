@@ -129,8 +129,29 @@ finish its server cleanup. Socket closure alone is not remote termination proof.
 partial text, usage uncertainty, inputs and records remain saved, and the session
 head stays active. A later open refuses it. Similarly, a crashed process can leave
 a private project `active` proposal; subsequent project admission refuses to edit
-until its exact container ownership has been reconciled. There is no automatic
-general recovery command. Do not delete these markers simply to bypass the checks.
+until its exact container ownership has been reconciled. Do not delete these
+markers simply to bypass the checks.
+
+For a stopped turn with recorded complete project cleanup, the picker offers
+`r<number>` to inspect a recovery report. It shows recorded results, unknown tool
+outcomes, and any omitted previews. Typing `recover` explicitly accepts the report
+and opens a new session; enter a fresh instruction to continue. The source remains
+fenced and unchanged. You can also inspect without starting inference:
+
+```sh
+codex-launcher playtime-framework-fast --inspect-interrupted /absolute/stopped-session
+codex-launcher playtime-framework-fast --recover-interrupted /absolute/stopped-session
+```
+
+Use the original workspace and settings. If tool outcomes are unknown, inspect the
+report and add `--acknowledge-uncertain-tools` to the recovery command. Tools may have
+changed files before stopping; acknowledgment does not mark them successful. The
+new conversation includes a bounded evidence notice on its next user turn. It also
+works after an interrupted first turn. Unused recovered sessions remain in the
+picker. Recovery cannot be combined with `--prompt`: it waits for your next message.
+Missing terminal/cleanup evidence, live source leases, and unresolved project
+containers stay blocked. The normal launcher still owns/verifies the endpoint;
+project cleanup alone does not prove remote inference stopped.
 
 One narrow failure has explicit recovery: a turn's first model request was a
 tool-free compaction, it completed with `length` at its summary cap, all usage is
