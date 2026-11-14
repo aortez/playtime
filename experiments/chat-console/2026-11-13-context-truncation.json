@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-13",
+  "scope": "Real project-tool output exceeds both the workshop cap and the context allowance; verify the payload delivered to Gyro-M and its metadata report. Not a throughput or quality benchmark.",
+  "profile": "framework-gyro-m-fast",
+  "harness_context_tokens": 65536,
+  "tool_output_allowance_bytes": 16384,
+  "raw_evidence": "/home/data2/playtime/chat-context-truncation-i76gl5jh",
+  "session": "/home/data2/playtime/chat-context-truncation-i76gl5jh/state/session-c3537683da3501acee0e803d7565873449c72f2279d18e4d68936ad634b43fde",
+  "launcher_evidence": "/home/oldman/.local/state/playtime-launcher/20261113T155949-kp11svpz",
+  "tool_result_sequence": 62,
+  "tool_output": {
+    "generated_stdout_bytes": 100000,
+    "captured_stdout_bytes": 16384,
+    "upstream_omitted_bytes": "not reported by tool",
+    "output_truncated": true,
+    "duration_seconds": 0.008,
+    "exit_code": 0,
+    "timed_out": false,
+    "stderr": ""
+  },
+  "delivered": {
+    "serialized_tool_message_bytes": 16380,
+    "retained_stdout_bytes": 16001,
+    "context_omitted_bytes": {
+      "stderr": 0,
+      "stdout": 383
+    },
+    "marker": "[... 383 UTF-8 bytes omitted from context; tail dropped]",
+    "metadata_preserved": true,
+    "matches_archived_result": true
+  },
+  "model_report": "Completed with a single exec call. Reported metadata exactly as received:\n\n- **output_truncated**: `true`\n- **duration_seconds**: `0.008`\n- **stderr**: present and empty (`\"\"`)\n- **context_omitted_bytes**: `{\"stderr\": 0, \"stdout\": 383}`\n\nFinal truncation marker quoted from stdout:\n\n`[... 383 UTF-8 bytes omitted from context; tail dropped]`",
+  "result": {
+    "cleanup": {
+      "status": "complete"
+    },
+    "diagnostics": [],
+    "elapsed_ms": 9851,
+    "last_checkpoint": null,
+    "mode": "live_smoke",
+    "model_calls": 2,
+    "reason": "agent_finished",
+    "run_id": "turn-e41029ab52cb1925f99fea630266f7b1bd154b8f25cd5717b06677b80f8c3705",
+    "sessions_started": 0,
+    "tool_parse_errors": 0,
+    "usage": {
+      "budget_charged_tokens": 190,
+      "known_generated_tokens": 190,
+      "unknown_requests": 0,
+      "unknown_reserved_tokens": 0,
+      "usage_complete": true
+    }
+  },
+  "launcher_result": {
+    "exit": 0,
+    "elapsed_seconds": 81.10831022399725,
+    "binary_sha256": "66a1135e35c7c298a99771c8c6061ea2b7fe86f3765a51e62ea099959be03157"
+  },
+  "owner_exit": {
+    "client_exit": 0,
+    "owner_exit": 0,
+    "exit": 0
+  },
+  "postconditions": {
+    "saved_checkpoint": true,
+    "framework_status": "starts_on_launch",
+    "owned_project_containers": 0
+  },
+  "checks": [
+    "cargo fmt --all -- --check",
+    "cargo clippy --workspace --all-targets --locked -- -D warnings",
+    "CARGO_INCREMENTAL=0 cargo test --workspace --locked: 749 passed, 35 ignored",
+    "cargo test -p playtime-engine --features test-harness --locked: 112 passed",
+    "cargo test -p playtime-runner --features test-harness --test workspace_probe --locked: 13 passed",
+    "python3 -m unittest discover -s tests -v: 101 run, 6 skipped",
+    "CARGO_INCREMENTAL=0 ./scripts/test-rust-continuous.sh --backend docker-scripted: 15 compactions and verified final capture",
+    "installed release client and owned Framework Strata smoke"
+  ],
+  "native_scripted_evidence": "/tmp/pc.QRNPhCQu/run",
+  "test_limitations": [
+    "The legacy continuous --backend live gate requires the reviewed Ollama endpoint at 127.0.0.1:11435, which was not listening. The live test used the current owned Framework Strata target instead."
+  ]
+}

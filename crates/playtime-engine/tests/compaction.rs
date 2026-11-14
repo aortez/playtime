@@ -1291,11 +1291,16 @@ fn tool_pairs_share_an_aggregate_allowance_and_plain_text_does_not_finish() {
     let mut run = Run::new(config());
     run.response(json!({"role":"assistant","content":"I am done."}));
     assert_eq!(run.request().purpose, RequestPurpose::Work);
-    run.response(json!({"role":"assistant","tool_calls":[call("exec",json!({"command":"first"})),call("exec",json!({"command":"second"}))]}));
-    for _ in 0..2 {
-        run.complete(Outcome::Tool(
-            json!({"exit_code":0,"stdout":"é".repeat(10000),"stderr":"","timed_out":false}),
-        ));
+    // Four calls consume the minimum 512-byte allocation apiece. Metadata and
+    // visible loss markers must fit inside that aggregate, not be added after it.
+    let calls: Vec<_> = (0..4)
+        .map(|n| call("exec", json!({"command":format!("echo {n}")})))
+        .collect();
+    run.response(json!({"role":"assistant","tool_calls":calls}));
+    let original = json!({"exit_code":0,"stdout":"é".repeat(10000),"stderr":"",
+        "timed_out":false,"duration_seconds":0.001,"output_truncated":true});
+    for _ in 0..4 {
+        run.complete(Outcome::Tool(original.clone()));
     }
     let request = run.request();
     let results: Vec<_> = request
@@ -1303,7 +1308,7 @@ fn tool_pairs_share_an_aggregate_allowance_and_plain_text_does_not_finish() {
         .iter()
         .filter(|m| m["role"] == "tool")
         .collect();
-    assert_eq!(results.len(), 2);
+    assert_eq!(results.len(), 4);
     // ASCII output after canonical escaping makes these serialized lengths exact.
     assert!(
         results
@@ -1312,17 +1317,37 @@ fn tool_pairs_share_an_aggregate_allowance_and_plain_text_does_not_finish() {
             .sum::<usize>()
             <= 2048
     );
-    assert!(
-        results
-            .iter()
-            .all(|m| m["content"].as_str().unwrap().contains("context_truncated"))
-    );
+    for message in results {
+        let delivered: Value = serde_json::from_str(message["content"].as_str().unwrap()).unwrap();
+        assert_eq!(delivered["context_truncated"], true);
+        for key in [
+            "exit_code",
+            "timed_out",
+            "duration_seconds",
+            "output_truncated",
+            "stderr",
+        ] {
+            assert_eq!(delivered[key], original[key]);
+        }
+        let omitted = delivered["context_omitted_bytes"]["stdout"]
+            .as_u64()
+            .unwrap() as usize;
+        let marker = format!("\n[... {omitted} UTF-8 bytes omitted from context; tail dropped]");
+        let retained = delivered["stdout"]
+            .as_str()
+            .unwrap()
+            .strip_suffix(&marker)
+            .unwrap();
+        assert!(original["stdout"].as_str().unwrap().starts_with(retained));
+        assert_eq!(retained.len() + omitted, 20000);
+        assert_eq!(delivered["context_omitted_bytes"]["stderr"], 0);
+    }
     assert_eq!(
         run.records
             .iter()
-            .filter(|r| r.kind == "tool_result" && !r.data["unabridged_result"].is_null())
+            .filter(|r| r.kind == "tool_result" && r.data["unabridged_result"] == original)
             .count(),
-        2
+        4
     );
     run.response(finish(json!("done")));
     assert_eq!(run.finalize().reason, StopReason::AgentFinished);

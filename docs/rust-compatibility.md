@@ -1,5 +1,20 @@
 # Rust compatibility and goldens
 
+## Explicit tool-result context truncation (2026-11-13)
+
+Oversized tool results now retain timing, upstream truncation flags and empty
+stderr. Shortened text fields include tail-dropped markers and the additive
+`context_omitted_bytes` map counts only UTF-8 bytes removed by context fitting.
+Diagnostics retain priority, and both markers and metadata count against the
+existing serialized-message allowance. Complete results are unchanged. This is
+an intentional change to model-visible tool payloads across the shared policies;
+archive envelopes and saved-session schemas are unchanged. The controller test
+now covers four results at the minimum allowance, with unabridged evidence and
+upstream flags preserved. No behavioral golden is regenerated.
+The [Framework smoke](../experiments/chat-console/2026-11-13-context-truncation.json)
+verified the delivered payload and Gyro-M's report of the flags, timing, empty
+stderr and exact context-stage omission count.
+
 ## Project chat console (#208/#210, 2026-11-13)
 
 `playtime-chat` adds a standalone async driver and terminal client over the
