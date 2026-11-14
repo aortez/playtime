@@ -1,0 +1,320 @@
+//! Version-one noninteractive worker; inference ownership stays in run-strata.py.
+use clap::Parser;
+use playtime_chat::{
+    Result,
+    native::{Journal, Model, NativeEffects},
+    runtime, worker,
+};
+use playtime_docker::{
+    self as docker,
+    project::{ProjectDirectory, ProjectLimits, ProjectWorkspace},
+    transport::Cli,
+};
+use playtime_harness::Session;
+use playtime_local::{PrivateDirectory, Token};
+use playtime_strata::{Client, Endpoint, ModelLock};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    fs::{File, OpenOptions},
+    io::{self, Write},
+    os::unix::fs::OpenOptionsExt,
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{sync::Mutex, time::Instant};
+use tokio_util::sync::CancellationToken;
+
+#[derive(Parser)]
+struct Args {
+    #[arg(long)]
+    describe_protocol: bool,
+    #[arg(long)]
+    check_inputs: bool,
+    #[arg(long, default_value_t = 1)]
+    protocol_version: u32,
+    #[arg(long)]
+    endpoint: Option<String>,
+    #[arg(long)]
+    model_lock: Option<PathBuf>,
+    #[arg(long)]
+    image_lock: Option<PathBuf>,
+    #[arg(long)]
+    workspace: Option<PathBuf>,
+    #[arg(long)]
+    run_dir: Option<PathBuf>,
+    #[arg(long)]
+    request: Option<PathBuf>,
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
+    #[arg(long)]
+    worker_session: Option<String>,
+    #[arg(long, default_value_t = 900)]
+    wall_seconds: u64,
+}
+
+struct Events {
+    file: File,
+    bytes: usize,
+}
+async fn emit(log: &Arc<std::sync::Mutex<Events>>, value: Value) -> Result<()> {
+    let log = log.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut bytes = serde_json::to_vec(&value)?;
+        bytes.push(b'\n');
+        let mut log = log.lock().map_err(|_| "worker event writer failed")?;
+        if log.bytes + bytes.len() > 16 * 1024 * 1024 {
+            return Err("worker event log exceeds 16 MiB".into());
+        }
+        log.file.write_all(&bytes)?;
+        log.bytes += bytes.len();
+        // The session journal supplies dispatch durability. This append retains
+        // streamed diagnostics even if the caller is interrupted before return.
+        io::stdout().write_all(&bytes)?;
+        io::stdout().flush()?;
+        Ok(())
+    })
+    .await?
+}
+
+async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
+    if args.protocol_version != worker::PROTOCOL {
+        return Err("unsupported worker protocol".into());
+    }
+    if args.describe_protocol {
+        println!(
+            "{}",
+            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"roles":["worker"],"tools":"project-docker-v1","report":"worker-report-v1","continuation":"completed-session-only"})
+        );
+        return Ok(());
+    }
+    let workspace = args.workspace.ok_or("missing workspace")?.canonicalize()?;
+    let run_dir = args
+        .run_dir
+        .ok_or("missing run directory")?
+        .canonicalize()?;
+    let request = args.request.ok_or("missing request")?.canonicalize()?;
+    let model_path = args.model_lock.ok_or("missing model lock")?;
+    let image_path = args.image_lock.ok_or("missing image lock")?;
+    let state = args.state_dir.unwrap_or(
+        PathBuf::from(std::env::var_os("HOME").ok_or("HOME required")?)
+            .join(".local/state/playtime-chat"),
+    );
+    PrivateDirectory::open(&state, true)?;
+    let records = PrivateDirectory::open(&run_dir, false)
+        .map_err(|error| format!("worker run directory {}: {error}", run_dir.display()))?;
+    let _run_lease = records.try_lock()?;
+    let artifacts = run_dir.join("artifacts");
+    let artifact_directory = PrivateDirectory::open(&artifacts, true)?;
+    if !artifact_directory.names()?.is_empty() {
+        return Err("worker artifacts must start empty".into());
+    }
+    let prompt = String::from_utf8(playtime_local::read_private(
+        &request,
+        playtime_engine::chat::MAX_USER_BYTES as u64,
+    )?)?;
+    if prompt.trim().is_empty() {
+        return Err("empty worker assignment".into());
+    }
+    let resume = args.worker_session.is_some();
+    let session_id = args
+        .worker_session
+        .unwrap_or(format!("ptw-{}", Token::generate()?.expose()));
+    worker::session_id(&session_id)?;
+    let session_path = state.join(&session_id);
+    if resume && !session_path.join("config.json").exists() {
+        return Err("saved worker session unavailable; no automatic fresh fallback".into());
+    }
+    let protected = vec![
+        run_dir.clone(),
+        request,
+        model_path.clone(),
+        image_path.clone(),
+    ];
+    let root = workspace.clone();
+    let private = state.clone();
+    let directory = Arc::new(
+        tokio::task::spawn_blocking(move || ProjectDirectory::open(&root, &private, &protected))
+            .await??,
+    );
+    let image_bytes = std::fs::read(&image_path)?;
+    let image: Value = serde_json::from_slice(&image_bytes)?;
+    let lock: ModelLock = serde_json::from_slice(&std::fs::read(&model_path)?)?;
+    let limits = ProjectLimits {
+        nano_cpus: 2_000_000_000,
+        memory_bytes: 4 * 1024 * 1024 * 1024,
+        tmp_bytes: 256 * 1024 * 1024,
+        tmp_inodes: 32768,
+        pids: 256,
+        seed: 1042,
+    };
+    let config = worker::config(&lock, &image, &directory, &limits, args.wall_seconds)?;
+    if args.check_inputs {
+        if resume {
+            Session::try_open(&session_path, &config)?;
+        }
+        println!(
+            "{}",
+            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"inputs_valid":true})
+        );
+        return Ok(());
+    }
+    records.write_new("worker-invoked.json",&serde_json::to_vec(&json!({"schema_version":1,"session_id":session_id,"resume":resume,"configuration":config.fingerprint()?}))?)?;
+    let log = Arc::new(std::sync::Mutex::new(Events {
+        file: OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(run_dir.join("worker-events.jsonl"))?,
+        bytes: 0,
+    }));
+    emit(
+        &log,
+        json!({"schema_version":1,"type":"worker_started","session_id":session_id}),
+    )
+    .await?;
+    let mut client = Client::new(
+        Endpoint::parse(args.endpoint.as_deref().ok_or("missing endpoint")?)?,
+        lock,
+        Default::default(),
+    )?;
+    client
+        .verify(Instant::now() + Duration::from_secs(20), &cancel)
+        .await?;
+    let transport = Arc::new(Cli::resolve(
+        std::path::Path::new("/usr/bin/docker"),
+        std::path::Path::new("/var/run/docker.sock"),
+        &state.join(format!("docker-{}", Token::generate()?.expose())),
+    )?);
+    let engine = docker::Engine::connect(
+        transport,
+        Instant::now() + Duration::from_secs(20),
+        cancel.clone(),
+    )
+    .await?;
+    let ready = engine
+        .readiness(
+            &image_bytes,
+            Instant::now() + Duration::from_secs(20),
+            cancel.clone(),
+        )
+        .await?;
+    let saved_path = session_path.clone();
+    let session = tokio::task::spawn_blocking(move || {
+        if resume {
+            Session::try_open(&saved_path, &config)
+        } else {
+            Session::create(&saved_path, config)
+        }
+    })
+    .await??;
+    if !resume {
+        playtime_chat::environment::save(&session_path, &image_bytes)?;
+    }
+    let owner = docker::Ownership {
+        service: "playtime-task".into(),
+        run: format!("turn-{}", docker::Ownership::random_nonce()?),
+        grant: "devbot-worker".into(),
+        invocation: docker::Ownership::random_nonce()?,
+        nonce: docker::Ownership::random_nonce()?,
+        daemon: engine.identity().clone(),
+    };
+    let wall = args.wall_seconds;
+    let workspace = tokio::task::spawn_blocking(move || {
+        ProjectWorkspace::new(
+            ready,
+            owner,
+            directory,
+            limits,
+            docker::WorkDeadline::after(Duration::from_secs(wall))?,
+            Arc::new(Journal(state)),
+        )
+    })
+    .await??;
+    let effects = Arc::new(Mutex::new(worker::EvidenceEffects {
+        inner: NativeEffects {
+            model: Arc::new(Mutex::new(Model {
+                client,
+                fenced: false,
+            })),
+            workspace,
+            output_bytes: 16384,
+            return_overhead: Duration::from_secs(1),
+        },
+        artifacts,
+        remaining_bytes: 64 * 1024 * 1024,
+    }));
+    let (tx, mut rx) = runtime::events();
+    let mut task = tokio::spawn(runtime::run_turn(
+        session,
+        prompt,
+        effects,
+        tx,
+        cancel.clone(),
+    ));
+    let mut output_error = None;
+    let completed = loop {
+        tokio::select! {
+            event=rx.recv()=>if let Some(event)=event {
+                if output_error.is_none() && let Err(error)=emit(&log,json!({"schema_version":1,"type":"runtime","event":event})).await {cancel.cancel();output_error=Some(error);}
+            } else {break task.await??;},
+            result=&mut task=>{
+                while let Some(event)=rx.recv().await {
+                    if output_error.is_none() && let Err(error)=emit(&log,json!({"schema_version":1,"type":"runtime","event":event})).await {cancel.cancel();output_error=Some(error);}
+                }
+                break result??;
+            }
+        }
+    };
+    if let Some(error) = output_error {
+        return Err(error);
+    }
+    let cleanup = completed.result.cleanup;
+    if completed.result.reason != playtime_core::StopReason::AgentFinished
+        || cleanup != playtime_protocol::events::CleanupOutcome::Complete
+    {
+        emit(&log,json!({"schema_version":1,"type":"worker_failed","session_id":session_id,"reason":completed.result.reason,"cleanup":cleanup,"usage":completed.result.usage})).await?;
+        return Err("worker turn did not finish; no automatic replay".into());
+    }
+    let session = completed.session.ok_or("completed session unavailable")?;
+    let checkpoint = session.checkpoint().ok_or("missing completed checkpoint")?;
+    let response = checkpoint
+        .history
+        .exchanges
+        .last()
+        .and_then(|exchange| exchange.messages.last())
+        .filter(|message| message["role"] == "assistant")
+        .and_then(|message| message["content"].as_str())
+        .ok_or("missing final worker response")?;
+    records.write_new("worker-report.raw.txt", response.as_bytes())?;
+    let report = worker::validate_report(response.as_bytes(), &artifact_directory)?;
+    let report_bytes = serde_json::to_vec(&report)?;
+    records.write_new("worker-report.json", &report_bytes)?;
+    let result = json!({"schema_version":1,"type":"worker_finished","session_id":session_id,"turn_id":checkpoint.completed_turn,"cleanup":cleanup,"status":report.status,"usage":completed.result.usage,"report_sha256":Sha256::digest(&report_bytes).iter().map(|byte|format!("{byte:02x}")).collect::<String>()});
+    records.write_new("worker-result.json", &serde_json::to_vec(&result)?)?;
+    emit(&log, result).await?;
+    log.lock()
+        .map_err(|_| "worker event writer failed")?
+        .file
+        .sync_all()?;
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() {
+    let cancel = CancellationToken::new();
+    let signals = cancel.clone();
+    let mut terminate =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM");
+    let mut hangup =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()).expect("SIGHUP");
+    tokio::spawn(async move {
+        tokio::select! {_=tokio::signal::ctrl_c()=>(),_=terminate.recv()=>(),_=hangup.recv()=>()};
+        signals.cancel();
+    });
+    if let Err(error) = run(Args::parse(), cancel.clone()).await {
+        eprintln!("playtime-task: {error}");
+        std::process::exit(if cancel.is_cancelled() { 130 } else { 1 });
+    }
+}

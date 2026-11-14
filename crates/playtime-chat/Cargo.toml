@@ -1,5 +1,6 @@
 [package]
 name = "playtime-chat"
+default-run = "playtime-chat"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

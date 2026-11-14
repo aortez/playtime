@@ -299,6 +299,7 @@ pub(crate) fn fit_tool_result_with_notice(
         "exit_code",
         "timed_out",
         "duration_seconds",
+        "evidence_log_path",
         "output_truncated",
         "truncated",
         "bytes_written",
@@ -500,7 +501,7 @@ mod tests {
         // The workshop already capped this output; its boolean cannot tell us
         // how many bytes it discarded. Our count describes only the next cut.
         let original = json!({"exit_code":0,"stdout":"x".repeat(16384),"stderr":"",
-            "timed_out":false,"duration_seconds":0.001,"output_truncated":true});
+            "timed_out":false,"duration_seconds":0.001,"output_truncated":true,"evidence_log_path":"tool-7.json"});
         let fitted = fit_tool_result_with_notice(
             "exec",
             original.clone(),
@@ -513,6 +514,7 @@ mod tests {
             "exit_code",
             "timed_out",
             "duration_seconds",
+            "evidence_log_path",
             "output_truncated",
             "stderr",
         ] {

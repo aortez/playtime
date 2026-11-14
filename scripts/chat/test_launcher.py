@@ -123,6 +123,46 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
     def run_fixture(self, mode="", *args):
         return subprocess.run(self.command("framework-gyro-m-fast", *args), env=dict(self.env, FIXTURE_MODE=mode), cwd=self.root, capture_output=True, text=True, timeout=15)
 
+    def worker_fixture(self):
+        self.write_program(self.package / "playtime-task", r'''
+import json, os, pathlib, sys
+root=pathlib.Path(os.environ['FIXTURE_ROOT'])
+if '--describe-protocol' in sys.argv:
+    print(json.dumps({'protocol':'playtime-worker','version':2 if os.environ.get('FIXTURE_MODE')=='wrong-protocol' else 1}))
+elif '--check-inputs' in sys.argv:
+    assert not (root/'started').exists()
+    print(json.dumps({'inputs_valid':True}))
+else:
+    assert sys.stdin.read() == ''
+    assert 'SSH_AUTH_SOCK' not in os.environ
+    (root/'client').write_text(json.dumps(sys.argv[1:]))
+''')
+        project=self.root/'project';project.mkdir()
+        records=self.root/'records';records.mkdir(mode=0o700)
+        request=records/'prompt.txt';request.write_text('Assignment');request.chmod(0o600)
+        return ['--worker','--environment','general','--workspace',str(project),'--run-dir',str(records),'--request',str(request)]
+
+    def test_worker_gate_and_protocol_precede_host_ownership(self):
+        args=self.worker_fixture()
+        self.env['SSH_AUTH_SOCK']='/trusted/fixture-agent'
+        for text,mode in [('Changed',''),('Assignment','wrong-protocol')]:
+            result=subprocess.run(self.command('framework-gyro-m-fast',*args), input=text, env=dict(self.env,FIXTURE_MODE=mode),capture_output=True,text=True,timeout=10)
+            self.assertNotEqual(result.returncode,0)
+            self.assertFalse((self.root/'started').exists())
+        result=subprocess.run(self.command('framework-gyro-m-fast',*args),input='Assignment',env=self.env,capture_output=True,text=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertTrue((self.root/'restored').exists())
+        self.assertFalse((self.root/'picked').exists())
+
+    def test_worker_waits_for_durable_start_release(self):
+        args=self.worker_fixture()
+        with subprocess.Popen(self.command('framework-gyro-m-fast',*args),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=self.env) as child:
+            time.sleep(.3)
+            self.assertIsNone(child.poll())
+            self.assertFalse((self.root/'started').exists())
+            _,err=child.communicate(b'Assignment',timeout=10)
+            self.assertEqual(child.returncode,0,err)
+
     def test_status_never_starts_or_verifies_a_model(self):
         result = subprocess.run(self.command("--status", "framework-gyro-m-fast"), env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
