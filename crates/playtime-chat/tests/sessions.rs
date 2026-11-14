@@ -1,14 +1,18 @@
 use playtime_chat::sessions::{State, catalog, select};
 use playtime_core::{RunMode, Sha256Digest};
 use playtime_engine::{
-    ToolPolicy,
+    Input, ModelResponse, Outcome, ToolPolicy,
     chat::ConversationConfig,
     compaction::CompactionSettings,
     simulation::{Scenario, SequentialIds},
 };
 use playtime_harness::Session;
 use playtime_local::{PrivateDirectory, Token};
-use std::{fs, os::unix::fs::symlink, path::PathBuf};
+use std::{
+    fs,
+    os::unix::fs::symlink,
+    path::{Path, PathBuf},
+};
 
 struct Root(PathBuf);
 impl Root {
@@ -53,12 +57,57 @@ fn config() -> ConversationConfig {
     }
 }
 
+fn completed(path: &Path, config: ConversationConfig) -> Session {
+    let mut turn = Session::create(path, config)
+        .unwrap()
+        .begin("A saved conversation.".into(), SequentialIds, 0)
+        .unwrap();
+    for (i, outcome) in [
+        Outcome::WorkspaceStarted,
+        Outcome::ModelCompleted {
+            response: ModelResponse {
+                message: serde_json::json!({"role":"assistant","content":"Recorded."}),
+                done: true,
+                generated_tokens: Some(10),
+                prompt_tokens: None,
+            },
+            finish_reason: "stop".into(),
+        },
+        Outcome::Cleaned(vec![]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let effect_id = turn.pending().unwrap().id;
+        turn.advance(i as u64 * 2, Input::Dispatched { effect_id })
+            .unwrap();
+        turn.advance(i as u64 * 2 + 1, Input::Complete { effect_id, outcome })
+            .unwrap();
+    }
+    turn.finish().unwrap()
+}
+
 #[test]
-fn filters_identity_and_rejects_busy_interrupted_changed_and_linked_sessions() {
+fn hides_empty_sessions_without_deleting_evidence_and_preserves_nonempty_states() {
     let root = Root::new();
     let expected = config();
-    drop(Session::create(&root.0.join("ready"), expected.clone()).unwrap());
-    let held = Session::create(&root.0.join("busy"), expected.clone()).unwrap();
+    let empty_path = root.0.join("empty");
+    drop(Session::create(&empty_path, expected.clone()).unwrap());
+    let empty = PrivateDirectory::open(&empty_path, false).unwrap();
+    empty
+        .write_new("diagnostic.log", b"exited before the first message")
+        .unwrap();
+    let empty_before: Vec<_> = empty
+        .names()
+        .unwrap()
+        .into_iter()
+        .map(|name| {
+            let data = empty.read(&name, 1024 * 1024).unwrap();
+            (name, data)
+        })
+        .collect();
+    drop(completed(&root.0.join("ready"), expected.clone()));
+    let held = completed(&root.0.join("busy"), expected.clone());
     let interrupted = root.0.join("interrupted");
     drop(
         Session::create(&interrupted, expected.clone())
@@ -69,16 +118,27 @@ fn filters_identity_and_rejects_busy_interrupted_changed_and_linked_sessions() {
     let head_before = fs::read(interrupted.join("head.json")).unwrap();
     let mut changed = expected.clone();
     changed.instructions.push_str(" Extra.");
-    drop(Session::create(&root.0.join("changed"), changed).unwrap());
+    drop(completed(&root.0.join("changed"), changed));
     let mut other = expected.clone();
     other.model = Sha256Digest::new("3".repeat(64)).unwrap();
-    drop(Session::create(&root.0.join("other-model"), other).unwrap());
+    drop(completed(&root.0.join("other-model"), other));
     let mut other = expected.clone();
     other.workspace = Sha256Digest::new("4".repeat(64)).unwrap();
-    drop(Session::create(&root.0.join("other-workspace"), other).unwrap());
+    drop(completed(&root.0.join("other-workspace"), other));
     symlink(root.0.join("ready"), root.0.join("linked")).unwrap();
     let entries = catalog(&root.0, &expected).unwrap();
     assert_eq!(entries.len(), 4);
+    assert!(!entries.iter().any(|entry| entry.path == empty_path));
+    assert_eq!(
+        empty.names().unwrap(),
+        empty_before
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>()
+    );
+    for (name, data) in empty_before {
+        assert_eq!(empty.read(&name, 1024 * 1024).unwrap(), data);
+    }
     for (name, state) in [
         ("ready", State::Ready),
         ("busy", State::InUse),

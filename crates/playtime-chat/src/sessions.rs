@@ -64,6 +64,10 @@ fn inspect(path: PathBuf, modified: u64, expected: &ConversationConfig) -> Resul
     if head.schema_version != 1 || head.configuration != config.fingerprint()? {
         return Err("invalid saved session metadata".into());
     }
+    // An opened console can leave diagnostics without any conversation to resume.
+    if head.checkpoint.is_none() && head.active_turn.is_none() {
+        return Ok(None);
+    }
     // Read only bounded display metadata, never the event transcript. The
     // harness remains authoritative for checkpoint validation and fencing.
     let input = head
@@ -93,7 +97,7 @@ fn inspect(path: PathBuf, modified: u64, expected: &ConversationConfig) -> Resul
     }))
 }
 
-/// The latest 20 matching sessions among the 200 most recently touched session
+/// The latest 20 nonempty matching sessions among the 200 most recently touched session
 /// directories. Unsafe files and unrelated models/workspaces are not offered.
 pub fn catalog(root: &Path, expected: &ConversationConfig) -> Result<Vec<Entry>> {
     let directory = PrivateDirectory::open(root, false)?;

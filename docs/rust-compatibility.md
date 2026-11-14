@@ -1,5 +1,13 @@
 # Rust compatibility and goldens
 
+## Empty chat sessions omitted from discovery (2026-11-13)
+
+The chat picker and `--list-sessions` omit sessions with neither a completed
+checkpoint nor an active turn. Their files remain intact, and explicit
+`--session` access still works. Completed and interrupted conversations retain
+their existing validation and resume rules. Saved-state schemas, model inputs
+and behavioral goldens are unchanged.
+
 ## Explicit tool-result context truncation (2026-11-13)
 
 Oversized tool results now retain timing, upstream truncation flags and empty

@@ -68,7 +68,9 @@ codex-launcher playtime-framework-fast --prompt 'Inspect the project and explain
 Interactive launches show a local session picker **before starting the model**.
 Choose `0` (or Enter) for a new conversation, a numbered resumable session, or
 `q` to cancel. The list shows the last user message and age for recent sessions
-with the selected workspace and model identity. Sessions with changed settings,
+with the selected workspace and model identity. Empty sessions with no completed
+or active turn are omitted; their logs and
+session files remain on disk for troubleshooting. Sessions with changed settings,
 unfinished turns, corrupt checkpoints, or a held lease cannot be selected.
 Unfinished turns require separate inspection/recovery; the picker never replays
 them. Explicit `--session`, `--recover-compaction`, and headless `--prompt` calls
