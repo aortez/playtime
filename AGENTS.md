@@ -43,7 +43,11 @@ Keep session state outside tool write roots, commit observations before dispatch
 and never replay an unfinished turn. The explicit compaction-recovery fork may
 carry only the last completed history after a fully observed, length-limited first
 summary and confirmed cleanup; it must preserve the fenced source and reject
-work/tool calls or uncertain/missing evidence. See `docs/rust-conversation.md`; its CPU
+work/tool calls or uncertain/missing evidence. General stopped-turn recovery is a
+separate explicit fork: require complete terminal/cleanup records, retain the source,
+carry a bounded evidence notice, and acknowledge unknown tool outcomes. Never replay
+pending effects or treat project cleanup as remote inference termination.
+See `docs/rust-conversation.md`; its CPU
 fixtures do not establish Strata transport, host tools or a runnable console.
 `playtime-chat` supplies the asynchronous project driver and basic terminal client;
 it must use that same controller. Run `cargo test -p playtime-chat --locked` for

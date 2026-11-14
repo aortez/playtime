@@ -65,7 +65,10 @@ fn inspect(path: PathBuf, modified: u64, expected: &ConversationConfig) -> Resul
         return Err("invalid saved session metadata".into());
     }
     // An opened console can leave diagnostics without any conversation to resume.
-    if head.checkpoint.is_none() && head.active_turn.is_none() {
+    if head.checkpoint.is_none()
+        && head.active_turn.is_none()
+        && !directory.names()?.iter().any(|n| n == "interruption.json")
+    {
         return Ok(None);
     }
     // Read only bounded display metadata, never the event transcript. The
@@ -81,6 +84,13 @@ fn inspect(path: PathBuf, modified: u64, expected: &ConversationConfig) -> Resul
         })
         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
         .and_then(|value| value.get("input")?.as_str().map(preview))
+        .or_else(|| {
+            let bytes = directory.read("interruption.json", 64 * 1024).ok()?;
+            let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+            value["report"]["pending_input"]["text"]
+                .as_str()
+                .map(preview)
+        })
         .unwrap_or_else(|| "(no saved message)".into());
     let state = match Session::try_open(&path, expected) {
         Ok(_) => State::Ready,
@@ -129,10 +139,13 @@ pub fn catalog(root: &Path, expected: &ConversationConfig) -> Result<Vec<Entry>>
 pub struct Choice {
     pub session: Option<PathBuf>,
     pub cancelled: bool,
+    pub recover_interrupted: Option<PathBuf>,
+    pub acknowledge_uncertain_tools: bool,
 }
 
 pub fn select(
     entries: &[Entry],
+    config: &ConversationConfig,
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> Result<Choice> {
@@ -150,7 +163,7 @@ pub fn select(
         let status = match entry.state {
             State::Ready => "",
             State::InUse => " [in use]",
-            State::Interrupted => " [unfinished; inspect/recover separately]",
+            State::Interrupted => " [interrupted; r<number> to inspect/recover]",
             State::SettingsDiffer => " [settings differ]",
             State::Unavailable => " [cannot resume]",
         };
@@ -165,13 +178,59 @@ pub fn select(
             return Ok(Choice {
                 session: None,
                 cancelled: true,
+                recover_interrupted: None,
+                acknowledge_uncertain_tools: false,
             });
         }
         if line.trim().is_empty() || line.trim() == "0" {
             return Ok(Choice {
                 session: None,
                 cancelled: false,
+                recover_interrupted: None,
+                acknowledge_uncertain_tools: false,
             });
+        }
+        if let Some(index) = line
+            .trim()
+            .strip_prefix('r')
+            .and_then(|s| s.parse::<usize>().ok())
+            && let Some(entry) = index.checked_sub(1).and_then(|i| entries.get(i))
+            && entry.state == State::Interrupted
+        {
+            match Session::inspect_interrupted(&entry.path, config) {
+                Ok(report) => {
+                    // Escape terminal controls in archived user/model/tool text.
+                    let text = report.context()?;
+                    for c in text.chars() {
+                        if c.is_control() && c != '\n' {
+                            write!(output, "{}", c.escape_default())?;
+                        } else {
+                            write!(output, "{c}")?;
+                        }
+                    }
+                    writeln!(
+                        output,
+                        "\nRecovery creates a new session and replays nothing. {} tool outcomes are unknown; files may have partial changes.",
+                        report.uncertain_tools
+                    )?;
+                    write!(
+                        output,
+                        "Type recover to accept this report and create the fork; Enter cancels: "
+                    )?;
+                    output.flush()?;
+                    let mut confirm = String::new();
+                    if input.read_line(&mut confirm)? != 0 && confirm.trim() == "recover" {
+                        return Ok(Choice {
+                            session: None,
+                            cancelled: false,
+                            recover_interrupted: Some(entry.path.clone()),
+                            acknowledge_uncertain_tools: report.uncertain_tools > 0,
+                        });
+                    }
+                }
+                Err(error) => writeln!(output, "Recovery unavailable: {error}")?,
+            }
+            continue;
         }
         if let Ok(index) = line.trim().parse::<usize>()
             && let Some(entry) = index.checked_sub(1).and_then(|i| entries.get(i))
@@ -180,6 +239,8 @@ pub fn select(
             return Ok(Choice {
                 session: Some(entry.path.clone()),
                 cancelled: false,
+                recover_interrupted: None,
+                acknowledge_uncertain_tools: false,
             });
         }
         writeln!(

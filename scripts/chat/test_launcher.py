@@ -83,6 +83,10 @@ else:
         self.write_program(self.package / "playtime-chat", r'''
 import json, os, pathlib, signal, sys, time
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
+if '--inspect-interrupted' in sys.argv:
+    assert not (root / 'started').exists(), 'inspection must not acquire inference'
+    (root / 'inspected').touch()
+    sys.exit(0)
 if '--select-session' in sys.argv:
     assert not (root / 'started').exists(), 'picker must precede SSH ownership'
     (root / 'picked').write_text(json.dumps(sys.argv[1:]))
@@ -90,7 +94,9 @@ if '--select-session' in sys.argv:
     if mode == 'picker-failure':
         sys.exit(2)
     print(json.dumps({'session': str(root / 'saved-session') if mode == 'picker-resume' else None,
-                      'cancelled': mode == 'picker-cancel'}))
+                      'cancelled': mode == 'picker-cancel',
+                      'recover_interrupted': str(root / 'stopped-session') if mode == 'picker-recover' else None,
+                      'acknowledge_uncertain_tools': mode == 'picker-recover'}))
     sys.exit(0)
 (root / 'client').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd()}))
 if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
@@ -135,6 +141,19 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         self.assertEqual(client[-2:], ['--session', str(self.root / 'saved-session')])
         self.assertTrue((self.root / 'restored').exists())
 
+    def test_recovery_picker_hands_off_the_explicit_fork_and_acknowledgement(self):
+        result = self.run_fixture('picker-recover', '--sessions')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads((self.root / 'client').read_text())['argv']
+        self.assertEqual(argv[-3:], ['--recover-interrupted', str(self.root / 'stopped-session'), '--acknowledge-uncertain-tools'])
+        self.assertNotIn('--session', argv)
+
+    def test_interruption_inspection_never_starts_inference(self):
+        result = self.run_fixture('', '--inspect-interrupted', '/stopped-session')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'inspected').exists())
+        self.assertFalse((self.root / 'started').exists())
+
     def test_picker_cancel_and_failure_never_start_host(self):
         for mode, expected in [('picker-cancel', 0), ('picker-failure', 1)]:
             result = self.run_fixture(mode, '--sessions')
@@ -144,7 +163,7 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
             self.assertFalse((self.root / 'client').exists())
 
     def test_explicit_sessions_and_headless_calls_skip_picker(self):
-        for args in [('--session', '/saved'), ('--prompt', '--sessions')]:
+        for args in [('--session', '/saved'), ('--prompt', '--sessions'), ('--recover-interrupted', '/stopped')]:
             result = self.run_fixture('', *args)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse((self.root / 'picked').exists())

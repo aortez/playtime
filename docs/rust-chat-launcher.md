@@ -71,9 +71,11 @@ Choose `0` (or Enter) for a new conversation, a numbered resumable session, or
 with the selected workspace and model identity. Empty sessions with no completed
 or active turn are omitted; their logs and
 session files remain on disk for troubleshooting. Sessions with changed settings,
-unfinished turns, corrupt checkpoints, or a held lease cannot be selected.
-Unfinished turns require separate inspection/recovery; the picker never replays
-them. Explicit `--session`, `--recover-compaction`, and headless `--prompt` calls
+corrupt checkpoints, or a held lease cannot be selected. Interrupted entries offer
+`r<number>` to inspect their report and explicitly fork after typing `recover`.
+This requires complete recorded cleanup; it never replays pending commands.
+An unused recovery fork remains visible even without a completed turn.
+Explicit `--session`, `--recover-compaction`, `--recover-interrupted`, and headless `--prompt` calls
 bypass selection. Use a leading `--sessions` to request the picker explicitly:
 
 ```sh
@@ -83,7 +85,8 @@ codex-launcher playtime-bird-fast --sessions --workspace /absolute/project
 Discovery checks at most 200 recent directories and displays up to 20 matches
 under `--state-dir` (default `~/.local/state/playtime-chat`). Sessions saved
 elsewhere remain available through `--session`. `--list-sessions` emits the same
-catalog as JSON without starting inference. Selection validates the saved
+catalog as JSON without starting inference. `--inspect-interrupted PATH` likewise
+prints the validated report locally without acquiring the host. Selection validates the saved
 checkpoint, and normal startup validates it again after acquiring the host.
 
 The current directory becomes `/work` in the tool container. Explicitly select

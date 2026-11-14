@@ -80,7 +80,8 @@ Opening a session with an active turn fails rather than replaying uncertain tool
 or silently reverting to the previous checkpoint. Inputs, partial history and any
 final result remain for inspection. Reopening recovers private files; it does not
 produce an archive writer receipt or establish that a previous caller received a
-commit acknowledgment. General interrupted-turn reconciliation is not implemented.
+commit acknowledgment. Crashed workers or incomplete cleanup still require manual
+resource reconciliation.
 Completed sessions reopen with the same configuration; a changed
 model, workspace, policy, schema or malformed history is rejected.
 
@@ -96,6 +97,37 @@ provenance, the failed result and pending input, preserving its cost in the sour
 evidence. The original session stays fenced. Publication starts with a fenced new
 head so an incomplete fork cannot reopen as an empty ready conversation. This
 operation grants no server or tool authority and does not submit the pending input.
+
+## Explicit stopped-turn recovery
+
+`Session::inspect_interrupted` audits a private stopped session without effects.
+`Session::recover_interrupted` creates a new session with the last completed
+checkpoint (or no checkpoint after a first-turn interruption) and a bounded
+`interruption.json` report. It requires the exact original configuration, a
+non-held source lock, contiguous records through the matching terminal result,
+and recorded complete project cleanup. Missing batches, tool-reference mismatches,
+unknown event types, live source leases, and uncertain cleanup remain refused.
+
+Tool records distinguish a result observed, an explicit non-dispatch, and an
+unknown outcome. Dispatch records are intent, so an absent result is conservatively
+unknown. Recovery requires acknowledgment when any tool outcome is unknown. A
+recorded result does not imply success: its error/status remains evidence. All
+source files stay unchanged; the new head starts fenced during publication.
+
+The report includes the interrupted message, unknown model-usage count, tool
+counts, and the latest 12 tool observations with explicit byte/preview omission
+counts. Full evidence stays at the source path. On the next **new user message**,
+the harness adds this labeled report as historical context. It archives both the
+raw user input and the added context; no pending input or tool call is submitted
+automatically. Closing/reopening an unused fork retains the notice. After a turn
+completes, subsequent turns use the saved history without reinjecting it. A repeated
+interruption carries a bounded excerpt of the earlier recovery as well.
+
+This is conversation recovery, not restoration of a suspended controller. Unfinished
+assistant text is not promoted to a completed reply, and project changes are neither
+rolled back nor claimed successful. Cleanup records establish project cleanup only;
+the caller must separately own and verify its model endpoint. The narrow
+`recover_compaction` path above retains its separate validation and cap-change rules.
 
 ## Shared context planner
 
