@@ -3350,6 +3350,7 @@ dependencies = [
  "playtime-local",
  "playtime-protocol",
  "playtime-strata",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "sha2",

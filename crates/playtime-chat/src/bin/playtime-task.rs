@@ -1,9 +1,9 @@
 //! Version-one noninteractive worker; inference ownership stays in run-strata.py.
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use playtime_chat::{
     Result,
     native::{Journal, Model, NativeEffects},
-    runtime, worker,
+    native_project, runtime, worker,
 };
 use playtime_docker::{
     self as docker,
@@ -25,8 +25,18 @@ use std::{
 use tokio::{sync::Mutex, time::Instant};
 use tokio_util::sync::CancellationToken;
 
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum ToolBackend {
+    Docker,
+    Native,
+}
+
 #[derive(Parser)]
 struct Args {
+    #[arg(long, value_enum, default_value = "docker")]
+    tool_backend: ToolBackend,
+    #[arg(long)]
+    native_policy: Option<PathBuf>,
     #[arg(long)]
     describe_protocol: bool,
     #[arg(long)]
@@ -84,7 +94,7 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     if args.describe_protocol {
         println!(
             "{}",
-            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"roles":["worker"],"tools":"project-docker-v1","report":"worker-report-v1","continuation":"completed-session-only"})
+            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"roles":["worker"],"tools":if args.tool_backend == ToolBackend::Native { native_project::CAPABILITY } else {"project-docker-v1"},"tool_backends":{"docker":"project-docker-v1","native":native_project::CAPABILITY},"native_policy_schema":1,"native_helper_sha256":native_project::helper_sha256(),"report":"worker-report-v1","continuation":"completed-session-only"})
         );
         return Ok(());
     }
@@ -95,7 +105,14 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         .canonicalize()?;
     let request = args.request.ok_or("missing request")?.canonicalize()?;
     let model_path = args.model_lock.ok_or("missing model lock")?;
-    let image_path = args.image_lock.ok_or("missing image lock")?;
+    if (args.tool_backend == ToolBackend::Native
+        && (args.image_lock.is_some() || args.native_policy.is_none()))
+        || (args.tool_backend == ToolBackend::Docker
+            && (args.native_policy.is_some() || args.image_lock.is_none()))
+    {
+        return Err("select Docker with --image-lock or native with --native-policy; no mixed backend configuration".into());
+    }
+    let image_path = args.image_lock;
     let state = args.state_dir.unwrap_or(
         PathBuf::from(std::env::var_os("HOME").ok_or("HOME required")?)
             .join(".local/state/playtime-chat"),
@@ -125,20 +142,7 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     if resume && !session_path.join("config.json").exists() {
         return Err("saved worker session unavailable; no automatic fresh fallback".into());
     }
-    let protected = vec![
-        run_dir.clone(),
-        request,
-        model_path.clone(),
-        image_path.clone(),
-    ];
-    let root = workspace.clone();
-    let private = state.clone();
-    let directory = Arc::new(
-        tokio::task::spawn_blocking(move || ProjectDirectory::open(&root, &private, &protected))
-            .await??,
-    );
-    let image_bytes = std::fs::read(&image_path)?;
-    let image: Value = serde_json::from_slice(&image_bytes)?;
+    let protected = vec![run_dir.clone(), request, model_path.clone()];
     let lock: ModelLock = serde_json::from_slice(&std::fs::read(&model_path)?)?;
     let limits = ProjectLimits {
         nano_cpus: 2_000_000_000,
@@ -148,18 +152,52 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         pids: 256,
         seed: 1042,
     };
-    let config = worker::config(&lock, &image, &directory, &limits, args.wall_seconds)?;
+    let mut native_workspace = None;
+    let mut docker_environment = None;
+    let config = if args.tool_backend == ToolBackend::Native {
+        let policy = args.native_policy.ok_or("missing native policy")?;
+        let root = workspace.clone();
+        let private = state.clone();
+        let native = tokio::task::spawn_blocking(move || {
+            native_project::Workspace::open(&policy, &root, &private, &protected)
+        })
+        .await??;
+        let config = worker::native_config(&lock, &native, args.wall_seconds)?;
+        native_workspace = Some(native);
+        config
+    } else {
+        let image_path = image_path.ok_or("missing image lock")?;
+        let mut protected = protected;
+        protected.push(image_path.clone());
+        let root = workspace.clone();
+        let private = state.clone();
+        let directory = Arc::new(
+            tokio::task::spawn_blocking(move || {
+                ProjectDirectory::open(&root, &private, &protected)
+            })
+            .await??,
+        );
+        let image_bytes = std::fs::read(&image_path)?;
+        let image: Value = serde_json::from_slice(&image_bytes)?;
+        let config = worker::config(&lock, &image, &directory, &limits, args.wall_seconds)?;
+        docker_environment = Some((directory, image_bytes));
+        config
+    };
+    let execution = native_workspace
+        .as_ref()
+        .map(native_project::Workspace::binding)
+        .unwrap_or(json!({"capability":"project-docker-v1"}));
     if args.check_inputs {
         if resume {
             Session::try_open(&session_path, &config)?;
         }
         println!(
             "{}",
-            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"inputs_valid":true})
+            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"inputs_valid":true,"execution":execution})
         );
         return Ok(());
     }
-    records.write_new("worker-invoked.json",&serde_json::to_vec(&json!({"schema_version":1,"session_id":session_id,"resume":resume,"configuration":config.fingerprint()?}))?)?;
+    records.write_new("worker-invoked.json",&serde_json::to_vec(&json!({"schema_version":1,"session_id":session_id,"resume":resume,"configuration":config.fingerprint()?,"execution":execution}))?)?;
     let log = Arc::new(std::sync::Mutex::new(Events {
         file: OpenOptions::new()
             .create_new(true)
@@ -170,7 +208,7 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     }));
     emit(
         &log,
-        json!({"schema_version":1,"type":"worker_started","session_id":session_id}),
+        json!({"schema_version":1,"type":"worker_started","session_id":session_id,"execution":execution}),
     )
     .await?;
     let mut client = Client::new(
@@ -180,24 +218,6 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     )?;
     client
         .verify(Instant::now() + Duration::from_secs(20), &cancel)
-        .await?;
-    let transport = Arc::new(Cli::resolve(
-        std::path::Path::new("/usr/bin/docker"),
-        std::path::Path::new("/var/run/docker.sock"),
-        &state.join(format!("docker-{}", Token::generate()?.expose())),
-    )?);
-    let engine = docker::Engine::connect(
-        transport,
-        Instant::now() + Duration::from_secs(20),
-        cancel.clone(),
-    )
-    .await?;
-    let ready = engine
-        .readiness(
-            &image_bytes,
-            Instant::now() + Duration::from_secs(20),
-            cancel.clone(),
-        )
         .await?;
     let saved_path = session_path.clone();
     let session = tokio::task::spawn_blocking(move || {
@@ -209,38 +229,71 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     })
     .await??;
     if !resume {
-        playtime_chat::environment::save(&session_path, &image_bytes)?;
+        if let Some((_, image_bytes)) = &docker_environment {
+            playtime_chat::environment::save(&session_path, image_bytes)?;
+        } else {
+            PrivateDirectory::open(&session_path, false)?
+                .write_new("native-execution.json", &serde_json::to_vec(&execution)?)?;
+        }
     }
-    let owner = docker::Ownership {
-        service: "playtime-task".into(),
-        run: format!("turn-{}", docker::Ownership::random_nonce()?),
-        grant: "devbot-worker".into(),
-        invocation: docker::Ownership::random_nonce()?,
-        nonce: docker::Ownership::random_nonce()?,
-        daemon: engine.identity().clone(),
-    };
-    let wall = args.wall_seconds;
-    let workspace = tokio::task::spawn_blocking(move || {
-        ProjectWorkspace::new(
-            ready,
-            owner,
-            directory,
-            limits,
-            docker::WorkDeadline::after(Duration::from_secs(wall))?,
-            Arc::new(Journal(state)),
+    let model = Arc::new(Mutex::new(Model {
+        client,
+        fenced: false,
+    }));
+    let backend = if let Some(workspace) = native_workspace {
+        worker::ProjectEffects::Native(Box::new(native_project::ProjectEffects {
+            inner: playtime_chat::native::ModelEffects(model),
+            workspace,
+        }))
+    } else {
+        let (directory, image_bytes) = docker_environment.ok_or("missing Docker environment")?;
+        let transport = Arc::new(Cli::resolve(
+            std::path::Path::new("/usr/bin/docker"),
+            std::path::Path::new("/var/run/docker.sock"),
+            &state.join(format!("docker-{}", Token::generate()?.expose())),
+        )?);
+        let engine = docker::Engine::connect(
+            transport,
+            Instant::now() + Duration::from_secs(20),
+            cancel.clone(),
         )
-    })
-    .await??;
-    let effects = Arc::new(Mutex::new(worker::EvidenceEffects::new(
-        NativeEffects {
-            model: Arc::new(Mutex::new(Model {
-                client,
-                fenced: false,
-            })),
+        .await?;
+        let ready = engine
+            .readiness(
+                &image_bytes,
+                Instant::now() + Duration::from_secs(20),
+                cancel.clone(),
+            )
+            .await?;
+        let owner = docker::Ownership {
+            service: "playtime-task".into(),
+            run: format!("turn-{}", docker::Ownership::random_nonce()?),
+            grant: "devbot-worker".into(),
+            invocation: docker::Ownership::random_nonce()?,
+            nonce: docker::Ownership::random_nonce()?,
+            daemon: engine.identity().clone(),
+        };
+        let wall = args.wall_seconds;
+        let workspace = tokio::task::spawn_blocking(move || {
+            ProjectWorkspace::new(
+                ready,
+                owner,
+                directory,
+                limits,
+                docker::WorkDeadline::after(Duration::from_secs(wall))?,
+                Arc::new(Journal(state)),
+            )
+        })
+        .await??;
+        worker::ProjectEffects::Docker(Box::new(NativeEffects {
+            model,
             workspace,
             output_bytes: 16384,
             return_overhead: Duration::from_secs(1),
-        },
+        }))
+    };
+    let effects = Arc::new(Mutex::new(worker::EvidenceEffects::new(
+        backend,
         artifacts,
         64 * 1024 * 1024,
     )?));

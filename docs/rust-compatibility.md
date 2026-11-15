@@ -1,5 +1,24 @@
 # Rust compatibility and goldens
 
+## Opt-in native project tools (2026-11-14)
+
+`playtime-task --tool-backend native --native-policy PATH` adds
+`project-native-v1` through the existing driver and evidence-report conversion.
+Native mode uses actual host paths and requires no image lock or Docker admission.
+Its frozen configuration includes account, policy bytes/path, helper bytes, role,
+limits, workspace and cache directory identities; changed bindings require fresh
+state. Docker remains the default, with unchanged instructions/configuration and
+existing session/fence meanings. The shared model transport was extracted without
+changing request/response behavior. No archive/session golden is regenerated.
+
+Protocol 1 keeps its worker/report contract. Capability descriptions gain a
+`tool_backends` map, native policy schema and helper digest; the selected `tools`
+value distinguishes native from Docker. Native startup/check-inputs receipts and
+invocation records expose the frozen `execution` binding. These additive fields do
+not grant privileged launch or independent verification authority. See
+[native project tools](rust-native-project-tools.md) for installation and validation
+limits; worker-only capability does not establish isolated supervisor roles.
+
 ## Worker evidence references (2026-11-14)
 
 The [model-facing worker report](rust-headless-worker.md#model-facing-references-and-canonical-conversion)

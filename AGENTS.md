@@ -67,6 +67,13 @@ Project-owned development images use explicit preparation; see
 execute repository lifecycle hooks. Preserve saved environment locks and the
 legacy general-workshop inventory. Validate new images with actual project builds
 and an owned chat/restart smoke, in addition to the bridge probe and fixtures.
+The opt-in `project-native-v1` worker adapter uses a reviewed root-owned policy,
+a fixed installed helper and Bubblewrap after dropping to a dedicated account.
+Keep controller state/evidence outside tool mounts, preserve the shared workspace
+lease and uncertain-tool fence, and never fall back to unrestricted execution.
+Run `./scripts/test-rust-native-project.sh` for native-tool changes; this same-UID
+namespace gate does not establish privileged launch or dedicated-account isolation.
+See `docs/rust-native-project-tools.md` for separate installed-account qualification.
 `playtime-strata` adapts the installed stateless Responses API to shared model
 requests; it never owns a model server or executes tools. Freeze the endpoint's
 model/template/settings plus independently verified host artifacts, keep missing
@@ -169,7 +176,9 @@ Run the frozen Python suite with `python3 -m unittest discover -s tests -v`.
 
 Preserve these properties:
 
-- Model-controlled commands execute only inside the workshop as uid 1000.
+- Experiment/Docker model commands execute only inside the workshop as uid 1000.
+  Opt-in native worker commands use the fixed dedicated-account sandbox policy;
+  model arguments never select identities, privileged helpers or mounts.
 - Logs, input archives, controller code, and Docker access stay outside it.
 - `memento_turns_v1` starts a new conversation each session; only workspace files
   persist. Other internal policies must use explicit request purposes/scopes and

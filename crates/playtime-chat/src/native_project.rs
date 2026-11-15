@@ -1,0 +1,858 @@
+//! Opt-in host tools behind a fixed privileged helper and Bubblewrap policy.
+use crate::{Result, runtime::Effects};
+use async_trait::async_trait;
+use playtime_engine::{Effect, EffectKind, Outcome, ToolRequest};
+use playtime_local::PrivateDirectory;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    fs::{self, File},
+    io::Read,
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    sync::mpsc,
+    time::Instant,
+};
+use tokio_util::sync::CancellationToken;
+
+pub const CAPABILITY: &str = "project-native-v1";
+const HELPER: &[u8] = include_bytes!("../../../scripts/chat/native_tool.py");
+pub fn helper_sha256() -> String {
+    digest(HELPER)
+}
+fn digest(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    pub command_seconds: u32,
+    pub memory_bytes: u64,
+    pub processes: u32,
+    pub output_bytes: u32,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Policy {
+    pub schema_version: u32,
+    pub controller_uid: u32,
+    pub agent_uid: u32,
+    pub agent_gid: u32,
+    pub workspace: PathBuf,
+    pub cache: PathBuf,
+    pub toolchain: PathBuf,
+    pub helper: PathBuf,
+    pub mode: String,
+    pub limits: Limits,
+}
+
+fn read_limited(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    File::open(path)?.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err("native configuration file exceeds bound".into());
+    }
+    Ok(bytes)
+}
+
+fn trusted(path: &Path, directory: bool) -> Result<()> {
+    if !path.is_absolute() || path.canonicalize()? != path {
+        return Err("native trusted path must be canonical".into());
+    }
+    for ancestor in path.ancestors() {
+        let metadata = fs::symlink_metadata(ancestor)?;
+        if metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+            return Err("native policy/helper/toolchain must be root-owned and protected".into());
+        }
+    }
+    let metadata = fs::metadata(path)?;
+    if if directory {
+        !metadata.is_dir()
+    } else {
+        !metadata.is_file()
+    } {
+        return Err("invalid native trusted path type".into());
+    }
+    Ok(())
+}
+
+pub struct Workspace {
+    policy: Policy,
+    path: PathBuf,
+    policy_bytes: Vec<u8>,
+    identity: Value,
+    cache_identity: Value,
+    git_identity: Value,
+    state: Arc<PrivateDirectory>,
+    _lease: File,
+    active: bool,
+    #[cfg(test)]
+    helper_fixture: bool,
+}
+impl Workspace {
+    pub fn policy(&self) -> &Policy {
+        &self.policy
+    }
+    pub fn open(
+        path: &Path,
+        workspace: &Path,
+        state: &Path,
+        protected: &[PathBuf],
+    ) -> Result<Self> {
+        trusted(path, false)?;
+        let policy_bytes = read_limited(path, 65536)?;
+        if policy_bytes.len() > 65536 {
+            return Err("native policy exceeds 64 KiB".into());
+        }
+        let policy: Policy = serde_json::from_slice(&policy_bytes)?;
+        let uid = rustix::process::geteuid().as_raw();
+        if policy.schema_version != 1
+            || uid == 0
+            || policy.controller_uid != uid
+            || policy.agent_uid == uid
+            || policy.agent_uid == 0
+            || policy.agent_uid == u32::MAX
+            || policy.agent_gid == u32::MAX
+            || policy.agent_gid == 0
+            || !["edit", "read_only"].contains(&policy.mode.as_str())
+        {
+            return Err("invalid native policy identity or mode".into());
+        }
+        let limits = &policy.limits;
+        if !(1..=3600).contains(&limits.command_seconds)
+            || !(1024..=65536).contains(&limits.output_bytes)
+            || !(1024 * 1024 * 1024..=128 * 1024 * 1024 * 1024).contains(&limits.memory_bytes)
+            || !(16..=4096).contains(&limits.processes)
+        {
+            return Err("invalid native development limits".into());
+        }
+        trusted(&policy.helper, false)?;
+        if fs::metadata(&policy.helper)?.mode() & 0o100 == 0 {
+            return Err("native helper is not executable".into());
+        }
+        if read_limited(&policy.helper, HELPER.len() as u64)? != HELPER {
+            return Err("native helper differs from this runtime build".into());
+        }
+        trusted(&policy.toolchain, true)?;
+        if policy.workspace != workspace.canonicalize()? {
+            return Err("native policy belongs to another workspace".into());
+        }
+        let roots = [&policy.workspace, &policy.cache, &policy.toolchain];
+        for (i, root) in roots.iter().enumerate() {
+            if root.as_path() == Path::new("/")
+                || root.canonicalize()? != **root
+                || !root.is_dir()
+                || roots
+                    .iter()
+                    .enumerate()
+                    .any(|(j, other)| i != j && root.starts_with(other))
+            {
+                return Err("native roots must be canonical, disjoint directories".into());
+            }
+        }
+        for root in [&policy.workspace, &policy.cache] {
+            if fs::metadata(root)?.mode() & 0o002 != 0 {
+                return Err("world-writable native root".into());
+            }
+        }
+        if fs::metadata(&policy.cache)?.uid() != policy.agent_uid {
+            return Err("native cache must belong to agent".into());
+        }
+        for name in ["home", "cargo", "tmp"] {
+            let directory = policy.cache.join(name);
+            if directory.canonicalize()? != directory
+                || !directory.is_dir()
+                || fs::metadata(&directory)?.uid() != policy.agent_uid
+            {
+                return Err("native cache subdirectories must be provisioned for agent".into());
+            }
+        }
+        let mut protected = protected.to_vec();
+        protected.extend([
+            state.to_owned(),
+            std::env::current_exe()?,
+            path.to_owned(),
+            policy.helper.clone(),
+        ]);
+        for protected in protected {
+            let protected = protected.canonicalize()?;
+            if roots.iter().any(|root| protected.starts_with(root)) {
+                return Err("native mounts expose trusted state or runtime".into());
+            }
+        }
+        let git = policy.workspace.join(".git");
+        if !git.is_dir() || git.canonicalize()? != git {
+            return Err("native workspace must have a standalone .git directory".into());
+        }
+        let git = fs::metadata(git)?;
+        let git_identity = json!({"device":git.dev(),"inode":git.ino()});
+        let metadata = fs::metadata(workspace)?;
+        let identity = json!({"device":metadata.dev(),"inode":metadata.ino()});
+        // Share the Docker project's device/inode lease and active fence name.
+        // Never interpret or clear an existing Docker or uncertain native fence.
+        let directory = PrivateDirectory::open(
+            &state.join(format!("project-{}-{}", metadata.dev(), metadata.ino())),
+            true,
+        )?;
+        let lease = directory.try_lock()?;
+        if directory.names()?.iter().any(|name| name == "active") {
+            return Err("project has unresolved owned tools; no automatic recovery".into());
+        }
+        let cache = fs::metadata(&policy.cache)?;
+        let cache_identity = json!({"device":cache.dev(),"inode":cache.ino()});
+        Ok(Self {
+            policy,
+            path: path.into(),
+            policy_bytes,
+            identity,
+            cache_identity,
+            git_identity,
+            state: Arc::new(directory),
+            _lease: lease,
+            active: false,
+            #[cfg(test)]
+            helper_fixture: false,
+        })
+    }
+    pub fn binding(&self) -> Value {
+        json!({"capability":CAPABILITY,"policy_path":self.path,"policy_sha256":digest(&self.policy_bytes),
+            "policy":self.policy,"workspace_identity":self.identity,"cache_identity":self.cache_identity,"git_identity":self.git_identity,"helper_sha256":helper_sha256()})
+    }
+    pub async fn tool(
+        &mut self,
+        request: &ToolRequest,
+        deadline: Instant,
+        cancel: CancellationToken,
+    ) -> Result<Value> {
+        if self.active {
+            return Err("prior native command has unresolved cleanup".into());
+        }
+        let remaining = deadline
+            .saturating_duration_since(Instant::now())
+            .saturating_sub(Duration::from_secs(1));
+        let timeout_ms = remaining
+            .as_millis()
+            .min(u128::from(self.policy.limits.command_seconds) * 1000);
+        if timeout_ms == 0 || cancel.is_cancelled() {
+            return Err("native command cancelled before dispatch".into());
+        }
+        let request = json!({"schema_version":1,"policy_sha256":digest(&self.policy_bytes),"helper_sha256":helper_sha256(),"workspace_identity":self.identity,"cache_identity":self.cache_identity,"git_identity":self.git_identity,
+            "tool":request.name,"arguments":request.arguments,"timeout_ms":timeout_ms as u64,"output_bytes":self.policy.limits.output_bytes});
+        let mut input = serde_json::to_vec(&request)?;
+        input.push(b'\n');
+        if input.len() > 262144 {
+            return Err("native request exceeds 256 KiB".into());
+        }
+        let marker = serde_json::to_vec(
+            &json!({"capability":CAPABILITY,"binding":self.binding(),"request":request}),
+        )?;
+        let state = self.state.clone();
+        let path = self.path.clone();
+        let policy = self.policy.clone();
+        let policy_bytes = self.policy_bytes.clone();
+        let identity = self.identity.clone();
+        let cache_identity = self.cache_identity.clone();
+        let git_identity = self.git_identity.clone();
+        #[cfg(test)]
+        let fixture = self.helper_fixture;
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            #[cfg(not(test))]
+            verify_binding(
+                &path,
+                &policy,
+                &policy_bytes,
+                &identity,
+                &cache_identity,
+                &git_identity,
+            )?;
+            #[cfg(test)]
+            if !fixture {
+                verify_binding(
+                    &path,
+                    &policy,
+                    &policy_bytes,
+                    &identity,
+                    &cache_identity,
+                    &git_identity,
+                )?;
+            }
+            state.write_new("active", &marker)?;
+            Ok(())
+        })
+        .await??;
+        self.active = true;
+        let result = if cancel.is_cancelled() || Instant::now() >= deadline {
+            // No dispatch occurred after the durable intent; it is safe to release.
+            let state = self.state.clone();
+            tokio::task::spawn_blocking(move || state.remove("active")).await??;
+            self.active = false;
+            return Err("native command cancelled before dispatch".into());
+        } else {
+            self.invoke(input, deadline, cancel).await
+        };
+        if result.is_ok() {
+            let state = self.state.clone();
+            tokio::task::spawn_blocking(move || state.remove("active")).await??;
+            self.active = false;
+        }
+        result
+    }
+    async fn invoke(
+        &self,
+        input: Vec<u8>,
+        deadline: Instant,
+        cancel: CancellationToken,
+    ) -> Result<Value> {
+        let mut command = tokio::process::Command::new("/usr/bin/sudo");
+        command
+            .args(["-n", "--"])
+            .arg(&self.policy.helper)
+            .arg("--policy")
+            .arg(&self.path)
+            .current_dir("/")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(test)]
+        if self.helper_fixture {
+            command = tokio::process::Command::new("/usr/bin/python3");
+            command
+                .args(["-I", "-S", "-c", FIXTURE_HELPER])
+                .arg(env!("CARGO_MANIFEST_DIR"))
+                .arg(serde_json::to_string(&self.policy)?)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+        }
+        let mut child = command.spawn()?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or("native helper stdin unavailable")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("native helper stdout unavailable")?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or("native helper stderr unavailable")?;
+        let output = tokio::spawn(read_bounded(
+            stdout,
+            12 * self.policy.limits.output_bytes as usize + 16384,
+        ));
+        let errors = tokio::spawn(read_bounded(stderr, 16384));
+        let write = tokio::select! {
+            result = stdin.write_all(&input) => result,
+            _ = cancel.cancelled() => Err(std::io::Error::other("native startup cancelled")),
+            _ = tokio::time::sleep_until(deadline) => Err(std::io::Error::other("native startup deadline")),
+        };
+        if write.is_err() {
+            drop(stdin);
+        } else {
+            tokio::select! {
+                _ = cancel.cancelled() => (),
+                _ = tokio::time::sleep_until(deadline) => (),
+                result = child.wait() => { result?; },
+            }
+            // EOF is the helper's cancellation/lost-controller signal.
+            drop(stdin);
+        }
+        let status = tokio::time::timeout(Duration::from_secs(7), child.wait()).await??;
+        let stdout = tokio::time::timeout(Duration::from_secs(1), output).await???;
+        let stderr = tokio::time::timeout(Duration::from_secs(1), errors).await???;
+        if !status.success() {
+            return Err(
+                format!("native helper failed: {}", String::from_utf8_lossy(&stderr)).into(),
+            );
+        }
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Reply {
+            schema_version: u32,
+            cleanup: String,
+            result: Value,
+        }
+        let reply: Reply = serde_json::from_slice(&stdout)?;
+        if reply.schema_version != 1 || reply.cleanup != "complete" || !reply.result.is_object() {
+            return Err("native helper did not confirm cleanup".into());
+        }
+        Ok(reply.result)
+    }
+    pub fn cleanup(&self) -> Vec<String> {
+        if self.active {
+            vec!["native tool cleanup remains uncertain; private active fence retained".into()]
+        } else {
+            vec![]
+        }
+    }
+}
+
+async fn read_bounded(mut stream: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>> {
+    let mut retained = Vec::new();
+    let mut buffer = [0; 8192];
+    let mut overflow = false;
+    loop {
+        let n = stream.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+        let room = limit.saturating_sub(retained.len());
+        retained.extend_from_slice(&buffer[..n.min(room)]);
+        overflow |= n > room;
+    }
+    if overflow {
+        return Err("native helper output exceeded bound".into());
+    }
+    Ok(retained)
+}
+
+pub struct ProjectEffects<E> {
+    pub inner: E,
+    pub workspace: Workspace,
+}
+#[async_trait]
+impl<E: Effects> Effects for ProjectEffects<E> {
+    async fn execute(
+        &mut self,
+        effect: &Effect,
+        deadline: Instant,
+        cancel: CancellationToken,
+        chunks: mpsc::Sender<Value>,
+    ) -> Outcome {
+        match &effect.kind {
+            EffectKind::StartWorkspace => {
+                let probe = ToolRequest {
+                    name: "exec".into(),
+                    arguments: json!({"command":"/usr/bin/id -u; /usr/bin/id -g; /usr/bin/id -G"}),
+                };
+                match self.workspace.tool(&probe, deadline, cancel).await {
+                    Ok(value)
+                        if value["exit_code"] == 0
+                            && value["stdout"]
+                                == format!(
+                                    "{}\n{}\n{}\n",
+                                    self.workspace.policy.agent_uid,
+                                    self.workspace.policy.agent_gid,
+                                    self.workspace.policy.agent_gid
+                                ) =>
+                    {
+                        Outcome::WorkspaceStarted
+                    }
+                    Ok(_) => Outcome::Failed("native account/sandbox probe failed".into()),
+                    Err(error) => Outcome::Failed(error.to_string()),
+                }
+            }
+            EffectKind::Tool(request) => match self.workspace.tool(request, deadline, cancel).await
+            {
+                Ok(value) => Outcome::Tool(value),
+                Err(error) => Outcome::Failed(error.to_string()),
+            },
+            EffectKind::Model(_) => self.inner.execute(effect, deadline, cancel, chunks).await,
+            EffectKind::Cleanup => Outcome::Cleaned(self.cleanup(deadline).await),
+            _ => Outcome::Failed("effect unsupported by native project tools".into()),
+        }
+    }
+    async fn cleanup(&mut self, deadline: Instant) -> Vec<String> {
+        let mut residuals = self.workspace.cleanup();
+        residuals.extend(self.inner.cleanup(deadline).await);
+        residuals
+    }
+}
+
+fn verify_binding(
+    path: &Path,
+    policy: &Policy,
+    policy_bytes: &[u8],
+    identity: &Value,
+    cache_identity: &Value,
+    git_identity: &Value,
+) -> Result<()> {
+    trusted(path, false)?;
+    trusted(&policy.helper, false)?;
+    if fs::metadata(&policy.helper)?.mode() & 0o100 == 0 {
+        return Err("native helper is not executable".into());
+    }
+    if read_limited(path, 65536)? != policy_bytes
+        || read_limited(&policy.helper, HELPER.len() as u64)? != HELPER
+    {
+        return Err("native policy/helper changed after admission".into());
+    }
+    let info = fs::symlink_metadata(&policy.workspace)?;
+    if !info.is_dir()
+        || policy.workspace.canonicalize()? != policy.workspace
+        || *identity != json!({"device":info.dev(),"inode":info.ino()})
+    {
+        return Err("native workspace changed after admission".into());
+    }
+    let cache = fs::symlink_metadata(&policy.cache)?;
+    if !cache.is_dir() || *cache_identity != json!({"device":cache.dev(),"inode":cache.ino()}) {
+        return Err("native cache changed after admission".into());
+    }
+    let git = fs::symlink_metadata(policy.workspace.join(".git"))?;
+    if !git.is_dir() || *git_identity != json!({"device":git.dev(),"inode":git.ino()}) {
+        return Err("native Git directory changed after admission".into());
+    }
+    Ok(())
+}
+
+// This runner exists only in the unit-test binary, never in an installed worker.
+// It qualifies namespaces/process handling, not sudo or dedicated-account access.
+#[cfg(test)]
+const FIXTURE_HELPER: &str = r#"
+import importlib.util, json, pathlib, sys
+source = pathlib.Path(sys.argv[1]).parent.parent / 'scripts/chat/native_tool.py'
+spec = importlib.util.spec_from_file_location('native_tool', source)
+native = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(native)
+request = native.read_request(0)
+# This unprivileged fixture cannot clear host supplementary groups. Substitute
+# only the group probe; dedicated-account launch/identity is a separate gate.
+if request['tool'] == 'exec' and request['arguments']['command'] == '/usr/bin/id -u; /usr/bin/id -g; /usr/bin/id -G':
+    request['arguments']['command'] = '/usr/bin/id -u; /usr/bin/id -g; /usr/bin/id -g'
+print(json.dumps(native.run_tool(json.loads(sys.argv[2]), request, 0, drop_identity=False)), flush=True)
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{runtime, worker};
+    use playtime_core::StopReason;
+    use playtime_engine::{ModelResponse, ToolPolicy};
+    use playtime_harness::Session;
+    use playtime_local::Token;
+    use tokio::sync::Mutex;
+
+    struct Root(PathBuf);
+    impl Root {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "playtime-native-rust-{}",
+                Token::generate().unwrap().expose()
+            ));
+            PrivateDirectory::open(&root, true).unwrap();
+            for name in ["workspace/src", "cache/home", "cache/cargo", "cache/tmp"] {
+                fs::create_dir_all(root.join(name)).unwrap();
+            }
+            assert!(
+                std::process::Command::new("/usr/bin/git")
+                    .env_clear()
+                    .env("PATH", "/usr/bin:/bin")
+                    .env("HOME", &root)
+                    .args([
+                        "-c",
+                        "init.templateDir=",
+                        "init",
+                        "--quiet",
+                        "--initial-branch=main"
+                    ])
+                    .arg(root.join("workspace"))
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            Self(root)
+        }
+        fn workspace(&self) -> Workspace {
+            let root = self.0.join("workspace");
+            let cache = self.0.join("cache");
+            let toolchain = std::process::Command::new("rustc")
+                .args(["--print", "sysroot"])
+                .output()
+                .unwrap();
+            assert!(toolchain.status.success());
+            let policy = Policy {
+                schema_version: 1,
+                controller_uid: rustix::process::geteuid().as_raw(),
+                agent_uid: rustix::process::geteuid().as_raw(),
+                agent_gid: rustix::process::getegid().as_raw(),
+                workspace: root.clone(),
+                cache: cache.clone(),
+                toolchain: PathBuf::from(String::from_utf8(toolchain.stdout).unwrap().trim()),
+                helper: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../scripts/chat/native_tool.py"),
+                mode: "edit".into(),
+                limits: Limits {
+                    command_seconds: 30,
+                    memory_bytes: 16 * 1024 * 1024 * 1024,
+                    processes: 512,
+                    output_bytes: 4096,
+                },
+            };
+            let info = fs::metadata(&root).unwrap();
+            let cache = fs::metadata(cache).unwrap();
+            let git = fs::metadata(root.join(".git")).unwrap();
+            let state = PrivateDirectory::open(&self.0.join("state"), true).unwrap();
+            let lease = state.try_lock().unwrap();
+            Workspace {
+                policy_bytes: serde_json::to_vec(&policy).unwrap(),
+                policy,
+                path: self.0.join("fixture-policy.json"),
+                identity: json!({"device":info.dev(),"inode":info.ino()}),
+                cache_identity: json!({"device":cache.dev(),"inode":cache.ino()}),
+                git_identity: json!({"device":git.dev(),"inode":git.ino()}),
+                state: Arc::new(state),
+                _lease: lease,
+                active: false,
+                helper_fixture: true,
+            }
+        }
+    }
+    impl Drop for Root {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    struct ScriptedModel(usize);
+    #[async_trait]
+    impl Effects for ScriptedModel {
+        async fn execute(
+            &mut self,
+            effect: &Effect,
+            _: Instant,
+            _: CancellationToken,
+            _: mpsc::Sender<Value>,
+        ) -> Outcome {
+            let EffectKind::Model(request) = &effect.kind else {
+                panic!("non-model effect reached fixture")
+            };
+            self.0 += 1;
+            let message = if self.0 == 1 {
+                json!({"role":"assistant","content":"","tool_calls":[
+                    {"id":"manifest","function":{"name":"write_file","arguments":{"path":"Cargo.toml","content":"[package]\nname=\"native-driver-fixture\"\nversion=\"0.1.0\"\nedition=\"2024\"\n"}}},
+                    {"id":"source","function":{"name":"write_file","arguments":{"path":"src/lib.rs","content":"#[test] fn checked() { assert_eq!(2 + 2, 4); }\n"}}},
+                    {"id":"check","function":{"name":"exec","arguments":{"command":"cargo test --offline"}}}
+                ]})
+            } else {
+                let tool = request
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m["role"] == "tool")
+                    .unwrap();
+                let result: Value =
+                    serde_json::from_str(tool["content"].as_str().unwrap()).unwrap();
+                assert_eq!(result["exit_code"], 0, "{result}");
+                let report = json!({"status":"completed","summary":"Rust test passed","changes":["src/lib.rs"],"verification":[{"evidence_ref":result["evidence_log_path"]}],"remaining_work":[],"questions":[],"blockers":[]});
+                json!({"role":"assistant","content":report.to_string()})
+            };
+            Outcome::ModelCompleted {
+                response: ModelResponse {
+                    message,
+                    done: true,
+                    generated_tokens: Some(50),
+                    prompt_tokens: Some(200),
+                },
+                finish_reason: "stop".into(),
+            }
+        }
+        async fn cleanup(&mut self, _: Instant) -> Vec<String> {
+            vec![]
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit native namespace gate; does not qualify a dedicated account"]
+    async fn native_driver_edits_builds_reports_and_continues() {
+        let root = Root::new();
+        let mut workspace = root.workspace();
+        let lock: playtime_strata::ModelLock = serde_json::from_str(include_str!(
+            "../../../models/framework-strata-gyro-m-fast-v1.lock.json"
+        ))
+        .unwrap();
+        let mut config = worker::native_config(&lock, &workspace, 60).unwrap();
+        assert!(config.instructions.contains("task dependency downloads"));
+        assert!(
+            !config
+                .instructions
+                .contains("Project paths are inside /work")
+        );
+        config.mode = playtime_core::RunMode::Simulation;
+        config.tool_policy = ToolPolicy::Simulation;
+        workspace.policy.mode = "read_only".into();
+        let mut altered = worker::native_config(&lock, &workspace, 60).unwrap();
+        altered.mode = playtime_core::RunMode::Simulation;
+        altered.tool_policy = ToolPolicy::Simulation;
+        assert_ne!(
+            config.fingerprint().unwrap(),
+            altered.fingerprint().unwrap()
+        );
+        drop(workspace);
+        let path = root.0.join("session");
+        let mut previous_reference = None;
+        for turn in 0..2 {
+            let session = if turn == 0 {
+                Session::create(&path, config.clone()).unwrap()
+            } else {
+                Session::open(&path, &config).unwrap()
+            };
+            let run = root.0.join(format!("run-{turn}"));
+            let records = PrivateDirectory::open(&run, true).unwrap();
+            let artifacts = PrivateDirectory::open(&run.join("artifacts"), true).unwrap();
+            let effects = Arc::new(Mutex::new(
+                worker::EvidenceEffects::new(
+                    ProjectEffects {
+                        inner: ScriptedModel(0),
+                        workspace: root.workspace(),
+                    },
+                    run.join("artifacts"),
+                    1024 * 1024,
+                )
+                .unwrap(),
+            ));
+            let (tx, mut rx) = runtime::events();
+            let drain = tokio::spawn(async move {
+                let mut events = Vec::new();
+                while let Some(event) = rx.recv().await {
+                    events.push(event);
+                }
+                events
+            });
+            let done = runtime::run_turn(
+                session,
+                "Implement and test".into(),
+                effects.clone(),
+                tx,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+            let events = drain.await.unwrap();
+            assert_eq!(done.result.reason, StopReason::AgentFinished, "{events:?}");
+            let session = done.session.unwrap();
+            let response = session
+                .checkpoint()
+                .unwrap()
+                .history
+                .exchanges
+                .last()
+                .unwrap()
+                .messages
+                .last()
+                .unwrap()["content"]
+                .as_str()
+                .unwrap();
+            let effects = effects.lock().await;
+            let (report, digest) =
+                worker::save_report(response, &records, &artifacts, effects.evidence()).unwrap();
+            assert_eq!(report.verification[0].command, "cargo test --offline");
+            assert_ne!(
+                previous_reference,
+                Some(report.verification[0].log_path.clone())
+            );
+            previous_reference = Some(report.verification[0].log_path.clone());
+            assert_eq!(
+                digest,
+                super::digest(
+                    &records
+                        .read("worker-report.json", worker::MAX_REPORT)
+                        .unwrap()
+                )
+            );
+            assert!(effects.inner.workspace.cleanup().is_empty());
+            assert!(!root.0.join("state/active").exists());
+            drop(session);
+            assert!(Session::open(&path, &altered).is_err());
+        }
+        assert!(root.0.join("workspace/target").is_dir());
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit native namespace gate; does not qualify a dedicated account"]
+    async fn native_control_eof_cancels_and_missing_receipt_fences() {
+        let root = Root::new();
+        let mut workspace = root.workspace();
+        let cancel = CancellationToken::new();
+        let trigger = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            trigger.cancel();
+        });
+        let request = ToolRequest {
+            name: "exec".into(),
+            arguments: json!({"command":"setsid sh -c 'sleep .5; touch escaped' & wait"}),
+        };
+        let result = workspace
+            .tool(&request, Instant::now() + Duration::from_secs(10), cancel)
+            .await
+            .unwrap();
+        assert_eq!(result["error"], "native tool cancelled");
+        assert!(workspace.cleanup().is_empty());
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(!root.0.join("workspace/escaped").exists());
+        workspace.policy.limits.output_bytes = 0;
+        assert!(
+            workspace
+                .tool(
+                    &request,
+                    Instant::now() + Duration::from_secs(10),
+                    CancellationToken::new()
+                )
+                .await
+                .is_err()
+        );
+        assert!(!workspace.cleanup().is_empty());
+        assert!(root.0.join("state/active").exists());
+        assert!(
+            workspace
+                .tool(
+                    &request,
+                    Instant::now() + Duration::from_secs(10),
+                    CancellationToken::new()
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit native namespace gate; does not qualify a dedicated account"]
+    async fn maximum_output_remains_bounded_after_json_escaping() {
+        let root = Root::new();
+        let mut workspace = root.workspace();
+        workspace.policy.limits.output_bytes = 65536;
+        let request = ToolRequest {
+            name: "exec".into(),
+            arguments: json!({"command":"head -c 100000 /dev/zero; head -c 100000 /dev/zero >&2"}),
+        };
+        let result = workspace
+            .tool(
+                &request,
+                Instant::now() + Duration::from_secs(10),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["exit_code"], 0);
+        assert_eq!(result["stdout"].as_str().unwrap().len(), 65536);
+        assert_eq!(result["stderr"].as_str().unwrap().len(), 65536);
+        assert_eq!(result["output_truncated"], true);
+        assert!(workspace.cleanup().is_empty());
+    }
+
+    #[test]
+    fn untrusted_policy_is_rejected_without_any_tool_dispatch() {
+        let root = Root::new();
+        let path = root.0.join("policy.json");
+        fs::write(&path, b"{}").unwrap();
+        assert!(
+            Workspace::open(&path, &root.0.join("workspace"), &root.0.join("state"), &[]).is_err()
+        );
+        assert!(!root.0.join("state/active").exists());
+    }
+}

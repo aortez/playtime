@@ -335,3 +335,109 @@ pub fn config(
     config.validate()?;
     Ok(config)
 }
+
+/// Native capability and policy are part of the frozen conversation identity.
+pub fn native_config(
+    lock: &playtime_strata::ModelLock,
+    workspace: &crate::native_project::Workspace,
+    wall_seconds: u64,
+) -> Result<playtime_engine::chat::ConversationConfig> {
+    use playtime_core::{CommonLimits, CommonParameters, RunMode, Sha256Digest, WorkshopLimits};
+    use playtime_engine::{ToolPolicy, compaction::CompactionSettings};
+    let policy = workspace.policy();
+    let binding = serde_json::to_vec(&workspace.binding())?;
+    let workspace_id = Sha256Digest::new(
+        Sha256::digest(&binding)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
+    )?;
+    let mut instructions = INSTRUCTIONS.replace(
+        "Project paths are inside /work.",
+        &format!(
+            "Project paths use the actual host checkout {}.",
+            policy.workspace.display()
+        ),
+    );
+    instructions = instructions.replace(
+        "Do not commit, publish, access external services or attempt to read host credentials.",
+        "Do not commit or publish. Network access is permitted only for task dependency downloads; do not access unrelated services or attempt to read host credentials.",
+    );
+    if policy.mode == "read_only" {
+        instructions.push_str(" This invocation is read-only: inspect source and evidence, do not edit or run write-requiring checks. The workspace and persistent cache are mounted read-only.");
+    }
+    let config = playtime_engine::chat::ConversationConfig {
+        schema_version: 1,
+        model: lock.fingerprint()?,
+        workspace: workspace_id,
+        instructions,
+        inventory: format!(
+            "Native project tools run as uid {} gid {} in a Bubblewrap filesystem/PID sandbox at {}. Mode: {}. Approved toolchain: {}. Network is enabled for dependencies. HOME/Cargo/temp caches under {} persist; processes end after every command. Controller state, credentials and Docker sockets are not mounted. There is no aggregate disk/memory quota or CPU quota. Per-process address-space bound: {} bytes; per-UID process bound: {}. Docker-dependent checks require separate operator execution.",
+            policy.agent_uid,
+            policy.agent_gid,
+            policy.workspace.display(),
+            policy.mode,
+            policy.toolchain.display(),
+            policy.cache.display(),
+            policy.limits.memory_bytes,
+            policy.limits.processes
+        ),
+        mode: RunMode::LiveSmoke,
+        tool_policy: ToolPolicy::ConfirmedExternal {
+            return_overhead_ms: 1000,
+        },
+        parameters: CommonParameters {
+            sampling_seed: 1042,
+            limits: CommonLimits {
+                wall_seconds: wall_seconds.try_into()?,
+                generated_tokens: 32768.try_into()?,
+                tokens_per_call: 8192.try_into()?,
+                context_tokens: lock.identity.context_tokens.try_into()?,
+                model_seconds: 300.try_into()?,
+                command_seconds: u64::from(policy.limits.command_seconds).try_into()?,
+                output_bytes: u64::from(policy.limits.output_bytes).try_into()?,
+                log_bytes: (16 * 1024 * 1024).try_into()?,
+            },
+            workshop: WorkshopLimits {
+                cpu_cores: std::thread::available_parallelism()?.get() as f64,
+                memory_bytes: policy.limits.memory_bytes.try_into()?,
+                workspace_bytes: (1024 * 1024).try_into()?,
+                tmp_bytes: (512 * 1024 * 1024).try_into()?,
+                pids: policy.limits.processes.try_into()?,
+            },
+        },
+        compaction: CompactionSettings {
+            allow_finish_run: false,
+            summary_tokens: 4096.try_into()?,
+            ..Default::default()
+        },
+    };
+    config.validate()?;
+    Ok(config)
+}
+
+pub enum ProjectEffects {
+    Docker(Box<crate::native::NativeEffects>),
+    Native(Box<crate::native_project::ProjectEffects<crate::native::ModelEffects>>),
+}
+#[async_trait]
+impl Effects for ProjectEffects {
+    async fn execute(
+        &mut self,
+        effect: &Effect,
+        deadline: Instant,
+        cancel: CancellationToken,
+        chunks: mpsc::Sender<Value>,
+    ) -> Outcome {
+        match self {
+            Self::Docker(effects) => effects.execute(effect, deadline, cancel, chunks).await,
+            Self::Native(effects) => effects.execute(effect, deadline, cancel, chunks).await,
+        }
+    }
+    async fn cleanup(&mut self, deadline: Instant) -> Vec<String> {
+        match self {
+            Self::Docker(effects) => effects.cleanup(deadline).await,
+            Self::Native(effects) => effects.cleanup(deadline).await,
+        }
+    }
+}

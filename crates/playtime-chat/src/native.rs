@@ -95,32 +95,7 @@ impl Effects for NativeEffects {
                 }
             }
             EffectKind::Model(request) => {
-                let mut model = self.model.lock().await;
-                if model.fenced {
-                    return Outcome::Failed(
-                        "prior inference is unresolved; return to the server owner".into(),
-                    );
-                }
-                model.fenced = true;
-                let (tx, mut rx) = playtime_strata::events();
-                let forward_cancel = cancel.clone();
-                let forward = async move {
-                    while let Some(event) = rx.recv().await {
-                        if let Some(chunk) = event.controller_chunk() {
-                            tokio::select! {biased;
-                                _=forward_cancel.cancelled()=>break,
-                                _=tokio::time::sleep_until(deadline)=>break,
-                                sent=chunks.send(chunk)=>if sent.is_err() {forward_cancel.cancel();break;},
-                            }
-                        }
-                    }
-                };
-                let (result, ()) = tokio::join!(
-                    model.client.complete(request, deadline, &cancel, tx),
-                    forward
-                );
-                model.fenced = result.remote == RemoteState::Uncertain;
-                result.into_outcome()
+                model_effect(&self.model, request, deadline, cancel, chunks).await
             }
             EffectKind::Cleanup => Outcome::Cleaned(self.cleanup(deadline).await),
             _ => Outcome::Failed("effect is not supported by the project chat adapter".into()),
@@ -166,4 +141,61 @@ fn tool(request: &ToolRequest) -> std::result::Result<docker::Tool, String> {
         },
         _ => return Err("unsupported project tool".into()),
     })
+}
+
+/// Shared transport path for Docker and native project tools.
+pub async fn model_effect(
+    model: &Arc<Mutex<Model>>,
+    request: &playtime_engine::ModelRequest,
+    deadline: Instant,
+    cancel: CancellationToken,
+    chunks: mpsc::Sender<Value>,
+) -> Outcome {
+    let mut model = model.lock().await;
+    if model.fenced {
+        return Outcome::Failed("prior inference is unresolved; return to the server owner".into());
+    }
+    model.fenced = true;
+    let (tx, mut rx) = playtime_strata::events();
+    let forward_cancel = cancel.clone();
+    let forward = async move {
+        while let Some(event) = rx.recv().await {
+            if let Some(chunk) = event.controller_chunk() {
+                tokio::select! {biased;
+                    _=forward_cancel.cancelled()=>break,
+                    _=tokio::time::sleep_until(deadline)=>break,
+                    sent=chunks.send(chunk)=>if sent.is_err() {forward_cancel.cancel();break;},
+                }
+            }
+        }
+    };
+    let (result, ()) = tokio::join!(
+        model.client.complete(request, deadline, &cancel, tx),
+        forward
+    );
+    model.fenced = result.remote == RemoteState::Uncertain;
+    result.into_outcome()
+}
+
+/// Model-only effects for project adapters with their own tool lifecycle.
+pub struct ModelEffects(pub Arc<Mutex<Model>>);
+#[async_trait::async_trait]
+impl Effects for ModelEffects {
+    async fn execute(
+        &mut self,
+        effect: &Effect,
+        deadline: Instant,
+        cancel: CancellationToken,
+        chunks: mpsc::Sender<Value>,
+    ) -> Outcome {
+        match &effect.kind {
+            EffectKind::Model(request) => {
+                model_effect(&self.0, request, deadline, cancel, chunks).await
+            }
+            _ => Outcome::Failed("model adapter received a non-model effect".into()),
+        }
+    }
+    async fn cleanup(&mut self, _: Instant) -> Vec<String> {
+        vec![]
+    }
 }
