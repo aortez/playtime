@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "recorded_at_utc": "2026-11-15T00:01:53.770206+00:00",
+  "scope": "Completion review and delivery of existing console editing, streaming and durable artifacts; no new product waypoint.",
+  "source_commit": "878f0279e76d892694816e064d1a95a60860e357",
+  "base_commit": "9503347ff3fdf454f64289de9b6ecc62fb0ad814",
+  "branch": "codex/console-ui",
+  "candidate_installation": "/home/oldman/.local/lib/playtime-chat-console-ui",
+  "binary_sha256": {
+    "playtime-chat": "520e5da4e587997dcde62c9970a0424ed1e76341ea5b1620521b4c55ba8cc381",
+    "playtime-console": "9ecc3864a7f5a3ff9b43ac68dde3262e8ef0918fbdcdc68317678b1c7947d7da",
+    "playtime-artifacts": "71d84f38076042b0c6fb8fd18f8a4bd6a9c26b7a3a17ece5a5540277457fa772"
+  },
+  "review_fixes": [
+    "Escape controls decoded from Markdown character references at the final span boundary.",
+    "Timestamp terminal input so Enter buffered behind output cannot submit after a queued completion."
+  ],
+  "regressions": {
+    "markdown_controls": "Failed before fix, passed after fix.",
+    "buffered_enter": "Failed against the earlier installed artifact candidate (console SHA-256 96641ede0def2c098d9dd93adc3e9504befccef754185b3e3891856ec9ccea02); passed against delivery debug and release builds.",
+    "blocked_stdout_cancellation": "The input reader cancels the driver before the renderer can drain output; later fixture output is not delivered."
+  },
+  "validation": {
+    "cargo fmt --all -- --check": "passed",
+    "cargo clippy --workspace --all-targets --locked -- -D warnings": "passed",
+    "cargo test --workspace --locked": {
+      "passed": 774,
+      "failed": 0,
+      "ignored": 35
+    },
+    "cargo test -p playtime-chat -p playtime-harness --locked": "passed; includes persistence, cancellation, cleanup and session fencing fixtures",
+    "artifact_protocol_golden": "passed within workspace gate",
+    "python3 -m unittest discover -s tests -v": {
+      "run": 101,
+      "skipped": 6,
+      "result": "passed"
+    },
+    "python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v": {
+      "run": 47,
+      "result": "passed"
+    },
+    "cargo build -p playtime-chat --locked": "passed",
+    "python3 scripts/console/test_pty.py": {
+      "run": 9,
+      "result": "passed"
+    },
+    "candidate_release_build_and_install": "passed with PLAYTIME_CHAT_INSTALL_DIR selecting only the separate candidate",
+    "candidate_pty": {
+      "run": 9,
+      "result": "passed"
+    }
+  },
+  "logs": {
+    "component": {
+      "path": "target/console-completion-component.log",
+      "sha256": "2de5cde8477a1083920b039261de1814be016e32dd24d73792bc21d5c6d5b3c7"
+    },
+    "clippy": {
+      "path": "target/console-completion-clippy.log",
+      "sha256": "5925b636cd2680f7fe5202261027b9222660355114993f03608307412a44f8f3"
+    },
+    "workspace": {
+      "path": "target/console-completion-workspace.log",
+      "sha256": "f0712fe240ec7aa1f572ec891dfcbc141042237a3613acbe717cd493d4be22e7"
+    },
+    "python": {
+      "path": "target/console-completion-python.log",
+      "sha256": "96ac00bdf99edee81b8ec1335a9ff4a8c3dbee047f320ed756a9b20e58fd53b1"
+    },
+    "launcher": {
+      "path": "target/console-completion-launcher.log",
+      "sha256": "c5fab4c906d7a5e212a726671cac5bb66fc33a870d9bf3dd2fa82082f51c2c3b"
+    },
+    "build": {
+      "path": "target/console-completion-build.log",
+      "sha256": "c92508a29848820f033cd2ea015c85dde0953c88b07cc967ce34b7c08f610549"
+    },
+    "pty": {
+      "path": "target/console-completion-pty.log",
+      "sha256": "de448f36f30187512c8a7837d02886553d527c0aec481fe268a0046af9fb0bf2"
+    },
+    "install": {
+      "path": "target/console-completion-install.log",
+      "sha256": "578c365c17b6ec82b827d2f722240bd8e934c6b9a9637411224562f7f92a3983"
+    },
+    "candidate-pty": {
+      "path": "target/console-completion-candidate-pty.log",
+      "sha256": "d49335c97610068a720b25ada7888e94fb24e1b9537d3ad966fe4292cf9bf77c"
+    }
+  },
+  "mate": {
+    "terminal": "MATE Terminal / VTE, private X11 display",
+    "binary": "/home/oldman/.local/lib/playtime-chat-console-ui/playtime-console",
+    "checks": [
+      "wrapped backspace",
+      "bracketed multiline Unicode paste",
+      "streaming with draft",
+      "no follow-up queue",
+      "narrow/wide resize",
+      "Ctrl-C stop",
+      "raw tool result",
+      "terminal restoration",
+      "restart"
+    ],
+    "result": "passed"
+  },
+  "mate_artifacts": {
+    "terminal": "MATE Terminal / VTE, private X11 display",
+    "binary": "/home/oldman/.local/lib/playtime-chat-console-ui/playtime-console",
+    "artifact_id": "ac75275ec0e8e2d06830efb7ef51595b",
+    "sha256": "523dbaa4f168fb5eeb350aedb7a84a0309608071a5e7940588fe584ad5b79914",
+    "checks": [
+      "explicit UI retain",
+      "session artifact list",
+      "external image viewer",
+      "source replacement",
+      "saved browser restart",
+      "retained image reopened",
+      "no model submission",
+      "terminal restoration"
+    ],
+    "result": "passed"
+  },
+  "mate_evidence_directories": [
+    "target/console-completion-mate",
+    "target/console-completion-artifacts-mate"
+  ],
+  "screenshots": {
+    "docs/images/console-ui-artifact-reopened.png": "e9c68b786ab2ed71189d7c2319b0b09522b4edd2e953dc83bd41068ef7cc7da5",
+    "docs/images/console-ui-artifacts.png": "f3278864a8259543b7947b0f7419e60f2ad648888bbb61c4aa340c640e26b882",
+    "docs/images/console-ui-composer.png": "5ee8e9d01a3dc54f1466f8fbe2917797f371a5c1fc43fa74ced254e586258ace",
+    "docs/images/console-ui-raw.png": "344030e3df4413b5394f8320a241eff91ef1a51ea8df16cd2a874864cad0441d",
+    "docs/images/console-ui-streaming.png": "17bcbbcc5cbe1784043bce769f7bfb3a0cb4aed635ab63a457e50a40995e69d5"
+  },
+  "live_evidence_reused": {
+    "report": "experiments/chat-console/2026-11-14-console-ui.json",
+    "source_revision_note": "Historical report records base 9503347 plus then-uncommitted UI work, identified by its binary hashes; it is not a live run of source_commit.",
+    "basis": "Owner wrapper handoff and runtime/controller code were not changed by the completion fixes. Existing owned Framework tool turn, busy refusal, cleanup, terminal restoration and headless JSON resume remain the handoff evidence.",
+    "new_live_run": false
+  },
+  "daily_installation": {
+    "unchanged": true,
+    "files_verified": 10
+  },
+  "integration_dependencies": [
+    "PR #213 is open; UI PR is based on codex/project-environments.",
+    "Combine #214 installer changes so playtime-chat, playtime-task, playtime-console and playtime-artifacts all remain installed.",
+    "Preserve both launcher fixture additions and run-strata.py owner-diagnostic deferral plus worker startup/credential-isolation behavior.",
+    "Devbot PR #12 credential isolation remains owned by the integration session; no cross-repository edits made."
+  ],
+  "limitations": [
+    "MATE automation used a private X11 display, not a daily terminal window.",
+    "Only basic streaming Markdown and native terminal scrollback; history and drafts are process-local.",
+    "PNG/JPEG opening is explicit external-viewer display, not model vision or inline graphics.",
+    "No transcript search/navigation, queued messages or new recovery/session workflows.",
+    "Artifact screenshot is historical Matchbox output; no new Matchbox build or hardware capture.",
+    "No new inference-host, transport, Docker adapter, worker package or daemon behavior is claimed by these fixture and desktop gates."
+  ]
+}
