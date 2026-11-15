@@ -82,6 +82,137 @@ fn answer(turn: &mut Turn<SequentialIds>, now: &mut u64, text: &str) {
     assert!(matches!(turn.pending().unwrap().kind, EffectKind::Cleanup));
     complete(turn, now, Outcome::Cleaned(vec![]));
 }
+
+fn artifact_file(bytes: &[u8]) -> playtime_harness::artifacts::RetainedFile {
+    playtime_harness::artifacts::RetainedFile {
+        name: "screen.png".into(),
+        media_type: "image/png".into(),
+        bytes: bytes.to_vec(),
+    }
+}
+
+#[test]
+fn artifacts_are_independent_of_context_and_remain_readable_with_a_fenced_turn() {
+    use playtime_harness::artifacts::{Artifacts, open_for_retention};
+    let root = Root::new();
+    let mut session = Session::create(&root.0, config()).unwrap();
+    assert!(
+        session
+            .retain_artifact("Before a turn".into(), artifact_file(b"image"), None)
+            .is_err()
+    );
+    let mut turn = session
+        .begin("Check the screen".into(), SequentialIds, 0)
+        .unwrap();
+    let mut now = 0;
+    complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+    answer(&mut turn, &mut now, "Screen checked");
+    let mut session = turn.finish().unwrap();
+    let checkpoint = session.checkpoint().unwrap().clone();
+    let record = session
+        .retain_artifact("A retained screen".into(), artifact_file(b"image"), None)
+        .unwrap();
+    assert_eq!(record.source_turn, checkpoint.completed_turn);
+    assert_eq!(session.checkpoint(), Some(&checkpoint));
+    assert!(
+        open_for_retention(&root.0).is_err(),
+        "live session lease must exclude offline writes"
+    );
+    let store = Artifacts::open(&root.0).unwrap();
+    assert_eq!(store.read(&record.id, false).unwrap(), b"image");
+    drop(
+        session
+            .begin("Unfinished turn".into(), SequentialIds, 100)
+            .unwrap(),
+    );
+    assert!(open_for_retention(&root.0).is_err());
+    assert_eq!(store.info(&record.id).unwrap(), record);
+    assert_eq!(store.read(&record.id, false).unwrap(), b"image");
+}
+
+#[test]
+fn artifacts_reject_corruption_links_oversize_and_invalid_catalogs() {
+    use playtime_harness::artifacts::{Artifacts, MAX_FILE_BYTES, blob_name};
+    let root = Root::new();
+    let mut turn = Session::create(&root.0, config())
+        .unwrap()
+        .begin("Screen".into(), SequentialIds, 0)
+        .unwrap();
+    let mut now = 0;
+    complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+    answer(&mut turn, &mut now, "Done");
+    let mut session = turn.finish().unwrap();
+    assert!(
+        session
+            .retain_artifact(
+                "Huge".into(),
+                artifact_file(&vec![0; MAX_FILE_BYTES as usize + 1]),
+                None
+            )
+            .is_err()
+    );
+    assert!(
+        session
+            .retain_artifact("bad\x1b caption".into(), artifact_file(b"image"), None)
+            .is_err()
+    );
+    let record = session
+        .retain_artifact("Screen".into(), artifact_file(b"image"), None)
+        .unwrap();
+    let store = Artifacts::open(&root.0).unwrap();
+    let path = root.0.join(blob_name(&record, false).unwrap());
+    fs::write(&path, b"other").unwrap();
+    assert!(
+        store
+            .read(&record.id, false)
+            .unwrap_err()
+            .to_string()
+            .contains("SHA-256")
+    );
+    fs::remove_file(&path).unwrap();
+    symlink(root.0.join("config.json"), &path).unwrap();
+    assert!(store.read(&record.id, false).is_err());
+    let directory = playtime_local::PrivateDirectory::open(&root.0, false).unwrap();
+    let mut catalog = store.list().unwrap();
+    catalog.artifacts.push(record);
+    directory
+        .replace("artifacts-v1.json", &serde_json::to_vec(&catalog).unwrap())
+        .unwrap();
+    assert!(store.list().unwrap_err().to_string().contains("duplicate"));
+}
+
+#[test]
+fn failed_artifact_publication_never_promotes_orphans_or_overwrites_catalog() {
+    use playtime_harness::artifacts::Artifacts;
+    let root = Root::new();
+    let mut turn = Session::create(&root.0, config())
+        .unwrap()
+        .begin("Screen".into(), SequentialIds, 0)
+        .unwrap();
+    let mut now = 0;
+    complete(&mut turn, &mut now, Outcome::WorkspaceStarted);
+    answer(&mut turn, &mut now, "Done");
+    let mut session = turn.finish().unwrap();
+    let directory = playtime_local::PrivateDirectory::open(&root.0, false).unwrap();
+    directory
+        .write_new("artifact-orphan.bin", b"uncommitted")
+        .unwrap();
+    let store = Artifacts::open(&root.0).unwrap();
+    assert!(store.list().unwrap().artifacts.is_empty());
+    // A non-file catalog is a publication fence, not permission to rebuild it
+    // from whatever blobs happen to be present.
+    fs::create_dir(root.0.join("artifacts-v1.json")).unwrap();
+    assert!(
+        session
+            .retain_artifact("Screen".into(), artifact_file(b"image"), None)
+            .is_err()
+    );
+    assert!(store.list().is_err());
+    assert_eq!(
+        fs::read(root.0.join("artifact-orphan.bin")).unwrap(),
+        b"uncommitted"
+    );
+}
 fn read_records(root: &Root) -> Vec<Record> {
     let mut records = Vec::new();
     for entry in fs::read_dir(&root.0).unwrap() {

@@ -46,12 +46,16 @@ project. When editing Playtime itself, install the binary and copy its reviewed
 locks outside the source checkout first, passing both `--model-lock` and
 `--image-lock` explicitly.
 
-The basic interface accepts one message per line. `/paste` starts multiline input;
-`/end` on its own line submits it. Text, reasoning, tool activity, input bounds,
-compaction requests and final accounting stream to the terminal. Model-supplied
-terminal control characters are escaped. `/quit` exits; `/stop` or Ctrl-C during
-a turn cancels it and waits for owned cleanup. SIGTERM/SIGHUP also request cleanup.
-Normal EOF during a running turn requests cancellation.
+Interactive terminals use the [inline multiline console](rust-console-ui.md).
+Enter sends an idle draft; Ctrl-J or Alt-Enter inserts a newline. Paste never
+submits. Drafts remain editable while output streams, and Enter during work
+preserves the draft. `/help` shows bindings, `/raw [number]` prints a recent full
+tool result, and `/quit` exits. Ctrl-C or `/stop` cancels active work and waits for
+owned cleanup; SIGTERM/SIGHUP do the same. Interrupted sessions remain fenced.
+
+`--plain`, pipes and basic terminals retain one-message-per-line input with
+`/paste` and `/end` for multiline messages. Model-supplied terminal controls are
+escaped in both modes. Normal EOF during a running turn requests cancellation.
 
 For one turn without a prompt loop, use `--prompt 'task'`. `--json` adds newline
 JSON event envelopes with `schema_version: 1`; diagnostics remain on stderr.

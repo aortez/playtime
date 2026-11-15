@@ -9,6 +9,8 @@ publish.workspace = true
 playtime-core.workspace = true
 playtime-engine.workspace = true
 playtime-local.workspace = true
+playtime-protocol.workspace = true
+sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

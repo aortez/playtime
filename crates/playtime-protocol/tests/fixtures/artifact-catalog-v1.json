@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "artifacts": [
+    {
+      "schema_version": 1,
+      "id": "0123456789abcdef0123456789abcdef",
+      "kind": "diagram",
+      "caption": "Controller ownership diagram",
+      "source_turn": "turn-fixture",
+      "retained_at_unix_ms": 1794614400000,
+      "file": {
+        "original_name": "controller.png",
+        "media_type": "image/png",
+        "size": 1024,
+        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "source": {
+        "original_name": "controller.mmd",
+        "media_type": "text/plain",
+        "size": 64,
+        "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    }
+  ]
+}

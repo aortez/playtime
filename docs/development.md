@@ -75,6 +75,8 @@ real worker, Docker, model-host, or recovery behavior.
 
 | Change | Command | What it exercises |
 | --- | --- | --- |
+| Terminal composer/presentation | `cargo test -p playtime-chat --locked`, then `cargo build -p playtime-chat --locked` and `python3 scripts/console/test_pty.py` | Fast real-PTY editing, streaming, resize, cancellation and restoration; [MATE screenshots](rust-console-ui.md#stack-probe-and-verification) separately |
+| Durable console artifacts | `cargo test -p playtime-protocol --test artifacts --locked`, `cargo test -p playtime-harness -p playtime-chat --locked` | Fast CLI retention/reopen/export, integrity and admission checks; [MATE viewer acceptance](rust-console-artifacts.md#fast-acceptance-and-mate-evidence) separately |
 | Project chat driver | `cargo test -p playtime-chat --locked` | Shared controller, saved follow-up, cancellation, failed persistence and cleanup through synthetic effects |
 | Persistent project tools | `./scripts/test-rust-docker-e2e.sh --case project` | Actual project edits, uid-1000 bridge, filesystem/network boundaries, cancellation, cleanup and retained files |
 | CLI/shared client | `./scripts/test-rust-cli-e2e.sh --backend fixture` | Actual CLI subprocesses over scripted authenticated HTTP; receipts, reconnect, output and downloads |

@@ -1,0 +1,12 @@
+{"type":"phase","text":"Work · input bound 640 tokens · output cap 512"}
+{"type":"delta","text":"I’ll inspect the example and its tests.\n","thinking":true}
+{"type":"delta","text":"## A readable conversation\n\nThis is a **deterministic console fixture**. Your draft stays editable while output arrives.\n\n- Wrapped editing and Unicode: café, 界, 🦀\n- Paste code with Ctrl-Shift-V; Ctrl-J adds a newline.\n\n```rust\nfn greeting(name: &str) -> String {\n    format!(\"Hello, {name}!\")\n}\n```\n"}
+{"type":"tool","name":"exec","arguments":{"command":"cargo test --example greeting"}}
+{"type":"tool_result","value":{"exit_code":1,"stdout":"running 2 tests\n","stderr":"error: no example target named `greeting`\nThis is a fixture failure, not a command executed on this machine.\n","output_truncated":false}}
+{"type":"tool_result","value":{"content":"line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\n","truncated":true}}
+{"type":"phase","text":"Compaction · input bound 1024 tokens · output cap 256"}
+{"type":"delta","text":"A short summary is being prepared.\n","thinking":true}
+{"type":"phase","text":"Work · input bound 360 tokens · output cap 512"}
+{"type":"delta","text":"### Result\n\nThe tool failure is visible above. Use `/raw 1` for its full recorded result.\nYour draft is still here; **Enter submits only when ready**.\n"}
+{"type":"phase","text":"Cleanup · stopping fixture processes (no native effects)"}
+{"type":"finished","text":"Fixture complete · usage unavailable · no model or tools executed"}

@@ -12,6 +12,7 @@ use playtime_engine::{
 use playtime_local::{PrivateDirectory, Token};
 use serde::{Deserialize, Serialize};
 
+pub mod artifacts;
 mod interruption;
 pub use interruption::{InterruptionReport, ToolObservation};
 mod recovery;

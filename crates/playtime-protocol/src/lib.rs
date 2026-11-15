@@ -3,6 +3,7 @@
 pub mod api;
 pub mod archive;
 pub mod archive_queries;
+pub mod artifacts;
 pub mod backend_guard;
 pub mod bridge;
 pub mod compaction;

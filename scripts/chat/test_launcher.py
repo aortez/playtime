@@ -68,6 +68,9 @@ else:
     print('Gyro-M: ' + verb + ' ' + profile + '; logs: ' + str(root / state / '20261113T123456Z-123'), file=sys.stderr, flush=True)
     print('GYRO_READY ' + json.dumps({'model':'fixture', 'context':131072 if bird else 163840, 'drafting':'dflash2'}), flush=True)
     while True:
+        if mode == 'owner-noise' and (root / 'client').exists() and not (root / 'noise').exists():
+            print('OWNER_NOISE_DURING_COMPOSER', file=sys.stderr, flush=True)
+            (root / 'noise').touch()
         if mode == 'owner-loss' and (root / 'client').exists():
             sys.exit(1)
         if select.select([sys.stdin], [], [], .05)[0]:
@@ -99,6 +102,11 @@ if '--select-session' in sys.argv:
                       'acknowledge_uncertain_tools': mode == 'picker-recover'}))
     sys.exit(0)
 (root / 'client').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd()}))
+if os.environ.get('FIXTURE_MODE') == 'owner-noise':
+    deadline = time.monotonic() + 3
+    while not (root / 'noise').exists() and time.monotonic() < deadline:
+        time.sleep(.01)
+    time.sleep(.3)
 if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
     def stop(*args):
         (root / 'client-cleaned').touch()
@@ -122,6 +130,15 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
 
     def run_fixture(self, mode="", *args):
         return subprocess.run(self.command("framework-gyro-m-fast", *args), env=dict(self.env, FIXTURE_MODE=mode), cwd=self.root, capture_output=True, text=True, timeout=15)
+
+    def test_helper_diagnostics_do_not_write_over_the_active_composer(self):
+        result = self.run_fixture('owner-noise', '--session', '/candidate-session')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('OWNER_NOISE_DURING_COMPOSER', result.stderr)
+        self.assertIn('host diagnostics recorded during chat', result.stderr)
+        evidence = next((self.root / '.local/state/playtime-launcher').glob('*/owner.log')).read_text()
+        self.assertIn('OWNER_NOISE_DURING_COMPOSER', evidence)
+        self.assertTrue((self.root / 'restored').exists())
 
     def test_status_never_starts_or_verifies_a_model(self):
         result = subprocess.run(self.command("--status", "framework-gyro-m-fast"), env=self.env, capture_output=True, text=True, timeout=5)

@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "scope": "Console waypoints 1 and 2: input, presentation and candidate launcher integration; no model-quality or long-context benchmark.",
+  "base_commit": "9503347",
+  "branch": "codex/console-ui",
+  "candidate_installation": "/home/oldman/.local/lib/playtime-chat-console-ui",
+  "binary_sha256": {
+    "playtime-chat": "c37eb041d82e15d0fcdf5e4c87ef5c3e89950c98b5d4ac993c3c54b9db8dfead",
+    "playtime-console": "0ccde8da2482fc23cccfd113d47b59030d08b0a20b065673c9342e3e40aaf441"
+  },
+  "terminal": {
+    "terminal": "MATE Terminal / VTE, private X11 display",
+    "binary": "/home/oldman/.local/lib/playtime-chat-console-ui/playtime-console",
+    "checks": [
+      "wrapped backspace",
+      "bracketed multiline Unicode paste",
+      "streaming with draft",
+      "no follow-up queue",
+      "narrow/wide resize",
+      "Ctrl-C stop",
+      "raw tool result",
+      "terminal restoration",
+      "restart"
+    ],
+    "result": "passed"
+  },
+  "fast_gates": {
+    "cargo_fmt": "passed",
+    "cargo_clippy_workspace_all_targets": "passed",
+    "cargo_test_workspace": {
+      "passed": 766,
+      "failed": 0,
+      "ignored": 35
+    },
+    "frozen_python": {
+      "run": 101,
+      "skipped": 6,
+      "result": "passed"
+    },
+    "launcher_python": {
+      "run": 47,
+      "result": "passed"
+    },
+    "candidate_pty": {
+      "run": 6,
+      "result": "passed"
+    }
+  },
+  "live": {
+    "project": "/tmp/playtime-console-ui-project-y0nfs2ym",
+    "session": "/home/oldman/.local/state/playtime-chat/session-console-ui-605638b57cb8427a9790b31321e3f138",
+    "candidate": "/home/oldman/.local/lib/playtime-chat-console-ui/run-strata.py",
+    "evidence": "/home/data2/workspace/playtime-console-ui/.playtime/console-ui-smoke-20261114T002502",
+    "interactive_tool_turn": "completed",
+    "busy_refusal_exit": 1,
+    "terminal_restored": true,
+    "json_resume": "completed with schema_version 1",
+    "result": "passed"
+  },
+  "turn_results": [
+    {
+      "run_id": "turn-2d980a1fbd43630c3ece9e73352c0904baa19afe4a03cbd92522d9a797a06cd2",
+      "mode": "live_smoke",
+      "reason": "agent_finished",
+      "usage": {
+        "known_generated_tokens": 107,
+        "unknown_reserved_tokens": 0,
+        "unknown_requests": 0,
+        "budget_charged_tokens": 107,
+        "usage_complete": true
+      },
+      "model_calls": 2,
+      "tool_parse_errors": 0,
+      "sessions_started": 0,
+      "elapsed_ms": 16203,
+      "cleanup": {
+        "status": "complete"
+      },
+      "last_checkpoint": null,
+      "diagnostics": []
+    },
+    {
+      "run_id": "turn-99f88b5e4b469516ebde640286d608fffa982b05abf6221d66f92dce4112423a",
+      "mode": "live_smoke",
+      "reason": "agent_finished",
+      "usage": {
+        "known_generated_tokens": 38,
+        "unknown_reserved_tokens": 0,
+        "unknown_requests": 0,
+        "budget_charged_tokens": 38,
+        "usage_complete": true
+      },
+      "model_calls": 1,
+      "tool_parse_errors": 0,
+      "sessions_started": 0,
+      "elapsed_ms": 2129,
+      "cleanup": {
+        "status": "complete"
+      },
+      "last_checkpoint": null,
+      "diagnostics": []
+    }
+  ],
+  "model_lock_sha256": "23a6e5577ebaf3ca3bcb8743bcdd512c040af3ff685322ef51b07a7279388d50",
+  "host_artifacts_verified_against_lock": true,
+  "normal_installation_unchanged": true,
+  "limitations": [
+    "MATE Terminal was driven on a private X11 display, not manually inside an existing daily-use window.",
+    "Native scrollback/reflow remains terminal-owned; draft history is process-local.",
+    "No attachments, transcript search, durable drafts, queued messages, or supervision UI implemented."
+  ],
+  "retained_prior_attempts": [
+    {
+      "path": "/home/data2/workspace/playtime-console-ui/.playtime/console-ui-smoke-20261114T002018",
+      "reason": "Smoke configuration used a per-call token cap below the summary cap; admission refused and the host was restored."
+    },
+    {
+      "path": "/home/data2/workspace/playtime-console-ui/.playtime/console-ui-smoke-20261114T002106",
+      "reason": "Tool turn passed and busy launch was refused; the test assertion did not recognize the words already owned. The wrapper then exited through owned cleanup."
+    }
+  ],
+  "host_after_smoke": {
+    "state": "starts_on_launch",
+    "message": "launching starts Gyro-M on Framework",
+    "context_window": 163840,
+    "drafting": "dflash2"
+  }
+}

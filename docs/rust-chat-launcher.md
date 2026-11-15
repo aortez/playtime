@@ -97,8 +97,10 @@ the supported definition, offline image contract and saved-session behavior.
 The current directory becomes `/work` in the tool container. Explicitly select
 another project with `--workspace /absolute/path`. The console prints its private
 session directory; pass `--session /that/directory` and the same project/settings
-to reopen a completed conversation. `/paste` starts multiline input, `/end`
-submits it and `/quit` exits. Ctrl-C or `/stop` cancels a turn and waits for cleanup;
+to reopen a completed conversation. The [inline composer](rust-console-ui.md)
+uses Ctrl-J or Alt-Enter for newlines and Enter to send; pasted text is never
+submitted automatically. `--plain` retains `/paste` and `/end`. `/quit` exits.
+Ctrl-C or `/stop` cancels a turn and waits for cleanup;
 interrupted sessions remain fenced. A truncated first compaction with confirmed
 cleanup can be explicitly recovered into a new session:
 

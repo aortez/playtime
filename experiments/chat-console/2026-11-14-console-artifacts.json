@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "scope": "Waypoint 3: explicit durable session artifacts, CLI and saved browser; no new inference or Matchbox build.",
+  "candidate_installation": "/home/oldman/.local/lib/playtime-chat-console-ui",
+  "binary_sha256": {
+    "playtime-chat": "3bbb9292ee8ed457c59451a4c1d6eaff20914505dbb08bf3e628984dccda1f06",
+    "playtime-console": "96641ede0def2c098d9dd93adc3e9504befccef754185b3e3891856ec9ccea02",
+    "playtime-artifacts": "cc766aebe978ddb98fbd74fcbf71d203eef7d1adb75ac5fb69d501007a5303d4"
+  },
+  "fast_gates": {
+    "cargo_fmt": "passed",
+    "cargo_clippy_workspace_all_targets": "passed",
+    "cargo_test_workspace": {
+      "passed": 773,
+      "failed": 0,
+      "ignored": 35
+    },
+    "final_harness_chat_and_artifact_contract_tests": "passed after mutable-session admission review",
+    "frozen_python": {
+      "run": 101,
+      "skipped": 6,
+      "result": "passed"
+    },
+    "launcher_python": {
+      "run": 47,
+      "result": "passed"
+    },
+    "candidate_pty": {
+      "run": 7,
+      "result": "passed"
+    }
+  },
+  "terminal": {
+    "terminal": "MATE Terminal / VTE, private X11 display",
+    "binary": "/home/oldman/.local/lib/playtime-chat-console-ui/playtime-console",
+    "artifact_id": "00c4f9a75ceb10bef8b89f8e9a7b7a3a",
+    "sha256": "523dbaa4f168fb5eeb350aedb7a84a0309608071a5e7940588fe584ad5b79914",
+    "checks": [
+      "explicit UI retain",
+      "session artifact list",
+      "external image viewer",
+      "source replacement",
+      "saved browser restart",
+      "retained image reopened",
+      "no model submission",
+      "terminal restoration"
+    ],
+    "result": "passed"
+  },
+  "source_screenshot": "/home/data/workspace/matchbox-audio-zephyr/docs/images/2026-10-14-rust-player-playing.png",
+  "source_sha256": "523dbaa4f168fb5eeb350aedb7a84a0309608071a5e7940588fe584ad5b79914",
+  "disposable_project": "/tmp/playtime-console-ui-project-y0nfs2ym",
+  "saved_session": "/home/oldman/.local/state/playtime-chat/session-console-ui-605638b57cb8427a9790b31321e3f138",
+  "evidence_directory": "/home/data2/workspace/playtime-console-ui/target/console-artifacts-mate-final",
+  "daily_installation_unchanged": true,
+  "daily_installation_files_verified": 10,
+  "limitations": [
+    "Image is a retained historical Matchbox screenshot, not a new device capture or build.",
+    "Reads and viewer launch were exercised offline; existing live-session history came from the preceding waypoint 1\u20132 smoke.",
+    "No inline graphics, model image input, automatic capture or transcript navigation."
+  ]
+}

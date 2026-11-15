@@ -1725,3 +1725,23 @@ profile retains exact whole-label matching. Core policies, experiment images,
 completed checkpoint formats and committed goldens are unchanged.
 See `rust-project-environments.md` for validation and the
 deliberately limited Dev Containers support.
+
+## Inline chat composer and presentation (2026-11-14)
+
+Interactive `playtime-chat` now uses the [inline console](rust-console-ui.md).
+Enter during work preserves an unsent draft; it does not enqueue a follow-up.
+`--plain` retains line input, and `--prompt --json` retains the existing runtime
+event envelope. No harness checkpoint, runtime event, model configuration or
+workspace fingerprint changes. Existing saved sessions retain their checks.
+The separate `console-v1.jsonl` fixture and `playtime-console` observation JSON
+are presentation-only; they grant no execution or recovery authority.
+
+## Durable session artifacts (2026-11-14)
+
+The additive `artifacts-v1.json` sidecar and artifact catalog golden define explicit
+retained files and optional diagram sources. Existing sessions without a catalog
+have an empty artifact list. No checkpoint, model input, workspace fingerprint,
+runtime observation or recovery format changes. `playtime-artifacts` and the
+saved artifact browser share version-1 artifact responses; viewer actions require
+explicit input and never execute diagram source. See
+[retention and export](rust-console-artifacts.md) for limits and publication rules.

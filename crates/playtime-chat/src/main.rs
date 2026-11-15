@@ -1,6 +1,7 @@
 use clap::Parser;
 use playtime_chat::{
     Result,
+    console::{Action, Console},
     native::{Journal, Model, NativeEffects},
     runtime::{self, Event},
 };
@@ -71,7 +72,10 @@ struct Args {
     /// Accept that tools without results may have partially changed project files.
     #[arg(long, requires = "recover_interrupted")]
     acknowledge_uncertain_tools: bool,
-    /// Run one turn and exit; otherwise open basic interactive chat.
+    /// Use plain line input/output even on an interactive terminal.
+    #[arg(long)]
+    plain: bool,
+    /// Run one turn and exit; otherwise open interactive chat.
     #[arg(long)]
     prompt: Option<String>,
     #[arg(long, requires = "prompt")]
@@ -353,6 +357,12 @@ async fn main_run(args: Args) -> Result<()> {
         }
         return Ok(());
     }
+    let model_description = format!(
+        "Model: {} · endpoint {} · settings {}",
+        lock.identity.model,
+        args.endpoint.as_deref().unwrap_or_default(),
+        lock.identity.defaults
+    );
     let mut client = Client::new(
         Endpoint::parse(args.endpoint.as_deref().ok_or("missing endpoint")?)?,
         lock,
@@ -420,12 +430,18 @@ async fn main_run(args: Args) -> Result<()> {
         );
     }
     let mut session = Some(initial_session);
-    eprintln!(
-        "Playtime chat — {}\nSession: {}\nContext: {} tokens. Project tools: Docker, no network. /help for commands.",
+    let banner = clean(&format!(
+        "Playtime chat — {}\nSession: {}\n{}\nEnvironment: {}\nContext allocation: {} tokens. Project tools: Docker, no network.",
         directory.root().path().display(),
         session_path.display(),
+        model_description,
+        if image.get("project_environment").is_some() {
+            "prepared project image"
+        } else {
+            "general workshop"
+        },
         config.parameters.limits.context_tokens
-    );
+    ));
     if let Some(input) = recovered_input {
         eprintln!(
             "Recovered completed history into a new session; the failed source is unchanged.\nPending message (submit again when ready): {}",
@@ -434,7 +450,13 @@ async fn main_run(args: Args) -> Result<()> {
     }
     let headless = args.prompt.is_some();
     let mut first = args.prompt.clone();
-    let mut input = if headless {
+    let mut console = if !headless && !args.plain && Console::supported() {
+        Some(Console::start(banner.clone())?)
+    } else {
+        eprintln!("{banner}");
+        None
+    };
+    let mut input = if headless || console.is_some() {
         let (_, rx) = mpsc::channel(1);
         rx
     } else {
@@ -446,12 +468,50 @@ async fn main_run(args: Args) -> Result<()> {
         }
         let prompt = if headless {
             first.take()
+        } else if console.is_some() {
+            loop {
+                let action = tokio::select! {
+                    action=console_action(&mut console)=>action,
+                    _=shutdown.cancelled()=>Action::Quit,
+                    _=tokio::signal::ctrl_c()=>Action::Quit,
+                };
+                match action {
+                    Action::Submit(text) => break Some(text),
+                    Action::Quit => break None,
+                    Action::Stop => (),
+                    Action::Artifact(command) => {
+                        let mut saved = session.take().ok_or("session unavailable")?;
+                        let path = session_path.clone();
+                        let workspace = directory.root().path().to_owned();
+                        let (saved, result) = tokio::task::spawn_blocking(move || {
+                            let result = playtime_chat::artifacts::execute(
+                                command,
+                                &path,
+                                Some(&workspace),
+                                Some(&mut saved),
+                            );
+                            (saved, result)
+                        })
+                        .await?;
+                        session = Some(saved);
+                        let text = match result {
+                            Ok(value) => playtime_chat::artifacts::display(&value),
+                            Err(error) => format!("Artifact: {error}"),
+                        };
+                        console.as_ref().unwrap().notice(text)?;
+                    }
+                }
+            }
         } else {
             read_prompt(&mut input, &shutdown).await?
         };
         let Some(prompt) = prompt else {
             break;
         };
+        let cancel = shutdown.child_token();
+        if let Some(console) = &console {
+            console.set_active(Some(cancel.clone()))?;
+        }
         let owner = docker::Ownership {
             service: "playtime-chat".into(),
             run: format!("turn-{}", docker::Ownership::random_nonce()?),
@@ -485,7 +545,6 @@ async fn main_run(args: Args) -> Result<()> {
             return_overhead: Duration::from_secs(1),
         }));
         let (tx, mut rx) = runtime::events();
-        let cancel = shutdown.child_token();
         let interrupt_cancel = cancel.clone();
         let interrupt_watch = tokio::spawn(async move {
             tokio::select! {
@@ -501,14 +560,25 @@ async fn main_run(args: Args) -> Result<()> {
             cancel.clone(),
         ));
         let mut thinking = false;
-        let mut input_open = !headless;
+        let mut input_open = !headless && console.is_none();
+        let mut console_input_open = console.is_some();
         let mut shutting_down = false;
         let mut leave_after_turn = false;
+        let mut output_error = None;
         let completed = loop {
             tokio::select! {
-                event=rx.recv()=>if let Some(event)=event {if let Err(error)=render(&event,args.json,&mut thinking){cancel.cancel();eprintln!("output failed: {error}");}}else{break task.await??;},
-                result=&mut task=>{while let Some(event)=rx.recv().await {render(&event,args.json,&mut thinking)?;}break result??;},
-                _=tokio::signal::ctrl_c()=>{cancel.cancel();eprintln!("\nStopping; waiting for owned cleanup...");},
+                event=rx.recv()=>if let Some(event)=event {if let Err(error)=output(&console,&event,args.json,&mut thinking){cancel.cancel();output_error=Some(error.to_string());}}else{break task.await??;},
+                result=&mut task=>{while let Some(event)=rx.recv().await {if let Err(error)=output(&console,&event,args.json,&mut thinking){output_error=Some(error.to_string());}}break result??;},
+                _=tokio::signal::ctrl_c()=>{cancel.cancel();notice(&console,"Stopping; waiting for owned cleanup...");},
+                action=console_action(&mut console),if console_input_open=>match action {
+                    Action::Stop=>cancel.cancel(),
+                    Action::Quit=>{console_input_open=false;leave_after_turn=true;cancel.cancel();},
+                    Action::Submit(_)=>{cancel.cancel();output_error=Some("unexpected submission while a turn is active".into());},
+                    Action::Artifact(_)=>{if let Some(console)=&console
+                        && let Err(error)=console.notice("Artifact operation refused while a turn is active; retry after cleanup.") {
+                        cancel.cancel();output_error=Some(error.to_string());
+                    }},
+                },
                 _=shutdown.cancelled(),if !shutting_down=>{shutting_down=true;cancel.cancel();},
                 line=input.recv(),if input_open=>match line {
                     Some(Ok(line)) if matches!(line.trim(),"/stop"|"/quit"|"/exit")=>{leave_after_turn=line.trim()!="/stop";cancel.cancel();},
@@ -518,17 +588,29 @@ async fn main_run(args: Args) -> Result<()> {
             }
         };
         interrupt_watch.abort();
+        if let Some(console) = &console {
+            console.set_active(None)?;
+        }
+        if let Some(error) = output_error {
+            return Err(format!("output failed after owned cleanup: {error}").into());
+        }
         session = completed.session;
         if session.is_none() {
             if completed.result.reason == playtime_core::StopReason::CompactionFailed {
-                eprintln!(
-                    "If this was the first call of the turn and its summary hit the output cap, use --recover-compaction {} with a larger --summary-tokens value. Recovery verifies the saved events and cleanup before creating a new session.",
-                    session_path.display()
+                notice(
+                    &console,
+                    &format!(
+                        "If the first summary hit its cap, use --recover-compaction {} with a larger --summary-tokens value. Recovery verifies saved events and cleanup before creating a new session.",
+                        session_path.display()
+                    ),
                 );
             }
-            eprintln!(
-                "Use the session picker recovery action, or --inspect-interrupted {} followed by --recover-interrupted with the same settings. Missing cleanup evidence stays blocked.",
-                session_path.display()
+            notice(
+                &console,
+                &format!(
+                    "Use the session picker recovery action, or --inspect-interrupted {} followed by --recover-interrupted with the same settings. Missing cleanup evidence stays blocked.",
+                    session_path.display()
+                ),
             );
             return Err(format!("turn stopped with {:?}; evidence retained at {}; no tools will be automatically replayed",completed.result.reason,session_path.display()).into());
         }
@@ -536,7 +618,29 @@ async fn main_run(args: Args) -> Result<()> {
             break;
         }
     }
+    if let Some(console) = console {
+        console.finish()?;
+    }
     Ok(())
+}
+async fn console_action(console: &mut Option<Console>) -> Action {
+    match console {
+        Some(console) => console.actions.recv().await.unwrap_or(Action::Quit),
+        None => std::future::pending().await,
+    }
+}
+fn output(console: &Option<Console>, event: &Event, json: bool, thinking: &mut bool) -> Result<()> {
+    match console {
+        Some(console) => console.event(event),
+        None => render(event, json, thinking),
+    }
+}
+fn notice(console: &Option<Console>, text: &str) {
+    if let Some(console) = console {
+        let _ = console.notice(text);
+    } else {
+        eprintln!("{}", clean(text));
+    }
 }
 #[tokio::main]
 async fn main() {

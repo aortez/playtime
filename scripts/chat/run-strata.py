@@ -172,6 +172,8 @@ def session(preset, profile, args):
     previous = {}
     result = 1
     owner_code = None
+    diagnostic = None
+    deferred_owner_output = False
 
     def receive(stream, channel):
         try:
@@ -201,7 +203,7 @@ def session(preset, profile, args):
             raise RuntimeError("lost the inference host owner")
 
     def drain():
-        nonlocal ready, state_dir
+        nonlocal ready, state_dir, deferred_owner_output
         while True:
             try:
                 channel, line = events.get_nowait()
@@ -210,7 +212,12 @@ def session(preset, profile, args):
             transcript.write(f"{channel}: {line}")
             transcript.flush()
             if channel == "stderr":
-                print(line, end="", file=sys.stderr, flush=True)
+                # The client owns terminal output while its composer is active.
+                # Retain helper diagnostics in evidence without repainting its draft.
+                if child is None or child.poll() is not None:
+                    print(line, end="", file=sys.stderr, flush=True)
+                else:
+                    deferred_owner_output = True
                 prefixes = [f"Gyro-M: {verb} {profile}; logs: " for verb in ("starting", "reusing")]
                 prefix = next((p for p in prefixes if line.startswith(p)), None)
                 if prefix:
@@ -286,9 +293,9 @@ def session(preset, profile, args):
         result = child.returncode if child.returncode >= 0 else 128 - child.returncode
     except InterruptedError:
         result = 128 + signals[0]
-        log("stopping chat and restoring the inference host…")
+        diagnostic = "stopping chat and restoring the inference host…"
     except Exception as error:
-        log(str(error))
+        diagnostic = str(error)
     finally:
         # Keep the owner heartbeats alive until local tool cleanup has had its
         # full grace period. Only successful, confirmed cleanup permits parking;
@@ -301,6 +308,10 @@ def session(preset, profile, args):
             except (OSError, subprocess.TimeoutExpired) as error:
                 log(f"local child cleanup was not confirmed: {error}")
                 result = 1
+        if diagnostic is not None:
+            log(diagnostic)
+        if deferred_owner_output:
+            log(f"host diagnostics recorded during chat: {evidence / 'owner.log'}")
         stopped.set()
         if heartbeats is not None:
             heartbeats.join(timeout=2)
