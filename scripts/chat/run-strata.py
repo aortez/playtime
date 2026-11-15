@@ -5,6 +5,7 @@ Configuration and locks sit next to this program, outside the selected project.
 Status checks only invoke the remote helper's read-only status command.
 """
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -88,10 +89,13 @@ def check_host(report, lock):
         raise RuntimeError("running host artifacts/settings differ from the reviewed model lock; client not started")
 
 
-def worker_arguments(args):
+def worker_arguments(args, read_only=False):
     """Resolve worker session metadata without treating an opaque ID as a path."""
     allowed = {"--workspace", "--run-dir", "--request", "--state-dir", "--worker-session",
                "--protocol-version", "--wall-seconds", "--tool-backend", "--native-policy"}
+    if read_only:
+        allowed |= {"--role", "--output-contract", "--output-contract-sha256"}
+        allowed -= {"--worker-session"}
     values = {}
     index = 0
     while index < len(args):
@@ -109,8 +113,14 @@ def worker_arguments(args):
         raise RuntimeError("worker needs --workspace, --run-dir and --request")
     if values.get("--protocol-version", "1") != "1":
         raise RuntimeError("unsupported worker protocol")
+    if read_only and (values.get("--role") not in ("setup", "supervisor", "reviewer")
+                      or values.get("--tool-backend") != "native"
+                      or not values.get("--native-policy")
+                      or not values.get("--output-contract")
+                      or not re.fullmatch(r"[0-9a-f]{64}", values.get("--output-contract-sha256", ""))):
+        raise RuntimeError("read-only invocation needs an explicit role, native policy and output contract/hash")
     root = Path(values["--workspace"]).resolve(strict=True)
-    for name in ("--run-dir", "--request"):
+    for name in (("--run-dir", "--request", "--output-contract") if read_only else ("--run-dir", "--request")):
         if Path(values[name]).resolve(strict=True).is_relative_to(root):
             raise RuntimeError("worker records and request must stay outside the project")
     selected = ["--workspace", str(root)]
@@ -135,7 +145,7 @@ def worker_arguments(args):
     delivered = sys.stdin.buffer.read(256 * 1024 + 1)
     if not frozen or len(frozen) > 256 * 1024 or delivered != frozen:
         raise RuntimeError("worker startup gate differs from the frozen assignment")
-    return selected
+    return selected, hashlib.sha256(frozen).hexdigest()
 
 
 def worker_option(args, key, default=None):
@@ -156,8 +166,10 @@ def session(preset, profile, args):
     import project_environment
 
     worker = args[:1] == ["--worker"]
+    read_only = args[:1] == ["--read-only"]
+    headless = worker or read_only
     client_environment = dict(os.environ)
-    if worker:
+    if headless:
         # Authentication belongs to the SSH owner, not the local harness child.
         client_environment.pop("SSH_AUTH_SOCK", None)
         args = args[1:]
@@ -173,6 +185,8 @@ def session(preset, profile, args):
                 raise RuntimeError("--environment needs one selection")
             environment, args = args[1], args[2:]
         elif args[0] == "--prepare-environment":
+            if read_only:
+                raise RuntimeError("read-only invocations cannot prepare a Docker environment")
             if full_verify or force_picker or environment is not None:
                 raise RuntimeError("environment preparation accepts only --workspace")
             return subprocess.call([sys.executable, str(PACKAGE / "project_environment.py"), *args[1:]])
@@ -181,10 +195,10 @@ def session(preset, profile, args):
     for arg in args:
         if arg.split("=", 1)[0] in ("--endpoint", "--model-lock", "--image-lock"):
             raise RuntimeError(f"{arg.split('=', 1)[0]} is owned by this preset")
-    native = worker and worker_option(args, "--tool-backend", "docker") == "native"
+    native = read_only or (worker and worker_option(args, "--tool-backend", "docker") == "native")
     if native and environment is not None:
         raise RuntimeError("native tools cannot select a Docker environment")
-    executable = PACKAGE / ("playtime-task" if worker else "playtime-chat")
+    executable = PACKAGE / ("playtime-task" if headless else "playtime-chat")
     lock_path = PACKAGE / preset["model_lock"]
     image_path = PACKAGE / "general.lock.json"
     # Read local resources before touching the remote host.
@@ -193,7 +207,7 @@ def session(preset, profile, args):
         json.loads(image_path.read_text())
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise RuntimeError("playtime-chat is not installed beside this wrapper")
-    if args in (["--help"], ["-h"], ["--version"], ["-V"]) or (worker and "--describe-protocol" in args):
+    if args in (["--help"], ["-h"], ["--version"], ["-V"]) or (headless and "--describe-protocol" in args):
         if args in (["--help"], ["-h"]):
             print("Launcher options (before chat arguments): --full-verify rehashes model files; "
                   "--sessions opens the local session picker. --stop-server releases an idle warm model. "
@@ -201,16 +215,30 @@ def session(preset, profile, args):
                   "Interactive launches pick by default.", flush=True)
         return subprocess.call([str(executable), *args], env=client_environment)
     if args == ["--stop-server"]:
+        if read_only:
+            raise RuntimeError("read-only invocation requires role and input arguments")
         return subprocess.call(ssh(preset) + remote(preset, "python3", preset["helper"], "--stop"), stdin=subprocess.DEVNULL)
-    selection_args = worker_arguments(args) if worker else args
-    if worker:
+    selection_args = args
+    if headless:
+        selection_args, request_sha256 = worker_arguments(args, read_only)
+        if read_only:
+            args = [*args, "--request-sha256", request_sha256]
+    if headless:
         if force_picker:
             raise RuntimeError("workers cannot use the session picker")
-        described = subprocess.run([str(executable), "--describe-protocol"], check=True,
+        role_args = ["--role", worker_option(args, "--role")] if read_only else []
+        described = subprocess.run([str(executable), "--describe-protocol", *role_args], check=True,
                                    capture_output=True, text=True, timeout=5, env=client_environment)
         protocol = json.loads(described.stdout)
-        if protocol.get("protocol") != "playtime-worker" or protocol.get("version") != 1:
+        if protocol.get("protocol") != ("playtime-readonly" if read_only else "playtime-worker") or protocol.get("version") != 1:
             raise RuntimeError("unsupported Playtime worker protocol")
+        if read_only and (protocol.get("capability") != "playtime-readonly-v1"
+                          or worker_option(args, "--role") not in protocol.get("roles", [])
+                          or protocol.get("output_contract") != "json-schema-subset-v1"
+                          or protocol.get("report") != "structured-result-v1"
+                          or protocol.get("continuation") != "none"
+                          or protocol.get("transport") != "strata-responses-v1"):
+            raise RuntimeError("installed task lacks the read-only invocation contract")
         if native and protocol.get("tool_backends", {}).get("native") != "project-native-v1":
             raise RuntimeError("installed worker lacks project-native-v1")
     client_args = [str(executable), "--model-lock", str(lock_path)]
@@ -218,7 +246,7 @@ def session(preset, profile, args):
         image_path = project_environment.resolve(selection_args, PACKAGE, environment)
         json.loads(image_path.read_text())
         client_args += ["--image-lock", str(image_path)]
-    if worker:
+    if headless:
         checked = subprocess.run([*client_args, "--check-inputs", *args], stdin=subprocess.DEVNULL,
                                  capture_output=True, text=True, timeout=10, env=client_environment)
         if checked.returncode:
@@ -226,7 +254,7 @@ def session(preset, profile, args):
     options = {arg.split("=", 1)[0] for arg in args}
     if options & {"--select-session", "--list-sessions", "--inspect-interrupted"} and not options & {"--prompt", "--session", "--recover-compaction", "--recover-interrupted"}:
         return subprocess.call([*client_args, *args])
-    explicit = worker or bool(options & {"--session", "--recover-compaction", "--recover-interrupted", "--prompt"})
+    explicit = headless or bool(options & {"--session", "--recover-compaction", "--recover-interrupted", "--prompt"})
     if force_picker and explicit:
         raise RuntimeError("--sessions cannot be combined with --session, recovery options or --prompt")
     if force_picker or (sys.stdin.isatty() and not explicit):
@@ -366,10 +394,10 @@ def session(preset, profile, args):
         (evidence / "timings.json").write_text(json.dumps(timings, indent=2) + "\n")
         log(f"verified in {verification_seconds:.1f}s; {stats['reused_files']} cached, "
             f"{stats['hashed_files']} hashed ({stats['hashed_bytes'] / 1e9:.2f} GB read); "
-            f"starting {profile} {'worker' if worker else 'chat'} in {project_environment.workspace_arguments(selection_args)[0]}")
+            f"starting {profile} {'read-only invocation' if read_only else 'worker' if worker else 'chat'} in {project_environment.workspace_arguments(selection_args)[0]}")
         child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
                                   *client_args[1:], *args],
-                                 stdin=subprocess.DEVNULL if worker else None, env=client_environment)
+                                 stdin=subprocess.DEVNULL if headless else None, env=client_environment)
         while child.poll() is None:
             drain()
             healthy()

@@ -13,6 +13,9 @@ pub mod observations;
 mod read;
 pub mod recovery;
 pub mod storage;
+mod strict_json;
+#[cfg(feature = "structured-output")]
+pub mod structured_output;
 pub mod v1;
 pub mod worker;
 pub mod worker_bundle;

@@ -3,7 +3,9 @@ use clap::{Parser, ValueEnum};
 use playtime_chat::{
     Result,
     native::{Journal, Model, NativeEffects},
-    native_project, runtime, worker,
+    native_project,
+    readonly::{self, Role},
+    runtime, worker,
 };
 use playtime_docker::{
     self as docker,
@@ -33,6 +35,14 @@ enum ToolBackend {
 
 #[derive(Parser)]
 struct Args {
+    #[arg(long, value_enum, default_value = "worker")]
+    role: Role,
+    #[arg(long)]
+    output_contract: Option<PathBuf>,
+    #[arg(long)]
+    output_contract_sha256: Option<String>,
+    #[arg(long)]
+    request_sha256: Option<String>,
     #[arg(long, value_enum, default_value = "docker")]
     tool_backend: ToolBackend,
     #[arg(long)]
@@ -91,12 +101,43 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     if args.protocol_version != worker::PROTOCOL {
         return Err("unsupported worker protocol".into());
     }
+    let read_only = args.role.is_readonly();
     if args.describe_protocol {
-        println!(
-            "{}",
-            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"roles":["worker"],"tools":if args.tool_backend == ToolBackend::Native { native_project::CAPABILITY } else {"project-docker-v1"},"tool_backends":{"docker":"project-docker-v1","native":native_project::CAPABILITY},"native_policy_schema":1,"native_helper_sha256":native_project::helper_sha256(),"report":"worker-report-v1","continuation":"completed-session-only"})
-        );
+        let mut description = if read_only {
+            readonly::capability()
+        } else {
+            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"roles":["worker"],"report":"worker-report-v1","continuation":"completed-session-only", "readonly_invocation":readonly::capability()})
+        };
+        description["tools"] = if read_only || args.tool_backend == ToolBackend::Native {
+            native_project::CAPABILITY
+        } else {
+            "project-docker-v1"
+        }
+        .into();
+        description["tool_backends"] = if read_only {
+            json!({"native":native_project::CAPABILITY})
+        } else {
+            json!({"docker":"project-docker-v1","native":native_project::CAPABILITY})
+        };
+        description["native_policy_schema"] = 1.into();
+        description["native_helper_sha256"] = native_project::helper_sha256().into();
+        println!("{description}");
         return Ok(());
+    }
+    if read_only {
+        if args.tool_backend != ToolBackend::Native
+            || args.worker_session.is_some()
+            || args.output_contract.is_none()
+            || args.output_contract_sha256.is_none()
+            || args.request_sha256.is_none()
+        {
+            return Err("read-only roles need native tools, output contract/hash and request hash; fresh invocations only".into());
+        }
+    } else if args.output_contract.is_some()
+        || args.output_contract_sha256.is_some()
+        || args.request_sha256.is_some()
+    {
+        return Err("structured output inputs require an explicit read-only role".into());
     }
     let workspace = args.workspace.ok_or("missing workspace")?.canonicalize()?;
     let run_dir = args
@@ -133,16 +174,36 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     if prompt.trim().is_empty() {
         return Err("empty worker assignment".into());
     }
+    if let Some(expected) = &args.request_sha256 {
+        readonly::check_digest(prompt.as_bytes(), expected)?;
+    }
+    let contract_path = args.output_contract.map(|p| p.canonicalize()).transpose()?;
+    let contract = contract_path
+        .as_ref()
+        .map(|path| {
+            readonly::Contract::parse(
+                playtime_local::read_private(path, readonly::MAX_CONTRACT as u64)?,
+                args.output_contract_sha256
+                    .as_deref()
+                    .ok_or("missing contract hash")?,
+            )
+        })
+        .transpose()?;
     let resume = args.worker_session.is_some();
-    let session_id = args
-        .worker_session
-        .unwrap_or(format!("ptw-{}", Token::generate()?.expose()));
-    worker::session_id(&session_id)?;
+    let session_id = args.worker_session.unwrap_or(format!(
+        "{}-{}",
+        if read_only { "ptr" } else { "ptw" },
+        Token::generate()?.expose()
+    ));
+    if !read_only {
+        worker::session_id(&session_id)?;
+    }
     let session_path = state.join(&session_id);
     if resume && !session_path.join("config.json").exists() {
         return Err("saved worker session unavailable; no automatic fresh fallback".into());
     }
-    let protected = vec![run_dir.clone(), request, model_path.clone()];
+    let mut protected = vec![run_dir.clone(), request, model_path.clone()];
+    protected.extend(contract_path);
     let lock: ModelLock = serde_json::from_slice(&std::fs::read(&model_path)?)?;
     let limits = ProjectLimits {
         nano_cpus: 2_000_000_000,
@@ -162,7 +223,11 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             native_project::Workspace::open(&policy, &root, &private, &protected)
         })
         .await??;
-        let config = worker::native_config(&lock, &native, args.wall_seconds)?;
+        let config = if let Some(contract) = &contract {
+            readonly::config(&lock, &native, args.wall_seconds, args.role, contract)?
+        } else {
+            worker::native_config(&lock, &native, args.wall_seconds)?
+        };
         native_workspace = Some(native);
         config
     } else {
@@ -187,28 +252,44 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         .as_ref()
         .map(native_project::Workspace::binding)
         .unwrap_or(json!({"capability":"project-docker-v1"}));
+    let invocation = contract.as_ref().map(|contract| {
+        readonly::binding(args.role, contract, prompt.as_bytes(), execution.clone())
+    });
+    let prefix = if read_only { "invocation" } else { "worker" };
+    let bound = |mut value: Value| {
+        if let Some(binding) = &invocation {
+            value["invocation"] = binding.clone();
+        }
+        value
+    };
     if args.check_inputs {
         if resume {
             Session::try_open(&session_path, &config)?;
         }
         println!(
             "{}",
-            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"inputs_valid":true,"execution":execution})
+            bound(
+                json!({"protocol":if read_only {"playtime-readonly"} else {"playtime-worker"},"version":worker::PROTOCOL,"inputs_valid":true,"execution":execution})
+            )
         );
         return Ok(());
     }
-    records.write_new("worker-invoked.json",&serde_json::to_vec(&json!({"schema_version":1,"session_id":session_id,"resume":resume,"configuration":config.fingerprint()?,"execution":execution}))?)?;
+    if let Some(contract) = &contract {
+        records.write_new("output-contract.json", contract.bytes())?;
+        records.write_new("request.txt", prompt.as_bytes())?;
+    }
+    records.write_new(if read_only {"invocation.json"} else {"worker-invoked.json"}, &serde_json::to_vec(&bound(json!({"schema_version":1,"session_id":session_id,"resume":resume,"configuration":config.fingerprint()?,"execution":execution})))?)?;
     let log = Arc::new(std::sync::Mutex::new(Events {
         file: OpenOptions::new()
             .create_new(true)
             .write(true)
             .mode(0o600)
-            .open(run_dir.join("worker-events.jsonl"))?,
+            .open(run_dir.join(format!("{prefix}-events.jsonl")))?,
         bytes: 0,
     }));
     emit(
         &log,
-        json!({"schema_version":1,"type":"worker_started","session_id":session_id,"execution":execution}),
+        bound(json!({"schema_version":1,"type":format!("{prefix}_started"),"session_id":session_id,"execution":execution})),
     )
     .await?;
     let mut client = Client::new(
@@ -292,11 +373,12 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             return_overhead: Duration::from_secs(1),
         }))
     };
-    let effects = Arc::new(Mutex::new(worker::EvidenceEffects::new(
-        backend,
-        artifacts,
-        64 * 1024 * 1024,
-    )?));
+    let effects = worker::EvidenceEffects::new(backend, artifacts, 64 * 1024 * 1024)?;
+    let effects = Arc::new(Mutex::new(if read_only {
+        effects.with_all_tools()
+    } else {
+        effects
+    }));
     let (tx, mut rx) = runtime::events();
     let mut task = tokio::spawn(runtime::run_turn(
         session,
@@ -326,7 +408,13 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     if completed.result.reason != playtime_core::StopReason::AgentFinished
         || cleanup != playtime_protocol::events::CleanupOutcome::Complete
     {
-        emit(&log,json!({"schema_version":1,"type":"worker_failed","session_id":session_id,"reason":completed.result.reason,"cleanup":cleanup,"usage":completed.result.usage})).await?;
+        let failure = bound(
+            json!({"schema_version":1,"type":format!("{prefix}_failed"),"session_id":session_id,"reason":completed.result.reason,"cleanup":cleanup,"usage":completed.result.usage}),
+        );
+        if read_only {
+            records.write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
+        }
+        emit(&log, failure).await?;
         return Err("worker turn did not finish; no automatic replay".into());
     }
     let session = completed.session.ok_or("completed session unavailable")?;
@@ -339,14 +427,34 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         .filter(|message| message["role"] == "assistant")
         .and_then(|message| message["content"].as_str())
         .ok_or("missing final worker response")?;
-    let (report, report_sha256) = worker::save_report(
-        response,
-        &records,
-        &artifact_directory,
-        effects.lock().await.evidence(),
+    let result = if let Some(contract) = &contract {
+        let response_sha256 = match readonly::save_response(response, &records, contract) {
+            Ok(digest) => digest,
+            Err(error) => {
+                let failure = bound(
+                    json!({"schema_version":1,"type":"invocation_failed","session_id":session_id,"turn_id":checkpoint.completed_turn,"reason":"invalid_output","cleanup":cleanup,"usage":completed.result.usage}),
+                );
+                records.write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
+                emit(&log, failure).await?;
+                return Err(error);
+            }
+        };
+        bound(
+            json!({"schema_version":1,"type":"invocation_finished","session_id":session_id,"turn_id":checkpoint.completed_turn,"cleanup":cleanup,"usage":completed.result.usage,"response_sha256":response_sha256}),
+        )
+    } else {
+        let (report, report_sha256) = worker::save_report(
+            response,
+            &records,
+            &artifact_directory,
+            effects.lock().await.evidence(),
+        )?;
+        json!({"schema_version":1,"type":"worker_finished","session_id":session_id,"turn_id":checkpoint.completed_turn,"cleanup":cleanup,"status":report.status,"usage":completed.result.usage,"report_sha256":report_sha256})
+    };
+    records.write_new(
+        &format!("{prefix}-result.json"),
+        &serde_json::to_vec(&result)?,
     )?;
-    let result = json!({"schema_version":1,"type":"worker_finished","session_id":session_id,"turn_id":checkpoint.completed_turn,"cleanup":cleanup,"status":report.status,"usage":completed.result.usage,"report_sha256":report_sha256});
-    records.write_new("worker-result.json", &serde_json::to_vec(&result)?)?;
     emit(&log, result).await?;
     log.lock()
         .map_err(|_| "worker event writer failed")?

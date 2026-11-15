@@ -238,6 +238,9 @@ impl Workspace {
         if self.active {
             return Err("prior native command has unresolved cleanup".into());
         }
+        if self.policy.mode == "read_only" && request.name == "write_file" {
+            return Ok(json!({"error":"write_file denied by read-only policy"}));
+        }
         let remaining = deadline
             .saturating_duration_since(Instant::now())
             .saturating_sub(Duration::from_secs(1));
@@ -854,5 +857,235 @@ mod tests {
             Workspace::open(&path, &root.0.join("workspace"), &root.0.join("state"), &[]).is_err()
         );
         assert!(!root.0.join("state/active").exists());
+    }
+    struct ReadonlyModel {
+        calls: usize,
+        malformed: bool,
+        cancel: bool,
+        cache: PathBuf,
+    }
+    #[async_trait]
+    impl Effects for ReadonlyModel {
+        async fn execute(
+            &mut self,
+            effect: &Effect,
+            _: Instant,
+            _: CancellationToken,
+            _: mpsc::Sender<Value>,
+        ) -> Outcome {
+            let EffectKind::Model(request) = &effect.kind else {
+                panic!("model fixture only")
+            };
+            self.calls += 1;
+            let message = if self.calls == 1 {
+                assert!(
+                    !request
+                        .messages
+                        .iter()
+                        .any(|m| m["role"] == "assistant" || m["role"] == "tool"),
+                    "every invocation starts fresh"
+                );
+                let command = if self.cancel {
+                    "sleep 30".to_string()
+                } else {
+                    format!(
+                        "touch forbidden; touch .git/forbidden; touch {}/forbidden",
+                        self.cache.display()
+                    )
+                };
+                json!({"role":"assistant","content":"","tool_calls":[
+                    {"id":"deny","function":{"name":"write_file","arguments":{"path":"source.txt","content":"overwritten"}}},
+                    {"id":"inspect","function":{"name":"read_file","arguments":{"path":"source.txt"}}},
+                    {"id":"boundary","function":{"name":"exec","arguments":{"command":command}}}
+                ]})
+            } else {
+                let tools: Vec<Value> = request
+                    .messages
+                    .iter()
+                    .filter(|m| m["role"] == "tool")
+                    .map(|m| serde_json::from_str(m["content"].as_str().unwrap()).unwrap())
+                    .collect();
+                assert_eq!(tools.len(), 3);
+                assert!(tools[0]["error"].as_str().unwrap().contains("denied"));
+                assert!(tools[1].to_string().contains("original source"));
+                assert_ne!(tools[2]["exit_code"], 0);
+                for tool in &tools {
+                    assert!(tool["evidence_log_path"].is_string());
+                }
+                json!({"role":"assistant","content":if self.malformed {"not JSON"} else {r#"{"decision":"ready"}"#}})
+            };
+            Outcome::ModelCompleted {
+                response: ModelResponse {
+                    message,
+                    done: true,
+                    generated_tokens: Some(50),
+                    prompt_tokens: Some(200),
+                },
+                finish_reason: "stop".into(),
+            }
+        }
+        async fn cleanup(&mut self, _: Instant) -> Vec<String> {
+            vec![]
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "explicit native namespace gate; does not qualify a dedicated account"]
+    async fn readonly_roles_inspect_validate_retain_failures_and_cancel() {
+        use crate::readonly::{self, Contract, Role};
+        let root = Root::new();
+        fs::write(root.0.join("workspace/source.txt"), "original source").unwrap();
+        let lock = serde_json::from_str(include_str!(
+            "../../../models/framework-strata-gyro-m-fast-v1.lock.json"
+        ))
+        .unwrap();
+        let bytes = br#"{"type":"object","properties":{"decision":{"type":"string","enum":["ready","blocked"]}},"required":["decision"],"additionalProperties":false}"#.to_vec();
+        let contract = Contract::parse(bytes.clone(), &readonly::digest(&bytes)).unwrap();
+        for (index, role) in [
+            Role::Setup,
+            Role::Supervisor,
+            Role::Reviewer,
+            Role::Reviewer,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut workspace = root.workspace();
+            assert!(readonly::config(&lock, &workspace, 60, role, &contract).is_err());
+            workspace.policy.mode = "read_only".into();
+            let mut config = readonly::config(&lock, &workspace, 60, role, &contract).unwrap();
+            config.mode = playtime_core::RunMode::Simulation;
+            config.tool_policy = ToolPolicy::Simulation;
+            let session_path = root.0.join(format!("readonly-session-{index}"));
+            let session = Session::create(&session_path, config.clone()).unwrap();
+            let records =
+                PrivateDirectory::open(&root.0.join(format!("readonly-run-{index}")), true)
+                    .unwrap();
+            let artifacts_path = root.0.join(format!("readonly-artifacts-{index}"));
+            let artifacts = PrivateDirectory::open(&artifacts_path, true).unwrap();
+            let effects = Arc::new(Mutex::new(
+                worker::EvidenceEffects::new(
+                    ProjectEffects {
+                        inner: ReadonlyModel {
+                            calls: 0,
+                            malformed: index == 2,
+                            cancel: index == 3,
+                            cache: workspace.policy.cache.clone(),
+                        },
+                        workspace,
+                    },
+                    artifacts_path,
+                    1024 * 1024,
+                )
+                .unwrap()
+                .with_all_tools(),
+            ));
+            let cancel = CancellationToken::new();
+            let (tx, mut rx) = runtime::events();
+            let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+            if index == 3 {
+                let trigger = cancel.clone();
+                let active = root.0.join("state/active");
+                tokio::spawn(async move {
+                    // Wait for the command itself, after the startup and read probes.
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    loop {
+                        if fs::read_to_string(&active).is_ok_and(|s| s.contains("sleep 30")) {
+                            break;
+                        }
+                        assert!(Instant::now() < deadline);
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    trigger.cancel();
+                });
+            }
+            let done = runtime::run_turn(
+                session,
+                "Inspect source using supplied evidence only".into(),
+                effects.clone(),
+                tx,
+                cancel,
+            )
+            .await
+            .unwrap();
+            drain.await.unwrap();
+            assert_eq!(
+                done.result.cleanup,
+                playtime_protocol::events::CleanupOutcome::Complete
+            );
+            assert!(effects.lock().await.inner.workspace.cleanup().is_empty());
+            assert!(!root.0.join("state/active").exists());
+            if index == 3 {
+                assert_eq!(done.result.reason, StopReason::Interrupted);
+                assert!(
+                    !root
+                        .0
+                        .join(format!("readonly-run-{index}/response.json"))
+                        .exists()
+                );
+            } else {
+                assert_eq!(done.result.reason, StopReason::AgentFinished);
+                let session = done.session.unwrap();
+                let response = session
+                    .checkpoint()
+                    .unwrap()
+                    .history
+                    .exchanges
+                    .last()
+                    .unwrap()
+                    .messages
+                    .last()
+                    .unwrap()["content"]
+                    .as_str()
+                    .unwrap();
+                let saved = readonly::save_response(response, &records, &contract);
+                assert_eq!(saved.is_err(), index == 2);
+                assert_eq!(
+                    records.read("response.raw.txt", 1024).unwrap(),
+                    response.as_bytes()
+                );
+                if let Ok(hash) = saved {
+                    assert_eq!(
+                        hash,
+                        readonly::digest(&records.read("response.json", 1024).unwrap())
+                    );
+                }
+                assert_eq!(artifacts.names().unwrap().len(), 3);
+                drop(session);
+                let mut different_role = readonly::configure(
+                    config.clone(),
+                    if role == Role::Setup {
+                        Role::Reviewer
+                    } else {
+                        Role::Setup
+                    },
+                    &contract,
+                )
+                .unwrap();
+                assert!(Session::open(&session_path, &different_role).is_err());
+                let changed_bytes = bytes.iter().copied().chain([b' ']).collect::<Vec<_>>();
+                let changed =
+                    Contract::parse(changed_bytes.clone(), &readonly::digest(&changed_bytes))
+                        .unwrap();
+                different_role = readonly::configure(config.clone(), role, &changed).unwrap();
+                assert!(Session::open(&session_path, &different_role).is_err());
+                let mut execution_change = config;
+                execution_change.workspace =
+                    playtime_core::Sha256Digest::new("0".repeat(64)).unwrap();
+                assert!(Session::open(&session_path, &execution_change).is_err());
+            }
+            assert_eq!(
+                fs::read_to_string(root.0.join("workspace/source.txt")).unwrap(),
+                "original source"
+            );
+            for path in [
+                "workspace/forbidden",
+                "workspace/.git/forbidden",
+                "cache/forbidden",
+            ] {
+                assert!(!root.0.join(path).exists());
+            }
+        }
     }
 }

@@ -1775,3 +1775,17 @@ profile retains exact whole-label matching. Core policies, experiment images,
 completed checkpoint formats and committed goldens are unchanged.
 See `rust-project-environments.md` for validation and the
 deliberately limited Dev Containers support.
+
+
+## Fresh read-only model roles
+
+`playtime-task --role setup|supervisor|reviewer` adds explicit
+`playtime-readonly-v1` / `structured-result-v1` over native read_only tools and
+Strata. The worker description gains only an additive `readonly_invocation`
+capability: its roles=[worker], report v1 and completed continuation stay intact.
+New roles use fresh ptr- sessions, pinned bounded trusted schemas and separate
+receipts/raw/validated outputs. Their role and exact schema hash bind the existing
+conversation configuration; no worker configuration migration or tool-schema
+change is introduced. Read-only policies reject write_file before helper dispatch.
+See [read-only invocations](rust-readonly-model-roles.md) for the strict schema
+subset, explicit selection, input gate and validation limits.

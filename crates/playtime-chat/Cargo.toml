@@ -8,7 +8,7 @@ publish.workspace = true
 
 [dependencies]
 playtime-core.workspace = true
-playtime-protocol.workspace = true
+playtime-protocol = { workspace = true, features = ["structured-output"] }
 playtime-engine = { path = "../playtime-engine" }
 playtime-harness.workspace = true
 playtime-local.workspace = true
