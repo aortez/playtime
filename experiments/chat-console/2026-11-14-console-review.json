@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-14",
+  "recorded_at_utc": "2026-11-15T00:22:08.548887+00:00",
+  "scope": "Independent review of PR #215 and fixes for two confirmed composer defects.",
+  "reviewed_commit": "979e5db6f044b5f70b305e4cced9e49ede778852",
+  "source_commit": "440481b22dabd61ad6ac62b47e344fc741c590cd",
+  "review": {
+    "fresh_agent": true,
+    "findings": [
+      {
+        "severity": "P2",
+        "defect": "Delete at end of draft removed the preceding character.",
+        "reproduction": "Type abc, Delete, Enter submitted ab.",
+        "fix": "Delete only when forward grapheme movement selects text; cancel an empty selection."
+      },
+      {
+        "severity": "P2",
+        "defect": "Plain Left/Right retained an existing Shift-selection, causing later insertion to delete text.",
+        "reproduction": "Type abc, Shift-Left, Left, X, Enter submitted aX instead of aXbc.",
+        "fix": "Cancel selection before plain horizontal movement."
+      }
+    ],
+    "reproduced_before_fix": true,
+    "followup_review": "Both fixes confirmed by the reviewer; all eight Rust console tests passed, with no additional confirmed findings."
+  },
+  "candidate_installation": "/home/oldman/.local/lib/playtime-chat-console-ui",
+  "binary_sha256": {
+    "playtime-chat": "57544c53ff27a9b7630e47e50b517ac5ede88b398dc833e72434a28ab9274c4f",
+    "playtime-console": "5447af25ec8f164d16c3330e5f298b1395dcb02e248283daa73ee5c71c33485e",
+    "playtime-artifacts": "feab8d80da01396692ee18b7d9ad06bdcd04fc56dfdeac328d34c3ae4e323a58"
+  },
+  "validation": {
+    "cargo fmt --all -- --check": "passed",
+    "cargo clippy --workspace --all-targets --locked -- -D warnings": "passed",
+    "cargo test --workspace --locked": {
+      "passed": 776,
+      "failed": 0,
+      "ignored": 35
+    },
+    "python3 -m unittest discover -s tests -v": {
+      "run": 101,
+      "skipped": 6,
+      "result": "passed"
+    },
+    "cargo build -p playtime-chat --locked": "passed",
+    "python3 scripts/console/test_pty.py": {
+      "run": 10,
+      "result": "passed"
+    },
+    "candidate_release_build_and_install": "passed; separate candidate only",
+    "candidate_pty": {
+      "run": 10,
+      "result": "passed"
+    },
+    "mate": {
+      "terminal": "MATE Terminal / VTE, private X11 display",
+      "binary": "/home/oldman/.local/lib/playtime-chat-console-ui/playtime-console",
+      "checks": [
+        "wrapped backspace",
+        "bracketed multiline Unicode paste",
+        "streaming with draft",
+        "no follow-up queue",
+        "narrow/wide resize",
+        "Ctrl-C stop",
+        "raw tool result",
+        "terminal restoration",
+        "restart"
+      ],
+      "result": "passed"
+    }
+  },
+  "logs": {
+    "clippy": {
+      "path": "target/console-review-clippy.log",
+      "sha256": "e25496412b9164797778a64aa9a76aac90dd675d451654ae93ac8e2e9e3b6a9a"
+    },
+    "workspace": {
+      "path": "target/console-review-workspace.log",
+      "sha256": "670ed9aea381972d5950ee18a05b32b6eb09dc341d1040946db02801757b7503"
+    },
+    "python": {
+      "path": "target/console-review-python.log",
+      "sha256": "f6ba06a860e7e45dd1214acef8b08f9e951623be75996e464220bf026f0ecdab"
+    },
+    "build": {
+      "path": "target/console-review-build.log",
+      "sha256": "0b53209db424367e80c52cd8cde8b75e37af110438a0efde777104a1463956de"
+    },
+    "pty": {
+      "path": "target/console-review-pty.log",
+      "sha256": "a452d2d18b3a6be639ef71bb8f9b89f1acb9a80521fcc79758d79a1e845835f0"
+    },
+    "install": {
+      "path": "target/console-review-install.log",
+      "sha256": "4f1291b3bb984551cfdd97ef749b639d05206b38b4667624fc0f89075a5d8d53"
+    },
+    "candidate-pty": {
+      "path": "target/console-review-candidate-pty.log",
+      "sha256": "e6be2746c3ae32778cc08f51a34f167ae5eefade5c935b5eb65cd6e3b7d03e72"
+    }
+  },
+  "mate_evidence_directory": "target/console-review-mate",
+  "unchanged_evidence": {
+    "report": "experiments/chat-console/2026-11-14-console-completion.json",
+    "scope": "Launcher fixtures, artifact retention/reopen/export, and historical owned live handoff. No launcher, storage, viewer, runtime/controller or host-handoff code changed in this follow-up.",
+    "screenshots": "Existing committed screenshots retain their recorded source revision; no layout changes."
+  },
+  "daily_installation": {
+    "unchanged": true,
+    "files_verified": 10
+  },
+  "limitations": [
+    "MATE ran on a private X11 display; the two new editing regressions were verified in Rust and real PTYs.",
+    "No new inference-host or native-effect run; the original owned live evidence remains historical."
+  ]
+}
