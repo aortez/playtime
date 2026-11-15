@@ -217,3 +217,13 @@ The earlier live report covers its recorded binaries, not a new live run of this
 candidate. Its owner-handoff evidence is reused because the completion fixes
 only changed presentation/input handling. No inference host was acquired during
 this completion pass, and the ten daily-use installation files remained unchanged.
+
+### Independent review follow-up
+
+A fresh review found two editor boundary bugs: Delete at the end of a draft
+removed the preceding character, and plain Left/Right kept a prior Shift-selection
+active. Both are corrected, with EOF, newline, Unicode and selection regressions
+plus a real-PTY submitted-buffer check. The reviewer checked the fixes as well.
+The [review validation report](../experiments/chat-console/2026-11-14-console-review.json)
+identifies the updated candidate and its checks. Earlier reports and screenshots
+retain their original revision/binary provenance.

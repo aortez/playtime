@@ -35,6 +35,47 @@ fn composer_wraps_unicode_and_preserves_draft_history() {
     assert_eq!(composer.text(), "pending\ncode");
 }
 #[test]
+fn delete_at_end_preserves_text_and_does_not_leave_a_selection() {
+    for text in ["", "abc", "first\n", "first\ne\u{301} 👩\u{200d}💻"] {
+        let mut composer = Composer::default();
+        composer.paste(text);
+        key(&mut composer, KeyCode::Delete);
+        assert_eq!(composer.text(), text);
+        assert!(composer.editor.selection_range().is_none());
+        composer.paste("x");
+        assert_eq!(composer.text(), format!("{text}x"));
+    }
+    let mut composer = Composer::default();
+    composer.paste("ab\n👩\u{200d}💻");
+    key(&mut composer, KeyCode::Home);
+    key(&mut composer, KeyCode::Left);
+    key(&mut composer, KeyCode::Delete);
+    assert_eq!(composer.text(), "ab👩\u{200d}💻");
+    key(&mut composer, KeyCode::Delete);
+    assert_eq!(composer.text(), "ab");
+    key(&mut composer, KeyCode::Delete);
+    assert_eq!(composer.text(), "ab");
+}
+#[test]
+fn plain_arrows_end_shift_selection_before_typing() {
+    for direction in [KeyCode::Left, KeyCode::Right] {
+        let mut composer = Composer::default();
+        composer.paste("abc");
+        composer.key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
+        key(&mut composer, direction);
+        composer.paste("X");
+        assert_eq!(
+            composer.text(),
+            if direction == KeyCode::Left {
+                "aXbc"
+            } else {
+                "abcX"
+            }
+        );
+        assert!(composer.editor.selection_range().is_none());
+    }
+}
+#[test]
 fn paste_is_atomic_bounded_and_escapes_controls() {
     let mut composer = Composer::default();
     assert!(composer.paste("/quit\r\n\u{1b}[2J"));

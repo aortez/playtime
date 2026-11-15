@@ -117,14 +117,21 @@ impl Composer {
                 self.editor.delete_char();
             }
             KeyCode::Left | KeyCode::Right if key.modifiers.is_empty() => {
+                self.editor.cancel_selection();
                 self.grapheme_move(key.code == KeyCode::Right)
             }
             KeyCode::Delete
                 if key.modifiers.is_empty() && self.editor.selection_range().is_none() =>
             {
+                let before = self.editor.cursor();
                 self.editor.start_selection();
                 self.grapheme_move(true);
-                self.editor.delete_char();
+                if self.editor.cursor() != before {
+                    self.editor.delete_char();
+                } else {
+                    // An empty selection falls back to backspace in delete_char.
+                    self.editor.cancel_selection();
+                }
             }
             _ => {
                 self.editor.input(key);

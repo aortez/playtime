@@ -1745,3 +1745,7 @@ runtime observation or recovery format changes. `playtime-artifacts` and the
 saved artifact browser share version-1 artifact responses; viewer actions require
 explicit input and never execute diagram source. See
 [retention and export](rust-console-artifacts.md) for limits and publication rules.
+
+The console review follow-up makes Delete at end-of-draft a no-op and ends
+Shift-selection on plain Left/Right before further typing. These editor corrections
+do not change any runtime, checkpoint, artifact or JSON schema.

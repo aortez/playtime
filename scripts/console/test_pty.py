@@ -188,6 +188,15 @@ class ConsolePtyTests(unittest.TestCase):
         t.send(b'\x04')
         self.assertIn({'type': 'quit'}, t.actions())
 
+    def test_delete_at_end_and_released_shift_selection_preserve_draft(self):
+        t = self.terminal()
+        t.send('abc')
+        t.send(b'\x1b[3~')  # Delete at EOF must not backspace.
+        t.send(b'\x1b[1;2D\x1b[DX')  # Shift-Left, plain Left, then insert.
+        t.send(b'\r')
+        t.wait_submitted(1)
+        self.assertEqual(t.submitted(), ['aXbc'])
+
     def test_enter_buffered_behind_output_cannot_submit_after_completion(self):
         with tempfile.TemporaryDirectory(prefix='playtime-console-backpressure-') as root:
             replay = Path(root) / 'replay.jsonl'
