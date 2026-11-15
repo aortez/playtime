@@ -1,5 +1,22 @@
 # Rust compatibility and goldens
 
+## Worker evidence references (2026-11-14)
+
+The [model-facing worker report](rust-headless-worker.md#model-facing-references-and-canonical-conversion)
+accepts selected `{evidence_ref}` entries and resolves them from this invocation's
+successfully committed exec logs. Artifact basenames now include a fresh invocation
+nonce, preventing repeated effect IDs from aliasing earlier evidence. Existing
+`evidence_log_path` metadata and its context-shortening behavior are reused.
+Canonical worker-report-v1 fields, protocol-v1 terminal receipts and evidence JSON
+contents are unchanged. Legacy full-field input remains exact-match only; mixed
+representations and duplicate references are rejected. Raw responses remain separate
+from canonical reports. No golden is regenerated.
+
+Changed frozen worker instructions intentionally invalidate prior worker-session
+bindings. Resume rejects incompatibility; the caller must explicitly reconstruct
+in a fresh worker session while preserving old evidence and surviving edits. No
+installed worker, saved pilot or console session is migrated.
+
 ## Headless editing workers (2026-11-14)
 
 [playtime-task](rust-headless-worker.md) adds an opt-in protocol-v1 worker binary

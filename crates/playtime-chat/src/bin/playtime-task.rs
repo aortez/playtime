@@ -14,7 +14,6 @@ use playtime_harness::Session;
 use playtime_local::{PrivateDirectory, Token};
 use playtime_strata::{Client, Endpoint, ModelLock};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
@@ -232,8 +231,8 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         )
     })
     .await??;
-    let effects = Arc::new(Mutex::new(worker::EvidenceEffects {
-        inner: NativeEffects {
+    let effects = Arc::new(Mutex::new(worker::EvidenceEffects::new(
+        NativeEffects {
             model: Arc::new(Mutex::new(Model {
                 client,
                 fenced: false,
@@ -243,13 +242,13 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             return_overhead: Duration::from_secs(1),
         },
         artifacts,
-        remaining_bytes: 64 * 1024 * 1024,
-    }));
+        64 * 1024 * 1024,
+    )?));
     let (tx, mut rx) = runtime::events();
     let mut task = tokio::spawn(runtime::run_turn(
         session,
         prompt,
-        effects,
+        effects.clone(),
         tx,
         cancel.clone(),
     ));
@@ -287,11 +286,13 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         .filter(|message| message["role"] == "assistant")
         .and_then(|message| message["content"].as_str())
         .ok_or("missing final worker response")?;
-    records.write_new("worker-report.raw.txt", response.as_bytes())?;
-    let report = worker::validate_report(response.as_bytes(), &artifact_directory)?;
-    let report_bytes = serde_json::to_vec(&report)?;
-    records.write_new("worker-report.json", &report_bytes)?;
-    let result = json!({"schema_version":1,"type":"worker_finished","session_id":session_id,"turn_id":checkpoint.completed_turn,"cleanup":cleanup,"status":report.status,"usage":completed.result.usage,"report_sha256":Sha256::digest(&report_bytes).iter().map(|byte|format!("{byte:02x}")).collect::<String>()});
+    let (report, report_sha256) = worker::save_report(
+        response,
+        &records,
+        &artifact_directory,
+        effects.lock().await.evidence(),
+    )?;
+    let result = json!({"schema_version":1,"type":"worker_finished","session_id":session_id,"turn_id":checkpoint.completed_turn,"cleanup":cleanup,"status":report.status,"usage":completed.result.usage,"report_sha256":report_sha256});
     records.write_new("worker-result.json", &serde_json::to_vec(&result)?)?;
     emit(&log, result).await?;
     log.lock()
