@@ -1,5 +1,17 @@
 # Rust compatibility and goldens
 
+## Host coding preset and tool contract
+
+Interactive `coding-host` adds `host_v1` tool definitions and a host-specific
+Codex adapter. `CompactionSettings.tool_profile` defaults to the workshop and is
+omitted from serialization for that default; existing Docker/worker configuration
+bytes and tool schemas remain unchanged. Host sessions freeze their distinct
+execution binding, prompt and tool contract. No existing session is migrated.
+The harness's interruption reader recognizes the configured tool vocabulary,
+including persistent-process operations. Compaction policy and the controller
+loop are unchanged. See [host coding](rust-host-coding.md) for process lifetime,
+trust model and qualification gates.
+
 ## Opt-in native project tools (2026-11-14)
 
 `playtime-task --tool-backend native --native-policy PATH` adds
@@ -1812,3 +1824,66 @@ Basalt 0.4.1 reports `activity.in_flight` as a busy flag plus queued requests.
 Admission therefore also reads `/slots`, validates IDs/context/count and boolean
 processing states, and counts active slots. Missing or malformed slot metadata
 rejects dispatch; a two-busy-slot regression keeps the status busy flag at one.
+
+## Interactive Codex prompt selection
+
+New `playtime-chat` conversations default to the pinned Codex CLI 0.166.0 base
+instructions followed by `codex-playtime-chat-adapter-v1.txt`. This new adapter
+describes the interactive client and its actual tools; the unattended experiment
+adapter and experiment recipes are unchanged. `--agent-prompt minimal` preserves
+the previous short instruction string exactly for existing sessions and recovery.
+The full composed text remains part of `ConversationConfig` and its fingerprint,
+so selecting a different prompt cannot silently reinterpret saved history.
+There are no changes to worker/read-only prompts, model locks, tools, checkpoint
+formats, compaction policy, or committed goldens.
+
+## Large project admission
+
+The project Docker admission scan now allows up to 2,000,000 entries and thirty
+seconds so source checkouts with large build trees can open. Every mounted entry,
+including ignored build artifacts, is still checked for special files, device
+boundaries, and external hard links. Entry and time limits report separate causes
+and the path reached. Special-file failures name the offending path. This changes
+only admission bounds and diagnostics; project identities, saved conversation
+fingerprints, mount policy, and cleanup fencing are unchanged.
+
+
+## Host coding, terminal cancellation and execution configuration
+
+The explicit `coding-host` preset uses same-user host tools and the shared compacting
+controller. It binds the helper digest, workspace identity and seven-tool contract;
+it does not use Docker admission or resource limits. Persistent processes survive
+turns and compaction within one CLI, and stop on CLI exit. Scope shutdown now escalates
+from a bounded grace period to SIGKILL and verifies only owned scopes.
+
+Conversation schema two separates `execution` from `compaction`, with no workshop
+allocation for new host sessions. The schema-one decoder/encoder retains exact old
+field order, omitted default profile, parameters and nested host tool profile so
+existing configuration fingerprints remain stable. Archive compaction settings,
+worker protocols and experiment goldens remain unchanged. The host helper digest
+changes deliberately; old host capabilities are not silently substituted.
+
+The terminal now handles bracketed paste, editing and Escape independently of model
+streaming. A safe live user cancellation can fork completed history plus evidence
+without replay. Unknown tool outcomes retain explicit acknowledgement. A private
+restart request and exit 75 require confirmed owner shutdown before launcher
+reacquisition; failed cleanup never starts another client. This does not change
+saved recovery/checkpoint formats or make socket closure proof of remote termination.
+
+New default interactive prompts use adapter v2 describing these controls. Adapter
+v1 bytes remain available through `--agent-prompt codex-v1`; the original minimal
+prompt remains unchanged. Selecting new instructions intentionally changes a
+conversation fingerprint. No model lock or compaction algorithm changed.
+
+
+## Chunked terminal response display
+
+Interactive terminal output now buffers model text per response, redraws a bounded
+single-line preview/activity indicator with elapsed time, received text size and
+average KiB/s since request start, and prints the received text together
+before the next effect. Thinking and answer order is retained; cancellation and
+driver errors preserve partial text. The timer updates presentation independently
+of model chunks and terminal cancellation remains serviced by the existing loop.
+`--stream`, redirected output and JSON events retain immediate streaming. No
+controller decisions, event schemas, model/prompt identities, saved configuration
+fingerprints, tool behavior or experiment goldens change.

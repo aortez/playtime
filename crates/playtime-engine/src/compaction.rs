@@ -111,6 +111,7 @@ pub struct CompactionSettings {
     )]
     pub allow_finish_run: bool,
 }
+
 fn default_allow_finish_run() -> bool {
     true
 }
@@ -203,6 +204,8 @@ pub struct CompactionConfig {
 /// Policy inputs shared by archived runs and standalone chat turns. Archive
 /// references belong to the lifecycle adapter, not to conversation planning.
 pub(crate) struct PolicyConfig {
+    pub tool_profile: crate::execution::ToolProfile,
+    pub legacy_host_settings: bool,
     pub parameters: CommonParameters,
     pub protocol: String,
     pub prompt: String,
@@ -213,6 +216,8 @@ pub(crate) struct PolicyConfig {
 impl From<&CompactionConfig> for PolicyConfig {
     fn from(config: &CompactionConfig) -> Self {
         Self {
+            tool_profile: crate::execution::ToolProfile::Workshop,
+            legacy_host_settings: false,
             parameters: config.parameters.clone(),
             protocol: config.protocol.clone(),
             prompt: config.prompt.clone(),
@@ -223,6 +228,21 @@ impl From<&CompactionConfig> for PolicyConfig {
 }
 
 impl PolicyConfig {
+    pub(crate) fn tools(&self) -> Vec<Value> {
+        self.tool_profile.tools(self.settings.allow_finish_run)
+    }
+    pub(crate) fn recorded_settings(&self) -> Value {
+        if self.legacy_host_settings {
+            serde_json::to_value(crate::chat_wire::LegacyCompaction::new(
+                &self.settings,
+                self.tool_profile,
+            ))
+            .unwrap()
+        } else {
+            serde_json::to_value(&self.settings).unwrap()
+        }
+    }
+
     pub(crate) fn work_reserve(&self) -> u64 {
         work_reserve(&self.parameters.limits, &self.settings)
     }
@@ -274,14 +294,15 @@ pub(crate) fn validate_tools(
     message: &Value,
     finish_reason: Option<&str>,
     result_allowance: u64,
-    allow_finish_run: bool,
+    settings: &CompactionSettings,
+    tools: &[Value],
 ) -> Result<Batch, (playtime_core::StopReason, String)> {
     use playtime_core::StopReason;
     let Some(calls) = message["tool_calls"].as_array() else {
         return Ok(Batch::Valid(None));
     };
     // Without the tool, a finish_run call is an ordinary invalid call.
-    let has_finish = allow_finish_run
+    let has_finish = settings.allow_finish_run
         && calls
             .iter()
             .any(|call| call["function"]["name"] == "finish_run");
@@ -301,9 +322,7 @@ pub(crate) fn validate_tools(
     for call in calls {
         let name = call["function"]["name"].as_str().unwrap_or("");
         let arguments = &call["function"]["arguments"];
-        if let Some(error) =
-            crate::validation::validate_call(&tools(allow_finish_run), name, arguments)
-        {
+        if let Some(error) = crate::validation::validate_call(tools, name, arguments) {
             if !has_finish {
                 return Ok(Batch::Rejected);
             }

@@ -175,7 +175,7 @@ fn verify_records(
         .filter(|n| n.starts_with(&prefix) && n.ends_with(".jsonl"))
         .collect();
     names.sort();
-    let mut remaining = config.parameters.limits.log_bytes.get();
+    let mut remaining = config.execution.limits.log_bytes.get();
     let mut counts = BTreeMap::<String, u64>::new();
     let mut last = String::new();
     let mut elapsed = 0;
@@ -202,11 +202,10 @@ fn verify_records(
             let valid = match r.kind.as_str() {
                 "controller_started" => {
                     d["run_id"] == turn
-                        && d["parameters"] == serde_json::to_value(&config.parameters)?
+                        && d["parameters"]
+                            == serde_json::to_value(config.execution.controller_parameters())?
                 }
-                "compaction_configured" => {
-                    d["settings"] == serde_json::to_value(&config.compaction)?
-                }
+                "compaction_configured" => d["settings"] == config.recorded_compaction(),
                 "model_request" => {
                     d["call"] == 1
                         && d["purpose"] == "compaction"

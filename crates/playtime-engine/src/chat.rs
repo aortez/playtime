@@ -1,7 +1,7 @@
 //! Standalone chat inputs and completed-turn continuation. The same controller
 //! still owns inference, tool admission, compaction, deadlines and cleanup.
 
-use playtime_core::{CommonParameters, InvalidValue, RunMode, Sha256Digest};
+use playtime_core::{InvalidValue, RunMode, Sha256Digest};
 pub use playtime_protocol::conversation::ConversationCheckpoint;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     RuntimeConfig, ToolPolicy,
     compaction::{CompactionSettings, PolicyConfig},
+    execution::ExecutionConfig,
 };
 
 pub const MAX_CHECKPOINT_BYTES: usize = 16 * 1024 * 1024;
@@ -24,7 +25,7 @@ pub struct ConversationTurn {
 /// the workspace identity and tool access policy. Adapters verify these frozen
 /// identities before execution. A display name is not an identity lock.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "crate::chat_wire::Wire", into = "crate::chat_wire::Wire")]
 pub struct ConversationConfig {
     pub schema_version: u32,
     pub model: Sha256Digest,
@@ -32,8 +33,7 @@ pub struct ConversationConfig {
     pub instructions: String,
     pub inventory: String,
     pub mode: RunMode,
-    pub tool_policy: ToolPolicy,
-    pub parameters: CommonParameters,
+    pub execution: ExecutionConfig,
     pub compaction: CompactionSettings,
 }
 
@@ -44,16 +44,37 @@ pub(crate) struct Boundary {
 }
 
 impl ConversationConfig {
+    pub fn tools(&self) -> Vec<serde_json::Value> {
+        self.execution
+            .tool_profile
+            .tools(self.compaction.allow_finish_run)
+    }
+    pub fn recorded_compaction(&self) -> serde_json::Value {
+        if self.schema_version == 1 {
+            serde_json::to_value(crate::chat_wire::LegacyCompaction::new(
+                &self.compaction,
+                self.execution.tool_profile,
+            ))
+            .unwrap()
+        } else {
+            serde_json::to_value(&self.compaction).unwrap()
+        }
+    }
+
     pub fn validate(&self) -> Result<(), InvalidValue> {
-        self.parameters.validate()?;
-        self.compaction.validate(&self.parameters)?;
-        self.tool_policy.validate(&self.parameters.limits)?;
-        if self.schema_version != 1
+        self.execution.validate()?;
+        self.compaction.validate_limits(&self.execution.limits)?;
+        if !matches!(self.schema_version, 1 | 2)
+            || (self.schema_version == 1 && self.execution.workshop.is_none())
+            || (self.schema_version == 2
+                && self.execution.tool_profile == crate::execution::ToolProfile::HostV1
+                && self.execution.workshop.is_some())
             || self.instructions.trim().is_empty()
             || self.instructions.len() > MAX_USER_BYTES
             || self.inventory.len() > MAX_USER_BYTES
             || self.compaction.allow_finish_run
-            || (self.mode == RunMode::Simulation) != (self.tool_policy == ToolPolicy::Simulation)
+            || (self.mode == RunMode::Simulation)
+                != (self.execution.tool_policy == ToolPolicy::Simulation)
         {
             return Err(InvalidValue(
                 "invalid chat configuration; use plain final replies and a tool policy matching the execution mode",
@@ -66,7 +87,7 @@ impl ConversationConfig {
         self.validate()?;
         // Include the tool contract so an implementation update cannot silently
         // resume an older conversation with different capabilities.
-        let bytes = serde_json::to_vec(&(HARNESS, self, crate::compaction::tools(false)))
+        let bytes = serde_json::to_vec(&(HARNESS, self, self.tools()))
             .map_err(|_| InvalidValue("chat configuration serialization failed"))?;
         Sha256Digest::new(
             Sha256::digest(bytes)
@@ -85,7 +106,7 @@ impl ConversationConfig {
             || saved.history.compactions >= saved.next_sequence
             || saved
                 .next_sequence
-                .checked_add(self.parameters.limits.log_bytes.get())
+                .checked_add(self.execution.limits.log_bytes.get())
                 .and_then(|n| n.checked_add(65536))
                 .is_none()
             || serde_json::to_vec(saved)
@@ -113,12 +134,15 @@ impl ConversationConfig {
             self.validate_checkpoint(saved)?;
         }
         Ok(RuntimeConfig {
-            parameters: self.parameters.clone(),
+            parameters: self.execution.controller_parameters(),
             initial_workspace: None,
             memento: None,
             workspace: None,
             compaction: Some(PolicyConfig {
-                parameters: self.parameters.clone(),
+                tool_profile: self.execution.tool_profile,
+                legacy_host_settings: self.schema_version == 1
+                    && !self.execution.tool_profile.is_workshop(),
+                parameters: self.execution.controller_parameters(),
                 protocol: self.instructions.clone(),
                 prompt: saved
                     .map_or(input, |s| s.history.root[1]["content"].as_str().unwrap())

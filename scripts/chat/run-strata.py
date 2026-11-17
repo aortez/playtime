@@ -171,17 +171,28 @@ def session(preset, profile, args):
     read_only = args[:1] == ["--read-only"]
     headless = worker or read_only
     client_environment = dict(os.environ)
+    client_environment.pop("PLAYTIME_CHAT_RESTART_FILE", None)
     if headless:
         # Authentication belongs to the SSH owner, not the local harness child.
         client_environment.pop("SSH_AUTH_SOCK", None)
         args = args[1:]
     full_verify = force_picker = False
     environment = None
+    selected_preset = None
     while args:
         if args[0] in ("--full-verify", "--sessions"):
             full_verify |= args[0] == "--full-verify"
             force_picker |= args[0] == "--sessions"
             args = args[1:]
+        elif args[0] == "--preset" or args[0].startswith("--preset="):
+            if selected_preset is not None:
+                raise RuntimeError("select only one chat preset")
+            if "=" in args[0]:
+                selected_preset, args = args[0].split("=", 1)[1], args[1:]
+            else:
+                if len(args) < 2:
+                    raise RuntimeError("--preset needs a value")
+                selected_preset, args = args[1], args[2:]
         elif args[0] == "--environment":
             if len(args) < 2 or environment is not None:
                 raise RuntimeError("--environment needs one selection")
@@ -189,7 +200,7 @@ def session(preset, profile, args):
         elif args[0] == "--prepare-environment":
             if read_only:
                 raise RuntimeError("read-only invocations cannot prepare a Docker environment")
-            if full_verify or force_picker or environment is not None:
+            if full_verify or force_picker or environment is not None or selected_preset is not None:
                 raise RuntimeError("environment preparation accepts only --workspace")
             return subprocess.call([sys.executable, str(PACKAGE / "project_environment.py"), *args[1:]])
         else:
@@ -198,8 +209,13 @@ def session(preset, profile, args):
         if arg.split("=", 1)[0] in ("--endpoint", "--model-lock", "--image-lock"):
             raise RuntimeError(f"{arg.split('=', 1)[0]} is owned by this preset")
     native = read_only or (worker and worker_option(args, "--tool-backend", "docker") == "native")
-    if native and environment is not None:
-        raise RuntimeError("native tools cannot select a Docker environment")
+    chat_preset = selected_preset or "workshop"
+    if chat_preset not in ("workshop", "coding-host") or (headless and selected_preset is not None):
+        raise RuntimeError("--preset coding-host is an interactive chat preset")
+    host_tools = not headless and chat_preset == "coding-host"
+    preset_args = ["--preset", selected_preset] if selected_preset else []
+    if (native or host_tools) and environment is not None:
+        raise RuntimeError("host/native tools cannot select a Docker environment")
     executable = PACKAGE / ("playtime-task" if headless else "playtime-chat")
     lock_path = PACKAGE / preset["model_lock"]
     image_path = PACKAGE / "general.lock.json"
@@ -208,7 +224,7 @@ def session(preset, profile, args):
     basalt = lock["identity"].get("service") == "basalt"
     protocol_args = ["--model-lock", str(lock_path)] if basalt else []
     transport = "basalt-responses-v1" if basalt else "strata-responses-v1"
-    if not native:
+    if not native and not host_tools:
         json.loads(image_path.read_text())
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise RuntimeError("playtime-chat is not installed beside this wrapper")
@@ -217,12 +233,14 @@ def session(preset, profile, args):
             print("Launcher options (before chat arguments): --full-verify rehashes model files; "
                   "--sessions opens the local session picker. --stop-server releases an idle warm model. "
                   "--prepare-environment builds the project devcontainer; --environment general|LOCK selects an environment. "
-                  "Interactive launches pick by default.", flush=True)
-        return subprocess.call([str(executable), *protocol_args, *args], env=client_environment)
+                  "--preset coding-host uses the Codex prompt and normal host tools without Docker. "
+                  "Interactive launches pick when a resumable conversation exists; otherwise they start a new one.", flush=True)
+        return subprocess.call([str(executable), *protocol_args, *args, *preset_args], env=client_environment)
     if args == ["--stop-server"]:
         if read_only:
             raise RuntimeError("read-only invocation requires role and input arguments")
         return subprocess.call(ssh(preset) + remote(preset, "python3", preset["helper"], "--stop"), stdin=subprocess.DEVNULL)
+    args = [*args, *preset_args]
     selection_args = args
     if headless:
         selection_args, request_sha256 = worker_arguments(args, read_only)
@@ -247,7 +265,7 @@ def session(preset, profile, args):
         if native and protocol.get("tool_backends", {}).get("native") != "project-native-v1":
             raise RuntimeError("installed worker lacks project-native-v1")
     client_args = [str(executable), "--model-lock", str(lock_path)]
-    if not native:
+    if not native and not host_tools:
         image_path = project_environment.resolve(selection_args, PACKAGE, environment)
         json.loads(image_path.read_text())
         client_args += ["--image-lock", str(image_path)]
@@ -262,12 +280,28 @@ def session(preset, profile, args):
     explicit = headless or bool(options & {"--session", "--recover-compaction", "--recover-interrupted", "--prompt"})
     if force_picker and explicit:
         raise RuntimeError("--sessions cannot be combined with --session, recovery options or --prompt")
-    if force_picker or (sys.stdin.isatty() and not explicit):
+    pick = force_picker
+    if sys.stdin.isatty() and not explicit and not force_picker:
+        try:
+            listed = subprocess.run([*client_args, "--list-sessions", *args],
+                                    stdout=subprocess.PIPE, text=True, check=True)
+        except KeyboardInterrupt:
+            return 130
+        except subprocess.CalledProcessError as error:
+            # The client already printed the workspace/selection diagnostic.
+            return error.returncode if error.returncode > 0 else 128 - error.returncode
+        entries = json.loads(listed.stdout)
+        pick = any(entry["state"] == "ready" for entry in entries)
+        if not pick and entries:
+            log("No resumable conversations; starting a new one. Use --sessions to inspect or recover saved sessions.")
+    if pick:
         try:
             picked = subprocess.run([*client_args, "--select-session", *args],
                                     stdout=subprocess.PIPE, text=True, check=True)
         except KeyboardInterrupt:
             return 130
+        except subprocess.CalledProcessError as error:
+            return error.returncode if error.returncode > 0 else 128 - error.returncode
         choice = json.loads(picked.stdout)
         if choice["cancelled"]:
             return 0
@@ -282,6 +316,10 @@ def session(preset, profile, args):
     verifier = (PACKAGE / "verify-strata-host.py").read_bytes()
     evidence = private_run_directory()
     log(f"session evidence: {evidence}")
+    restart_file = evidence / "restart.json"
+    interactive = not headless and "--prompt" not in options
+    if interactive:
+        client_environment["PLAYTIME_CHAT_RESTART_FILE"] = str(restart_file)
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
@@ -456,7 +494,7 @@ def session(preset, profile, args):
                 result = 1
             owner_code = owner.returncode
             if owner_code != 0:
-                result = result or 1
+                result = 1
             try:
                 drain()
             except Exception:
@@ -466,7 +504,30 @@ def session(preset, profile, args):
             "owner_exit": owner_code, "exit": result}) + "\n")
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+    if result == 75 and interactive and owner_code == 0 and not failed.is_set() and not signals:
+        request = project_environment.read_private(restart_file)
+        if not isinstance(request, dict) or set(request) != {"session"} or not isinstance(request["session"], str):
+            raise RuntimeError("invalid chat restart request")
+        destination = Path(request["session"])
+        if not destination.is_absolute() or not (destination / "config.json").is_file():
+            raise RuntimeError("restart requires a saved conversation")
+        log("inference owner stopped; reacquiring it for the recovered conversation")
+        return destination
     return result
+
+
+def resume_arguments(args, destination):
+    """Keep launch settings, replacing only the old conversation selection."""
+    result = []
+    args = iter(args)
+    for arg in args:
+        option = arg.split("=", 1)[0]
+        if option in ("--session", "--recover-interrupted", "--recover-compaction"):
+            if "=" not in arg:
+                next(args)
+        elif option not in ("--sessions", "--acknowledge-uncertain-tools"):
+            result.append(arg)
+    return [*result, "--session", str(destination)]
 
 
 def main(args):
@@ -482,7 +543,13 @@ def main(args):
     if report and extra:
         raise RuntimeError("status accepts only a profile")
     preset = config["profiles"][profile]
-    return status(preset, profile) if report else session(preset, profile, extra)
+    if report:
+        return status(preset, profile)
+    while True:
+        outcome = session(preset, profile, extra)
+        if not isinstance(outcome, Path):
+            return outcome
+        extra = resume_arguments(extra, outcome)
 
 
 if __name__ == "__main__":

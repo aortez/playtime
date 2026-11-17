@@ -39,12 +39,16 @@ Native compaction changes also run `./scripts/test-rust-continuous.sh --backend 
 and then `--backend live` sequentially; see `docs/rust-continuous-native.md`.
 `playtime-harness` wraps that controller for standalone chat turns and private
 saved conversations. Run `cargo test -p playtime-harness --locked` for its changes.
-Keep session state outside tool write roots, commit observations before dispatch,
+For isolated profiles keep session state outside tool write roots; explicit host
+coding keeps records separate but cannot isolate them from same-user tools.
+Commit observations before dispatch,
 and never replay an unfinished turn. The explicit compaction-recovery fork may
 carry only the last completed history after a fully observed, length-limited first
 summary and confirmed cleanup; it must preserve the fenced source and reject
 work/tool calls or uncertain/missing evidence. General stopped-turn recovery is a
-separate explicit fork: require complete terminal/cleanup records, retain the source,
+separate fork: live user cancellation may automatically create it only after complete
+terminal/cleanup records and observed tool outcomes; otherwise require explicit
+inspection and acknowledgement. Retain the source,
 carry a bounded evidence notice, and acknowledge unknown tool outcomes. Never replay
 pending effects or treat project cleanup as remote inference termination.
 See `docs/rust-conversation.md`; its CPU
@@ -55,13 +59,23 @@ its changes. Keep model deadlines and cancellation independent of record fsync,
 never dispatch after a failed observation commit, and run owned cleanup on every
 exit path. Its Strata endpoint must be held and verified by the external host
 owner. See `docs/rust-chat-console.md`; saved completed sessions resume, interrupted
-turns remain fenced, and launcher-managed server startup stays outside the client.
+sources remain fenced. Safe live cancellation forks completed history without replay;
+uncertain remote inference requires confirmed owner shutdown and reacquisition before
+continuing. Launcher-managed server startup stays outside the client.
 The owner wrapper and installer live under `scripts/chat/` and
 `scripts/install-chat-launcher.sh`; see `docs/rust-chat-launcher.md`. For changes,
 run `python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v`, then an
 explicitly owned live smoke for host handoff changes. Status must remain read-only,
 busy hosts must be refused, and actual host artifacts must match the reviewed
 model lock before starting the client. Keep the host owned through tool cleanup.
+Interactive `--preset coding-host` is an explicit trusted same-user profile,
+separate from Docker experiments and dedicated-account workers. It has ordinary
+host filesystem/network/device access and uses systemd user scopes for owned
+process cleanup, not access isolation. See `docs/rust-host-coding.md`. Run
+`PLAYTIME_TEST_HOST_TOOLS=1 python3 -m unittest discover -s scripts/chat -p test_host_tools.py -v`
+and `cargo test -p playtime-chat --test host --locked -- --include-ignored` for
+host adapter changes. Preserve persistent process handles across turns and
+compaction within a live CLI; never replay them on saved-conversation resume.
 Project-owned development images use explicit preparation; see
 `docs/rust-project-environments.md`. Normal launches must never build images or
 execute repository lifecycle hooks. Preserve saved environment locks and the
@@ -185,6 +199,8 @@ Preserve these properties:
 - Experiment/Docker model commands execute only inside the workshop as uid 1000.
   Opt-in native worker commands use the fixed dedicated-account sandbox policy;
   model arguments never select identities, privileged helpers or mounts.
+- Explicit interactive host coding runs as the invoking user without a sandbox.
+  Keep that trust model and tool contract distinct from isolated worker profiles.
 - Logs, input archives, controller code, and Docker access stay outside it.
 - `memento_turns_v1` starts a new conversation each session; only workspace files
   persist. Other internal policies must use explicit request purposes/scopes and

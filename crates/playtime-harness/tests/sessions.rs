@@ -43,12 +43,14 @@ fn config() -> ConversationConfig {
     ConversationConfig {
         schema_version: 1,
         mode: RunMode::Simulation,
-        tool_policy: ToolPolicy::Simulation,
+        execution: playtime_engine::execution::ExecutionConfig::workshop(
+            parameters,
+            ToolPolicy::Simulation,
+        ),
         model: Sha256Digest::new("1".repeat(64)).unwrap(),
         workspace: Sha256Digest::new("2".repeat(64)).unwrap(),
         instructions: "Answer when finished.".into(),
         inventory: "Owned workshop.".into(),
-        parameters,
         compaction: CompactionSettings {
             allow_finish_run: false,
             summary_tokens: 256.try_into().unwrap(),
@@ -463,8 +465,8 @@ fn resume_refuses_changed_configuration_and_unsafe_private_files() {
 fn a_large_checkpoint_is_immutable_and_does_not_hit_the_small_head_replace_limit() {
     let root = Root::new();
     let mut config = config();
-    config.parameters.limits.context_tokens = 2_000_000.try_into().unwrap();
-    config.parameters.limits.log_bytes = 16_000_000.try_into().unwrap();
+    config.execution.limits.context_tokens = 2_000_000.try_into().unwrap();
+    config.execution.limits.log_bytes = 16_000_000.try_into().unwrap();
     let mut turn = Session::create(&root.0, config.clone())
         .unwrap()
         .begin("Investigate.".into(), SequentialIds, 0)
@@ -782,7 +784,7 @@ fn repeated_interruption_keeps_new_input_separate_from_earlier_recovery() {
 fn long_interrupted_input_has_a_bounded_preview_and_explicit_omission_count() {
     let source = Root::new();
     let mut config = config();
-    config.parameters.limits.context_tokens = 65536.try_into().unwrap();
+    config.execution.limits.context_tokens = 65536.try_into().unwrap();
     let input = "é".repeat(3000);
     let mut turn = Session::create(&source.0, config.clone())
         .unwrap()

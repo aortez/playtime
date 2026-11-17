@@ -315,29 +315,31 @@ pub fn config(
         instructions: INSTRUCTIONS.into(),
         inventory: crate::environment::inventory(image, directory.root().path())?,
         mode: RunMode::LiveSmoke,
-        tool_policy: ToolPolicy::ConfirmedExternal {
-            return_overhead_ms: 1000,
-        },
-        parameters: CommonParameters {
-            sampling_seed: limits.seed,
-            limits: CommonLimits {
-                wall_seconds: wall_seconds.try_into()?,
-                generated_tokens: 32768.try_into()?,
-                tokens_per_call: 8192.try_into()?,
-                context_tokens: lock.identity.context_tokens.try_into()?,
-                model_seconds: 300.try_into()?,
-                command_seconds: 90.try_into()?,
-                output_bytes: 16384.try_into()?,
-                log_bytes: (16 * 1024 * 1024).try_into()?,
+        execution: playtime_engine::execution::ExecutionConfig::workshop(
+            CommonParameters {
+                sampling_seed: limits.seed,
+                limits: CommonLimits {
+                    wall_seconds: wall_seconds.try_into()?,
+                    generated_tokens: 32768.try_into()?,
+                    tokens_per_call: 8192.try_into()?,
+                    context_tokens: lock.identity.context_tokens.try_into()?,
+                    model_seconds: 300.try_into()?,
+                    command_seconds: 90.try_into()?,
+                    output_bytes: 16384.try_into()?,
+                    log_bytes: (16 * 1024 * 1024).try_into()?,
+                },
+                workshop: WorkshopLimits {
+                    cpu_cores: 2.0,
+                    memory_bytes: limits.memory_bytes.try_into()?,
+                    workspace_bytes: (1024 * 1024).try_into()?,
+                    tmp_bytes: limits.tmp_bytes.try_into()?,
+                    pids: limits.pids.try_into()?,
+                },
             },
-            workshop: WorkshopLimits {
-                cpu_cores: 2.0,
-                memory_bytes: limits.memory_bytes.try_into()?,
-                workspace_bytes: (1024 * 1024).try_into()?,
-                tmp_bytes: limits.tmp_bytes.try_into()?,
-                pids: limits.pids.try_into()?,
+            ToolPolicy::ConfirmedExternal {
+                return_overhead_ms: 1000,
             },
-        },
+        ),
         compaction: CompactionSettings {
             allow_finish_run: false,
             summary_tokens: 4096.try_into()?,
@@ -395,29 +397,31 @@ pub fn native_config(
             policy.limits.processes
         ),
         mode: RunMode::LiveSmoke,
-        tool_policy: ToolPolicy::ConfirmedExternal {
-            return_overhead_ms: 1000,
-        },
-        parameters: CommonParameters {
-            sampling_seed: 1042,
-            limits: CommonLimits {
-                wall_seconds: wall_seconds.try_into()?,
-                generated_tokens: 32768.try_into()?,
-                tokens_per_call: 8192.try_into()?,
-                context_tokens: lock.identity.context_tokens.try_into()?,
-                model_seconds: 300.try_into()?,
-                command_seconds: u64::from(policy.limits.command_seconds).try_into()?,
-                output_bytes: u64::from(policy.limits.output_bytes).try_into()?,
-                log_bytes: (16 * 1024 * 1024).try_into()?,
+        execution: playtime_engine::execution::ExecutionConfig::workshop(
+            CommonParameters {
+                sampling_seed: 1042,
+                limits: CommonLimits {
+                    wall_seconds: wall_seconds.try_into()?,
+                    generated_tokens: 32768.try_into()?,
+                    tokens_per_call: 8192.try_into()?,
+                    context_tokens: lock.identity.context_tokens.try_into()?,
+                    model_seconds: 300.try_into()?,
+                    command_seconds: u64::from(policy.limits.command_seconds).try_into()?,
+                    output_bytes: u64::from(policy.limits.output_bytes).try_into()?,
+                    log_bytes: (16 * 1024 * 1024).try_into()?,
+                },
+                workshop: WorkshopLimits {
+                    cpu_cores: std::thread::available_parallelism()?.get() as f64,
+                    memory_bytes: policy.limits.memory_bytes.try_into()?,
+                    workspace_bytes: (1024 * 1024).try_into()?,
+                    tmp_bytes: (512 * 1024 * 1024).try_into()?,
+                    pids: policy.limits.processes.try_into()?,
+                },
             },
-            workshop: WorkshopLimits {
-                cpu_cores: std::thread::available_parallelism()?.get() as f64,
-                memory_bytes: policy.limits.memory_bytes.try_into()?,
-                workspace_bytes: (1024 * 1024).try_into()?,
-                tmp_bytes: (512 * 1024 * 1024).try_into()?,
-                pids: policy.limits.processes.try_into()?,
+            ToolPolicy::ConfirmedExternal {
+                return_overhead_ms: 1000,
             },
-        },
+        ),
         compaction: CompactionSettings {
             allow_finish_run: false,
             summary_tokens: 4096.try_into()?,

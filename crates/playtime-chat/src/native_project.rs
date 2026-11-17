@@ -686,11 +686,11 @@ mod tests {
                 .contains("Project paths are inside /work")
         );
         config.mode = playtime_core::RunMode::Simulation;
-        config.tool_policy = ToolPolicy::Simulation;
+        config.execution.tool_policy = ToolPolicy::Simulation;
         workspace.policy.mode = "read_only".into();
         let mut altered = worker::native_config(&lock, &workspace, 60).unwrap();
         altered.mode = playtime_core::RunMode::Simulation;
-        altered.tool_policy = ToolPolicy::Simulation;
+        altered.execution.tool_policy = ToolPolicy::Simulation;
         assert_ne!(
             config.fingerprint().unwrap(),
             altered.fingerprint().unwrap()
@@ -955,7 +955,7 @@ mod tests {
             workspace.policy.mode = "read_only".into();
             let mut config = readonly::config(&lock, &workspace, 60, role, &contract).unwrap();
             config.mode = playtime_core::RunMode::Simulation;
-            config.tool_policy = ToolPolicy::Simulation;
+            config.execution.tool_policy = ToolPolicy::Simulation;
             let session_path = root.0.join(format!("readonly-session-{index}"));
             let session = Session::create(&session_path, config.clone()).unwrap();
             let records =

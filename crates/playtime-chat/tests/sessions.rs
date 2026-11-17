@@ -43,12 +43,14 @@ fn config() -> ConversationConfig {
     ConversationConfig {
         schema_version: 1,
         mode: RunMode::Simulation,
-        tool_policy: ToolPolicy::Simulation,
+        execution: playtime_engine::execution::ExecutionConfig::workshop(
+            parameters,
+            ToolPolicy::Simulation,
+        ),
         model: Sha256Digest::new("1".repeat(64)).unwrap(),
         workspace: Sha256Digest::new("2".repeat(64)).unwrap(),
         instructions: "Answer when finished.".into(),
         inventory: "Owned workshop.".into(),
-        parameters,
         compaction: CompactionSettings {
             allow_finish_run: false,
             summary_tokens: 256.try_into().unwrap(),

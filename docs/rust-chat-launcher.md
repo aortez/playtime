@@ -12,6 +12,32 @@ with the host's reviewed Gyro-M DFlash2 preset:
 All use medium work thinking and no summary thinking. Codex does not participate
 in the agent loop. Project tools run on the workstation that launches the console.
 
+For ordinary host development, select the [host coding preset](rust-host-coding.md):
+`codex-launcher playtime-bird-nvfp4 --preset coding-host`. It uses the same chat
+and compaction harness with Codex-derived instructions, your real workspace path,
+and your user account's tools/filesystem/network/device access. The existing
+entries continue to select the Docker workshop unless this preset is explicit.
+
+Interactive chat defaults to `--agent-prompt codex`: the pinned
+[Codex CLI 0.166.0 base instructions](../prompts/codex-cli-0.166.0-base.txt),
+followed by an [interactive Playtime adapter](../prompts/codex-playtime-chat-adapter-v1.txt).
+The adapter defines the real tools, workspace, terminal controls, and completion
+behavior. Playtime's existing harness still owns compaction and execution. The
+startup banner names the prompt; the prompt does not change the selected model
+or grant additional filesystem/network access.
+
+The complete instructions are frozen into each saved conversation. Start a new
+conversation to use the Codex prompt. To select or resume sessions made with the
+original short prompt, pass `--agent-prompt minimal`, for example:
+
+```sh
+codex-launcher playtime-bird-nvfp4 --sessions --agent-prompt minimal
+```
+
+Use that same selection for explicit `--session` and recovery commands. Prompt
+changes are never applied silently to saved history. Headless worker and
+read-only role prompts remain separate from this interactive selection.
+
 Install from this checkout on the workstation where the project lives:
 
 ```sh
@@ -74,11 +100,17 @@ Basalt process with Codex and Devbot: at most two clients of the same model,
 160K context per client. A third client or a different quant is refused while
 leases are held. The last clean release leaves the model warm for 30 minutes.
 An interrupted client closes admission until its peer finishes, then stops the
-owned server. Switching quant with no clients reloads the model. The 3090 stays
+owned server. A new launch waits up to two minutes for this drain, reports why it
+is waiting, and can be cancelled with Ctrl-C. If the peer is still active at the
+deadline, the launch asks you to let it finish or close it before retrying.
+Switching quant with no clients reloads the model. The 3090 stays
 idle. The first verified launch hashes the whole pack; later launches can reuse
 its verified hash while file identity is unchanged.
 
-Interactive launches show a local session picker **before starting the model**.
+Interactive launches show a local session picker **before starting the model**
+when a resumable conversation exists. Otherwise they start a new conversation
+without prompting. Saved interrupted or unavailable sessions remain untouched;
+use `--sessions` to inspect them or request recovery explicitly.
 Choose `0` (or Enter) for a new conversation, a numbered resumable session, or
 `q` to cancel. The list shows the last user message and age for recent sessions
 with the selected workspace and model identity. Empty sessions with no completed
@@ -110,9 +142,13 @@ the supported definition, offline image contract and saved-session behavior.
 The current directory becomes `/work` in the tool container. Explicitly select
 another project with `--workspace /absolute/path`. The console prints its private
 session directory; pass `--session /that/directory` and the same project/settings
-to reopen a completed conversation. `/paste` starts multiline input, `/end`
-submits it and `/quit` exits. Ctrl-C or `/stop` cancels a turn and waits for cleanup;
-interrupted sessions remain fenced. A truncated first compaction with confirmed
+to reopen a completed conversation. Bracketed paste inserts one editable multiline
+message; Enter submits it. `/paste` then `/end` is also supported; `/quit` exits.
+Escape, Ctrl-C or `/stop` cancels a turn and waits for cleanup. Safe live stops
+return to input through a recovery fork; the interrupted source stays fenced and
+no input or commands are replayed. Unknown tool outcomes require explicit recovery.
+A model cancellation may restart the client after confirmed inference-owner shutdown
+and reacquisition; persistent host processes end at that restart. A truncated first compaction with confirmed
 cleanup can be explicitly recovered into a new session:
 
 ```sh

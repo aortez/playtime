@@ -236,7 +236,7 @@ impl<I: IdSource> Controller<I> {
             config.mode,
             ids,
             now_ms,
-            config.tool_policy,
+            config.execution.tool_policy,
         )
     }
 
@@ -355,7 +355,7 @@ impl<I: IdSource> Controller<I> {
         if let Some(config) = &controller.config.compaction {
             controller.emit("compaction_configured", json!({
                 "harness":if controller.config.conversation.is_some() { crate::chat::HARNESS } else { crate::compaction::HARNESS },
-                "settings":config.settings,
+                "settings":config.recorded_settings(),
                 "safety_margin":crate::compaction::CompactionSettings::safety_margin(config.parameters.limits.context_tokens.get()),
                 "work_context_reserve":config.work_reserve()
             }));
@@ -1112,7 +1112,8 @@ impl<I: IdSource> Controller<I> {
                 &response.message,
                 finish_reason,
                 self.config.parameters.limits.output_bytes.get(),
-                config.settings.allow_finish_run,
+                &config.settings,
+                &config.tools(),
             )
         });
         let oversized_batch = matches!(batch, Some(Ok(crate::compaction::Batch::TooLarge { .. })));

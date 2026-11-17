@@ -325,7 +325,7 @@ fn audit(
         .filter(|n| n.starts_with(&prefix) && n.ends_with(".jsonl"))
         .collect();
     names.sort();
-    let mut remaining = config.parameters.limits.log_bytes.get();
+    let mut remaining = config.execution.limits.log_bytes.get();
     let (mut started, mut configured, mut stopped, mut finished) = (false, false, false, false);
     let (mut elapsed, mut calls) = (0, 0);
     let mut settled = false;
@@ -357,13 +357,13 @@ fn audit(
                     let ok = !started
                         && d["run_id"] == result.run_id.as_str()
                         && d["mode"] == serde_json::to_value(config.mode)?
-                        && d["parameters"] == serde_json::to_value(&config.parameters)?;
+                        && d["parameters"]
+                            == serde_json::to_value(config.execution.controller_parameters())?;
                     started = true;
                     ok
                 }
                 "compaction_configured" => {
-                    let ok =
-                        !configured && d["settings"] == serde_json::to_value(&config.compaction)?;
+                    let ok = !configured && d["settings"] == config.recorded_compaction();
                     configured = true;
                     ok
                 }
@@ -386,9 +386,12 @@ fn audit(
                 }
                 "model_error" | "model_usage_overflow" | "model_chunk_rejected" => calls > 0,
                 "tool_request" => {
-                    let name = d["name"]
-                        .as_str()
-                        .filter(|s| matches!(*s, "exec" | "read_file" | "write_file"));
+                    let name = d["name"].as_str().filter(|s| {
+                        config
+                            .tools()
+                            .iter()
+                            .any(|tool| tool["function"]["name"] == *s)
+                    });
                     if let Some(name) = name {
                         tools.insert(
                             sequence,

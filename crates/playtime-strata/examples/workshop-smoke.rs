@@ -101,7 +101,7 @@ fn config(lock: &ModelLock, image: &Value, nonce: &str) -> Result<ConversationCo
     Ok(ConversationConfig{schema_version:1,model:lock.fingerprint()?,workspace,
         instructions:"You are testing a tool transport in a disposable workshop. Follow the user request, use the tools when needed, and give a concise plain final answer.".into(),
         inventory:"An isolated uid-1000 workshop with a prepared /work/probe.txt file.".into(),
-        mode:RunMode::LiveSmoke,tool_policy:ToolPolicy::ConfirmedExternal{return_overhead_ms:1000},parameters,
+        mode:RunMode::LiveSmoke,execution:playtime_engine::execution::ExecutionConfig::workshop(parameters,ToolPolicy::ConfirmedExternal{return_overhead_ms:1000}),
         compaction:CompactionSettings{allow_finish_run:false,summary_tokens:256.try_into()?,..Default::default()}})
 }
 fn tool(request: &playtime_engine::ToolRequest) -> Result<docker::Tool> {
