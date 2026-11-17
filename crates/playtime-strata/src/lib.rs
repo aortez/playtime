@@ -6,7 +6,7 @@ mod request;
 mod stream;
 
 pub use client::{Client, Endpoint, Inspection, inspect_endpoint};
-pub use identity::{HostIdentity, Identity, ModelLock};
+pub use identity::{HostIdentity, Identity, ModelLock, Service};
 pub use request::{Settings, Thinking, encode_request};
 pub use stream::{Decoder, StreamEvent};
 pub use tokio_util::sync::CancellationToken;

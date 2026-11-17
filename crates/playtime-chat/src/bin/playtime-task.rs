@@ -121,6 +121,16 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         };
         description["native_policy_schema"] = 1.into();
         description["native_helper_sha256"] = native_project::helper_sha256().into();
+        if let Some(path) = &args.model_lock {
+            let lock: ModelLock = serde_json::from_slice(&std::fs::read(path)?)?;
+            lock.validate()?;
+            if lock.identity.service == playtime_strata::Service::Basalt {
+                description["transport"] = "basalt-responses-v1".into();
+                if !read_only {
+                    description["readonly_invocation"]["transport"] = "basalt-responses-v1".into();
+                }
+            }
+        }
         println!("{description}");
         return Ok(());
     }

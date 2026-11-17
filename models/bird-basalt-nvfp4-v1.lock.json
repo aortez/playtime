@@ -1,0 +1,46 @@
+{
+  "schema_version": 2,
+  "identity": {
+    "service": "basalt",
+    "parallel": 2,
+    "model": "bird-qwen38-flashnext-nvfp4-dq8-basalt",
+    "engine": "0.4.1",
+    "context_tokens": 163840,
+    "model_path": "/home/oldman/Basalt-data/models/Qwen3.8-FN-NVFP4-DQ8.basalt",
+    "template_sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041",
+    "defaults": {
+      "n_predict": -1,
+      "temperature": 0.0,
+      "top_k": 20,
+      "top_p": 0.95
+    },
+    "template_capabilities": {
+      "supports_parallel_tool_calls": true,
+      "supports_preserve_reasoning": true,
+      "supports_reasoning_effort": true,
+      "supports_system_role": true,
+      "supports_tool_calls": true
+    },
+    "shared_settings": null
+  },
+  "host": {
+    "backend": "cuda",
+    "quantization": "NVFP4-DQ8",
+    "engine_sha256": "5a15f95f8bf41fbd61c8e7299910d08049243eb32b26699b0b7a6f7976ad92e8",
+    "artifacts_manifest_sha256": "00d3d28065a5c09a5108abbe4ed8a570d4cc0e3b4fe8303793ae839d92435477",
+    "launch_configuration_sha256": "6422a2ac224aed8a7b0bed3d1d59591a9a1cdaf23323682ffd43b552c9a09332",
+    "responses_source_sha256": "c1ba29dd88ac98f052b34e75de46106737a559871c75eb565fb852930e7bcf23"
+  },
+  "settings": {
+    "thinking": "medium",
+    "summary_thinking": "none",
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "penalty_last_n": 64
+  }
+}

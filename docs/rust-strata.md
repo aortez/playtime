@@ -1,4 +1,4 @@
-# Strata transport
+# Strata and Basalt Responses transport
 
 `playtime-strata` implements the model-transport part of
 [#207](https://github.com/aortez/playtime/issues/207). It accepts the shared
@@ -7,7 +7,7 @@ policy, private conversation storage, server ownership, tools and presentation
 remain outside the adapter. The live developer example connects it to
 `playtime-harness::Session` and the existing isolated Docker workshop.
 
-The initial profile is a single-slot, already loaded Strata server reached through
+Supported profiles are a single-slot Strata server or a one/two-slot Basalt server reached through
 loopback HTTP, normally an independently owned SSH forward. Requests use the
 stateless `/v1/responses` dialect with complete history, `store:false`, streaming
 and a strictly positive output limit. No Responses state is stored remotely;
@@ -17,12 +17,15 @@ used. Other serving dialects remain future adapters.
 
 ## Identity and settings
 
-`inspect_endpoint` reads `/props`, `/settings` and `/v1/status` under a bounded
-deadline. `ModelLock` freezes model/path, engine version, actual template hash and
+`inspect_endpoint` reads `/props` and `/v1/status` under a bounded deadline.
+Strata also supplies `/settings`; Basalt 0.4.1 has no such route and its lock
+records `shared_settings: null`. `ModelLock` freezes model/path, engine version, actual template hash and
 capabilities, context, generation defaults and shared settings. Before every POST,
-`Client` rechecks these and refuses a busy endpoint or a changed process start
-identity. Activity checks do not acquire ownership and do not prevent a second
-client racing the POST; the caller must hold the host's exclusive session lease.
+`Client` rechecks these and the process start identity. Strata refuses any
+in-flight request. Basalt permits an occupied peer slot and refuses a full
+endpoint. Activity checks do not reserve capacity: the caller must retain the
+external owner lease, with at most two clients sharing one Basalt model. The
+owner retains the exclusive host lock against other serving runtimes.
 
 The caller also supplies `HostIdentity`: backend, quantization, executable hash,
 artifact-manifest hash, launch-configuration hash and Responses-source hash. This
@@ -40,6 +43,18 @@ The reviewed source profile is Strata engine 0.1.57 / 0.1.58 with
 Both installed copies had these bytes. Framework HIP and Bird CUDA have now
 passed the live tool/follow-up and cancellation smoke with DFlash2 enabled.
 A newer source/version needs review and new evidence.
+
+Basalt schema-2 locks additionally bind `service: basalt` and slot count. The
+reviewed runtime is CUDA Basalt 0.4.1, engine SHA-256
+`5a15f95f8bf41fbd61c8e7299910d08049243eb32b26699b0b7a6f7976ad92e8`,
+Responses source SHA-256
+`c1ba29dd88ac98f052b34e75de46106737a559871c75eb565fb852930e7bcf23`.
+The host verifier checks the API process, its CUDA child, selected GPU, complete
+model pack, serving Python/templates and launch configuration before lending it.
+`bird-basalt-iq4-v1.lock.json` and `bird-basalt-nvfp4-v1.lock.json` freeze the
+PRO 5000 profiles with two 163,840-token slots and MTP8. Both passed the owned
+live Docker tool/follow-up and local cancellation smoke. Basalt requests explicitly
+disable relaxed drafting. Existing schema-1 Strata fingerprints remain unchanged.
 
 Sampler settings are explicit on every request: temperature, top-p/top-k/min-p,
 repetition/presence/frequency penalties, penalty window and the controller's seed.
@@ -187,3 +202,8 @@ its server, restored the original 450/420 W limits and restarted idle Ollama.
 These short, sampled responses use different generated text and random file
 contents. Their timing is integration evidence, not a controlled speedup ratio,
 a populated-context test or an accuracy comparison.
+
+Basalt 0.4.1 reports `activity.in_flight` as a busy flag plus queued requests.
+Admission therefore also reads `/slots`, validates IDs/context/count and boolean
+processing states, and counts active slots. Missing or malformed slot metadata
+rejects dispatch; a two-busy-slot regression keeps the status busy flag at one.

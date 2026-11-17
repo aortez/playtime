@@ -3,7 +3,10 @@
   "profiles": {
     "bird-gyro-m-fast": {
       "host": "oldman@oldman-bird.local",
-      "ssh_options": ["-i", "~/.ssh/id_ed25519_oldman_bird_codex"],
+      "ssh_options": [
+        "-i",
+        "~/.ssh/id_ed25519_oldman_bird_codex"
+      ],
       "helper": ".local/lib/codex-gyro/warm-session.py",
       "state_parent": ".local/state/codex-gyro",
       "model_lock": "bird-strata-gyro-m-fast-v1.lock.json",
@@ -18,6 +21,32 @@
       "model_lock": "framework-strata-gyro-m-fast-v1.lock.json",
       "startup_timeout": 930,
       "cleanup_timeout": 160
+    },
+    "bird-basalt-iq4": {
+      "host": "oldman@oldman-bird.local",
+      "ssh_options": [
+        "-i",
+        "~/.ssh/id_ed25519_oldman_bird_codex"
+      ],
+      "helper": ".local/lib/codex-basalt/basalt-session.py",
+      "state_parent": ".local/state/codex-basalt",
+      "port": 8082,
+      "model_lock": "bird-basalt-iq4-v1.lock.json",
+      "startup_timeout": 330,
+      "cleanup_timeout": 65
+    },
+    "bird-basalt-nvfp4": {
+      "host": "oldman@oldman-bird.local",
+      "ssh_options": [
+        "-i",
+        "~/.ssh/id_ed25519_oldman_bird_codex"
+      ],
+      "helper": ".local/lib/codex-basalt/basalt-session.py",
+      "state_parent": ".local/state/codex-basalt",
+      "port": 8082,
+      "model_lock": "bird-basalt-nvfp4-v1.lock.json",
+      "startup_timeout": 330,
+      "cleanup_timeout": 65
     }
   }
 }

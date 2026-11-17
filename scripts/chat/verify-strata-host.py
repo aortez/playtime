@@ -122,7 +122,72 @@ class ArtifactHashes:
                 temporary.unlink(missing_ok=True)
 
 
+def verify_basalt(root, expected_host, full=False):
+    """Attest the API process, its CUDA child, complete pack and serving code."""
+    session = json.loads((root / "session.json").read_text())
+    config_path = Path(session["config_path"])
+    config = json.loads(config_path.read_text())
+    model = config["models"][0]
+    release = Path.home() / ".local/share/basalt/0.4.1/basalt-v0.4.1-linux-x64"
+    proc = Path("/proc") / str(session["launcher_pid"])
+    def argv(path):
+        return [s.decode() for s in (path / "cmdline").read_bytes().split(b"\0") if s]
+    expected_argv = [str(release / ".venv/bin/python"), "-m", "serve.server", "--engine-bin", str(release / "bin/basalt"), "--config", str(config_path)]
+    actual = argv(proc)
+    if actual != expected_argv or proc.joinpath("cwd").resolve() != release:
+        raise RuntimeError("owned Basalt API process differs from its recorded configuration")
+    started = proc.joinpath("stat").read_text().rsplit(")", 1)[1].split()[19]
+    children = []
+    for item in Path("/proc").glob("[0-9]*"):
+        try:
+            command = argv(item)
+            if command[:2] == [str(release / "bin/basalt"), "--serve"]:
+                parent = int(item.joinpath("stat").read_text().rsplit(")", 1)[1].split()[1])
+                if parent == session["launcher_pid"]:
+                    children.append((item, command))
+        except (OSError, ValueError, UnicodeError):
+            continue
+    if len(children) != 1:
+        raise RuntimeError("expected one CUDA child of the owned Basalt API process")
+    engine, command = children[0]
+    if command[command.index("--model") + 1] != model["model"]:
+        raise RuntimeError("Basalt CUDA child selected a different model")
+    environment = dict(v.split("=", 1) for v in proc.joinpath("environ").read_bytes().decode().split("\0")
+                       if "=" in v and v.startswith(("CUDA_", "LD_LIBRARY_PATH=")))
+    if environment.get("CUDA_VISIBLE_DEVICES") != session["gpu_uuid"]:
+        raise RuntimeError("Basalt selected a different GPU")
+    hashes = ArtifactHashes(Path.home() / ".cache/playtime-chat", expected_host or {}, full or expected_host is None)
+    sources = [Path(model["model"]), release / "requirements.txt"]
+    sources += sorted(p for directory in (release / "serve", release / "tools") for p in directory.rglob("*")
+                      if p.is_file() and p.suffix in (".py", ".jinja"))
+    artifacts = [hashes.hash_file(p, reusable=p.suffix == ".basalt") for p in sorted(sources)]
+    launch = {"config": config, "argv": actual, "engine_argv": command, "environment": environment}
+    quant = json.loads((config_path.parent.parent / "profiles.json").read_text())["profiles"][session["profile"]]["quantization"]
+    host = {"backend": "cuda", "quantization": quant,
+            "engine_sha256": hashes.hash_file(engine / "exe")["sha256"],
+            "responses_source_sha256": hashes.hash_file(release / "serve/api/responses.py")["sha256"],
+            "artifacts_manifest_sha256": digest_json(artifacts),
+            "launch_configuration_sha256": digest_json(launch)}
+    if (argv(proc) != actual or argv(engine) != command
+            or proc.joinpath("stat").read_text().rsplit(")", 1)[1].split()[19] != started
+            or json.loads(config_path.read_text()) != config):
+        raise RuntimeError("Basalt process/configuration changed during verification")
+    if expected_host is not None:
+        hashes.finish(host)
+    else:
+        for path, before in hashes.observed.items():
+            if identity(path.stat()) != before:
+                raise RuntimeError("artifact changed during discovery")
+    return {"host": host, "artifacts": artifacts, "launch": launch,
+            "process": {"pid": session["launcher_pid"], "engine_pid": int(engine.name), "start_ticks": started},
+            "verification": hashes.stats}
+
+
 def verify(root, expected_host, full=False):
+    if (root / "session.json").exists():
+        return verify_basalt(root, expected_host, full)
+    if expected_host is None:
+        raise RuntimeError("discovery mode is only supported for Basalt")
     hashes = ArtifactHashes(Path.home() / ".cache/playtime-chat", expected_host, full)
     config = json.loads((root / "engine-config.json").read_text())
     native = config["args"][config["args"].index("--native") + 1]
@@ -180,7 +245,9 @@ if __name__ == "__main__":
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("session", type=Path)
-    parser.add_argument("--expected-host", type=json.loads, required=True)
+    identity_mode = parser.add_mutually_exclusive_group(required=True)
+    identity_mode.add_argument("--expected-host", type=json.loads)
+    identity_mode.add_argument("--discover", action="store_true", help="read a new Basalt identity without publishing a hash cache")
     parser.add_argument("--full-verify", action="store_true")
     args = parser.parse_args()
     print(json.dumps(verify(args.session, args.expected_host, args.full_verify), indent=2))

@@ -465,6 +465,12 @@ else:
             launcher.check_host({'host': {'digest': 'different'}}, self.lock)
         with self.assertRaises(RuntimeError):
             launcher.check_ready({'model': 'fixture', 'context': 128000, 'drafting': 'dflash2'}, self.lock)
+        lock = {'identity': {'model': 'fixture', 'context_tokens': 163840, 'service': 'basalt', 'parallel': 2}}
+        ready = {'model': 'fixture', 'context': 163840, 'drafting': 'mtp8', 'parallel': 2}
+        launcher.check_ready(ready, lock)
+        for changed in ({'parallel': 1}, {'drafting': 'dflash2'}, {'model': 'other'}):
+            with self.assertRaises(RuntimeError):
+                launcher.check_ready(dict(ready, **changed), lock)
 
 
 if __name__ == '__main__':

@@ -197,13 +197,16 @@ pub fn encode_request(
     } else {
         settings.thinking
     };
-    let body = json!({"model":lock.identity.model, "input":input, "tools":tools,
+    let mut body = json!({"model":lock.identity.model, "input":input, "tools":tools,
         "stream":true, "store":false, "truncation":"disabled", "tool_choice":"auto",
         "max_output_tokens":request.maximum_tokens, "reasoning":{"effort":thinking},
         "temperature":settings.temperature, "top_p":settings.top_p, "top_k":settings.top_k,
         "min_p":settings.min_p, "repetition_penalty":settings.repetition_penalty,
         "presence_penalty":settings.presence_penalty, "frequency_penalty":settings.frequency_penalty,
         "penalty_last_n":settings.penalty_last_n, "seed":request.sampling_seed});
+    if lock.identity.service == crate::Service::Basalt {
+        body["relaxed_drafting"] = json!(false);
+    }
     let bytes = serde_json::to_vec(&body).map_err(|e| Failure::new(FailureKind::Request, e))?;
     if bytes.len() > limits.request_bytes {
         return Err(Failure::new(

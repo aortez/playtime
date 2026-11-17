@@ -1,0 +1,46 @@
+{
+  "schema_version": 2,
+  "identity": {
+    "service": "basalt",
+    "parallel": 2,
+    "model": "bird-qwen38-flashnext-iq4-basalt",
+    "engine": "0.4.1",
+    "context_tokens": 163840,
+    "model_path": "/home/oldman/Basalt-data/models/Qwen3.8-FN-UD-IQ4_XS.basalt",
+    "template_sha256": "12827f24b742ea4e80cdc12dbcf9622227056b9f797252a3149263d4f9aaadce",
+    "defaults": {
+      "n_predict": -1,
+      "temperature": 0.0,
+      "top_k": 20,
+      "top_p": 0.95
+    },
+    "template_capabilities": {
+      "supports_parallel_tool_calls": true,
+      "supports_preserve_reasoning": true,
+      "supports_reasoning_effort": true,
+      "supports_system_role": true,
+      "supports_tool_calls": true
+    },
+    "shared_settings": null
+  },
+  "host": {
+    "backend": "cuda",
+    "quantization": "UD-IQ4_XS",
+    "engine_sha256": "5a15f95f8bf41fbd61c8e7299910d08049243eb32b26699b0b7a6f7976ad92e8",
+    "artifacts_manifest_sha256": "e7431765b0bb8699081d569469b11dba289f1d8abce43e184e4e2f070bd71e08",
+    "launch_configuration_sha256": "3bfd87f0c2e570a9b127a3509d88bbfe75217876151d4e26efc9be2e856d97b2",
+    "responses_source_sha256": "c1ba29dd88ac98f052b34e75de46106737a559871c75eb565fb852930e7bcf23"
+  },
+  "settings": {
+    "thinking": "medium",
+    "summary_thinking": "none",
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "penalty_last_n": 64
+  }
+}

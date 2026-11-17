@@ -78,9 +78,11 @@ def stop_process(process, grace):
 
 
 def check_ready(ready, lock):
+    drafting = "mtp8" if lock["identity"].get("service") == "basalt" else "dflash2"
     if (ready.get("model") != lock["identity"]["model"]
             or ready.get("context") != lock["identity"]["context_tokens"]
-            or ready.get("drafting") != "dflash2"):
+            or ready.get("drafting") != drafting
+            or (drafting == "mtp8" and ready.get("parallel") != lock["identity"]["parallel"])):
         raise RuntimeError("helper returned a different model, context or drafting preset")
 
 
@@ -203,6 +205,9 @@ def session(preset, profile, args):
     image_path = PACKAGE / "general.lock.json"
     # Read local resources before touching the remote host.
     lock = json.loads(lock_path.read_text())
+    basalt = lock["identity"].get("service") == "basalt"
+    protocol_args = ["--model-lock", str(lock_path)] if basalt else []
+    transport = "basalt-responses-v1" if basalt else "strata-responses-v1"
     if not native:
         json.loads(image_path.read_text())
     if not executable.is_file() or not os.access(executable, os.X_OK):
@@ -213,7 +218,7 @@ def session(preset, profile, args):
                   "--sessions opens the local session picker. --stop-server releases an idle warm model. "
                   "--prepare-environment builds the project devcontainer; --environment general|LOCK selects an environment. "
                   "Interactive launches pick by default.", flush=True)
-        return subprocess.call([str(executable), *args], env=client_environment)
+        return subprocess.call([str(executable), *protocol_args, *args], env=client_environment)
     if args == ["--stop-server"]:
         if read_only:
             raise RuntimeError("read-only invocation requires role and input arguments")
@@ -227,7 +232,7 @@ def session(preset, profile, args):
         if force_picker:
             raise RuntimeError("workers cannot use the session picker")
         role_args = ["--role", worker_option(args, "--role")] if read_only else []
-        described = subprocess.run([str(executable), "--describe-protocol", *role_args], check=True,
+        described = subprocess.run([str(executable), "--describe-protocol", *protocol_args, *role_args], check=True,
                                    capture_output=True, text=True, timeout=5, env=client_environment)
         protocol = json.loads(described.stdout)
         if protocol.get("protocol") != ("playtime-readonly" if read_only else "playtime-worker") or protocol.get("version") != 1:
@@ -237,7 +242,7 @@ def session(preset, profile, args):
                           or protocol.get("output_contract") != "json-schema-subset-v1"
                           or protocol.get("report") != "structured-result-v1"
                           or protocol.get("continuation") != "none"
-                          or protocol.get("transport") != "strata-responses-v1"):
+                          or protocol.get("transport") != transport):
             raise RuntimeError("installed task lacks the read-only invocation contract")
         if native and protocol.get("tool_backends", {}).get("native") != "project-native-v1":
             raise RuntimeError("installed worker lacks project-native-v1")
@@ -280,7 +285,8 @@ def session(preset, profile, args):
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
-    command = ssh(preset) + ["-o", "ExitOnForwardFailure=yes", "-L", f"127.0.0.1:{port}:127.0.0.1:8080"]
+    remote_port = preset.get("port", 8080)
+    command = ssh(preset) + ["-o", "ExitOnForwardFailure=yes", "-L", f"127.0.0.1:{port}:127.0.0.1:{remote_port}"]
     command += remote(preset, "python3", preset["helper"], profile)
     owner = child = verification = heartbeats = None
     events = queue.Queue(maxsize=256)
@@ -329,7 +335,8 @@ def session(preset, profile, args):
             transcript.flush()
             if channel == "stderr":
                 print(line, end="", file=sys.stderr, flush=True)
-                prefixes = [f"Gyro-M: {verb} {profile}; logs: " for verb in ("starting", "reusing")]
+                owner_label = "Basalt" if basalt else "Gyro-M"
+                prefixes = [f"{owner_label}: {verb} {profile}; logs: " for verb in ("starting", "reusing")]
                 prefix = next((p for p in prefixes if line.startswith(p)), None)
                 if prefix:
                     state_dir = line[len(prefix):].strip()
