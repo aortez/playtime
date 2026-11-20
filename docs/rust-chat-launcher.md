@@ -302,3 +302,47 @@ The initial artifact check took 80.3 seconds; the cached check took 0.4 seconds,
 with 35.8 seconds total to starting the resumed chat client. This exercises the
 CUDA console, tools, resume and normal cleanup; it does not measure a populated
 128K context or coding quality.
+
+## One-shot launch contract
+
+A caller can run `~/.local/lib/playtime-chat/run-strata.py PROFILE --describe-launch` without
+acquiring a model. The JSON response identifies schema 1, `launcher_v1`, the prompt
+byte limit and a profile-specific cleanup timeout. This is capability inspection,
+not readiness or a reservation. Model and effort settings remain profile-owned.
+
+`~/.local/lib/playtime-chat/run-strata.py PROFILE --launch-request /absolute/request.json` accepts
+only that request, without additional chat flags:
+
+```json
+{"schema_version":1,"launch_id":"example","workspace":"/absolute/project","prompt_file":"/absolute/prompt.md","prompt_sha256":"<64 lowercase hex digits>","receipt_file":"/private/caller/receipt.json","timeout_seconds":600}
+```
+
+The request and prompt must be bounded regular files; keys are strict. The receipt
+parent must already exist, belong to the caller and have no group/other access.
+The wrapper retains an exclusive `receipt.json.started` claim before acquiring
+an actor. A claim or existing receipt rejects re-entry, including after a crash;
+a fresh deliberate attempt uses a new ID/path. Do not remove a claim to retry an
+uncertain task. The claim is evidence, not a recovery command.
+
+The wrapper freezes the validated prompt into its private evidence, selects a
+fresh `coding-host` one-shot conversation and uses the existing owner, model
+verification and chat path. The task timeout includes startup, verification and
+the turn. SIGINT/SIGTERM requests cancellation; the caller must then allow the
+advertised cleanup budget before deciding that ownership is unresolved. Host
+coding remains trusted same-user execution with its ordinary network access.
+
+The terminal receipt adds `inference_owner` to the client's completion fields.
+Each cleanup field is `confirmed`, `not_acquired`, or `unresolved`. Tool confirmation
+requires the client's correlated completion and a reaped client; inference
+confirmation requires normal owner release without transport failure or cleanup
+deadline escalation. A normal release may leave a shared model warm. Process exit
+alone does not substitute for either acknowledgement. Publication exposes complete
+JSON atomically and never overwrites another receipt. File and parent-directory
+sync must succeed before the wrapper acknowledges publication.
+
+Raw client output, the copied prompt, client completion and `exit.json` remain in
+the launcher's private evidence directory. Missing or invalid receipts must remain
+unknown to callers; this interface never automatically resumes/replays a request.
+
+This source implementation has CPU/fake-owner qualification. Installed-helper and
+live-model qualification must be recorded separately before claiming that path.

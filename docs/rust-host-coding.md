@@ -83,7 +83,11 @@ time, received text size and average KiB/s since the request began (including th
 initial wait). This measures received text bytes, not model tokens. Responses
 print in complete blocks at the next effect
 boundary. `--stream` restores the previous display; redirected output and JSON
-remain streamed. Buffering does not delay cancellation or change saved history.
+remain streamed. Tool results show a compact status and first output line;
+`/tool` lists recent results and `/tool N` displays captured stdout, stderr,
+file content and metadata. The CLI retains 32 results until exit or restart;
+session records retain the durable evidence. Buffering does not delay cancellation
+or change saved history.
 
 Bracketed multiline paste stays one editable message until Enter. Escape, Ctrl-C
 or `/stop` interrupts work. After confirmed cleanup and observed tool outcomes,

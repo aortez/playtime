@@ -184,7 +184,7 @@ def workspace_arguments(args):
     # Recognize chat's value-taking options, including prompts that contain what
     # looks like a flag. Stop scanning on an unknown flag; chat will reject it.
     values = {'--workspace', '--state-dir', '--session', '--recover-compaction', '--recover-interrupted',
-              '--inspect-interrupted', '--prompt', '--context-tokens', '--wall-seconds', '--tokens-per-call',
+              '--inspect-interrupted', '--prompt', '--prompt-file', '--completion-receipt', '--launch-id', '--context-tokens', '--wall-seconds', '--tokens-per-call',
               '--generated-tokens', '--summary-tokens', '--output-bytes', '--agent-prompt', '--preset'}
     switches = {'--json', '--stream', '--select-session', '--list-sessions', '--acknowledge-uncertain-tools'}
     parsed = {}

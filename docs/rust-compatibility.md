@@ -1,5 +1,13 @@
 # Rust compatibility and goldens
 
+## Inspectable chat tool results (2026-11-16)
+
+The interactive CLI now summarizes each observed tool result and retains a
+bounded recent view for `/tool N`. This is presentation state only: model-visible
+tool payloads, durable records, JSON event envelopes, conversation fingerprints,
+compaction policy and behavioral goldens are unchanged. A missing observed result
+is explicitly marked unavailable; the CLI view is not recovery authority.
+
 ## Host coding preset and tool contract
 
 Interactive `coding-host` adds `host_v1` tool definitions and a host-specific
@@ -1887,3 +1895,14 @@ of model chunks and terminal cancellation remains serviced by the existing loop.
 `--stream`, redirected output and JSON events retain immediate streaming. No
 controller decisions, event schemas, model/prompt identities, saved configuration
 fingerprints, tool behavior or experiment goldens change.
+
+### One-shot launcher input and cleanup receipt (2026-11-18)
+
+Added `--prompt-file` as an alternative to `--prompt` for a fresh one-turn console
+session, preserving exact bounded UTF-8 bytes. JSON output accepts either source.
+The opt-in coding-host completion receipt binds launch ID, prompt digest, outcome
+and local-tool cleanup. The wrapper's new `launcher_v1` request/receipt interface
+adds inference-owner cleanup and a retained dispatch claim. These additions do not
+change existing worker/read-only protocols, saved conversations or golden event
+schemas. CPU fixtures cover the added contract; installed/live qualification is
+separate.

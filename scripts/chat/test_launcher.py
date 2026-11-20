@@ -25,7 +25,8 @@ class LauncherTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.package = self.root / "package"
         self.package.mkdir()
-        for name in ("run-strata.py", "verify-strata-host.py", "project_environment.py", "presets.json"):
+        for name in ("run-strata.py", "verify-strata-host.py", "project_environment.py",
+                     "launch_protocol.py", "presets.json"):
             shutil.copyfile(SOURCE / name, self.package / name)
         self.lock = {"identity": {"model": "fixture", "context_tokens": 163840}, "host": {"digest": "reviewed"}}
         (self.package / "framework-strata-gyro-m-fast-v1.lock.json").write_text(json.dumps(self.lock))
@@ -35,7 +36,7 @@ class LauncherTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.write_program(self.bin / "ssh", r'''
-import json, os, pathlib, select, shlex, sys, time
+import json, os, pathlib, select, shlex, signal, sys, time
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
 args = shlex.split(sys.argv[-1])
 mode = os.environ.get('FIXTURE_MODE', '')
@@ -58,6 +59,8 @@ elif args[1] == '-':
                                        'hashed_bytes': 100}}))
 else:
     (root / 'started').touch()
+    with (root / 'owner-starts').open('a') as starts:
+        starts.write('start\n')
     (root / 'owner-args').write_text(json.dumps(sys.argv[1:]))
     if mode == 'busy':
         print('Another session owns Framework', file=sys.stderr)
@@ -77,6 +80,10 @@ else:
                 break
             with (root / 'owner-input').open('a') as received:
                 received.write(line)
+    if mode == 'owner-cleanup-timeout':
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        while True:
+            time.sleep(.02)
     (root / 'restored').touch()
     if mode in ('restore-failure', 'restart-restore-failure'):
         sys.exit(1)

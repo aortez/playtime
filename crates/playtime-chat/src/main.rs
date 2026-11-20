@@ -1,4 +1,5 @@
 use clap::{Parser, ValueEnum};
+mod oneshot;
 use playtime_chat::{
     Result,
     native::{Journal, Model, ModelEffects, NativeEffects},
@@ -55,6 +56,7 @@ enum Preset {
 #[derive(Parser)]
 #[command(
     about = "Project chat using Playtime's compacting harness and a caller-owned Strata endpoint",
+    group(clap::ArgGroup::new("one_shot").args(["prompt", "prompt_file"])),
     version
 )]
 struct Args {
@@ -99,10 +101,18 @@ struct Args {
     /// Run one turn and exit; otherwise open basic interactive chat.
     #[arg(long)]
     prompt: Option<String>,
+    /// Read one exact UTF-8 prompt from a regular file and start a fresh session.
+    #[arg(long, conflicts_with_all = ["prompt", "session", "recover_compaction", "recover_interrupted", "select_session", "list_sessions", "inspect_interrupted"])]
+    prompt_file: Option<PathBuf>,
+    /// Retain host-tool cleanup evidence for a one-shot launcher invocation.
+    #[arg(long, requires_all = ["prompt_file", "launch_id"])]
+    completion_receipt: Option<PathBuf>,
+    #[arg(long, requires = "completion_receipt")]
+    launch_id: Option<String>,
     /// Coding instructions; use minimal to reopen sessions made with the old prompt.
     #[arg(long, value_enum, default_value_t = AgentPrompt::Codex)]
     agent_prompt: AgentPrompt,
-    #[arg(long, requires = "prompt")]
+    #[arg(long, requires = "one_shot")]
     json: bool,
     /// Print model text as it arrives instead of showing a compact activity row.
     #[arg(long)]
@@ -198,7 +208,11 @@ fn config(
     config.validate()?;
     Ok(config)
 }
-async fn read_prompt(input: &mut Console, shutdown: &CancellationToken) -> Result<Option<String>> {
+async fn read_prompt<W: io::Write, D: io::Write>(
+    input: &mut Console,
+    shutdown: &CancellationToken,
+    output: &mut Output<W, D>,
+) -> Result<Option<String>> {
     loop {
         let Some(line) = input.prompt(shutdown).await? else {
             return Ok(None);
@@ -207,8 +221,18 @@ async fn read_prompt(input: &mut Console, shutdown: &CancellationToken) -> Resul
             "/quit" | "/exit" => return Ok(None),
             "/help" => {
                 println!(
-                    "Paste inserts an editable multiline message; Enter submits it. Escape, Ctrl-C or /stop cancels a running turn. /quit exits. Safely stopped turns return to input with completed history and a recovery notice. Unknown tool outcomes require explicit recovery. /paste then /end also accepts multiple lines."
+                    "Paste inserts an editable multiline message; Enter submits it. Escape, Ctrl-C or /stop cancels a running turn. /tool lists recent results; /tool N shows captured output. /quit exits. Safely stopped turns return to input with completed history and a recovery notice. Unknown tool outcomes require explicit recovery. /paste then /end also accepts multiple lines."
                 );
+            }
+            line if line == "/tool" || line.starts_with("/tool ") => {
+                let number = line[5..].trim();
+                if number.is_empty() {
+                    output.inspect_tool(None)?;
+                } else if let Ok(number) = number.parse::<usize>() {
+                    output.inspect_tool(Some(number))?;
+                } else {
+                    println!("Use /tool to list results or /tool N to inspect one.");
+                }
             }
             "/paste" => {
                 println!("Paste text; finish with /end on a line by itself.");
@@ -271,7 +295,13 @@ async fn recover_stopped_turn(
     .await??)
 }
 
-async fn main_run(args: Args) -> Result<i32> {
+async fn main_run(mut args: Args) -> Result<i32> {
+    if let Some(path) = &args.prompt_file {
+        args.prompt = Some(oneshot::prompt(path)?);
+    }
+    if args.completion_receipt.is_some() && args.preset != Preset::CodingHost {
+        return Err("completion receipts currently require --preset coding-host".into());
+    }
     if args.preset == Preset::CodingHost
         && (args.image_lock.is_some() || matches!(args.agent_prompt, AgentPrompt::Minimal))
     {
@@ -519,6 +549,13 @@ async fn main_run(args: Args) -> Result<i32> {
     } else {
         Some(Console::new()?)
     };
+    let mut output = Output::new(
+        io::stdout(),
+        io::stderr(),
+        args.json,
+        !args.stream && io::stdout().is_terminal() && io::stderr().is_terminal(),
+    );
+    let mut one_shot_outcome = "failed";
     let result: Result<Option<PathBuf>> = async {
         loop {
             if shutdown.is_cancelled() {
@@ -527,7 +564,7 @@ async fn main_run(args: Args) -> Result<i32> {
             let prompt = if headless {
                 first.take()
             } else {
-                read_prompt(input.as_mut().unwrap(), &shutdown).await?
+                read_prompt(input.as_mut().unwrap(), &shutdown, &mut output).await?
             };
             let Some(prompt) = prompt else {
                 break;
@@ -587,8 +624,6 @@ async fn main_run(args: Args) -> Result<i32> {
                 tx,
                 cancel.clone(),
             ));
-            let mut output = Output::new(io::stdout(), io::stderr(), args.json,
-                !args.stream && io::stdout().is_terminal() && io::stderr().is_terminal());
             let mut refresh = tokio::time::interval(Duration::from_millis(100));
             refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut input_open = !headless;
@@ -625,6 +660,12 @@ async fn main_run(args: Args) -> Result<i32> {
                 }
             };
             interrupt_watch.abort();
+            one_shot_outcome = match completed.result.reason {
+                playtime_core::StopReason::AgentFinished => "completed",
+                playtime_core::StopReason::Interrupted => "cancelled",
+                playtime_core::StopReason::WallLimit => "timed_out",
+                _ => "failed",
+            };
             output.finish(completed.result.reason != playtime_core::StopReason::AgentFinished)?;
             session = completed.session;
             if session.is_none() && requested_stop && !headless && !leave_after_turn && !shutdown.is_cancelled()
@@ -674,9 +715,29 @@ async fn main_run(args: Args) -> Result<i32> {
         Ok(None::<PathBuf>)
     }
     .await;
-    if let Some(host) = &host {
-        host.lock().await.close().await?;
+    if shutdown.is_cancelled() {
+        one_shot_outcome = "cancelled";
     }
+    let cleanup = if let Some(host) = &host {
+        host.lock().await.close().await
+    } else {
+        Ok(())
+    };
+    if let Some(path) = &args.completion_receipt {
+        oneshot::completion(
+            path,
+            args.launch_id.as_deref().ok_or("missing launch ID")?,
+            args.prompt.as_deref().ok_or("missing one-shot prompt")?,
+            one_shot_outcome,
+            if cleanup.is_ok() {
+                "confirmed"
+            } else {
+                "unresolved"
+            },
+            &session_path,
+        )?;
+    }
+    cleanup?;
     let restart = result?;
     if let Some(session) = restart {
         let path = PathBuf::from(
@@ -729,4 +790,47 @@ async fn main() {
         }
     };
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod one_shot_arguments {
+    use super::*;
+    #[test]
+    fn file_prompt_is_headless_and_cannot_select_saved_history() {
+        let base = [
+            "playtime-chat",
+            "--endpoint",
+            "http://127.0.0.1:1/v1",
+            "--model-lock",
+            "model.json",
+            "--prompt-file",
+            "prompt.md",
+            "--json",
+        ];
+        assert!(Args::try_parse_from(base).is_ok());
+        for extra in [
+            ["--prompt", "inline"],
+            ["--session", "old"],
+            ["--recover-compaction", "old"],
+            ["--recover-interrupted", "old"],
+        ] {
+            assert!(Args::try_parse_from(base.into_iter().chain(extra)).is_err());
+        }
+        assert!(
+            Args::try_parse_from(
+                base.into_iter()
+                    .chain(["--completion-receipt", "receipt.json"])
+            )
+            .is_err()
+        );
+        assert!(
+            Args::try_parse_from(base.into_iter().chain([
+                "--completion-receipt",
+                "receipt.json",
+                "--launch-id",
+                "launch-123"
+            ]))
+            .is_ok()
+        );
+    }
 }

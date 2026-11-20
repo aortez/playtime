@@ -162,7 +162,7 @@ def worker_option(args, key, default=None):
     return default
 
 
-def session(preset, profile, args):
+def session(preset, profile, args, launch=None):
     # Wrapper flags precede chat arguments, so a prompt whose text is literally
     # "--full-verify" remains an ordinary prompt value.
     import project_environment
@@ -275,11 +275,12 @@ def session(preset, profile, args):
         if checked.returncode:
             raise RuntimeError(checked.stderr.strip() or "worker input validation failed")
     options = {arg.split("=", 1)[0] for arg in args}
-    if options & {"--select-session", "--list-sessions", "--inspect-interrupted"} and not options & {"--prompt", "--session", "--recover-compaction", "--recover-interrupted"}:
+    if options & {"--select-session", "--list-sessions", "--inspect-interrupted"} and not options & {"--prompt", "--prompt-file", "--session", "--recover-compaction", "--recover-interrupted"}:
         return subprocess.call([*client_args, *args])
-    explicit = headless or bool(options & {"--session", "--recover-compaction", "--recover-interrupted", "--prompt"})
+    explicit = headless or launch is not None or bool(
+        options & {"--session", "--recover-compaction", "--recover-interrupted", "--prompt", "--prompt-file"})
     if force_picker and explicit:
-        raise RuntimeError("--sessions cannot be combined with --session, recovery options or --prompt")
+        raise RuntimeError("--sessions cannot be combined with a session, recovery or one-shot prompt")
     pick = force_picker
     if sys.stdin.isatty() and not explicit and not force_picker:
         try:
@@ -316,8 +317,10 @@ def session(preset, profile, args):
     verifier = (PACKAGE / "verify-strata-host.py").read_bytes()
     evidence = private_run_directory()
     log(f"session evidence: {evidence}")
+    if launch is not None:
+        launch.freeze(evidence)
     restart_file = evidence / "restart.json"
-    interactive = not headless and "--prompt" not in options
+    interactive = not headless and launch is None and not options & {"--prompt", "--prompt-file"}
     if interactive:
         client_environment["PLAYTIME_CHAT_RESTART_FILE"] = str(restart_file)
     with socket.socket() as reservation:
@@ -359,6 +362,8 @@ def session(preset, profile, args):
     def healthy():
         if signals:
             raise InterruptedError(f"received signal {signals[0]}")
+        if launch is not None:
+            launch.check()
         if failed.is_set() or owner.poll() is not None:
             raise RuntimeError("lost the inference host owner")
 
@@ -395,6 +400,8 @@ def session(preset, profile, args):
             previous[sig] = signal.signal(sig, interrupted)
         owner = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
+        if launch is not None:
+            launch.note("inference")
         for channel in ("stdout", "stderr"):
             threading.Thread(target=receive, args=(getattr(owner, channel), channel), daemon=True).start()
         heartbeats = threading.Thread(target=heartbeat, daemon=True)
@@ -440,9 +447,14 @@ def session(preset, profile, args):
         log(f"verified in {verification_seconds:.1f}s; {stats['reused_files']} cached, "
             f"{stats['hashed_files']} hashed ({stats['hashed_bytes'] / 1e9:.2f} GB read); "
             f"starting {profile} {'read-only invocation' if read_only else 'worker' if worker else 'chat'} in {project_environment.workspace_arguments(selection_args)[0]}")
+        if launch is not None:
+            args = launch.attach(args)
         child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
                                   *client_args[1:], *args],
-                                 stdin=subprocess.DEVNULL if headless else None, env=client_environment)
+                                 stdin=subprocess.DEVNULL if headless or launch is not None else None,
+                                 env=client_environment)
+        if launch is not None:
+            launch.note("tools")
         while child.poll() is None:
             drain()
             healthy()
@@ -471,8 +483,12 @@ def session(preset, profile, args):
             if heartbeats.is_alive():
                 result = 1
         if owner is not None:
+            park = result == 0 and child is not None and child.returncode == 0 and not failed.is_set() and not signals
+            if launch is not None:
+                completion, _ = launch.read_completion()
+                park = park and launch.local_tools(child, completion) == "confirmed" and launch.outcome(child, completion, signals) == "completed"
             try:
-                if result == 0 and child is not None and child.returncode == 0 and not failed.is_set() and not signals:
+                if park:
                     owner.stdin.write("GYRO_RELEASE\n")
                     owner.stdin.flush()
                 owner.stdin.close()
@@ -486,6 +502,7 @@ def session(preset, profile, args):
                     pass
                 time.sleep(.1)
             if owner.poll() is None:
+                failed.set()
                 log("host restoration was not confirmed; inspect the helper logs before another launch")
                 try:
                     stop_process(owner, 5)
@@ -500,6 +517,14 @@ def session(preset, profile, args):
             except Exception:
                 pass
         transcript.close()
+        if launch is not None:
+            launch.finish(child=child, owner_code=owner_code, signals=signals,
+                          transport_failed=failed.is_set())
+            # A launch only exits 0 when its own receipt says the turn completed
+            # and both cleanup classes are settled. An existing nonzero or signal
+            # exit code stays as the wrapper already reported it.
+            if result == 0 and not launch.succeeded():
+                result = 1
         (evidence / "exit.json").write_text(json.dumps({"client_exit": None if child is None else child.returncode,
             "owner_exit": owner_code, "exit": result}) + "\n")
         for sig, handler in previous.items():
@@ -530,7 +555,22 @@ def resume_arguments(args, destination):
     return [*result, "--session", str(destination)]
 
 
+def one_shot(preset, profile, request_path):
+    """Honor exactly one launcher_v1 request and report through its own receipt."""
+    import launch_protocol
+
+    launch = launch_protocol.begin(preset, profile, request_path)
+    try:
+        return session(preset, profile, launch.chat_arguments(), launch=launch)
+    except BaseException as error:
+        # Actor acquisition flags keep early failures distinct from unknown cleanup.
+        launch.abort(error)
+        raise
+
+
 def main(args):
+    import launch_protocol
+
     report = args[:1] == ["--status"]
     if report:
         args = args[1:]
@@ -545,6 +585,15 @@ def main(args):
     preset = config["profiles"][profile]
     if report:
         return status(preset, profile)
+    if extra[:1] == [launch_protocol.DESCRIBE_FLAG]:
+        if len(extra) != 1:
+            raise RuntimeError(f"{launch_protocol.DESCRIBE_FLAG} accepts only a profile")
+        return launch_protocol.describe(preset, profile)
+    if extra[:1] == [launch_protocol.REQUEST_FLAG]:
+        if len(extra) != 2 or extra[1].startswith("-"):
+            raise RuntimeError("usage: run-strata.py PROFILE "
+                               f"{launch_protocol.REQUEST_FLAG} /absolute/request.json")
+        return one_shot(preset, profile, extra[1])
     while True:
         outcome = session(preset, profile, extra)
         if not isinstance(outcome, Path):
