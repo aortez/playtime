@@ -1904,5 +1904,5 @@ The opt-in coding-host completion receipt binds launch ID, prompt digest, outcom
 and local-tool cleanup. The wrapper's new `launcher_v1` request/receipt interface
 adds inference-owner cleanup and a retained dispatch claim. These additions do not
 change existing worker/read-only protocols, saved conversations or golden event
-schemas. CPU fixtures cover the added contract; installed/live qualification is
-separate.
+schemas. CPU fixtures cover the added contract, and an installed copy passed live
+completion, cancellation and replay checks on Framework.

@@ -344,5 +344,20 @@ Raw client output, the copied prompt, client completion and `exit.json` remain i
 the launcher's private evidence directory. Missing or invalid receipts must remain
 unknown to callers; this interface never automatically resumes/replays a request.
 
-This source implementation has CPU/fake-owner qualification. Installed-helper and
-live-model qualification must be recorded separately before claiming that path.
+On November 20, 2026, a separately installed copy of this launcher ran these
+requests on Framework with `framework-gyro-m-fast`:
+
+- A one-turn repair from a cold start finished in 50 seconds. The model fixed a
+  one-line bug and ran the project's test. The receipt recorded `completed` with
+  both cleanups `confirmed`, and the model was kept warm.
+- A second request received SIGTERM 20 seconds into its turn. The wrapper exited
+  143 two seconds later with `cancelled` and both cleanups `confirmed`, and the
+  server stopped instead of staying warm.
+- Replaying the first request was refused before anything was acquired, and its
+  receipt was unchanged.
+- An earlier attempt failed before SSH connected, because `framework.local`
+  briefly didn't resolve. Its receipt recorded `failed`, with `local_tools`
+  `not_acquired` and `inference_owner` `unresolved`: an SSH failure can't prove
+  that nothing started on the host.
+
+These are integration checks, not coding-quality measurements.
