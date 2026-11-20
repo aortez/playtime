@@ -1,7 +1,9 @@
 # Project-owned development environments
 
 The standalone launcher can use the selected project's `.devcontainer/devcontainer.json`
-instead of the general workshop. The project owns its compiler/tool/dependency image;
+instead of the general workshop. A project opts in with a `customizations.playtime`
+entry in strict JSON. Other devcontainers, including JSONC files written for other
+tools, keep the general workshop. The project owns its compiler/tool/dependency image;
 Playtime owns the tool bridge, workspace mount, resource limits, offline execution,
 logs and process cleanup. Inference still uses the selected remote model host.
 
@@ -39,7 +41,8 @@ clients to use the same mount layout. Compose, features, lifecycle hooks, custom
 privileged options and other unsupported properties are rejected rather than ignored.
 This is a deliberately bounded subset, not general Dev Containers compatibility.
 
-Projects can declare additional build inputs, relative to the project root:
+`customizations.playtime` opts the project in, and `{}` is enough. It can also
+declare additional build inputs, relative to the project root:
 
 ```json
 {
@@ -73,9 +76,13 @@ Commands have the same private network, read-only root, `/tmp` allocation and
 selected-project-only writable bind mount as general chat. Put persistent build
 outputs/caches under `/work`, and prepare other dependencies into the image. The
 project can provide image-internal aliases for an existing script's working paths.
-The bridge remains uid 1000; the independent lifetime timer and owned cleanup remain
-under Playtime's control. Project definitions cannot add host/device mounts or alter
-those controls. The general workshop and experiment image locks are unchanged.
+The bridge remains uid 1000, and owned cleanup remains under Playtime's control.
+PID 1, the lifetime timer, runs as uid 65534, never root: the image supplies its
+interpreter, and without a user namespace container root is host root. A hostile
+image could therefore ignore the timer's deadline. A container left by a crashed
+client then keeps the project fenced until its ownership is reconciled (see
+[Persistence and interruption](rust-chat-console.md#persistence-and-interruption)).
+Project definitions cannot add host/device mounts or alter those controls. The general workshop and experiment image locks are unchanged.
 
 ## Locks and saved sessions
 

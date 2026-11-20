@@ -12,7 +12,9 @@ The separate [`project` adapter](rust-chat-console.md#project-tools) supports re
 editing in a selected local project. It shares transport, container verification
 and lifecycle reconciliation with this sandbox, while retaining files on the host.
 It creates no experiment volume or checkpoint and does not provide a project disk
-quota. Run its additional `--case project` gate when changing that profile.
+quota. Its containers run the lifetime timer below as uid 65534 rather than root,
+because a project image can supply the timer's interpreter. Run its additional
+`--case project` gate when changing that profile.
 
 ## Supported selection and readiness
 

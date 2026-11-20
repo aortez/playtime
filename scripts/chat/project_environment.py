@@ -74,6 +74,31 @@ def contained(root, path):
     return path
 
 
+def opted_in(root):
+    """Say whether the project asks for its own Playtime environment.
+
+    Only a strict-JSON devcontainer.json with customizations.playtime opts in.
+    Devcontainers written for other tools, often JSONC with comments, keep the
+    general workshop they had before project environments existed.
+    """
+    path = root / '.devcontainer/devcontainer.json'
+    if not path.exists() and not path.is_symlink():
+        return False
+    path = contained(root, path)
+    if path.stat().st_size > MAX_LOCK:
+        raise ValueError('devcontainer.json exceeds 64 KiB')
+    data = path.read_bytes()
+    try:
+        config = json.loads(data)
+    except ValueError:
+        # A definition meant for Playtime must not fall back over a syntax error.
+        if b'"playtime"' in data:
+            raise ValueError('devcontainer.json mentions playtime but is not strict JSON') from None
+        return False
+    custom = config.get('customizations') if isinstance(config, dict) else None
+    return isinstance(custom, dict) and 'playtime' in custom
+
+
 def definition(workspace):
     root = workspace.resolve(strict=True)
     path = contained(root, root / '.devcontainer/devcontainer.json')
@@ -207,15 +232,18 @@ def resolve(args, package=PACKAGE, selection=None):
             return path
         # Pre-environment sessions used the packaged general workshop.
         return package / 'general.lock.json'
-    path = root / '.devcontainer/devcontainer.json'
-    if not path.exists() and not path.is_symlink():
+    if not opted_in(root):
         return package / 'general.lock.json'
-    _, _, hashes = definition(root)
+    try:
+        _, _, hashes = definition(root)
+    except ValueError as error:
+        raise ValueError(f'{error}; pass --environment general to use the general workshop') from error
     index_path = project_store(root) / 'current.json'
     try:
         index = read_private(index_path)
     except FileNotFoundError as error:
-        raise ValueError('project environment is not prepared; run --prepare-environment first') from error
+        raise ValueError('project environment is not prepared; run --prepare-environment first, '
+                         'or pass --environment general to use the general workshop') from error
     if index.get('schema_version') != 1 or not isinstance(index.get('lock'), str):
         raise ValueError('invalid prepared environment index')
     if index.get('inputs') != hashes:
@@ -270,6 +298,9 @@ def image_identity(reference):
 
 def prepare(workspace, package=PACKAGE):
     workspace = workspace.resolve(strict=True)
+    if not opted_in(workspace):
+        raise ValueError('to prepare a Playtime environment, add customizations.playtime '
+                         'to .devcontainer/devcontainer.json')
     config, command, hashes = definition(workspace)
     store = private_directory(project_store(workspace))
     if store.resolve().is_relative_to(workspace):

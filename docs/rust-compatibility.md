@@ -1719,6 +1719,12 @@ part of the conversation configuration; new sessions retain a private environmen
 lock. Explicit restart and recovery use that saved image even after another image
 is prepared. Legacy sessions retain the original general-workshop inventory.
 
+A project opts in through `customizations.playtime`; other devcontainers keep the
+general workshop. Project containers run the PID-1 timer as uid 65534 instead of
+root, because a project image supplies its interpreter, and readiness refuses images
+that carry `io.playtime.*` labels. A project container left by an earlier build
+reports root and no longer verifies; inspect it and remove it by hand.
+
 The project Docker profile now permits descriptive base-image labels while
 requiring the entire `io.playtime.*` ownership namespace exactly. The experiment
 profile retains exact whole-label matching. Core policies, experiment images,

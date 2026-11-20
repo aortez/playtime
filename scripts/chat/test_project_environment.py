@@ -83,6 +83,26 @@ class Environments(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'/work'):
             env.definition(self.workspace)
 
+    def test_only_a_playtime_devcontainer_opts_in(self):
+        general = self.package/'general.lock.json'
+        path = self.workspace/'.devcontainer/devcontainer.json'
+        # Devcontainers written for other tools keep the general workshop.
+        path.write_text('// VS Code\n{"image": "x", "customizations": {"vscode": {}}}\n')
+        self.assertEqual(env.resolve(self.args,self.package),general)
+        path.write_text(json.dumps({'image':'x','features':{'node':{}},'workspaceFolder':'/workspaces/p'}))
+        self.assertEqual(env.resolve(self.args,self.package),general)
+        with self.assertRaisesRegex(ValueError,'customizations.playtime'):
+            env.prepare(self.workspace,self.package)
+        # A definition meant for Playtime never falls back over a syntax error.
+        path.write_text('// note\n{"image": "x", "customizations": {"playtime": {}}}\n')
+        with self.assertRaisesRegex(ValueError,'not strict JSON'):
+            env.resolve(self.args,self.package)
+        # An opted-in definition still refuses what it can't honor, and names the way out.
+        self.config['features'] = {}
+        self.write_config()
+        with self.assertRaisesRegex(ValueError,'unsupported.*--environment general'):
+            env.resolve(self.args,self.package)
+
     def test_project_cannot_supply_outside_paths_or_a_writable_lock(self):
         outside=self.root/'outside'
         outside.write_text('FROM outside')

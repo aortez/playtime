@@ -159,7 +159,7 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
     def test_unprepared_project_environment_fails_before_host_ownership(self):
         directory = self.root / '.devcontainer'
         directory.mkdir()
-        (directory / 'devcontainer.json').write_text(json.dumps({'image':'fixture:local'}))
+        (directory / 'devcontainer.json').write_text(json.dumps({'image':'fixture:local','customizations':{'playtime':{}}}))
         result = self.run_fixture('', '--prompt', 'hello')
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn('not prepared', result.stderr)

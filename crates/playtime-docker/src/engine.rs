@@ -218,6 +218,19 @@ impl Engine {
                 "unexpected image volumes or build hooks",
             ));
         }
+        // Containers inherit image labels. One in Playtime's ownership namespace
+        // would make every container from this image fail identity verification,
+        // which strands it with its project reservation still held.
+        if image["Config"]["Labels"]
+            .as_object()
+            .is_some_and(|labels| labels.keys().any(|key| key.starts_with("io.playtime.")))
+        {
+            return Err(Error::new(
+                Failure::Unsupported,
+                "readiness",
+                "image carries a reserved io.playtime label",
+            ));
+        }
         Ok(ReadyImage {
             engine: self.clone(),
             image: id.into(),
@@ -532,7 +545,7 @@ pub(crate) fn verify_container_mount(
                 TIMER,
                 p.deadline_monotonic_ns.to_string()
             ])
-        || c["User"] != "0:0"
+        || c["User"] != timer_user(project.is_some())
         || c["WorkingDir"] != "/"
         || c["Healthcheck"]["Test"] != json!(["NONE"])
         || !empty(&c["Volumes"])
