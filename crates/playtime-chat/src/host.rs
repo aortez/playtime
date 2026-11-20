@@ -141,6 +141,9 @@ impl Workspace {
             .stderr(Stdio::inherit())
             .process_group(0)
             .spawn()?;
+        // Until the helper reports ready, its control stream may still carry that
+        // line, so a failed handshake fences the helper instead of reusing it.
+        self.failed = true;
         let input = child.stdin.take().ok_or("missing host control input")?;
         let output = BufReader::new(child.stdout.take().ok_or("missing host control output")?);
         self.supervisor = Some(Supervisor {
@@ -153,6 +156,7 @@ impl Workspace {
         if ready["ready"] != true {
             return Err("host helper did not become ready".into());
         }
+        self.failed = false;
         Ok(())
     }
     pub async fn call(

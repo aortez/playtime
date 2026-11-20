@@ -36,6 +36,15 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// Writes one diagnostic line and ignores a failed terminal. `eprintln!` panics on
+/// EIO, and a hangup during a turn must not skip its records or owned cleanup.
+macro_rules! note {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($arg)*);
+    }};
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, ValueEnum)]
 enum Preset {
     #[default]
@@ -239,9 +248,9 @@ async fn recover_stopped_turn(
         tokio::task::spawn_blocking(move || Session::inspect_interrupted(&path, &c)).await??;
     let acknowledge = report.uncertain_tools != 0;
     if acknowledge {
-        eprintln!("{}", clean(&report.context()?));
+        note!("{}", clean(&report.context()?));
         loop {
-            eprintln!(
+            note!(
                 "Turn stopped and processes cleaned up, but some tool outcomes were not recorded. Inspect possible partial changes. Type /recover to acknowledge and continue, or /quit to exit. Nothing will be replayed."
             );
             match input.prompt(shutdown).await?.as_deref().map(str::trim) {
@@ -589,13 +598,13 @@ async fn main_run(args: Args) -> Result<i32> {
             let mut typed = String::new();
             let completed = loop {
                 tokio::select! {
-                    event=rx.recv()=>if let Some(event)=event {if let Err(error)=output.render(&event){cancel.cancel();eprintln!("output failed: {error}");}}else{break task.await??;},
+                    event=rx.recv()=>if let Some(event)=event {if let Err(error)=output.render(&event){cancel.cancel();note!("output failed: {error}");}}else{break task.await??;},
                     result=&mut task=>{while let Some(event)=rx.recv().await {output.render(&event)?;}break result??;},
                     _=tokio::signal::ctrl_c()=>{requested_stop=true;cancel.cancel();let _=output.notice("Stopping; waiting for owned cleanup...",true);},
                     _=shutdown.cancelled(),if !shutting_down=>{shutting_down=true;cancel.cancel();let _=output.notice("Stopping; waiting for owned cleanup...",true);},
                     _=refresh.tick()=>{
                         let columns=rustix::termios::tcgetwinsize(io::stderr()).map_or(80,|size|if size.ws_col == 0 {80} else {usize::from(size.ws_col)});
-                        if let Err(error)=output.tick(columns) {cancel.cancel();eprintln!("output failed: {error}");}
+                        if let Err(error)=output.tick(columns) {cancel.cancel();note!("output failed: {error}");}
                     },
                     key=async { input.as_mut().unwrap().recv().await },if input_open=>match key {
                         Err(error)=>{let _=output.notice(&format!("Input failed: {error}"),true);input_open=false;leave_after_turn=true;cancel.cancel();},
@@ -630,29 +639,29 @@ async fn main_run(args: Args) -> Result<i32> {
                         if host.is_some() {
                             PrivateDirectory::open(&destination, false)?.write_new("host-execution.json", &serde_json::to_vec(&binding)?)?;
                         } else { playtime_chat::environment::save(&destination, &image_bytes)?; }
-                        eprintln!("Stopped. Completed history retained; partial changes may remain. No input or tools were replayed.\nSession: {}", destination.display());
+                        note!("Stopped. Completed history retained; partial changes may remain. No input or tools were replayed.\nSession: {}", destination.display());
                         session_path = destination;
                         session = Some(recovered);
                         input.as_mut().unwrap().discard_pending();
                         if model.lock().await.fenced {
                             if std::env::var_os("PLAYTIME_CHAT_RESTART_FILE").is_some() {
-                                eprintln!("Reconnecting after confirmed inference-owner shutdown...");
+                                note!("Reconnecting once the inference owner confirms shutdown...");
                                 return Ok(Some(session_path.clone()));
                             }
                             return Err(format!("remote inference needs owner shutdown before resuming --session {}",session_path.display()).into());
                         }
                     }
-                    Err(error) => eprintln!("Automatic continuation is unavailable: {}", clean(&error.to_string())),
+                    Err(error) => note!("Automatic continuation is unavailable: {}", clean(&error.to_string())),
                 }
             }
             if session.is_none() {
                 if completed.result.reason == playtime_core::StopReason::CompactionFailed {
-                    eprintln!(
+                    note!(
                         "If this was the first call of the turn and its summary hit the output cap, use --recover-compaction {} with a larger --summary-tokens value. Recovery verifies the saved events and cleanup before creating a new session.",
                         session_path.display()
                     );
                 }
-                eprintln!(
+                note!(
                     "Use the session picker recovery action, or --inspect-interrupted {} followed by --recover-interrupted with the same settings. Missing cleanup evidence stays blocked.",
                     session_path.display()
                 );

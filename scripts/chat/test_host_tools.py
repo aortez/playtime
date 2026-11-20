@@ -148,6 +148,14 @@ class HostToolsTests(unittest.TestCase):
             result = subprocess.run(['systemctl', '--user', 'is-active', unit], capture_output=True, text=True)
             self.assertNotEqual(result.stdout.strip(), 'active')
 
+    def test_invalid_exec_timeout_is_refused_before_the_command_starts(self):
+        for timeout in ('30s', None):
+            result = self.call('exec', command='touch started', timeout_seconds=timeout)
+            self.assertIn('error', result)
+            time.sleep(.5)
+            self.assertFalse((self.project / 'started').exists(), timeout)
+        self.assertEqual(self.call('exec', command='true')['exit_code'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

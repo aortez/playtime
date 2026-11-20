@@ -119,23 +119,28 @@ class HostTools:
                'tty': tty, 'stdout': bytearray(), 'stderr': bytearray(),
                'truncated': False, 'streams': [], 'persistent': persistent, 'stopped': False, 'admission_uncertain': True}
         self.jobs[job_id] = job
-        for stream, name in streams:
-            fd = stream if isinstance(stream, int) else stream.fileno()
-            os.set_blocking(fd, False)
-            self.selector.register(fd, selectors.EVENT_READ, (job_id, name, stream))
-            job['streams'].append(fd)
-        # The trusted child marks readiness before executing model command text.
-        # Wait for admission to settle before accepting a cancellation/stop.
-        until = time.monotonic() + 5
-        while not ready.exists() and process.poll() is None and time.monotonic() < until:
-            time.sleep(.005)
-        if ready.exists():
-            job['admission_uncertain'] = False
-            ready.unlink()
-        elif process.poll() is None:
-            raise RuntimeError('host scope admission timed out; cleanup required')
-        elif process.returncode >= 0:
-            job['admission_uncertain'] = False
+        try:
+            for stream, name in streams:
+                fd = stream if isinstance(stream, int) else stream.fileno()
+                os.set_blocking(fd, False)
+                self.selector.register(fd, selectors.EVENT_READ, (job_id, name, stream))
+                job['streams'].append(fd)
+            # The trusted child marks readiness before executing model command text.
+            # Wait for admission to settle before accepting a cancellation/stop.
+            until = time.monotonic() + 5
+            while not ready.exists() and process.poll() is None and time.monotonic() < until:
+                time.sleep(.005)
+            if ready.exists():
+                job['admission_uncertain'] = False
+                ready.unlink()
+            elif process.poll() is None:
+                raise RuntimeError('host scope admission timed out; cleanup required')
+            elif process.returncode >= 0:
+                job['admission_uncertain'] = False
+        except (OSError, ValueError) as error:
+            # run() answers these as ordinary tool errors, which would leave the
+            # started command running unsupervised. Stop through cleanup instead.
+            raise RuntimeError('host command started but is unsupervised: ' + str(error)) from error
         return job
 
     def drain(self, timeout=0):
@@ -310,9 +315,14 @@ class HostTools:
         if name in ('read_file', 'write_file'):
             self.reply(self.file_tool(name, args))
         elif name in ('exec', 'start_process'):
+            if name == 'exec':
+                # Check model arguments before the start, while an error reply is still true.
+                try:
+                    seconds = min(float(args.get('timeout_seconds', request['timeout_seconds'])), request['timeout_seconds'])
+                except TypeError as error:
+                    raise ValueError('timeout_seconds must be a number') from error
             job = self.open_job(args, name == 'start_process')
             if name == 'exec':
-                seconds = min(float(args.get('timeout_seconds', request['timeout_seconds'])), request['timeout_seconds'])
                 self.pending = (job, time.monotonic() + max(.001, seconds), 'exec')
             else:
                 self.reply(self.snapshot(job))

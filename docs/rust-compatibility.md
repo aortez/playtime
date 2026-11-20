@@ -3,9 +3,9 @@
 ## Host coding preset and tool contract
 
 Interactive `coding-host` adds `host_v1` tool definitions and a host-specific
-Codex adapter. `CompactionSettings.tool_profile` defaults to the workshop and is
-omitted from serialization for that default; existing Docker/worker configuration
-bytes and tool schemas remain unchanged. Host sessions freeze their distinct
+Codex adapter. Execution settings, including `tool_profile`, now sit in
+`ExecutionConfig` rather than the compaction settings; existing Docker/worker
+configurations serialize to the same bytes, and their tool schemas are unchanged. Host sessions freeze their distinct
 execution binding, prompt and tool contract. No existing session is migrated.
 The harness's interruption reader recognizes the configured tool vocabulary,
 including persistent-process operations. Compaction policy and the controller

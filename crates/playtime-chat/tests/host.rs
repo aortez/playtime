@@ -158,6 +158,52 @@ fn host_admission_does_not_scan_build_trees_and_keeps_shared_lease_and_fence() {
 
 #[tokio::test]
 #[ignore = "explicit same-user systemd host gate"]
+async fn failed_helper_start_fences_the_workspace_instead_of_reusing_it() {
+    let root = Root::new();
+    let state = root.0.join("state");
+    let workspace = Workspace::open(&root.0.join("project"), &state, 4096).unwrap();
+    // The helper creates this fence exclusively, so it exits before reporting ready.
+    let lease = fs::read_dir(&state)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    PrivateDirectory::open(&lease, false)
+        .unwrap()
+        .write_new("active", b"unresolved")
+        .unwrap();
+    let workspace = Arc::new(Mutex::new(workspace));
+    let mut effects = HostEffects {
+        inner: ModelFixture::default(),
+        workspace: workspace.clone(),
+    };
+    let deadline = || Instant::now() + Duration::from_secs(10);
+    let exec = || json!({"command": "true"});
+    assert!(
+        workspace
+            .lock()
+            .await
+            .call("exec", exec(), deadline(), CancellationToken::new())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        effects.cleanup(deadline()).await,
+        vec!["host tool cleanup/control is unresolved".to_string()]
+    );
+    let error = workspace
+        .lock()
+        .await
+        .call("exec", exec(), deadline(), CancellationToken::new())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("fenced"), "{error}");
+    assert!(workspace.lock().await.close().await.is_err());
+}
+
+#[tokio::test]
+#[ignore = "explicit same-user systemd host gate"]
 async fn host_process_survives_real_harness_turns_compaction_and_stops_at_exit() {
     let root = Root::new();
     let workspace = Workspace::open(&root.0.join("project"), &root.0.join("state"), 4096).unwrap();

@@ -20,7 +20,7 @@ entries continue to select the Docker workshop unless this preset is explicit.
 
 Interactive chat defaults to `--agent-prompt codex`: the pinned
 [Codex CLI 0.166.0 base instructions](../prompts/codex-cli-0.166.0-base.txt),
-followed by an [interactive Playtime adapter](../prompts/codex-playtime-chat-adapter-v1.txt).
+followed by an [interactive Playtime adapter](../prompts/codex-playtime-chat-adapter-v2.txt).
 The adapter defines the real tools, workspace, terminal controls, and completion
 behavior. Playtime's existing harness still owns compaction and execution. The
 startup banner names the prompt; the prompt does not change the selected model
