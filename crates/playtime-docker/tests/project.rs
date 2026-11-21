@@ -100,8 +100,13 @@ fn admission_rejects_external_hardlinks_and_host_sockets_but_accepts_internal_li
     fs::hard_link(t.project.join("symlink"), t.root.join("outside-symlink")).unwrap();
     assert!(t.open().is_err());
     fs::remove_file(t.root.join("outside-symlink")).unwrap();
-    let _socket = std::os::unix::net::UnixListener::bind(t.project.join("socket")).unwrap();
-    assert!(t.open().is_err());
+    let build = t.project.join("target/debug");
+    fs::create_dir_all(&build).unwrap();
+    let path = build.join("control.sock");
+    let _socket = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let error = t.open().err().expect("socket in build tree was accepted");
+    assert!(error.to_string().contains("special file"));
+    assert!(error.to_string().contains(path.to_str().unwrap()));
 }
 #[test]
 fn private_state_and_protected_paths_cannot_be_inside_project() {

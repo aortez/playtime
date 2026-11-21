@@ -44,8 +44,10 @@ fn config() -> ConversationConfig {
         instructions: "Reply when finished.".into(),
         inventory: "Synthetic project tools.".into(),
         mode: RunMode::Simulation,
-        tool_policy: ToolPolicy::Simulation,
-        parameters,
+        execution: playtime_engine::execution::ExecutionConfig::workshop(
+            parameters,
+            ToolPolicy::Simulation,
+        ),
         compaction: CompactionSettings {
             allow_finish_run: false,
             summary_tokens: 256.try_into().unwrap(),

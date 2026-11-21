@@ -185,8 +185,8 @@ def workspace_arguments(args):
     # looks like a flag. Stop scanning on an unknown flag; chat will reject it.
     values = {'--workspace', '--state-dir', '--session', '--recover-compaction', '--recover-interrupted',
               '--inspect-interrupted', '--prompt', '--context-tokens', '--wall-seconds', '--tokens-per-call',
-              '--generated-tokens', '--summary-tokens', '--output-bytes'}
-    switches = {'--json', '--select-session', '--list-sessions', '--acknowledge-uncertain-tools'}
+              '--generated-tokens', '--summary-tokens', '--output-bytes', '--agent-prompt', '--preset'}
+    switches = {'--json', '--stream', '--select-session', '--list-sessions', '--acknowledge-uncertain-tools'}
     parsed = {}
     i = 0
     while i < len(args):

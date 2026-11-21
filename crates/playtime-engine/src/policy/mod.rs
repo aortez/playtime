@@ -155,7 +155,7 @@ impl RuntimeConfig {
                     self.parameters.limits.tokens_per_call.get(),
                     0,
                     config.work_reserve(),
-                    crate::compaction::tools(config.settings.allow_finish_run),
+                    config.tools(),
                 ),
                 RequestPurpose::Compaction => (
                     config.settings.summary_tokens.get(),

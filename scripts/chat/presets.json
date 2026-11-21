@@ -32,7 +32,7 @@
       "state_parent": ".local/state/codex-basalt",
       "port": 8082,
       "model_lock": "bird-basalt-iq4-v1.lock.json",
-      "startup_timeout": 330,
+      "startup_timeout": 450,
       "cleanup_timeout": 65
     },
     "bird-basalt-nvfp4": {
@@ -45,7 +45,7 @@
       "state_parent": ".local/state/codex-basalt",
       "port": 8082,
       "model_lock": "bird-basalt-nvfp4-v1.lock.json",
-      "startup_timeout": 330,
+      "startup_timeout": 450,
       "cleanup_timeout": 65
     }
   }

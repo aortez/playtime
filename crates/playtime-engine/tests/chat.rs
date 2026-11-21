@@ -18,12 +18,14 @@ fn config() -> ConversationConfig {
     ConversationConfig {
         schema_version: 1,
         mode: RunMode::Simulation,
-        tool_policy: ToolPolicy::Simulation,
+        execution: playtime_engine::execution::ExecutionConfig::workshop(
+            parameters,
+            ToolPolicy::Simulation,
+        ),
         model: Sha256Digest::new("1".repeat(64)).unwrap(),
         workspace: Sha256Digest::new("2".repeat(64)).unwrap(),
         instructions: "Keep the API stable. Answer normally when done.".into(),
         inventory: "Owned workshop, no network.".into(),
-        parameters,
         compaction: CompactionSettings {
             allow_finish_run: false,
             summary_tokens: 256.try_into().unwrap(),
@@ -192,7 +194,7 @@ fn a_follow_up_can_compact_the_saved_prefix_without_summarizing_new_input() {
 #[test]
 fn earlier_follow_up_constraints_are_included_when_they_eventually_compact() {
     let mut config = config();
-    config.parameters.limits.context_tokens = 32768.try_into().unwrap();
+    config.execution.limits.context_tokens = 32768.try_into().unwrap();
     config.compaction.recent_exchanges = 1;
     let mut first = Chat::new(config.clone(), None, "Investigate.", 0);
     let saved = first.final_reply(&"a".repeat(5000));
@@ -282,17 +284,17 @@ fn resume_rejects_configuration_changes_and_incomplete_saved_exchanges() {
     changed.model = Sha256Digest::new("3".repeat(64)).unwrap();
     assert!(changed.validate_checkpoint(&saved).is_err());
     changed = config.clone();
-    changed.parameters.limits.generated_tokens = 4000.try_into().unwrap();
+    changed.execution.limits.generated_tokens = 4000.try_into().unwrap();
     assert!(changed.validate_checkpoint(&saved).is_err());
     changed = config.clone();
     changed.mode = RunMode::LiveSmoke;
     assert!(changed.validate().is_err());
-    changed.tool_policy = ToolPolicy::ConfirmedExternal {
+    changed.execution.tool_policy = ToolPolicy::ConfirmedExternal {
         return_overhead_ms: 100,
     };
     changed.validate().unwrap();
     assert!(changed.validate_checkpoint(&saved).is_err());
-    changed.tool_policy = ToolPolicy::ConfirmedExternal {
+    changed.execution.tool_policy = ToolPolicy::ConfirmedExternal {
         return_overhead_ms: 0,
     };
     assert!(changed.validate().is_err());
@@ -302,4 +304,68 @@ fn resume_rejects_configuration_changes_and_incomplete_saved_exchanges() {
     invalid = saved;
     invalid.schema_version = 2;
     assert!(config.validate_checkpoint(&invalid).is_err());
+}
+
+#[test]
+fn legacy_configuration_bytes_and_host_profiles_round_trip() {
+    use playtime_engine::execution::ToolProfile;
+    // The field order and omitted workshop profile are the schema-one wire
+    // contract: changing them would invalidate saved checkpoint fingerprints.
+    let mut cfg = config();
+    for profile in [ToolProfile::Workshop, ToolProfile::HostV1] {
+        cfg.execution.tool_profile = profile;
+        let suffix = if profile == ToolProfile::HostV1 {
+            ",\"tool_profile\":\"host_v1\""
+        } else {
+            ""
+        };
+        let expected = format!(
+            "{{\"schema_version\":1,\"model\":{},\"workspace\":{},\"instructions\":{},\"inventory\":{},\"mode\":\"simulation\",\"tool_policy\":{},\"parameters\":{},\"compaction\":{{\"schema_version\":1,\"trigger_percent\":75,\"recent_exchanges\":2,\"summary_tokens\":256,\"instructions\":{},\"allow_finish_run\":false{suffix}}}}}",
+            json!(cfg.model),
+            json!(cfg.workspace),
+            json!(cfg.instructions),
+            json!(cfg.inventory),
+            serde_json::to_string(&ToolPolicy::Simulation).unwrap(),
+            serde_json::to_string(&cfg.execution.controller_parameters()).unwrap(),
+            json!(playtime_engine::compaction::DEFAULT_INSTRUCTIONS),
+        );
+        let loaded: ConversationConfig = serde_json::from_str(&expected).unwrap();
+        assert_eq!(loaded, cfg);
+        assert_eq!(serde_json::to_string(&loaded).unwrap(), expected);
+        assert_eq!(loaded.fingerprint().unwrap(), cfg.fingerprint().unwrap());
+        assert_eq!(
+            loaded.tools().len(),
+            if profile == ToolProfile::Workshop {
+                3
+            } else {
+                7
+            }
+        );
+    }
+}
+
+#[test]
+fn host_execution_is_separate_from_compaction_and_workshop_allocations() {
+    use playtime_engine::execution::ToolProfile;
+    let mut cfg = config();
+    cfg.schema_version = 2;
+    cfg.execution.tool_profile = ToolProfile::HostV1;
+    cfg.execution.workshop = None;
+    cfg.validate().unwrap();
+    let wire = serde_json::to_value(&cfg).unwrap();
+    assert!(wire.get("parameters").is_none());
+    assert!(wire["execution"].get("workshop").is_none());
+    assert!(wire["compaction"].get("tool_profile").is_none());
+    assert_eq!(wire["execution"]["tool_profile"], "host_v1");
+    let loaded: ConversationConfig = serde_json::from_value(wire).unwrap();
+    assert_eq!(cfg, loaded);
+    assert_eq!(cfg.fingerprint().unwrap(), loaded.fingerprint().unwrap());
+    let chat = Chat::new(loaded, None, "Inspect the host workspace", 0);
+    assert_eq!(chat.request().tools.len(), 7);
+    assert!(
+        chat.request()
+            .tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == "start_process")
+    );
 }

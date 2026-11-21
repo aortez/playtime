@@ -19,9 +19,10 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["process", "termios", "event"] }
 tokio = { workspace = true, features = ["signal", "process"] }
 tokio-util.workspace = true
+unicode-width = "=0.2.2"
 
 [lints]
 workspace = true

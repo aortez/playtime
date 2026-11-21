@@ -8,6 +8,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const SCAN_MAX_ENTRIES: usize = 2_000_000;
+const SCAN_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Identity of a local directory, not merely the pathname used to select it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectRoot {
@@ -94,7 +97,7 @@ impl ProjectDirectory {
             ));
         }
         no_child_mounts(&root.path)?;
-        scan(&root)?;
+        scan(&root, SCAN_MAX_ENTRIES, SCAN_TIMEOUT)?;
         no_child_mounts(&root.path)?;
         root.verify().map_err(io::Error::other)?;
         Ok(Self {
@@ -156,20 +159,32 @@ fn changed() -> Error {
     )
 }
 
-fn scan(root: &ProjectRoot) -> io::Result<()> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+fn scan(root: &ProjectRoot, max_entries: usize, timeout: Duration) -> io::Result<()> {
+    // Build trees are mounted along with source, so they must be checked too.
+    let deadline = std::time::Instant::now() + timeout;
     let mut directories = vec![root.path.clone()];
     let mut links: BTreeMap<(u64, u64), (u64, u64)> = BTreeMap::new();
     let mut count = 0;
     while let Some(directory) = directories.pop() {
         for entry in fs::read_dir(directory)? {
             count += 1;
-            if count > 500_000 || std::time::Instant::now() >= deadline {
-                return Err(io::Error::other(
-                    "project admission scan exceeded 500000 entries or 10 seconds",
+            let entry = entry?;
+            if count > max_entries {
+                return Err(io::Error::other(format!(
+                    "project admission scan exceeded {max_entries} entries at {:?}; select a smaller workspace",
+                    entry.path()
+                )));
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "project admission scan exceeded {} seconds after {count} entries at {:?}",
+                        timeout.as_secs(),
+                        entry.path()
+                    ),
                 ));
             }
-            let entry = entry?;
             let metadata = fs::symlink_metadata(entry.path())?;
             if metadata.dev() != root.device {
                 return Err(unsafe_project());
@@ -186,7 +201,13 @@ fn scan(root: &ProjectRoot) -> io::Result<()> {
                 value.1 += 1;
             } else {
                 // In particular, never expose a host Unix socket to commands.
-                return Err(unsafe_project());
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "project contains a socket, device or other special file: {:?}",
+                        entry.path()
+                    ),
+                ));
             }
         }
     }
@@ -248,6 +269,59 @@ fn validate_mounts(root: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ScanTree(ProjectRoot);
+    impl ScanTree {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "playtime-admission-{}",
+                Ownership::random_nonce().unwrap()
+            ));
+            fs::create_dir(&path).unwrap();
+            let metadata = fs::symlink_metadata(&path).unwrap();
+            Self(ProjectRoot {
+                path,
+                device: metadata.dev(),
+                inode: metadata.ino(),
+                uid: metadata.uid(),
+            })
+        }
+    }
+    impl Drop for ScanTree {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0.path);
+        }
+    }
+
+    #[test]
+    fn entry_limit_counts_build_trees_and_reports_the_path_reached() {
+        let tree = ScanTree::new();
+        let build = tree.0.path.join("target");
+        fs::create_dir(&build).unwrap();
+        fs::write(build.join("a"), "artifact").unwrap();
+        fs::write(build.join("b"), "artifact").unwrap();
+        scan(&tree.0, 3, SCAN_TIMEOUT).unwrap();
+        let error = scan(&tree.0, 2, SCAN_TIMEOUT).unwrap_err();
+        assert!(error.to_string().contains("exceeded 2 entries"));
+        assert!(error.to_string().contains(build.to_str().unwrap()));
+        assert_ne!(error.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn scan_deadline_reports_time_and_count_separately_from_entry_limit() {
+        let tree = ScanTree::new();
+        let file = tree.0.path.join("source");
+        fs::write(&file, "source").unwrap();
+        let error = scan(&tree.0, SCAN_MAX_ENTRIES, Duration::ZERO).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            error
+                .to_string()
+                .contains("exceeded 0 seconds after 1 entries")
+        );
+        assert!(error.to_string().contains(file.to_str().unwrap()));
+    }
+
     #[test]
     fn child_mounts_are_rejected_even_with_the_same_device_and_escaped_names() {
         let root = Path::new("/project with space");

@@ -114,7 +114,7 @@ impl Compaction {
             context_policy: ContextPolicy::new(
                 config.parameters.limits.clone(),
                 config.settings.clone(),
-                crate::compaction::tools(config.settings.allow_finish_run),
+                config.tools(),
             )?,
             stage: Stage::Starting,
             root: vec![

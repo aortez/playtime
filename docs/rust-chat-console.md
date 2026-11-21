@@ -1,10 +1,24 @@
 # Project chat console
 
+The explicit [`--preset coding-host`](rust-host-coding.md) supplies ordinary
+same-user host tools, persistent processes and PTYs through this same controller.
+The Docker admission/environment rules below describe the default workshop preset.
+
 `playtime-chat` is a standalone terminal client over `playtime-harness::Session`.
 It supplies an asynchronous effect driver, Strata model calls and a separate
 Docker adapter for editing a selected local project. The controller, tool
 admission, token accounting, context planning and compaction policy are shared
 with Playtime experiments. It requires no Playtime daemon or workbench.
+
+The default `--agent-prompt codex` combines the pinned
+[Codex CLI 0.166.0 base prompt](../prompts/codex-cli-0.166.0-base.txt) with the
+[interactive Playtime adapter](../prompts/codex-playtime-chat-adapter-v2.txt).
+This supplies coding-agent working habits using the existing tools and compacting
+harness. `--agent-prompt minimal` retains the exact original short instructions
+for older conversations. `--agent-prompt codex-v1` retains the preceding Codex
+adapter bytes. The startup banner identifies the selection. The larger
+Codex prompt counts toward context admission; small explicit context allocations
+may need the minimal prompt.
 
 This is the initial implementation of
 [#210](https://github.com/aortez/playtime/issues/210), with the project execution
@@ -40,18 +54,34 @@ inference starts; see [the launcher guide](rust-chat-launcher.md). Direct
 model/image locks, workspace and limits, but no endpoint. They emit a JSON choice
 or catalog and exit without connecting to Docker or a model. To reopen a completed
 session, pass `--session /absolute/session` and
-the same model, workspace and allocation settings. A changed config is rejected.
+the same model, workspace, agent prompt and allocation settings. A changed config
+is rejected. Sessions created before the Codex default require
+`--agent-prompt minimal`; choose a new conversation to use the Codex prompt.
 The executable, image/model locks, session and private state must be outside the
 project. When editing Playtime itself, install the binary and copy its reviewed
 locks outside the source checkout first, passing both `--model-lock` and
 `--image-lock` explicitly.
 
-The basic interface accepts one message per line. `/paste` starts multiline input;
-`/end` on its own line submits it. Text, reasoning, tool activity, input bounds,
-compaction requests and final accounting stream to the terminal. Model-supplied
-terminal control characters are escaped. `/quit` exits; `/stop` or Ctrl-C during
-a turn cancels it and waits for owned cleanup. SIGTERM/SIGHUP also request cleanup.
-Normal EOF during a running turn requests cancellation.
+On a terminal, input supports cursor editing, history and bracketed multiline
+paste. A paste stays one editable message; Enter submits it. Newlines display as
+`↵` in the horizontally scrolling input row. `/paste` followed by `/end` remains
+available, including with line-oriented input pipes. Terminal output uses one
+activity row per model response: a first-line preview, spinner, elapsed seconds
+and received text size and average rate in KiB/s. The rate counts UTF-8 thinking
+and answer text bytes divided by elapsed request time, including the initial wait;
+it is neither tokens per second nor transport bandwidth. The row updates in place
+without scrolling. The complete
+received response is printed together at the next effect boundary, before tool
+activity or the next model request. Thinking and answer text retain their order.
+Cancelled partial responses remain visible with the stop diagnostics; Escape and
+Ctrl-C continue to work while the display buffers. The display buffer is bounded
+at 32 MiB; larger text is explicitly marked and remains in session records.
+
+`--stream` restores immediate text streaming. Redirected output and `--json`
+continue streaming without cursor controls. This changes presentation only:
+transport, durable records, tool dispatch and compaction are unchanged. Model
+terminal control characters are escaped. Escape, Ctrl-C or `/stop` cancels a running turn and waits for owned
+cleanup. `/quit` exits. SIGTERM/SIGHUP and input EOF also request cleanup.
 
 For one turn without a prompt loop, use `--prompt 'task'`. `--json` adds newline
 JSON event envelopes with `schema_version: 1`; diagnostics remain on stderr.
@@ -70,8 +100,10 @@ the server or claim a benchmark at its full context size.
 
 `playtime-docker::project::ProjectDirectory` resolves the selected project and
 records its device/inode/owner identity. It holds a cooperative exclusive lease
-under private state, keyed by device and inode. Admission checks at most 500,000
-entries for ten seconds, refuses nested mounts, special files and external hard links, and never
+under private state, keyed by device and inode. Admission checks at most 2,000,000
+entries for thirty seconds, including ignored files and build trees. It reports
+entry-limit and timeout failures separately, with the path reached. It refuses
+nested mounts, special files and external hard links, and never
 follows project symlinks. Internal hard links are allowed when all links are
 within the selected tree. Both files and symlinks are counted. Same-device bind
 mounts are checked using [`/proc/self/mountinfo`](https://man7.org/linux/man-pages/man5/proc_pid_mountinfo.5.html), so a mount cannot hide files from
@@ -132,6 +164,19 @@ head stays active. A later open refuses it. Similarly, a crashed process can lea
 a private project `active` proposal; subsequent project admission refuses to edit
 until its exact container ownership has been reconciled. Do not delete these
 markers simply to bypass the checks.
+
+A live interactive Escape/Ctrl-C/`/stop` can automatically fork completed history
+plus a bounded evidence notice when the recovery audit confirms cleanup and all
+tool outcomes were observed. It then returns to input without replaying the old
+message or tools. Unknown tool outcomes display an evidence report and wait at an in-CLI recovery
+prompt. `/recover` acknowledges possible partial changes; `/quit` exits.
+If inference termination is uncertain, the client closes its owned tools and asks
+the launcher to restart via a private restart record and exit 75. The wrapper must
+observe successful owner shutdown before reacquiring and verifying inference for
+the new session. It never sends a warm-release request for this exit. Failure to
+confirm shutdown blocks continuation. Direct endpoint users must reconcile their
+owner before reopening the printed fork. No reset of a fenced model occurs inside
+the client, and headless requests never automatically restart.
 
 For a stopped turn with recorded complete project cleanup, the picker offers
 `r<number>` to inspect a recovery report. It shows recorded results, unknown tool

@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import pty
 import shutil
 import signal
 import subprocess
@@ -77,12 +78,22 @@ else:
             with (root / 'owner-input').open('a') as received:
                 received.write(line)
     (root / 'restored').touch()
-    if mode == 'restore-failure':
+    if mode in ('restore-failure', 'restart-restore-failure'):
         sys.exit(1)
 ''')
         self.write_program(self.package / "playtime-chat", r'''
 import json, os, pathlib, signal, sys, time
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
+if '--list-sessions' in sys.argv:
+    assert not (root / 'started').exists(), 'discovery must precede SSH ownership'
+    (root / 'listed').write_text(json.dumps(sys.argv[1:]))
+    mode = os.environ.get('FIXTURE_MODE', '')
+    if mode == 'list-failure':
+        print('playtime-chat: fixture workspace rejected', file=sys.stderr)
+        sys.exit(2)
+    state = mode.removeprefix('sessions-') if mode.startswith('sessions-') else 'ready'
+    print(json.dumps([] if state == 'empty' else [{'state': state}]))
+    sys.exit(0)
 if '--inspect-interrupted' in sys.argv:
     assert not (root / 'started').exists(), 'inspection must not acquire inference'
     (root / 'inspected').touch()
@@ -92,6 +103,7 @@ if '--select-session' in sys.argv:
     (root / 'picked').write_text(json.dumps(sys.argv[1:]))
     mode = os.environ.get('FIXTURE_MODE')
     if mode == 'picker-failure':
+        print('playtime-chat: fixture workspace rejected', file=sys.stderr)
         sys.exit(2)
     print(json.dumps({'session': str(root / 'saved-session') if mode == 'picker-resume' else None,
                       'cancelled': mode == 'picker-cancel',
@@ -99,6 +111,18 @@ if '--select-session' in sys.argv:
                       'acknowledge_uncertain_tools': mode == 'picker-recover'}))
     sys.exit(0)
 (root / 'client').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd()}))
+if os.environ.get('FIXTURE_MODE', '').startswith('restart'):
+    if not (root / 'restart-requested').exists():
+        (root / 'restart-requested').touch()
+        destination = root / 'fork'
+        destination.mkdir()
+        (destination / 'config.json').write_text('{}')
+        pathlib.Path(os.environ['PLAYTIME_CHAT_RESTART_FILE']).write_text(json.dumps({'session': str(destination)}))
+        sys.exit(75)
+    assert (root / 'restored').exists(), 'owner must finish before client restart'
+    assert 'GYRO_RELEASE' not in (root / 'owner-input').read_text(), 'interrupted inference must not be parked'
+    assert '--session' in sys.argv and str(root / 'fork') in sys.argv
+    (root / 'restarted').touch()
 if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
     def stop(*args):
         (root / 'client-cleaned').touch()
@@ -122,6 +146,80 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
 
     def run_fixture(self, mode="", *args):
         return subprocess.run(self.command("framework-gyro-m-fast", *args), env=dict(self.env, FIXTURE_MODE=mode), cwd=self.root, capture_output=True, text=True, timeout=15)
+
+    def run_interactive(self, mode="", *args):
+        master, terminal = pty.openpty()
+        try:
+            return subprocess.run(self.command("framework-gyro-m-fast", *args),
+                                  env=dict(self.env, FIXTURE_MODE=mode), cwd=self.root,
+                                  stdin=terminal, capture_output=True, text=True, timeout=15)
+        finally:
+            os.close(terminal)
+            os.close(master)
+
+    def test_interactive_launch_starts_new_without_resumable_sessions(self):
+        for state in ('empty', 'interrupted', 'in_use', 'settings_differ', 'unavailable'):
+            with self.subTest(state=state):
+                # Each discovery must precede this launch's owner acquisition.
+                (self.root / 'started').unlink(missing_ok=True)
+                result = self.run_interactive('sessions-' + state)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((self.root / 'listed').exists())
+                self.assertFalse((self.root / 'picked').exists())
+                argv = json.loads((self.root / 'client').read_text())['argv']
+                self.assertNotIn('--session', argv)
+                self.assertNotIn('--recover-interrupted', argv)
+                if state != 'empty':
+                    self.assertIn('--sessions to inspect or recover', result.stderr)
+
+    def test_interactive_launch_offers_resumable_session(self):
+        result = self.run_interactive('picker-resume')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'listed').exists())
+        self.assertTrue((self.root / 'picked').exists())
+        argv = json.loads((self.root / 'client').read_text())['argv']
+        self.assertEqual(argv[argv.index('--session') + 1], str(self.root / 'saved-session'))
+
+    def test_interactive_discovery_failure_never_starts_host(self):
+        result = self.run_interactive('list-failure')
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr.strip(), 'playtime-chat: fixture workspace rejected')
+        self.assertFalse((self.root / 'started').exists())
+
+    def test_forced_picker_does_not_require_a_resumable_session(self):
+        result = self.run_interactive('picker-recover', '--sessions')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / 'listed').exists())
+        argv = json.loads((self.root / 'client').read_text())['argv']
+        self.assertEqual(argv[argv.index('--recover-interrupted') + 1], str(self.root / 'stopped-session'))
+
+    def test_host_preset_skips_environment_and_preserves_picker_options(self):
+        (self.package / 'general.lock.json').unlink()
+        definitions = self.root / '.devcontainer'
+        definitions.mkdir()
+        (definitions / 'devcontainer.json').write_text('invalid and never read for host tools')
+        result = self.run_interactive('picker-resume', '--preset', 'coding-host', '--sessions')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads((self.root / 'client').read_text())['argv']
+        self.assertNotIn('--image-lock', argv)
+        self.assertEqual(argv[argv.index('--preset') + 1], 'coding-host')
+        self.assertIn('--session', argv)
+        self.assertTrue((self.root / 'restored').exists())
+
+    def test_host_preset_rejects_container_selection_before_ownership(self):
+        result = self.run_fixture('', '--preset', 'coding-host', '--environment', 'general')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('cannot select a Docker environment', result.stderr)
+        self.assertFalse((self.root / 'started').exists())
+
+    def test_host_preset_help_does_not_acquire_inference(self):
+        (self.package / 'general.lock.json').unlink()
+        result = self.run_fixture('', '--preset', 'coding-host', '--help')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / 'started').exists())
+        argv = json.loads((self.root / 'client').read_text())['argv']
+        self.assertIn('--help', argv)
+        self.assertIn('coding-host', argv)
 
     def worker_fixture(self):
         self.write_program(self.package / "playtime-task", r'''
@@ -307,18 +405,23 @@ else:
         self.assertFalse((self.root / 'started').exists())
 
     def test_picker_cancel_and_failure_never_start_host(self):
-        for mode, expected in [('picker-cancel', 0), ('picker-failure', 1)]:
+        for mode, expected in [('picker-cancel', 0), ('picker-failure', 2)]:
             result = self.run_fixture(mode, '--sessions')
             self.assertEqual(result.returncode, expected, result.stderr)
             self.assertTrue((self.root / 'picked').exists())
             self.assertFalse((self.root / 'started').exists())
             self.assertFalse((self.root / 'client').exists())
+            if mode == 'picker-failure':
+                self.assertEqual(result.stderr.strip(), 'playtime-chat: fixture workspace rejected')
 
     def test_explicit_sessions_and_headless_calls_skip_picker(self):
-        for args in [('--session', '/saved'), ('--prompt', '--sessions'), ('--recover-interrupted', '/stopped')]:
+        for args in [('--session', '/saved'), ('--prompt', '--sessions'), ('--recover-interrupted', '/stopped'),
+                     ('--agent-prompt', 'minimal', '--session', '/saved'), ('--stream', '--session', '/saved')]:
             result = self.run_fixture('', *args)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse((self.root / 'picked').exists())
+            argv = json.loads((self.root / 'client').read_text())['argv']
+            self.assertEqual(argv[-len(args):], list(args))
 
     def test_picker_new_conversation_has_no_session_override(self):
         result = self.run_fixture('', '--sessions')
@@ -459,6 +562,22 @@ else:
             finally:
                 if process.poll() is None:
                     process.kill()
+
+    def test_interrupted_model_restarts_only_after_owner_shutdown(self):
+        result = self.run_fixture('restart', '--session', str(self.root / 'old'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'restarted').exists())
+        self.assertNotIn(str(self.root / 'old'), (self.root / 'client').read_text())
+
+    def test_failed_owner_shutdown_blocks_restart(self):
+        result = self.run_fixture('restart-restore-failure')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / 'restarted').exists())
+
+    def test_restart_replaces_selection_and_preserves_launch_settings(self):
+        self.assertEqual(launcher.resume_arguments(['--preset', 'coding-host', '--sessions',
+            '--recover-interrupted=/old', '--acknowledge-uncertain-tools', '--context-tokens', '163840'], Path('/fork')),
+            ['--preset', 'coding-host', '--context-tokens', '163840', '--session', '/fork'])
 
     def test_host_and_readiness_require_exact_reviewed_values(self):
         with self.assertRaises(RuntimeError):

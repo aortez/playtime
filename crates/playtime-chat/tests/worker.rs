@@ -114,8 +114,10 @@ fn config() -> chat::ConversationConfig {
         instructions: worker::INSTRUCTIONS.into(),
         inventory: "fixture".into(),
         mode: playtime_core::RunMode::Simulation,
-        tool_policy: ToolPolicy::Simulation,
-        parameters,
+        execution: playtime_engine::execution::ExecutionConfig::workshop(
+            parameters,
+            ToolPolicy::Simulation,
+        ),
         compaction: compaction::CompactionSettings {
             allow_finish_run: false,
             summary_tokens: 256.try_into().unwrap(),

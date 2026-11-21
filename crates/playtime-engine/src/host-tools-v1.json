@@ -1,0 +1,165 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "exec",
+      "description": "Run a bounded Bash command on the host as the current user. Relative cwd defaults to the launch workspace. Its child processes are stopped on completion, timeout or cancellation. Use start_process for a persistent service or interactive CLI.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "read_file",
+      "description": "Read a bounded UTF-8 slice of a regular host file. Relative paths use the launch workspace; absolute paths and symlinks use normal host permissions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "offset_bytes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "write_file",
+      "description": "Write or append UTF-8 text to a regular host file. Relative paths use the launch workspace. Creates missing parent directories.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "append": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "start_process",
+      "description": "Start a host service or interactive program and return its process_id. It survives turns and compaction in this live CLI session. Set tty=true for a terminal. Processes stop on CLI exit and are not restored on conversation resume.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "tty": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "poll_process",
+      "description": "Read new bounded output and status for a process_id. Optionally wait up to 10 seconds. A missing process_id lists this live session's process handles.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "process_id": {
+            "type": "string"
+          },
+          "wait_seconds": {
+            "type": "number"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "write_process",
+      "description": "Send UTF-8 input to a live process, including newlines or terminal control characters. Set close_stdin=true to close pipe input; for a terminal send the appropriate EOF character.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "process_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "close_stdin": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "process_id",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "stop_process",
+      "description": "Stop a process and its descendants, then return remaining output and status. Stops only the selected process handle owned by this CLI session.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "process_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+]
