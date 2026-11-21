@@ -25,7 +25,8 @@ class LauncherTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.package = self.root / "package"
         self.package.mkdir()
-        for name in ("run-strata.py", "verify-strata-host.py", "project_environment.py", "presets.json"):
+        for name in ("run-strata.py", "verify-strata-host.py", "project_environment.py",
+                     "launch_protocol.py", "presets.json"):
             shutil.copyfile(SOURCE / name, self.package / name)
         self.lock = {"identity": {"model": "fixture", "context_tokens": 163840}, "host": {"digest": "reviewed"}}
         (self.package / "framework-strata-gyro-m-fast-v1.lock.json").write_text(json.dumps(self.lock))
@@ -35,7 +36,7 @@ class LauncherTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.write_program(self.bin / "ssh", r'''
-import json, os, pathlib, select, shlex, sys, time
+import json, os, pathlib, select, shlex, signal, sys, time
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
 args = shlex.split(sys.argv[-1])
 mode = os.environ.get('FIXTURE_MODE', '')
@@ -58,6 +59,8 @@ elif args[1] == '-':
                                        'hashed_bytes': 100}}))
 else:
     (root / 'started').touch()
+    with (root / 'owner-starts').open('a') as starts:
+        starts.write('start\n')
     (root / 'owner-args').write_text(json.dumps(sys.argv[1:]))
     if mode == 'busy':
         print('Another session owns Framework', file=sys.stderr)
@@ -69,14 +72,18 @@ else:
     print('Gyro-M: ' + verb + ' ' + profile + '; logs: ' + str(root / state / '20261113T123456Z-123'), file=sys.stderr, flush=True)
     print('GYRO_READY ' + json.dumps({'model':'fixture', 'context':131072 if bird else 163840, 'drafting':'dflash2'}), flush=True)
     while True:
-        if mode == 'owner-loss' and (root / 'client').exists():
-            sys.exit(1)
+        if mode in ('owner-loss', 'owner-exit-zero') and (root / 'client').exists():
+            sys.exit(1 if mode == 'owner-loss' else 0)
         if select.select([sys.stdin], [], [], .05)[0]:
             line = sys.stdin.readline()
             if not line:
                 break
             with (root / 'owner-input').open('a') as received:
                 received.write(line)
+    if mode == 'owner-cleanup-timeout':
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+        while True:
+            time.sleep(.02)
     (root / 'restored').touch()
     if mode in ('restore-failure', 'restart-restore-failure'):
         sys.exit(1)
@@ -210,6 +217,12 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         result = self.run_fixture('', '--preset', 'coding-host', '--environment', 'general')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('cannot select a Docker environment', result.stderr)
+        self.assertFalse((self.root / 'started').exists())
+
+    def test_host_preset_rejects_unknown_chat_options_before_ownership(self):
+        result = self.run_fixture('', '--preset', 'coding-host', '--bogus')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('unsupported chat option: --bogus', result.stderr)
         self.assertFalse((self.root / 'started').exists())
 
     def test_host_preset_help_does_not_acquire_inference(self):

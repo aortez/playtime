@@ -117,6 +117,16 @@ class Environments(unittest.TestCase):
         outside.chmod(0o644)
         with self.assertRaises(ValueError): env.read_private(outside)
 
+    def test_prompt_file_options_preserve_flag_looking_values(self):
+        for extra in (["--prompt", "--prompt-file", *self.args],
+                      ["--prompt-file", "--workspace", *self.args],
+                      [*self.args, "--prompt-file", "prompt.md"],
+                      ["--completion-receipt", "--workspace", "--launch-id", "run-1", *self.args]):
+            with self.subTest(extra=extra):
+                root, source = env.workspace_arguments(extra)
+                self.assertEqual(root, self.workspace)
+                self.assertIsNone(source)
+
     def test_flag_looking_prompt_values_do_not_change_environment_selection(self):
         root,source=env.workspace_arguments([*self.args,'--prompt','--session','--wall-seconds','120'])
         self.assertEqual(root,self.workspace)

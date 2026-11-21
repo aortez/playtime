@@ -1,4 +1,4 @@
-# Interactive host coding
+# Host coding
 
 `--preset coding-host` uses Playtime's terminal client, saved conversations and
 shared compacting controller with the pinned Codex-derived coding prompt. Tools
@@ -25,6 +25,11 @@ come from the user's groups and host setup. There is no filesystem, network,
 device or IPC sandbox, sudo API, CPU/memory quota, or claimed protection of
 same-user session records. State and the installed client stay separate from the
 checkout to avoid accidental edits, but host execution can access them.
+
+The one-shot [`launcher_v1` contract](rust-chat-launcher.md#one-shot-launch-contract)
+runs a single `coding-host` turn for a calling program, with the same trust. Its
+tools run as the invoking user with the access described above, and no terminal
+shows the turn while it runs; the caller's timeout and signals are the only controls.
 
 ## Tools and process lifetime
 
@@ -83,7 +88,11 @@ time, received text size and average KiB/s since the request began (including th
 initial wait). This measures received text bytes, not model tokens. Responses
 print in complete blocks at the next effect
 boundary. `--stream` restores the previous display; redirected output and JSON
-remain streamed. Buffering does not delay cancellation or change saved history.
+remain streamed. Tool results show a compact status and first output line;
+`/tool` lists recent results and `/tool N` displays captured stdout, stderr,
+file content and metadata. The CLI retains 32 results until exit or restart;
+session records retain the durable evidence. Buffering does not delay cancellation
+or change saved history.
 
 Bracketed multiline paste stays one editable message until Enter. Escape, Ctrl-C
 or `/stop` interrupts work. After confirmed cleanup and observed tool outcomes,

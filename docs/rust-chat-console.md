@@ -80,7 +80,15 @@ at 32 MiB; larger text is explicitly marked and remains in session records.
 `--stream` restores immediate text streaming. Redirected output and `--json`
 continue streaming without cursor controls. This changes presentation only:
 transport, durable records, tool dispatch and compaction are unchanged. Model
-terminal control characters are escaped. Escape, Ctrl-C or `/stop` cancels a running turn and waits for owned
+terminal control characters are escaped. Each completed tool shows its command or
+path, elapsed time, result status, output sizes and any timeout or truncation.
+One output line previews stderr, stdout or file content. At an idle prompt,
+`/tool` lists the 32 most recent results in this CLI, and `/tool N` shows a
+result's captured output and metadata. Larger results are marked and remain in
+the session records; the view is cleared when the CLI exits or restarts. JSON
+event envelopes and saved records are unchanged. A tool without an observed
+result is marked unavailable and must be assessed through the session evidence.
+Escape, Ctrl-C or `/stop` cancels a running turn and waits for owned
 cleanup. `/quit` exits. SIGTERM/SIGHUP and input EOF also request cleanup.
 
 For one turn without a prompt loop, use `--prompt 'task'`. `--json` adds newline
@@ -269,3 +277,25 @@ remote artifacts/configuration against that lock before inference.
 The helper then stopped the owned server and restored Framework successfully.
 No owned local project containers remained. Bird's CUDA transport has prior fast
 smoke evidence, but these project-console cases have only run on Framework.
+
+### File input and one-shot completion
+
+`--prompt-file PATH --json` starts one fresh turn using the exact UTF-8 bytes of a
+regular file (up to 256 KiB). It conflicts with `--prompt` and saved-session,
+recovery or session-picker selections. Symlinks, non-regular files, blank prompts
+and oversized inputs are refused. This avoids argv size limits; it does not
+change the controller, model settings or tool permissions.
+
+For a `--preset coding-host` caller that needs correlated local cleanup evidence,
+add `--launch-id ID --completion-receipt /private/directory/receipt.json`.
+After the turn and host-tool cleanup, the client atomically creates a receipt:
+
+```json
+{"schema_version":1,"launch_id":"example","prompt_sha256":"<sha256 of exact prompt bytes>","outcome":"completed","local_tools":"confirmed","session_id":"/private/session/path"}
+```
+
+Outcome is `completed`, `failed`, `cancelled`, or `timed_out`; `local_tools` is
+`confirmed` or `unresolved`. Existing receipt files are never overwritten. An
+early failure can leave no receipt, which is unknown cleanup to a caller that
+already started the client. The client makes no inference-owner cleanup claim;
+use the owner wrapper's separate launch receipt for that.
