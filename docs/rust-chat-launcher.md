@@ -354,16 +354,21 @@ resumes/replays a request.
 On November 20, 2026, a separately installed copy of this launcher ran these
 requests on Framework with `framework-gyro-m-fast`:
 
-- A one-turn repair from a cold start finished in 50 seconds. The model fixed a
+- A one-turn repair from a cold start finished in 42 seconds. The model fixed a
   one-line bug and ran the project's test. The receipt recorded `completed` with
-  both cleanups `confirmed`, and the model was kept warm.
+  both cleanups `confirmed`, and the model was kept warm. The caller's stdout
+  stayed empty and its stderr held four status lines; the client's output and the
+  helper's log were in the evidence directory.
+- Replaying that request was refused before anything was acquired. Its receipt
+  was unchanged and no run directory was created.
 - A second request received SIGTERM 20 seconds into its turn. The wrapper exited
   143 two seconds later with `cancelled` and both cleanups `confirmed`, and the
   server stopped instead of staying warm.
-- Replaying the first request was refused before anything was acquired, and its
-  receipt was unchanged.
-- An earlier attempt failed before SSH connected, because `framework.local`
-  briefly didn't resolve. Its receipt recorded `failed`, with `local_tools`
+- A third received SIGTERM 19 ms after starting, once its claim existed. The
+  wrapper exited 143 with `cancelled` and both cleanups `not_acquired`, without
+  creating a run directory.
+- One attempt failed before SSH connected, because `framework.local` briefly
+  didn't resolve. Its receipt recorded `failed`, with `local_tools`
   `not_acquired` and `inference_owner` `unresolved`: an SSH failure can't prove
   that nothing started on the host.
 
