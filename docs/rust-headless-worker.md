@@ -51,14 +51,70 @@ The canonical report is one strict JSON object with `status`, `summary`, `change
 least one passing check and no unresolved work. Questions/blockers are required
 for their respective statuses; a report never supplies independent authority.
 
-Each real exec result is retained under private `artifacts/tool-N.json` before
-it is delivered to the model. Its additive `evidence_log_path` remains present
-when the context fitter shortens output. Reports copy the exact command, exit
-code and reference; validation rejects missing, escaped, timed-out or mismatched
-evidence. These logs are not writable or readable by project tools. Aggregate
-artifact storage is bounded at 64 MiB; failures stop the turn through the shared
-driver and still clean up. Tool output retains the existing per-command cap;
-these logs are actual adapter responses, not necessarily uncapped process output.
+### Model-facing references and canonical conversion
+
+The model-facing report uses the same top-level fields, but each selected check is
+`{"evidence_ref":"tool-<invocation>-<effect>.json"}`. The model copies the entire
+`evidence_log_path` from its exec result; it never constructs an identifier or
+transcribes a command. `<invocation>` is a fresh 64-character lowercase hex nonce
+for each invocation, including completed-session continuation. `<effect>` is the
+controller effect ID. The reference is also the retained artifact's basename.
+The existing context fitter preserves `evidence_log_path` when shortening output;
+no context or compaction policy changes are required.
+
+For example, the model can submit:
+
+```json
+{
+  "status": "completed",
+  "summary": "The selected checks passed.",
+  "changes": ["Updated the parser"],
+  "verification": [{"evidence_ref": "tool-<invocation>-<effect>.json"}],
+  "remaining_work": [],
+  "questions": [],
+  "blockers": []
+}
+```
+
+The placeholder in this example must be replaced with an actual observed
+`evidence_log_path`. After retaining the exact raw response, the harness resolves
+each reference against its in-memory registry of successful evidence commits in
+this invocation. It checks the private file's SHA-256 against the committed bytes,
+then copies the captured command, integer exit code and basename into the canonical
+`verification` entry. Selection and array order are preserved; uncited commands
+are never included. Commands retain prefixes such as `cd /work &&`, whitespace,
+quotes and multiline heredocs exactly. The raw `evidence_ref` equals the canonical
+entry's `log_path`, making their association independently auditable without a
+second manifest.
+
+The external worker-report-v1 contract remains unchanged: each canonical entry
+has only `command`, `exit_code` and `log_path`. Devbot's frozen assignment and worker
+guidance describe that external report. The worker's frozen system instructions
+explicitly distinguish its reference input from that contract and direct the model
+to use references; no Devbot schema or adapter change is required. Legacy full-field
+model reports remain accepted only with exact command/exit-code matches against
+current committed evidence. They are never corrected. Mixing reference and legacy
+entries, supplying both shapes in an entry, or selecting a reference twice is an
+error, even when both selections agree.
+
+Unknown, malformed, escaped, foreign and uncommitted references are rejected before
+filesystem access. Missing, changed or linked artifacts are rejected. Merely
+copying a log into the artifact directory does not register it. Local effect IDs
+can repeat in a later invocation without aliasing an earlier reference. Compaction
+can retain a reference to current committed evidence, but an earlier invocation's
+reference in history or a summary remains unavailable. The harness never searches
+old runs, substitutes a new check, or replays tools to repair a report.
+
+Each exec result is committed to private `artifacts/` before it is delivered to
+the controller or model. Project tools cannot read or write these logs. Aggregate
+artifact storage remains bounded at 64 MiB, with a 1 MiB per-artifact read/write
+limit. Both model-input and expanded canonical reports have a 1 MiB parsing/output
+limit. Evidence failures stop the turn through the shared driver and still clean
+up. Tool output retains the existing per-command cap; retained logs are actual
+adapter responses, not necessarily uncapped process output. A missing integer exit
+code, missing timeout status, timeout or adapter error cannot become verification.
+A known nonzero exit code may appear in a checkpoint, but cannot support completed
+status. Existing unresolved-work and status requirements still apply.
 
 A model response may have a prose preface before its single trailing JSON object.
 Normalization accepts only that complete object; multiple objects, truncated
@@ -90,6 +146,11 @@ The default turn limits are 900 seconds, 32,768 generated tokens, 8,192 tokens p
 call, 300 seconds per model call and 90 seconds per command. A caller's shorter
 absolute deadline can cancel startup or execution. Completed continuation uses
 the same frozen configuration; changing `--wall-seconds` changes that binding.
+The reference-reporting instructions also change the configuration fingerprint:
+saved workers from the earlier full-field-only implementation are rejected, even
+though the external protocol remains version 1. Use the caller's explicit fresh
+reconstruction path with a new worker session, preserve the old session/evidence,
+and inspect surviving edits. There is no silent session migration or fresh fallback.
 
 Validation: `cargo test -p playtime-chat --locked`, shared engine/context tests,
 and `python3 -m unittest discover -s scripts/chat -p 'test_*.py' -v`. Devbot owns
