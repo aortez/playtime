@@ -300,6 +300,34 @@ their shape. Neither runs a model or qualifies native tools, the dedicated
 account or how well a model uses the correction. No caller uses the contract
 invocation yet.
 
+### Live check, November 20
+
+A separately installed build of this change ran two contract invocations through
+the owner wrapper on Framework `framework-gyro-m-fast`, with Docker tools,
+Devbot's generated worker schema as the contract, `--evidence-property
+verification` and `--repair-turns 1`:
+
+- A one-turn repair from a cold start finished in 46 seconds. The model fixed a
+  one-line bug, ran the tests and returned one JSON object citing three
+  references. The harness wrote the recorded commands and exit codes,
+  `response_sha256` matched `response.json`, cleanup was complete and no repair
+  turn ran.
+- A second assignment also asked for a leading sentence and a fenced block, to
+  provoke a rejection. The first response was rejected as `invalid_output`. The
+  repair turn returned clean JSON citing the same two references, without
+  running tools again, and was accepted; the invocation took 28 seconds. The
+  receipt recorded one repair turn and the rejected turn's reason, usage and
+  cleanup.
+- Both results have status `completed` while citing the failing run from before
+  the fix, with exit code 1, beside the passing one. They are shape-valid, so
+  Playtime delivered them. A caller that requires passing checks for `completed`
+  must reject them itself: the repair turn covers shape and evidence, not caller
+  rules.
+
+Framework ended as it began, with no model loaded, and no project containers
+remained. These are integration checks on one preset, not coding-quality
+measurements.
+
 ## Separate read-only role protocol
 
 Setup, supervision and review can explicitly select the new
