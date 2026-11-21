@@ -91,7 +91,7 @@ def check_host(report, lock):
 def worker_arguments(args):
     """Resolve worker session metadata without treating an opaque ID as a path."""
     allowed = {"--workspace", "--run-dir", "--request", "--state-dir", "--worker-session",
-               "--protocol-version", "--wall-seconds"}
+               "--protocol-version", "--wall-seconds", "--tool-backend", "--native-policy"}
     values = {}
     index = 0
     while index < len(args):
@@ -138,6 +138,18 @@ def worker_arguments(args):
     return selected
 
 
+def worker_option(args, key, default=None):
+    for index, arg in enumerate(args):
+        name, equals, value = arg.partition("=")
+        if name == key:
+            if equals:
+                return value
+            if index + 1 >= len(args):
+                raise RuntimeError(f"{key} needs a value")
+            return args[index + 1]
+    return default
+
+
 def session(preset, profile, args):
     # Wrapper flags precede chat arguments, so a prompt whose text is literally
     # "--full-verify" remains an ordinary prompt value.
@@ -169,15 +181,19 @@ def session(preset, profile, args):
     for arg in args:
         if arg.split("=", 1)[0] in ("--endpoint", "--model-lock", "--image-lock"):
             raise RuntimeError(f"{arg.split('=', 1)[0]} is owned by this preset")
+    native = worker and worker_option(args, "--tool-backend", "docker") == "native"
+    if native and environment is not None:
+        raise RuntimeError("native tools cannot select a Docker environment")
     executable = PACKAGE / ("playtime-task" if worker else "playtime-chat")
     lock_path = PACKAGE / preset["model_lock"]
     image_path = PACKAGE / "general.lock.json"
     # Read local resources before touching the remote host.
     lock = json.loads(lock_path.read_text())
-    json.loads(image_path.read_text())
+    if not native:
+        json.loads(image_path.read_text())
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise RuntimeError("playtime-chat is not installed beside this wrapper")
-    if args in (["--help"], ["-h"], ["--version"], ["-V"]) or (worker and args == ["--describe-protocol"]):
+    if args in (["--help"], ["-h"], ["--version"], ["-V"]) or (worker and "--describe-protocol" in args):
         if args in (["--help"], ["-h"]):
             print("Launcher options (before chat arguments): --full-verify rehashes model files; "
                   "--sessions opens the local session picker. --stop-server releases an idle warm model. "
@@ -195,9 +211,13 @@ def session(preset, profile, args):
         protocol = json.loads(described.stdout)
         if protocol.get("protocol") != "playtime-worker" or protocol.get("version") != 1:
             raise RuntimeError("unsupported Playtime worker protocol")
-    image_path = project_environment.resolve(selection_args, PACKAGE, environment)
-    json.loads(image_path.read_text())
-    client_args = [str(executable), "--model-lock", str(lock_path), "--image-lock", str(image_path)]
+        if native and protocol.get("tool_backends", {}).get("native") != "project-native-v1":
+            raise RuntimeError("installed worker lacks project-native-v1")
+    client_args = [str(executable), "--model-lock", str(lock_path)]
+    if not native:
+        image_path = project_environment.resolve(selection_args, PACKAGE, environment)
+        json.loads(image_path.read_text())
+        client_args += ["--image-lock", str(image_path)]
     if worker:
         checked = subprocess.run([*client_args, "--check-inputs", *args], stdin=subprocess.DEVNULL,
                                  capture_output=True, text=True, timeout=10, env=client_environment)
@@ -348,7 +368,7 @@ def session(preset, profile, args):
             f"{stats['hashed_files']} hashed ({stats['hashed_bytes'] / 1e9:.2f} GB read); "
             f"starting {profile} {'worker' if worker else 'chat'} in {project_environment.workspace_arguments(selection_args)[0]}")
         child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
-                                  "--model-lock", str(lock_path), "--image-lock", str(image_path), *args],
+                                  *client_args[1:], *args],
                                  stdin=subprocess.DEVNULL if worker else None, env=client_environment)
         while child.poll() is None:
             drain()

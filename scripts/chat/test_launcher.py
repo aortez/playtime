@@ -128,7 +128,7 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
 import json, os, pathlib, sys
 root=pathlib.Path(os.environ['FIXTURE_ROOT'])
 if '--describe-protocol' in sys.argv:
-    print(json.dumps({'protocol':'playtime-worker','version':2 if os.environ.get('FIXTURE_MODE')=='wrong-protocol' else 1}))
+    print(json.dumps({'protocol':'playtime-worker','version':2 if os.environ.get('FIXTURE_MODE')=='wrong-protocol' else 1, 'tool_backends': {} if os.environ.get('FIXTURE_MODE')=='missing-native' else {'native':'project-native-v1'}}))
 elif '--check-inputs' in sys.argv:
     assert not (root/'started').exists()
     print(json.dumps({'inputs_valid':True}))
@@ -153,6 +153,29 @@ else:
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertTrue((self.root/'restored').exists())
         self.assertFalse((self.root/'picked').exists())
+
+    def test_native_worker_needs_no_docker_image_or_environment(self):
+        args = self.worker_fixture()
+        args[1:3] = ['--tool-backend', 'native', '--native-policy', '/etc/playtime/native/fixture.json']
+        (self.package / 'general.lock.json').unlink()
+        result = subprocess.run(self.command('framework-gyro-m-fast', *args), input='Assignment', env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        child = json.loads((self.root / 'client').read_text())
+        self.assertNotIn('--image-lock', child)
+        self.assertIn('/etc/playtime/native/fixture.json', child)
+        self.assertTrue((self.root / 'restored').exists())
+
+    def test_native_capability_and_mixed_environment_fail_before_owner(self):
+        args = self.worker_fixture()
+        args += ['--tool-backend', 'native', '--native-policy', '/etc/playtime/native/fixture.json']
+        result = subprocess.run(self.command('framework-gyro-m-fast', *args), input='Assignment', env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / 'started').exists())
+        del args[1:3]
+        result = subprocess.run(self.command('framework-gyro-m-fast', *args), input='Assignment', env=dict(self.env, FIXTURE_MODE='missing-native'), capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('lacks project-native-v1', result.stderr)
+        self.assertFalse((self.root / 'started').exists())
 
     def test_worker_waits_for_durable_start_release(self):
         args=self.worker_fixture()

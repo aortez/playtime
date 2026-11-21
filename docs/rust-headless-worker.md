@@ -37,6 +37,12 @@ socket. Busy inference owners are never evicted.
 supports editing workers, project-docker-v1 tools, worker-report-v1 JSON reports
 and completed-session-only continuation. Unsupported protocol versions fail.
 
+Native execution is opt-in via `--tool-backend native --native-policy PATH`, using
+the actual assigned checkout path without Docker or an image lock. See
+[native tools](rust-native-project-tools.md) for the dedicated-account helper,
+configuration/session binding, capability fields and separate qualification gates.
+Do not combine native mode with `--environment` or `--image-lock`.
+
 ## Report and evidence
 
 Stdout is JSONL, schema version 1: one `worker_started`, shared `runtime` events,
