@@ -74,6 +74,12 @@ lease and uncertain-tool fence, and never fall back to unrestricted execution.
 Run `./scripts/test-rust-native-project.sh` for native-tool changes; this same-UID
 namespace gate does not establish privileged launch or dedicated-account isolation.
 See `docs/rust-native-project-tools.md` for separate installed-account qualification.
+Fresh read-only model roles use the same harness/native driver with explicit
+`playtime-readonly-v1` capability; see `docs/rust-readonly-model-roles.md`. Preserve
+worker/report v1, require read_only policy and a bounded pinned output contract,
+keep raw invalid output, and never resume worker/reviewer contexts across roles.
+Schema validity grants no domain authority. Run chat/protocol, launcher and native
+namespace gates for changes; fixtures do not qualify installed accounts or live roles.
 `playtime-strata` adapts the installed stateless Responses API to shared model
 requests; it never owns a model server or executes tools. Freeze the endpoint's
 model/template/settings plus independently verified host artifacts, keep missing

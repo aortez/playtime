@@ -6,11 +6,11 @@ private session journal and evidence-reference conversion remain in use. Docker
 is still the default; native mode never performs Docker admission, reads an image
 lock, or falls back to an unrestricted shell.
 
-This is a worker capability, not completed rollout qualification. The dedicated
-account, reviewed privileged installation, cross-UID access/cleanup tests and live
-model journey are separate integration prerequisites. Protocol 1 still advertises
-only `roles: ["worker"]`. Read-only native mounts do not isolate tools launched by
-an unrelated Codex supervisor, setup or reviewer.
+The dedicated account, reviewed privileged installation, cross-UID access/cleanup
+tests and live model journey are separate integration prerequisites. Worker
+protocol 1 still advertises only `roles: ["worker"]`. Explicit setup, supervision
+and review use the separate [read-only invocation protocol](rust-readonly-model-roles.md).
+Read-only native mounts do not isolate tools launched by an unrelated Codex client.
 
 ## Launch and capability contract
 
@@ -262,3 +262,12 @@ use. [Issue #224](https://github.com/aortez/playtime/issues/224) tracks them.
 
 Implementation references: [Bubblewrap documentation](https://github.com/containers/bubblewrap/blob/v0.11.1/bwrap.xml)
 and [setpriv](https://kernel.googlesource.com/pub/scm/utils/util-linux/util-linux/+/refs/tags/v2.41.1/sys-utils/setpriv.1.adoc).
+
+
+## Read-only model role integration
+
+The follow-up [read-only invocation protocol](rust-readonly-model-roles.md) adds
+fresh setup/supervisor/reviewer calls over this same sandbox and Strata transport.
+It requires mode read_only and a pinned trusted output contract. Worker protocol
+and continuation remain separate; Devbot must explicitly integrate/select the
+new path. It does not install a helper or qualify dedicated-account execution.

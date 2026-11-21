@@ -1775,3 +1775,40 @@ profile retains exact whole-label matching. Core policies, experiment images,
 completed checkpoint formats and committed goldens are unchanged.
 See `rust-project-environments.md` for validation and the
 deliberately limited Dev Containers support.
+
+
+## Fresh read-only model roles
+
+`playtime-task --role setup|supervisor|reviewer` adds explicit
+`playtime-readonly-v1` / `structured-result-v1` over native read_only tools and
+Strata. The worker description gains only an additive `readonly_invocation`
+capability: its roles=[worker], report v1 and completed continuation stay intact.
+New roles use fresh ptr- sessions, pinned bounded trusted schemas and separate
+receipts/raw/validated outputs. Their role and exact schema hash bind the existing
+conversation configuration; no worker configuration migration or tool-schema
+change is introduced. Read-only policies reject write_file before helper dispatch.
+See [read-only invocations](rust-readonly-model-roles.md) for the strict schema
+subset, explicit selection, input gate and validation limits.
+
+## Basalt model locks and shared serving slots
+
+The Responses adapter now supports reviewed CUDA Basalt 0.4.1 using schema-2
+model locks. Its identity records the service and one/two serving slots and
+uses null shared settings because Basalt has no `/settings` route. Legacy Strata
+locks omit the new default fields on serialization, preserving their existing
+fingerprints. Full endpoints still reject dispatch; a held Basalt lease permits
+one occupied peer slot. There is no request replay or implicit model migration.
+Basalt requests explicitly set `relaxed_drafting: false`.
+
+The selected native capability advertises `basalt-responses-v1` when probed with
+a reviewed Basalt model lock. Worker/report v1 and read-only role contracts are
+unchanged. New IQ4 and NVFP4 presets have independent locks and saved sessions.
+Validation includes CPU metadata/capacity/source-pin regressions, unchanged Strata
+serialization, owned live tool/cancellation checks for both quants, and installed
+Codex/Playtime file-edit smoke tests. No experiment goldens or Python controller
+files changed.
+
+Basalt 0.4.1 reports `activity.in_flight` as a busy flag plus queued requests.
+Admission therefore also reads `/slots`, validates IDs/context/count and boolean
+processing states, and counts active slots. Missing or malformed slot metadata
+rejects dispatch; a two-busy-slot regression keeps the status busy flag at one.

@@ -6,9 +6,10 @@ with the host's reviewed Gyro-M DFlash2 preset:
 | Entry | Inference host | Server context |
 | --- | --- | --- |
 | `playtime-framework-fast` | Framework, HIP | 163,840 tokens |
-| `playtime-bird-fast` | Bird, CUDA on the 4090 and 3090 | 131,072 tokens |
+| `playtime-bird-iq4` | Bird PRO 5000, Basalt Flash-Next IQ4 | 163,840 tokens |
+| `playtime-bird-nvfp4` | Bird PRO 5000, Basalt Flash-Next NVFP4-DQ8 | 163,840 tokens |
 
-Both use medium work thinking and no summary thinking. Codex does not participate
+All use medium work thinking and no summary thinking. Codex does not participate
 in the agent loop. Project tools run on the workstation that launches the console.
 
 Install from this checkout on the workstation where the project lives:
@@ -22,9 +23,12 @@ reviewed locks under `~/.local/lib/playtime-chat`, outside the writable project.
 It requires Python 3.11+ on both ends and the locked local Docker workshop image.
 Framework uses the existing `framework` SSH alias and its Gyro owner helpers.
 Bird uses `oldman@oldman-bird.local`, `~/.ssh/id_ed25519_oldman_bird_codex` and its
-existing `.local/lib/codex-gyro/gyro-session.py` helper. Each host also needs
-`warm-session.py` beside that helper; the source is Notes'
-`agents/strata-warm-session.py`. The Notes profile installers deploy both files.
+`.local/lib/codex-basalt/basalt-session.py` owner. Install Playtime first,
+then run Notes' `oldman-bird/install-basalt-profiles.py` to install that owner,
+Codex profiles and both Playtime menu entries. It refuses active clients before
+updating. Framework retains its existing `warm-session.py` / Gyro helpers.
+The legacy Bird Strata preset remains readable for historical sessions; its old
+4090 hardware configuration is no longer available.
 The Playtime installer does not update remote helpers, models or engines.
 
 Use a codex-launcher build that supports standalone `[[harness]]` entries. Add
@@ -44,14 +48,14 @@ effort = "medium"
 tools = "project Docker; no external network"
 
 [[harness]]
-name = "playtime-bird-fast"
+name = "playtime-bird-nvfp4"
 harness = "Playtime"
-description = "Project chat on Bird with the tested Gyro-M fast preset."
-launch = ["~/.local/lib/playtime-chat/run-strata.py", "bird-gyro-m-fast"]
-status = ["~/.local/lib/playtime-chat/run-strata.py", "--status", "bird-gyro-m-fast"]
-model = "qwen3.8-flash-next-gyro-gyro-m"
-provider = "Strata on Bird"
-context_window = 131072
+description = "Flash-Next NVFP4-DQ8 on Bird PRO 5000; up to two clients."
+launch = ["~/.local/lib/playtime-chat/run-strata.py", "bird-basalt-nvfp4"]
+status = ["~/.local/lib/playtime-chat/run-strata.py", "--status", "bird-basalt-nvfp4"]
+model = "bird-qwen38-flashnext-nvfp4-dq8-basalt"
+provider = "Basalt on Bird"
+context_window = 163840
 effort = "medium"
 tools = "project Docker; no external network"
 ```
@@ -60,10 +64,19 @@ From the project directory, select that entry in the menu, or run:
 
 ```sh
 codex-launcher playtime-framework-fast
-codex-launcher playtime-bird-fast
+codex-launcher playtime-bird-nvfp4
 # One turn, with optional machine-readable event output:
 codex-launcher playtime-framework-fast --prompt 'Inspect the project and explain its tests.' --json
 ```
+
+Use `playtime-bird-iq4` for the workhorse baseline. Both Bird entries share one
+Basalt process with Codex and Devbot: at most two clients of the same model,
+160K context per client. A third client or a different quant is refused while
+leases are held. The last clean release leaves the model warm for 30 minutes.
+An interrupted client closes admission until its peer finishes, then stops the
+owned server. Switching quant with no clients reloads the model. The 3090 stays
+idle. The first verified launch hashes the whole pack; later launches can reuse
+its verified hash while file identity is unchanged.
 
 Interactive launches show a local session picker **before starting the model**.
 Choose `0` (or Enter) for a new conversation, a numbered resumable session, or
@@ -79,7 +92,7 @@ Explicit `--session`, `--recover-compaction`, `--recover-interrupted`, and headl
 bypass selection. Use a leading `--sessions` to request the picker explicitly:
 
 ```sh
-codex-launcher playtime-bird-fast --sessions --workspace /absolute/project
+codex-launcher playtime-bird-nvfp4 --sessions --workspace /absolute/project
 ```
 
 Discovery checks at most 200 recent directories and displays up to 20 matches
@@ -123,10 +136,10 @@ and effort controls.
 
 ## Inference ownership and verification
 
-`scripts/chat/run-strata.py` owns an SSH forward and an exclusive client connection
-to the host's warm supervisor for the whole chat session. The supervisor keeps
-the original Gyro helper alive, holding its existing exclusive host lease even
-between clients. One client at a time may use it. An idle matching profile is
+`scripts/chat/run-strata.py` owns an SSH forward and a client lease for the whole
+chat session. Strata's warm supervisor keeps the original Gyro helper alive and
+admits one client. Basalt's owner holds the same exclusive Bird host lock and
+admits up to two clients of one quant. Both retain ownership between clients. An idle matching profile is
 reused; an idle different profile is stopped through its original helper before
 starting the requested one. Active clients cannot be evicted. Menu status checks use the read-only
 `--status` path; they never start or hash a model.
@@ -170,29 +183,30 @@ console shuts down local tools, with up to 45 seconds for graceful client cleanu
 Only a zero client exit with confirmed cleanup sends `GYRO_RELEASE` before EOF.
 The supervisor then verifies that no inference request remains and parks the
 model. EOF without that release, lost SSH, verification failure or failed client
-cleanup stops the owned server. The original helper's watchdog still handles
-supervisor loss; the supervisor cannot outlive that lease by merely discovering
-a listening endpoint. Uncertain helper cleanup fences subsequent admission.
+cleanup stops Strata immediately. Basalt instead blocks new admission until any
+remaining peer releases, then stops the process group. Its systemd cgroup owns
+the API and CUDA processes. The Strata helper watchdog retains its existing
+supervisor-loss handling; neither owner adopts an unowned listening endpoint. Uncertain helper cleanup fences subsequent admission.
 EOF and a terminal SSE event alone are not treated as remote termination proof.
 
 The default is **30 minutes after the client closes**, rather than a timeout
 inside an open chat. Warm status appears as `ready`. Idle expiry or explicit stop
-closes the original helper, which stops its owned server and restores Bird's GPU
-power limits. Until then GPU/RAM allocations and the serving power limits remain
-in place. No model settings or accuracy tradeoff is introduced. To release an
+stops the owned server. Strata uses its original helper and restoration rules;
+Basalt keeps the PRO 5000's existing 300 W limit throughout. Until shutdown the
+model retains its GPU/RAM allocations. No model settings or accuracy tradeoff is introduced. To release an
 idle host immediately (an active chat makes this command refuse):
 
 ```sh
-codex-launcher playtime-bird-fast --stop-server
+codex-launcher playtime-bird-nvfp4 --stop-server
 codex-launcher playtime-framework-fast --stop-server
 ```
 
-The host's private `warm/policy.json` under its existing helper state directory
+For Strata, the host's private `warm/policy.json` under its existing helper state directory
 contains `{"idle_seconds":1800}`. Zero means retain until explicit stop or profile
 switch. The policy is read on each clean release. An unavailable idle-status probe
 defers expiry and retries; it never authorizes interrupting an unknown request.
 
-The installer includes both reviewed fast model locks.
+The installer includes the historical Strata locks and both reviewed Basalt locks.
 Ollama was retired on both hosts on November 13, 2026, including the helpers'
 stop/restart hooks. It is not restarted when a console exits. No other active
 inference session is evicted to make a test run.

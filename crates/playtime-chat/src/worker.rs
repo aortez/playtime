@@ -72,6 +72,7 @@ pub struct EvidenceEffects<E> {
     remaining_bytes: usize,
     invocation: String,
     evidence: CommittedEvidence,
+    all_tools: bool,
 }
 impl<E> EvidenceEffects<E> {
     pub fn new(inner: E, artifacts: PathBuf, remaining_bytes: usize) -> Result<Self> {
@@ -81,11 +82,18 @@ impl<E> EvidenceEffects<E> {
             remaining_bytes,
             invocation: Token::generate()?.expose(),
             evidence: CommittedEvidence::default(),
+            all_tools: false,
         })
     }
 
     pub fn evidence(&self) -> &CommittedEvidence {
         &self.evidence
+    }
+
+    /// Read-only invocations retain inspections as well as command results.
+    pub fn with_all_tools(mut self) -> Self {
+        self.all_tools = true;
+        self
     }
 }
 
@@ -100,11 +108,15 @@ impl<E: Effects> Effects for EvidenceEffects<E> {
     ) -> Outcome {
         let mut outcome = self.inner.execute(effect, deadline, cancel, chunks).await;
         if let EffectKind::Tool(request) = &effect.kind
-            && request.name == "exec"
+            && (request.name == "exec" || self.all_tools)
             && let Outcome::Tool(value) = &mut outcome
         {
             let name = format!("tool-{}-{}.json", self.invocation, effect.id);
-            let record = json!({"schema_version":PROTOCOL,"command":request.arguments["command"],"result":value});
+            let mut record = json!({"schema_version":PROTOCOL,"command":request.arguments["command"],"result":value});
+            if self.all_tools {
+                record["tool"] = request.name.clone().into();
+                record["arguments"] = request.arguments.clone();
+            }
             let bytes = match serde_json::to_vec(&record) {
                 Ok(bytes)
                     if bytes.len() <= self.remaining_bytes && bytes.len() as u64 <= MAX_REPORT =>

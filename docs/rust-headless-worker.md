@@ -171,3 +171,12 @@ and the inference host was released. Evidence is retained at
 `~/.local/state/playtime-worker-pilot-20261114-r7`; setup decisions were scripted
 while worker inference and project tools were real. This establishes integration,
 not comparative coding quality.
+
+
+## Separate read-only role protocol
+
+Setup, supervision and review can explicitly select the new
+[read-only invocation protocol](rust-readonly-model-roles.md). These calls use
+fresh native read_only contexts and caller-supplied output schemas; they do not
+use worker reports or worker continuation. Existing worker argv and external
+report fields remain unchanged.

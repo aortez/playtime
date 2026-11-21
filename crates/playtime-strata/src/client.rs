@@ -6,7 +6,7 @@ use tokio::{sync::mpsc, time::Instant};
 
 use crate::{
     CallResult, CancellationToken, Decoder, Failure, FailureKind, Identity, Limits, ModelLock,
-    RemoteState, Result, StreamEvent, encode_request,
+    RemoteState, Result, Service, StreamEvent, encode_request,
 };
 
 /// The initial profile reaches an owned local server or SSH forward. It does
@@ -162,15 +162,6 @@ async fn inspect(
         cancel,
     )
     .await?;
-    let settings = metadata(
-        http,
-        endpoint,
-        "/settings",
-        limits.metadata_bytes,
-        deadline,
-        cancel,
-    )
-    .await?;
     let status = metadata(
         http,
         endpoint,
@@ -180,14 +171,57 @@ async fn inspect(
         cancel,
     )
     .await?;
+    // Basalt has no /settings endpoint. Record its absence explicitly; never
+    // manufacture Strata settings or accept a failed Strata metadata request.
+    let settings = if status["service"] == "basalt" {
+        Value::Null
+    } else {
+        metadata(
+            http,
+            endpoint,
+            "/settings",
+            limits.metadata_bytes,
+            deadline,
+            cancel,
+        )
+        .await?
+    };
     let identity = Identity::inspect(&props, &status, &settings)?;
     let started = status["started"]
         .as_u64()
         .filter(|n| *n > 0)
         .ok_or_else(|| Failure::new(FailureKind::Identity, "server start identity is missing"))?;
-    let in_flight = status["activity"]["in_flight"]
+    let mut in_flight = status["activity"]["in_flight"]
         .as_u64()
         .ok_or_else(|| Failure::new(FailureKind::Identity, "server activity is missing"))?;
+    if identity.service == Service::Basalt {
+        // Basalt 0.4.1 reports bool(busy) + queued here, not the number of
+        // active batch slots. Count its slot table before admitting a peer.
+        let slots = metadata(
+            http,
+            endpoint,
+            "/slots",
+            limits.metadata_bytes,
+            deadline,
+            cancel,
+        )
+        .await?;
+        let invalid = || Failure::new(FailureKind::Identity, "invalid Basalt slot activity");
+        let slots = slots.as_array().ok_or_else(invalid)?;
+        if slots.len() as u64 != identity.parallel {
+            return Err(invalid());
+        }
+        let mut active = 0;
+        for (id, slot) in slots.iter().enumerate() {
+            if slot["id"].as_u64() != Some(id as u64)
+                || slot["n_ctx"].as_u64() != Some(identity.context_tokens)
+            {
+                return Err(invalid());
+            }
+            active += u64::from(slot["is_processing"].as_bool().ok_or_else(invalid)?);
+        }
+        in_flight = in_flight.max(active);
+    }
     Ok(Inspection {
         identity,
         started,
@@ -237,7 +271,11 @@ impl Client {
                 "Strata model, template, settings or server process changed",
             ));
         }
-        if seen.in_flight != 0 {
+        // The external Basalt owner lends at most one client per serving slot.
+        // Another admitted client may be generating while this one verifies.
+        if (seen.identity.service == Service::Strata && seen.in_flight != 0)
+            || seen.in_flight >= seen.identity.parallel
+        {
             return Err(Failure::new(
                 FailureKind::Busy,
                 "Strata has active or queued requests",

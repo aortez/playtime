@@ -30,7 +30,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         return Err("endpoint is busy".into());
     }
     let lock = ModelLock {
-        schema_version: 1,
+        schema_version: if seen.identity.service == Service::Basalt {
+            2
+        } else {
+            1
+        },
         identity: seen.identity,
         host: serde_json::from_value(host["host"].clone())?,
         settings: Settings::default(),

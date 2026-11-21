@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+structured-output = ["dep:jsonschema"]
+
 [dependencies]
 base64.workspace = true
 playtime-core.workspace = true
@@ -12,6 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 utoipa.workspace = true
+jsonschema = { version = "=0.59.0", default-features = false, optional = true }
 
 [lints]
 workspace = true

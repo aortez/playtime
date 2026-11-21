@@ -80,13 +80,18 @@ opt-level = 3
 # production 64 MiB object bound. Keep line tables without full local-variable
 # debug metadata; do not increase archive limits to accommodate test symbols.
 [profile.test.package.playtime-worker]
-debug = 1
+debug = "line-tables-only"
 [profile.test.package.playtime-runner]
-debug = 1
-# Shared controller and archive types also contribute test-image type metadata.
+debug = "line-tables-only"
+# Shared controller, archive and native transport types contribute test-image
+# type metadata even when their structured-output callers are separate clients.
 [profile.test.package.playtime-engine]
 debug = "line-tables-only"
 [profile.test.package.playtime-protocol]
+debug = "line-tables-only"
+[profile.test.package.playtime-storage]
+debug = "line-tables-only"
+[profile.test.package.playtime-docker]
 debug = "line-tables-only"
 # The live worker also links an HTTP client. Third-party dependencies keep line
 # tables only, so the worker's own test image still fits that bound.

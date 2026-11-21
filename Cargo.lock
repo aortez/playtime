@@ -3477,6 +3477,7 @@ name = "playtime-protocol"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "jsonschema",
  "playtime-core",
  "serde",
  "serde_json",

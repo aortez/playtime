@@ -128,9 +128,14 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
 import json, os, pathlib, sys
 root=pathlib.Path(os.environ['FIXTURE_ROOT'])
 if '--describe-protocol' in sys.argv:
+    if '--role' in sys.argv and os.environ.get('FIXTURE_MODE') != 'missing-readonly':
+        print(json.dumps({'protocol':'playtime-readonly','version':1,'capability':'playtime-readonly-v1','roles':['setup','supervisor','reviewer'],'report':'structured-result-v1','output_contract':'json-schema-subset-v1','continuation':'none','transport':'strata-responses-v1','tool_backends':{'native':'project-native-v1'}}))
+        sys.exit(0)
     print(json.dumps({'protocol':'playtime-worker','version':2 if os.environ.get('FIXTURE_MODE')=='wrong-protocol' else 1, 'tool_backends': {} if os.environ.get('FIXTURE_MODE')=='missing-native' else {'native':'project-native-v1'}}))
 elif '--check-inputs' in sys.argv:
     assert not (root/'started').exists()
+    if os.environ.get('FIXTURE_MODE') == 'invalid-readonly-input':
+        sys.exit(1)
     print(json.dumps({'inputs_valid':True}))
 else:
     assert sys.stdin.read() == ''
@@ -185,6 +190,59 @@ else:
             self.assertFalse((self.root/'started').exists())
             _,err=child.communicate(b'Assignment',timeout=10)
             self.assertEqual(child.returncode,0,err)
+
+    def readonly_fixture(self):
+        import hashlib
+        args = self.worker_fixture()
+        schema = self.root / 'records' / 'schema.json'
+        schema.write_text('{"type":"object","properties":{},"additionalProperties":false}')
+        schema.chmod(0o600)
+        args[:3] = ['--read-only']
+        args += ['--role', 'reviewer', '--tool-backend', 'native',
+                 '--native-policy', '/etc/playtime/native/readonly.json',
+                 '--output-contract', str(schema), '--output-contract-sha256', hashlib.sha256(schema.read_bytes()).hexdigest()]
+        (self.package / 'general.lock.json').unlink()
+        return args
+
+    def test_readonly_gate_pins_request_and_keeps_owner_credential_out_of_child(self):
+        import hashlib
+        args = self.readonly_fixture()
+        self.env['SSH_AUTH_SOCK'] = '/trusted/fixture-agent'
+        with subprocess.Popen(self.command('framework-gyro-m-fast', *args), stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env) as child:
+            time.sleep(.3)
+            self.assertIsNone(child.poll())
+            self.assertFalse((self.root / 'started').exists())
+            _, errors = child.communicate(b'Assignment', timeout=10)
+            self.assertEqual(child.returncode, 0, errors)
+        child_args = json.loads((self.root / 'client').read_text())
+        self.assertEqual(child_args[child_args.index('--request-sha256') + 1], hashlib.sha256(b'Assignment').hexdigest())
+        self.assertIn('--role', child_args)
+        self.assertNotIn('--image-lock', child_args)
+        self.assertTrue((self.root / 'restored').exists())
+
+    def test_readonly_rejections_precede_inference_acquisition(self):
+        args = self.readonly_fixture()
+        cases = [(['--read-only', '--prepare-environment', '--workspace', str(self.root / 'project')], 'Assignment', ''),
+                 (['--read-only', '--stop-server'], 'Assignment', ''),
+                 (args, 'Changed', ''), (args, 'Assignment', 'missing-readonly'),
+                 (args, 'Assignment', 'invalid-readonly-input'),
+                 ([*args, '--worker-session', 'ptw-' + 'a' * 64], 'Assignment', ''),
+                 ([*args, '--role', 'setup'], 'Assignment', ''),
+                 ([args[0], '--environment', 'general', *args[1:]], 'Assignment', '')]
+        for argv, delivered, mode in cases:
+            result = subprocess.run(self.command('framework-gyro-m-fast', *argv), input=delivered,
+                                    env=dict(self.env, FIXTURE_MODE=mode), capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0, (argv, mode))
+            self.assertFalse((self.root / 'started').exists())
+            self.assertFalse((self.root / 'stop-warm').exists())
+        for name, value in [('--role', 'worker'), ('--tool-backend', 'docker'), ('--output-contract-sha256', 'invalid')]:
+            changed = args.copy()
+            changed[changed.index(name) + 1] = value
+            result = subprocess.run(self.command('framework-gyro-m-fast', *changed), input='Assignment',
+                                    env=self.env, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((self.root / 'started').exists())
 
     def test_status_never_starts_or_verifies_a_model(self):
         result = subprocess.run(self.command("--status", "framework-gyro-m-fast"), env=self.env, capture_output=True, text=True, timeout=5)
@@ -407,6 +465,12 @@ else:
             launcher.check_host({'host': {'digest': 'different'}}, self.lock)
         with self.assertRaises(RuntimeError):
             launcher.check_ready({'model': 'fixture', 'context': 128000, 'drafting': 'dflash2'}, self.lock)
+        lock = {'identity': {'model': 'fixture', 'context_tokens': 163840, 'service': 'basalt', 'parallel': 2}}
+        ready = {'model': 'fixture', 'context': 163840, 'drafting': 'mtp8', 'parallel': 2}
+        launcher.check_ready(ready, lock)
+        for changed in ({'parallel': 1}, {'drafting': 'dflash2'}, {'model': 'other'}):
+            with self.assertRaises(RuntimeError):
+                launcher.check_ready(dict(ready, **changed), lock)
 
 
 if __name__ == '__main__':

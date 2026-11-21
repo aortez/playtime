@@ -284,7 +284,7 @@ pub fn strict_control_fields(
         _ => return Ok(()),
     }
     .map_err(crate::ReadError::malformed)?;
-    let raw = validate::unique_json(bytes)?;
+    let raw = crate::strict_json::unique_json(bytes)?;
     let mut envelope =
         serde_json::to_value(event.envelope()).map_err(crate::ReadError::malformed)?;
     envelope["data"] = known["data"].clone();
