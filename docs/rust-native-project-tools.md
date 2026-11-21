@@ -232,5 +232,33 @@ and interruption journey. Existing pilot receipts and active user sessions remai
 untouched. Unsupported native supervisor/reviewer paths must be explicit admission
 failures until a reviewed model-tool integration exists.
 
+### Known gaps before qualification
+
+A review of this version found gaps that qualification must close before first
+use. [Issue #224](https://github.com/aortez/playtime/issues/224) tracks them.
+
+- **Cleanup confirmation.** The helper reports `cleanup:"complete"` once its
+  Bubblewrap child has exited and the output streams have closed. It doesn't wait
+  for the sandbox's PID namespace to be empty, and that namespace's init runs as
+  the agent UID. Until the helper kills and waits for the sandboxed process tree
+  itself, hosts need `kernel.yama.ptrace_scope` of 1 or higher.
+- **Shared loopback.** Sharing the host network namespace also exposes the
+  worker's own model tunnel, so a tool can send inference requests that the
+  controller neither counts nor fences. Anything readable in the mounts can leave
+  over the network, including credentials in the read-only `.git/config`.
+- **Refusals that fence.** Some model-reachable arguments make the helper exit
+  with a failure before dispatch: a negative `offset_bytes`, a zero timeout, NUL
+  characters, or `write_file` under `read_only`. The controller treats that exit
+  as uncertain and keeps the shared `active` fence, which also blocks Docker. A
+  command that changes the agent-owned cache state the helper validates at startup
+  has the same effect.
+- **Persistent agent cache.** `HOME`, `CARGO_HOME` and `TMPDIR` persist across
+  tasks, roles and workspaces that share a cache, and nothing resets or reviews
+  them. Configuration one task leaves there can change what later tasks' builds
+  and tests run, without appearing in the reviewed diff.
+- **Account provisioning.** The account must not be able to log in, and its
+  passwd home and SSH authorized keys must lie outside the tool mounts. Otherwise
+  a tool could start a process outside the sandbox through a local login service.
+
 Implementation references: [Bubblewrap documentation](https://github.com/containers/bubblewrap/blob/v0.11.1/bwrap.xml)
 and [setpriv](https://kernel.googlesource.com/pub/scm/utils/util-linux/util-linux/+/refs/tags/v2.41.1/sys-utils/setpriv.1.adoc).
