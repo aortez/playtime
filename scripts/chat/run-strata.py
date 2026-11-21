@@ -88,11 +88,67 @@ def check_host(report, lock):
         raise RuntimeError("running host artifacts/settings differ from the reviewed model lock; client not started")
 
 
+def worker_arguments(args):
+    """Resolve worker session metadata without treating an opaque ID as a path."""
+    allowed = {"--workspace", "--run-dir", "--request", "--state-dir", "--worker-session",
+               "--protocol-version", "--wall-seconds"}
+    values = {}
+    index = 0
+    while index < len(args):
+        name, separator, value = args[index].partition("=")
+        if name not in allowed or name in values:
+            raise RuntimeError("unsupported or duplicate worker argument")
+        if not separator:
+            index += 1
+            if index == len(args):
+                raise RuntimeError("missing worker argument value")
+            value = args[index]
+        values[name] = value
+        index += 1
+    if any(name not in values for name in ("--workspace", "--run-dir", "--request")):
+        raise RuntimeError("worker needs --workspace, --run-dir and --request")
+    if values.get("--protocol-version", "1") != "1":
+        raise RuntimeError("unsupported worker protocol")
+    root = Path(values["--workspace"]).resolve(strict=True)
+    for name in ("--run-dir", "--request"):
+        if Path(values[name]).resolve(strict=True).is_relative_to(root):
+            raise RuntimeError("worker records and request must stay outside the project")
+    selected = ["--workspace", str(root)]
+    if "--worker-session" in values:
+        session = values["--worker-session"]
+        if not re.fullmatch(r"ptw-[0-9a-f]{64}", session):
+            raise RuntimeError("invalid Playtime worker session ID")
+        state = Path(values.get("--state-dir", str(Path.home() / ".local/state/playtime-chat")))
+        source = state / session
+        if not (source / "config.json").is_file():
+            raise RuntimeError("saved worker session unavailable; no automatic fresh fallback")
+        selected += ["--session", str(source)]
+    # Devbot sends the assignment only after its process-start receipt is durable.
+    # No SSH ownership or model activity is allowed before that release gate.
+    request = Path(values["--request"])
+    descriptor = os.open(request, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "rb") as source:
+        metadata = os.fstat(source.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+            raise RuntimeError("worker request must be a private owned regular file")
+        frozen = source.read(256 * 1024 + 1)
+    delivered = sys.stdin.buffer.read(256 * 1024 + 1)
+    if not frozen or len(frozen) > 256 * 1024 or delivered != frozen:
+        raise RuntimeError("worker startup gate differs from the frozen assignment")
+    return selected
+
+
 def session(preset, profile, args):
     # Wrapper flags precede chat arguments, so a prompt whose text is literally
     # "--full-verify" remains an ordinary prompt value.
     import project_environment
 
+    worker = args[:1] == ["--worker"]
+    client_environment = dict(os.environ)
+    if worker:
+        # Authentication belongs to the SSH owner, not the local harness child.
+        client_environment.pop("SSH_AUTH_SOCK", None)
+        args = args[1:]
     full_verify = force_picker = False
     environment = None
     while args:
@@ -113,7 +169,7 @@ def session(preset, profile, args):
     for arg in args:
         if arg.split("=", 1)[0] in ("--endpoint", "--model-lock", "--image-lock"):
             raise RuntimeError(f"{arg.split('=', 1)[0]} is owned by this preset")
-    executable = PACKAGE / "playtime-chat"
+    executable = PACKAGE / ("playtime-task" if worker else "playtime-chat")
     lock_path = PACKAGE / preset["model_lock"]
     image_path = PACKAGE / "general.lock.json"
     # Read local resources before touching the remote host.
@@ -121,22 +177,36 @@ def session(preset, profile, args):
     json.loads(image_path.read_text())
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise RuntimeError("playtime-chat is not installed beside this wrapper")
-    if args in (["--help"], ["-h"], ["--version"], ["-V"]):
+    if args in (["--help"], ["-h"], ["--version"], ["-V"]) or (worker and args == ["--describe-protocol"]):
         if args in (["--help"], ["-h"]):
             print("Launcher options (before chat arguments): --full-verify rehashes model files; "
                   "--sessions opens the local session picker. --stop-server releases an idle warm model. "
                   "--prepare-environment builds the project devcontainer; --environment general|LOCK selects an environment. "
                   "Interactive launches pick by default.", flush=True)
-        return subprocess.call([str(executable), *args])
+        return subprocess.call([str(executable), *args], env=client_environment)
     if args == ["--stop-server"]:
         return subprocess.call(ssh(preset) + remote(preset, "python3", preset["helper"], "--stop"), stdin=subprocess.DEVNULL)
-    image_path = project_environment.resolve(args, PACKAGE, environment)
+    selection_args = worker_arguments(args) if worker else args
+    if worker:
+        if force_picker:
+            raise RuntimeError("workers cannot use the session picker")
+        described = subprocess.run([str(executable), "--describe-protocol"], check=True,
+                                   capture_output=True, text=True, timeout=5, env=client_environment)
+        protocol = json.loads(described.stdout)
+        if protocol.get("protocol") != "playtime-worker" or protocol.get("version") != 1:
+            raise RuntimeError("unsupported Playtime worker protocol")
+    image_path = project_environment.resolve(selection_args, PACKAGE, environment)
     json.loads(image_path.read_text())
     client_args = [str(executable), "--model-lock", str(lock_path), "--image-lock", str(image_path)]
+    if worker:
+        checked = subprocess.run([*client_args, "--check-inputs", *args], stdin=subprocess.DEVNULL,
+                                 capture_output=True, text=True, timeout=10, env=client_environment)
+        if checked.returncode:
+            raise RuntimeError(checked.stderr.strip() or "worker input validation failed")
     options = {arg.split("=", 1)[0] for arg in args}
     if options & {"--select-session", "--list-sessions", "--inspect-interrupted"} and not options & {"--prompt", "--session", "--recover-compaction", "--recover-interrupted"}:
         return subprocess.call([*client_args, *args])
-    explicit = bool(options & {"--session", "--recover-compaction", "--recover-interrupted", "--prompt"})
+    explicit = worker or bool(options & {"--session", "--recover-compaction", "--recover-interrupted", "--prompt"})
     if force_picker and explicit:
         raise RuntimeError("--sessions cannot be combined with --session, recovery options or --prompt")
     if force_picker or (sys.stdin.isatty() and not explicit):
@@ -276,9 +346,10 @@ def session(preset, profile, args):
         (evidence / "timings.json").write_text(json.dumps(timings, indent=2) + "\n")
         log(f"verified in {verification_seconds:.1f}s; {stats['reused_files']} cached, "
             f"{stats['hashed_files']} hashed ({stats['hashed_bytes'] / 1e9:.2f} GB read); "
-            f"starting {profile} chat in {project_environment.workspace_arguments(args)[0]}")
+            f"starting {profile} {'worker' if worker else 'chat'} in {project_environment.workspace_arguments(selection_args)[0]}")
         child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
-                                  "--model-lock", str(lock_path), "--image-lock", str(image_path), *args])
+                                  "--model-lock", str(lock_path), "--image-lock", str(image_path), *args],
+                                 stdin=subprocess.DEVNULL if worker else None, env=client_environment)
         while child.poll() is None:
             drain()
             healthy()

@@ -1,5 +1,13 @@
 # Rust compatibility and goldens
 
+## Headless editing workers (2026-11-14)
+
+[playtime-task](rust-headless-worker.md) adds an opt-in protocol-v1 worker binary
+over the shared chat runtime. Worker sessions have a separate `ptw-` namespace
+and frozen worker instructions. Exec replies gain `evidence_log_path`, referencing
+private captured command evidence; context fitting preserves that field. Ordinary
+chat output and saved-session schemas are unchanged. No golden is regenerated.
+
 ## Empty chat sessions omitted from discovery (2026-11-13)
 
 The chat picker and `--list-sessions` omit sessions with neither a completed
