@@ -1908,3 +1908,18 @@ dispatch claim. These additions do not change existing worker/read-only protocol
 saved conversations or golden event schemas. CPU fixtures cover the added contract,
 and an installed copy passed live completion, cancellation and replay checks on
 Framework.
+
+## Worker contract invocation (2026-11-20)
+
+`playtime-task` gains the additive `playtime-worker-contract-v1` editing
+invocation: a caller-supplied `json-schema-subset-v1` contract for the resolved
+result, optional `evidence-ref-v1` resolution of one named array, typed
+`invalid_output` and `evidence_unresolved` failures, and an opt-in single repair
+turn. The worker probe advertises it under a new `contract_invocation` key. Worker
+protocol 1, `worker-report-v1`, its instruction bytes, events, files, `ptw-`
+sessions and both pinned `roles` arrays are unchanged, as are read-only
+invocations. One refusal changed wording: an output contract on the worker role
+now selects this invocation and is refused without its hashes, instead of being
+refused as a read-only input. No conversation, archive or experiment golden
+changes. Fixtures and the opt-in Docker gate use a scripted model; they establish
+no live model, native account or caller integration.

@@ -94,6 +94,12 @@ worker/report v1, require read_only policy and a bounded pinned output contract,
 keep raw invalid output, and never resume worker/reviewer contexts across roles.
 Schema validity grants no domain authority. Run chat/protocol, launcher and native
 namespace gates for changes; fixtures do not qualify installed accounts or live roles.
+Editing workers may instead select the additive `playtime-worker-contract-v1`
+invocation with a caller-supplied result contract; see `docs/rust-headless-worker.md`.
+Keep it beside worker/report v1 without changing v1 bytes or events, resolve evidence
+only from the same invocation, and keep its repair turn opt-in and bounded to one.
+Also run `cargo test -p playtime-chat --test contract_docker --locked -- --ignored`
+for its Docker path; its scripted model qualifies no live role.
 `playtime-strata` adapts the installed stateless Responses API to shared model
 requests; it never owns a model server or executes tools. Freeze the endpoint's
 model/template/settings plus independently verified host artifacts, keep missing

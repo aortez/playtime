@@ -56,10 +56,24 @@ fn readonly_capability_is_separate_from_worker_reports_and_never_resumes() {
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("fresh invocations only"));
     }
-    let output = Command::new(env!("CARGO_BIN_EXE_playtime-task"))
-        .args(["--output-contract", "/not/read", "--check-inputs"])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("explicit read-only role"));
+    // On the worker role an output contract selects the contract invocation, which
+    // is refused without its pinned hashes. A stray hash alone selects nothing.
+    for (arguments, refusal) in [
+        (
+            ["--output-contract", "/not/read"],
+            "need the output contract hash and request hash",
+        ),
+        (["--request-sha256", "00"], "explicit read-only role"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_playtime-task"))
+            .args(arguments)
+            .arg("--check-inputs")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(refusal),
+            "{arguments:?}"
+        );
+    }
 }

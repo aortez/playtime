@@ -173,6 +173,161 @@ while worker inference and project tools were real. This establishes integration
 not comparative coding quality.
 
 
+## Caller-supplied output contract
+
+`playtime-worker-contract-v1` is an additive editing invocation for callers that
+own their report format. Worker protocol 1 above is unchanged: its instructions,
+report rules, events, files and `ptw-` sessions keep their exact bytes and meaning.
+The contract invocation shares the worker's tools, session journal, evidence
+capture and cleanup, and uses the read-only roles'
+[`json-schema-subset-v1` profile](rust-readonly-model-roles.md#output-contract-profile-v1).
+
+Select it on the worker role by passing an output contract:
+
+```sh
+/private/package/run-strata.py framework-gyro-m-fast --worker \
+  --environment general --workspace /project/checkout --run-dir /private/run \
+  --request /private/run/prompt.txt \
+  --output-contract /private/run/report-schema.json \
+  --output-contract-sha256 EXACT_SCHEMA_BYTES_SHA256 \
+  --evidence-property verification --repair-turns 1 < /private/run/prompt.txt
+```
+
+The wrapper freezes `--request-sha256` from the delivered request, as it does for
+read-only roles; direct `playtime-task` callers pass it themselves.
+`--evidence-property` and `--repair-turns` are optional and are refused without a
+contract. Native tools need an `edit` policy. The worker probe advertises the
+capability under a new top-level key and leaves every existing field alone:
+
+```json
+"contract_invocation": {
+  "protocol": "playtime-worker-contract", "version": 1,
+  "capability": "playtime-worker-contract-v1", "roles": ["worker"],
+  "report": "structured-result-v1", "output_contract": "json-schema-subset-v1",
+  "evidence": "evidence-ref-v1", "continuation": "completed-session-only",
+  "repair_turns": 1, "transport": "strata-responses-v1",
+  "tool_backends": {"docker": "project-docker-v1", "native": "project-native-v1"}
+}
+```
+
+### Contract, evidence and validation
+
+The contract describes the **resolved** result: the object written to
+`response.json` and hashed in the receipt. Playtime checks shape only. Status
+rules, readiness and the meaning of every field stay with the caller, which
+validates the result again. A schema-valid result grants no authority.
+
+With `--evidence-property NAME` (`evidence-ref-v1`), `NAME` must be a root array
+whose items are objects with exactly `command` (string), `exit_code` (integer)
+and `log_path` (string), all required. The model is shown the same contract with
+those items replaced by `{"evidence_ref": string}` and cites `evidence_log_path`
+values. The harness replaces each citation with the command and exit code it
+recorded and the artifact's name, then validates the resolved object against the
+caller's contract. Resolution uses the same registry and checks as worker
+protocol 1: only successful evidence commits from this invocation, no duplicates,
+and no timed-out or incomplete results. A nonzero exit code resolves; whether it
+is acceptable is the contract's and the caller's decision, for example
+`"exit_code": {"type": "integer", "maximum": 0}`. Without the option the
+contract is validated as written and nothing is substituted.
+
+The final response must be exactly one JSON object. Prose prefixes and Markdown
+fences are rejected here, unlike protocol 1's tolerated preface.
+
+### Rejected output and the repair turn
+
+A turn whose final response is rejected is still a completed turn: its checkpoint
+is committed and its cleanup confirmed before the response is examined. The
+session therefore stays resumable, and the caller may continue it with a
+correction as its next request. That later invocation has a new evidence
+registry, so it must rerun any check it cites.
+
+`--repair-turns 1` lets the harness send one fixed correction request inside the
+same invocation instead, where earlier references are still citable. It is off by
+default and one turn is the maximum. The request names the rejection reason and
+the harness's own diagnostic; it never contains corrected content. A repair turn
+is a second full turn under the same frozen per-turn limits and, with Docker, a
+new owned container, so a caller must budget up to twice `--wall-seconds` plus
+cleanup. No repair turn starts after cancellation. A repair turn that is itself
+interrupted leaves the session fenced like any other interrupted turn.
+
+### Records and receipts
+
+The invocation uses the read-only family of files and events, and never adds an
+event type to a protocol-1 stream: `request.txt`, `output-contract.json`,
+`invocation.json`, `invocation-events.jsonl` (`invocation_started`, `runtime`,
+then `invocation_finished` or `invocation_failed`), `artifacts/`,
+`response.raw.txt`, `response.repair-1.raw.txt` when a repair turn ran,
+`response.json` after acceptance, and `invocation-result.json`. Sessions use
+`ptc-` IDs with `--worker-session`; a `ptw-` or `ptr-` ID is refused, and a
+changed contract or evidence property changes the configuration fingerprint.
+
+The startup event, terminal event and `invocation.json` carry the same binding:
+
+```json
+{"capability": "playtime-worker-contract-v1", "role": "worker",
+ "output_contract_sha256": "<exact input digest>", "request_sha256": "<exact input digest>",
+ "evidence_property": "verification", "repair_turns": 1,
+ "execution": {"capability": "project-docker-v1"}}
+```
+
+`invocation_finished` adds `turn_id`, `cleanup`, `usage` and `response_sha256`
+for the accepted turn, plus `repair_turns_used`. When a repair turn ran,
+`rejected` lists the rejected turn's `turn_id`, `reason`, `detail`, `cleanup` and
+`usage`, so its confirmed cleanup is receipt evidence too.
+There is no status echo: the caller reads status from the validated result.
+After a completed turn, `invocation_failed` has `reason` `invalid_output` (not
+one JSON object, or not matching the contract) or `evidence_unresolved` (a
+citation that is unknown, duplicated, changed or incomplete), with `detail` and
+`turn_id`. Other failures keep the driver's stop reason. Startup errors may still
+end without a terminal event.
+
+### Verification
+
+`cargo test -p playtime-chat --locked` covers contract admission, the derived
+model-facing shape, typed rejections, repair with live evidence, per-invocation
+evidence, session binding and the unchanged protocol-1 and read-only probes. The
+launcher suite covers the wrapper's gate. With the locked workshop image present:
+
+```sh
+cargo test -p playtime-chat --test contract_docker --locked -- --ignored
+```
+
+This runs the real task binary against real Docker with a scripted loopback
+model, twice. The contract run makes a tool call, returns a fenced result that
+is rejected, and is repaired in a second owned container. The other run is a
+version-one worker on the same task path, whose stream, files and receipt keep
+their shape. Neither runs a model or qualifies native tools, the dedicated
+account or how well a model uses the correction. No caller uses the contract
+invocation yet.
+
+### Live check, November 20
+
+A separately installed build of this change ran two contract invocations through
+the owner wrapper on Framework `framework-gyro-m-fast`, with Docker tools,
+Devbot's generated worker schema as the contract, `--evidence-property
+verification` and `--repair-turns 1`:
+
+- A one-turn repair from a cold start finished in 46 seconds. The model fixed a
+  one-line bug, ran the tests and returned one JSON object citing three
+  references. The harness wrote the recorded commands and exit codes,
+  `response_sha256` matched `response.json`, cleanup was complete and no repair
+  turn ran.
+- A second assignment also asked for a leading sentence and a fenced block, to
+  provoke a rejection. The first response was rejected as `invalid_output`. The
+  repair turn returned clean JSON citing the same two references, without
+  running tools again, and was accepted; the invocation took 28 seconds. The
+  receipt recorded one repair turn and the rejected turn's reason, usage and
+  cleanup.
+- Both results have status `completed` while citing the failing run from before
+  the fix, with exit code 1, beside the passing one. They are shape-valid, so
+  Playtime delivered them. A caller that requires passing checks for `completed`
+  must reject them itself: the repair turn covers shape and evidence, not caller
+  rules.
+
+Framework ended as it began, with no model loaded, and no project containers
+remained. These are integration checks on one preset, not coding-quality
+measurements.
+
 ## Separate read-only role protocol
 
 Setup, supervision and review can explicitly select the new
