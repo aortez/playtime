@@ -77,6 +77,7 @@ real worker, Docker, model-host, or recovery behavior.
 | --- | --- | --- |
 | Project chat driver | `cargo test -p playtime-chat --locked` | Shared controller, saved follow-up, cancellation, failed persistence and cleanup through synthetic effects |
 | Read-only model roles | `cargo test -p playtime-chat -p playtime-protocol --locked`, launcher suite, and `./scripts/test-rust-native-project.sh` | Trusted schema/result validation, fresh contexts, real same-UID read-only mounts and cancellation; installed account/live role qualification remains separate |
+| Worker contract invocation | `cargo test -p playtime-chat --locked`, launcher suite, then `cargo test -p playtime-chat --test contract_docker --locked -- --ignored` | Contract admission, evidence resolution, typed rejections and the repair turn; then the real task binary with real Docker and a scripted loopback model. No live model, native account or caller integration |
 | Native project tools | `./scripts/test-rust-native-project.sh` | Real same-UID Bubblewrap file/build/test/descendant and shared-driver fixtures; dedicated-account sudo qualification remains separate |
 | Persistent project tools | `./scripts/test-rust-docker-e2e.sh --case project` | Actual project edits, uid-1000 bridge, filesystem/network boundaries, cancellation, cleanup and retained files |
 | CLI/shared client | `./scripts/test-rust-cli-e2e.sh --backend fixture` | Actual CLI subprocesses over scripted authenticated HTTP; receipts, reconnect, output and downloads |

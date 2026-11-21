@@ -94,10 +94,13 @@ def check_host(report, lock):
 def worker_arguments(args, read_only=False):
     """Resolve worker session metadata without treating an opaque ID as a path."""
     allowed = {"--workspace", "--run-dir", "--request", "--state-dir", "--worker-session",
-               "--protocol-version", "--wall-seconds", "--tool-backend", "--native-policy"}
+               "--protocol-version", "--wall-seconds", "--tool-backend", "--native-policy",
+               "--output-contract", "--output-contract-sha256"}
     if read_only:
-        allowed |= {"--role", "--output-contract", "--output-contract-sha256"}
+        allowed |= {"--role"}
         allowed -= {"--worker-session"}
+    else:
+        allowed |= {"--evidence-property", "--repair-turns"}
     values = {}
     index = 0
     while index < len(args):
@@ -121,14 +124,22 @@ def worker_arguments(args, read_only=False):
                       or not values.get("--output-contract")
                       or not re.fullmatch(r"[0-9a-f]{64}", values.get("--output-contract-sha256", ""))):
         raise RuntimeError("read-only invocation needs an explicit role, native policy and output contract/hash")
+    # A worker's output contract selects the contract invocation; its options
+    # mean nothing to a version-one worker.
+    contract = not read_only and "--output-contract" in values
+    if not read_only and not contract and values.keys() & {"--output-contract-sha256", "--evidence-property", "--repair-turns"}:
+        raise RuntimeError("contract options need --output-contract")
+    if contract and (not re.fullmatch(r"[0-9a-f]{64}", values.get("--output-contract-sha256", ""))
+                     or values.get("--repair-turns", "0") not in ("0", "1")):
+        raise RuntimeError("worker contract invocation needs an output contract hash and at most one repair turn")
     root = Path(values["--workspace"]).resolve(strict=True)
-    for name in (("--run-dir", "--request", "--output-contract") if read_only else ("--run-dir", "--request")):
+    for name in (("--run-dir", "--request", "--output-contract") if read_only or contract else ("--run-dir", "--request")):
         if Path(values[name]).resolve(strict=True).is_relative_to(root):
             raise RuntimeError("worker records and request must stay outside the project")
     selected = ["--workspace", str(root)]
     if "--worker-session" in values:
         session = values["--worker-session"]
-        if not re.fullmatch(r"ptw-[0-9a-f]{64}", session):
+        if not re.fullmatch(r"ptc-[0-9a-f]{64}" if contract else r"ptw-[0-9a-f]{64}", session):
             raise RuntimeError("invalid Playtime worker session ID")
         state = Path(values.get("--state-dir", str(Path.home() / ".local/state/playtime-chat")))
         source = state / session
@@ -212,6 +223,7 @@ def session(preset, profile, args, launch=None, signals=None):
         if arg.split("=", 1)[0] in ("--endpoint", "--model-lock", "--image-lock"):
             raise RuntimeError(f"{arg.split('=', 1)[0]} is owned by this preset")
     native = read_only or (worker and worker_option(args, "--tool-backend", "docker") == "native")
+    contract = worker and worker_option(args, "--output-contract") is not None
     chat_preset = selected_preset or "workshop"
     if chat_preset not in ("workshop", "coding-host") or (headless and selected_preset is not None):
         raise RuntimeError("--preset coding-host is an interactive chat preset")
@@ -247,7 +259,7 @@ def session(preset, profile, args, launch=None, signals=None):
     selection_args = args
     if headless:
         selection_args, request_sha256 = worker_arguments(args, read_only)
-        if read_only:
+        if read_only or contract:
             args = [*args, "--request-sha256", request_sha256]
     if headless:
         if force_picker:
@@ -265,6 +277,15 @@ def session(preset, profile, args, launch=None, signals=None):
                           or protocol.get("continuation") != "none"
                           or protocol.get("transport") != transport):
             raise RuntimeError("installed task lacks the read-only invocation contract")
+        offered = protocol.get("contract_invocation", {})
+        if contract and (offered.get("capability") != "playtime-worker-contract-v1"
+                         or offered.get("output_contract") != "json-schema-subset-v1"
+                         or offered.get("report") != "structured-result-v1"
+                         or offered.get("evidence") != "evidence-ref-v1"
+                         or offered.get("continuation") != "completed-session-only"
+                         or offered.get("transport") != transport
+                         or int(worker_option(args, "--repair-turns", "0")) > offered.get("repair_turns", 0)):
+            raise RuntimeError("installed task lacks the worker contract invocation")
         if native and protocol.get("tool_backends", {}).get("native") != "project-native-v1":
             raise RuntimeError("installed worker lacks project-native-v1")
     # Refuse unknown chat options before touching the remote host. Workshop chat

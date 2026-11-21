@@ -146,6 +146,39 @@ impl<E: Effects> Effects for EvidenceEffects<E> {
     }
 }
 
+/// The command and exit code this invocation recorded for one reference.
+/// Exact registry lookup precedes any filesystem access: paths, aliases,
+/// old-turn references and uncommitted files are not resolution inputs.
+pub fn resolve(
+    name: &str,
+    artifacts: &PrivateDirectory,
+    evidence: &CommittedEvidence,
+) -> Result<(String, i64)> {
+    let digest = evidence
+        .digests
+        .get(name)
+        .ok_or("unknown worker evidence reference")?;
+    let bytes = artifacts.read(name, MAX_REPORT)?;
+    if <[u8; 32]>::from(Sha256::digest(&bytes)) != *digest {
+        return Err("captured worker evidence changed".into());
+    }
+    let record: Value = serde_json::from_slice(&bytes)?;
+    let command = record["command"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("missing captured command")?;
+    let exit_code = record["result"]["exit_code"]
+        .as_i64()
+        .ok_or("missing captured exit code")?;
+    if record["schema_version"] != PROTOCOL
+        || record["result"]["timed_out"] != false
+        || record["result"].get("error").is_some()
+    {
+        return Err("incomplete or timed-out worker evidence".into());
+    }
+    Ok((command.into(), exit_code))
+}
+
 pub fn validate_report(
     bytes: &[u8],
     artifacts: &PrivateDirectory,
@@ -184,37 +217,14 @@ pub fn validate_report(
         if !selected.insert(name.clone()) {
             return Err("duplicate worker verification reference".into());
         }
-        // Exact registry lookup precedes any filesystem access: paths, aliases,
-        // old-turn references and uncommitted files are not resolution inputs.
-        let digest = evidence
-            .digests
-            .get(name)
-            .ok_or("unknown worker evidence reference")?;
-        let bytes = artifacts.read(name, MAX_REPORT)?;
-        if <[u8; 32]>::from(Sha256::digest(&bytes)) != *digest {
-            return Err("captured worker evidence changed".into());
-        }
-        let record: Value = serde_json::from_slice(&bytes)?;
-        let command = record["command"]
-            .as_str()
-            .filter(|s| !s.trim().is_empty())
-            .ok_or("missing captured command")?;
-        let exit_code = record["result"]["exit_code"]
-            .as_i64()
-            .ok_or("missing captured exit code")?;
-        if record["schema_version"] != PROTOCOL
-            || record["result"]["timed_out"] != false
-            || record["result"].get("error").is_some()
-        {
-            return Err("incomplete or timed-out worker evidence".into());
-        }
+        let (command, exit_code) = resolve(name, artifacts, evidence)?;
         if let ModelVerification::Legacy(check) = &entry
             && (check.command != command || check.exit_code != exit_code)
         {
             return Err("reported verification differs from captured tool evidence".into());
         }
         verification.push(Verification {
-            command: command.into(),
+            command,
             exit_code,
             log_path: name.clone(),
         });

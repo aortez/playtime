@@ -1,7 +1,8 @@
-//! Version-one noninteractive worker; inference ownership stays in run-strata.py.
+//! Noninteractive worker, read-only and contract invocations; inference ownership
+//! stays in run-strata.py.
 use clap::{Parser, ValueEnum};
 use playtime_chat::{
-    Result,
+    Result, contract,
     native::{Journal, Model, NativeEffects},
     native_project,
     readonly::{self, Role},
@@ -43,6 +44,10 @@ struct Args {
     output_contract_sha256: Option<String>,
     #[arg(long)]
     request_sha256: Option<String>,
+    #[arg(long)]
+    evidence_property: Option<String>,
+    #[arg(long, default_value_t = 0)]
+    repair_turns: u32,
     #[arg(long, value_enum, default_value = "docker")]
     tool_backend: ToolBackend,
     #[arg(long)]
@@ -97,6 +102,123 @@ async fn emit(log: &Arc<std::sync::Mutex<Events>>, value: Value) -> Result<()> {
     .await?
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Worker,
+    Readonly,
+    Contract,
+}
+
+/// What another Docker turn needs: each turn owns a new container.
+struct DockerTools {
+    engine: docker::Engine,
+    ready: docker::ReadyImage,
+    directory: Arc<ProjectDirectory>,
+    limits: ProjectLimits,
+    state: PathBuf,
+    wall: u64,
+    grant: &'static str,
+}
+impl DockerTools {
+    async fn effects(&self, model: Arc<Mutex<Model>>) -> Result<worker::ProjectEffects> {
+        let owner = docker::Ownership {
+            service: "playtime-task".into(),
+            run: format!("turn-{}", docker::Ownership::random_nonce()?),
+            grant: self.grant.into(),
+            invocation: docker::Ownership::random_nonce()?,
+            nonce: docker::Ownership::random_nonce()?,
+            daemon: self.engine.identity().clone(),
+        };
+        let (ready, directory, limits, state, wall) = (
+            self.ready.clone(),
+            self.directory.clone(),
+            self.limits.clone(),
+            self.state.clone(),
+            self.wall,
+        );
+        let workspace = tokio::task::spawn_blocking(move || {
+            ProjectWorkspace::new(
+                ready,
+                owner,
+                directory,
+                limits,
+                docker::WorkDeadline::after(Duration::from_secs(wall))?,
+                Arc::new(Journal(state)),
+            )
+        })
+        .await??;
+        Ok(worker::ProjectEffects::Docker(Box::new(NativeEffects {
+            model,
+            workspace,
+            output_bytes: 16384,
+            return_overhead: Duration::from_secs(1),
+        })))
+    }
+}
+
+type TaskEffects = Arc<Mutex<worker::EvidenceEffects<worker::ProjectEffects>>>;
+
+/// Run one turn and forward its events. A failed event write cancels the turn
+/// and is reported only after the driver's owned cleanup.
+async fn turn(
+    session: Session,
+    prompt: String,
+    effects: TaskEffects,
+    log: &Arc<std::sync::Mutex<Events>>,
+    cancel: &CancellationToken,
+) -> Result<runtime::Completed> {
+    let (tx, mut rx) = runtime::events();
+    let mut task = tokio::spawn(runtime::run_turn(
+        session,
+        prompt,
+        effects,
+        tx,
+        cancel.clone(),
+    ));
+    let mut output_error = None;
+    let completed = loop {
+        tokio::select! {
+            event=rx.recv()=>if let Some(event)=event {
+                if output_error.is_none() && let Err(error)=emit(log,json!({"schema_version":1,"type":"runtime","event":event})).await {cancel.cancel();output_error=Some(error);}
+            } else {break task.await??;},
+            result=&mut task=>{
+                while let Some(event)=rx.recv().await {
+                    if output_error.is_none() && let Err(error)=emit(log,json!({"schema_version":1,"type":"runtime","event":event})).await {cancel.cancel();output_error=Some(error);}
+                }
+                break result??;
+            }
+        }
+    };
+    match output_error {
+        Some(error) => Err(error),
+        None => Ok(completed),
+    }
+}
+
+fn final_response(session: &Session) -> Result<(Value, String)> {
+    let checkpoint = session.checkpoint().ok_or("missing completed checkpoint")?;
+    let response = checkpoint
+        .history
+        .exchanges
+        .last()
+        .and_then(|exchange| exchange.messages.last())
+        .filter(|message| message["role"] == "assistant")
+        .and_then(|message| message["content"].as_str())
+        .ok_or("missing final worker response")?;
+    Ok((json!(checkpoint.completed_turn), response.to_owned()))
+}
+
+/// Contract receipts say whether a repair turn ran and keep what it rejected.
+fn repairs(kind: Kind, rejected: &[Value], mut value: Value) -> Value {
+    if kind == Kind::Contract {
+        value["repair_turns_used"] = rejected.len().into();
+        if !rejected.is_empty() {
+            value["rejected"] = rejected.to_vec().into();
+        }
+    }
+    value
+}
+
 async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     if args.protocol_version != worker::PROTOCOL {
         return Err("unsupported worker protocol".into());
@@ -106,7 +228,7 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         let mut description = if read_only {
             readonly::capability()
         } else {
-            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"roles":["worker"],"report":"worker-report-v1","continuation":"completed-session-only", "readonly_invocation":readonly::capability()})
+            json!({"protocol":"playtime-worker","version":worker::PROTOCOL,"roles":["worker"],"report":"worker-report-v1","continuation":"completed-session-only", "readonly_invocation":readonly::capability(), "contract_invocation":contract::capability()})
         };
         description["tools"] = if read_only || args.tool_backend == ToolBackend::Native {
             native_project::CAPABILITY
@@ -128,26 +250,52 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
                 description["transport"] = "basalt-responses-v1".into();
                 if !read_only {
                     description["readonly_invocation"]["transport"] = "basalt-responses-v1".into();
+                    description["contract_invocation"]["transport"] = "basalt-responses-v1".into();
                 }
             }
         }
         println!("{description}");
         return Ok(());
     }
-    if read_only {
-        if args.tool_backend != ToolBackend::Native
-            || args.worker_session.is_some()
-            || args.output_contract.is_none()
-            || args.output_contract_sha256.is_none()
-            || args.request_sha256.is_none()
-        {
-            return Err("read-only roles need native tools, output contract/hash and request hash; fresh invocations only".into());
+    let kind = if read_only {
+        Kind::Readonly
+    } else if args.output_contract.is_some() {
+        Kind::Contract
+    } else {
+        Kind::Worker
+    };
+    match kind {
+        Kind::Readonly => {
+            if args.tool_backend != ToolBackend::Native
+                || args.worker_session.is_some()
+                || args.output_contract.is_none()
+                || args.output_contract_sha256.is_none()
+                || args.request_sha256.is_none()
+            {
+                return Err("read-only roles need native tools, output contract/hash and request hash; fresh invocations only".into());
+            }
         }
-    } else if args.output_contract.is_some()
-        || args.output_contract_sha256.is_some()
-        || args.request_sha256.is_some()
-    {
-        return Err("structured output inputs require an explicit read-only role".into());
+        Kind::Contract => {
+            if args.output_contract_sha256.is_none() || args.request_sha256.is_none() {
+                return Err(
+                    "worker contract invocations need the output contract hash and request hash"
+                        .into(),
+                );
+            }
+        }
+        Kind::Worker => {
+            if args.output_contract_sha256.is_some() || args.request_sha256.is_some() {
+                return Err("structured output inputs require an output contract or an explicit read-only role".into());
+            }
+        }
+    }
+    if kind != Kind::Contract && (args.evidence_property.is_some() || args.repair_turns != 0) {
+        return Err(
+            "evidence resolution and repair turns belong to worker contract invocations".into(),
+        );
+    }
+    if args.repair_turns > contract::MAX_REPAIR_TURNS {
+        return Err("at most one repair turn is supported".into());
     }
     let workspace = args.workspace.ok_or("missing workspace")?.canonicalize()?;
     let run_dir = args
@@ -199,14 +347,32 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             )
         })
         .transpose()?;
+    // The caller's contract describes the resolved result; read-only roles keep
+    // their plain contract and version-one workers have none.
+    let (contract, spec) = match (kind, contract) {
+        (Kind::Contract, Some(contract)) => (
+            None,
+            Some(contract::Spec::new(
+                contract,
+                args.evidence_property.clone(),
+            )?),
+        ),
+        (_, contract) => (contract, None),
+    };
     let resume = args.worker_session.is_some();
     let session_id = args.worker_session.unwrap_or(format!(
         "{}-{}",
-        if read_only { "ptr" } else { "ptw" },
+        match kind {
+            Kind::Readonly => "ptr",
+            Kind::Contract => "ptc",
+            Kind::Worker => "ptw",
+        },
         Token::generate()?.expose()
     ));
-    if !read_only {
-        worker::session_id(&session_id)?;
+    match kind {
+        Kind::Worker => worker::session_id(&session_id)?,
+        Kind::Contract => contract::session_id(&session_id)?,
+        Kind::Readonly => (),
     }
     let session_path = state.join(&session_id);
     if resume && !session_path.join("config.json").exists() {
@@ -236,7 +402,11 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         let config = if let Some(contract) = &contract {
             readonly::config(&lock, &native, args.wall_seconds, args.role, contract)?
         } else {
-            worker::native_config(&lock, &native, args.wall_seconds)?
+            let config = worker::native_config(&lock, &native, args.wall_seconds)?;
+            match &spec {
+                Some(spec) => contract::configure(config, Some(native.policy()), spec)?,
+                None => config,
+            }
         };
         native_workspace = Some(native);
         config
@@ -256,16 +426,35 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         let image: Value = serde_json::from_slice(&image_bytes)?;
         let config = worker::config(&lock, &image, &directory, &limits, args.wall_seconds)?;
         docker_environment = Some((directory, image_bytes));
-        config
+        match &spec {
+            Some(spec) => contract::configure(config, None, spec)?,
+            None => config,
+        }
     };
     let execution = native_workspace
         .as_ref()
         .map(native_project::Workspace::binding)
         .unwrap_or(json!({"capability":"project-docker-v1"}));
-    let invocation = contract.as_ref().map(|contract| {
-        readonly::binding(args.role, contract, prompt.as_bytes(), execution.clone())
-    });
-    let prefix = if read_only { "invocation" } else { "worker" };
+    let invocation = match (&contract, &spec) {
+        (Some(contract), _) => Some(readonly::binding(
+            args.role,
+            contract,
+            prompt.as_bytes(),
+            execution.clone(),
+        )),
+        (None, Some(spec)) => Some(contract::binding(
+            spec,
+            prompt.as_bytes(),
+            args.repair_turns,
+            execution.clone(),
+        )),
+        (None, None) => None,
+    };
+    let prefix = if kind == Kind::Worker {
+        "worker"
+    } else {
+        "invocation"
+    };
     let bound = |mut value: Value| {
         if let Some(binding) = &invocation {
             value["invocation"] = binding.clone();
@@ -279,16 +468,19 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         println!(
             "{}",
             bound(
-                json!({"protocol":if read_only {"playtime-readonly"} else {"playtime-worker"},"version":worker::PROTOCOL,"inputs_valid":true,"execution":execution})
+                json!({"protocol":match kind {Kind::Readonly => "playtime-readonly", Kind::Contract => contract::PROTOCOL, Kind::Worker => "playtime-worker"},"version":worker::PROTOCOL,"inputs_valid":true,"execution":execution})
             )
         );
         return Ok(());
     }
-    if let Some(contract) = &contract {
+    if let Some(contract) = contract
+        .as_ref()
+        .or(spec.as_ref().map(contract::Spec::contract))
+    {
         records.write_new("output-contract.json", contract.bytes())?;
         records.write_new("request.txt", prompt.as_bytes())?;
     }
-    records.write_new(if read_only {"invocation.json"} else {"worker-invoked.json"}, &serde_json::to_vec(&bound(json!({"schema_version":1,"session_id":session_id,"resume":resume,"configuration":config.fingerprint()?,"execution":execution})))?)?;
+    records.write_new(if kind == Kind::Worker {"worker-invoked.json"} else {"invocation.json"}, &serde_json::to_vec(&bound(json!({"schema_version":1,"session_id":session_id,"resume":resume,"configuration":config.fingerprint()?,"execution":execution})))?)?;
     let log = Arc::new(std::sync::Mutex::new(Events {
         file: OpenOptions::new()
             .create_new(true)
@@ -331,9 +523,10 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         client,
         fenced: false,
     }));
+    let mut docker_tools = None;
     let backend = if let Some(workspace) = native_workspace {
         worker::ProjectEffects::Native(Box::new(native_project::ProjectEffects {
-            inner: playtime_chat::native::ModelEffects(model),
+            inner: playtime_chat::native::ModelEffects(model.clone()),
             workspace,
         }))
     } else {
@@ -356,32 +549,22 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
                 cancel.clone(),
             )
             .await?;
-        let owner = docker::Ownership {
-            service: "playtime-task".into(),
-            run: format!("turn-{}", docker::Ownership::random_nonce()?),
-            grant: "devbot-worker".into(),
-            invocation: docker::Ownership::random_nonce()?,
-            nonce: docker::Ownership::random_nonce()?,
-            daemon: engine.identity().clone(),
+        let tools = DockerTools {
+            engine,
+            ready,
+            directory,
+            limits,
+            state,
+            wall: args.wall_seconds,
+            grant: if kind == Kind::Contract {
+                "worker-contract"
+            } else {
+                "devbot-worker"
+            },
         };
-        let wall = args.wall_seconds;
-        let workspace = tokio::task::spawn_blocking(move || {
-            ProjectWorkspace::new(
-                ready,
-                owner,
-                directory,
-                limits,
-                docker::WorkDeadline::after(Duration::from_secs(wall))?,
-                Arc::new(Journal(state)),
-            )
-        })
-        .await??;
-        worker::ProjectEffects::Docker(Box::new(NativeEffects {
-            model,
-            workspace,
-            output_bytes: 16384,
-            return_overhead: Duration::from_secs(1),
-        }))
+        let effects = tools.effects(model.clone()).await?;
+        docker_tools = Some(tools);
+        effects
     };
     let effects = worker::EvidenceEffects::new(backend, artifacts, 64 * 1024 * 1024)?;
     let effects = Arc::new(Mutex::new(if read_only {
@@ -389,77 +572,132 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     } else {
         effects
     }));
-    let (tx, mut rx) = runtime::events();
-    let mut task = tokio::spawn(runtime::run_turn(
-        session,
-        prompt,
-        effects.clone(),
-        tx,
-        cancel.clone(),
-    ));
-    let mut output_error = None;
-    let completed = loop {
-        tokio::select! {
-            event=rx.recv()=>if let Some(event)=event {
-                if output_error.is_none() && let Err(error)=emit(&log,json!({"schema_version":1,"type":"runtime","event":event})).await {cancel.cancel();output_error=Some(error);}
-            } else {break task.await??;},
-            result=&mut task=>{
-                while let Some(event)=rx.recv().await {
-                    if output_error.is_none() && let Err(error)=emit(&log,json!({"schema_version":1,"type":"runtime","event":event})).await {cancel.cancel();output_error=Some(error);}
-                }
-                break result??;
-            }
-        }
-    };
-    if let Some(error) = output_error {
-        return Err(error);
-    }
-    let cleanup = completed.result.cleanup;
-    if completed.result.reason != playtime_core::StopReason::AgentFinished
-        || cleanup != playtime_protocol::events::CleanupOutcome::Complete
-    {
-        let failure = bound(
-            json!({"schema_version":1,"type":format!("{prefix}_failed"),"session_id":session_id,"reason":completed.result.reason,"cleanup":cleanup,"usage":completed.result.usage}),
-        );
-        if read_only {
-            records.write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
-        }
-        emit(&log, failure).await?;
-        return Err("worker turn did not finish; no automatic replay".into());
-    }
-    let session = completed.session.ok_or("completed session unavailable")?;
-    let checkpoint = session.checkpoint().ok_or("missing completed checkpoint")?;
-    let response = checkpoint
-        .history
-        .exchanges
-        .last()
-        .and_then(|exchange| exchange.messages.last())
-        .filter(|message| message["role"] == "assistant")
-        .and_then(|message| message["content"].as_str())
-        .ok_or("missing final worker response")?;
-    let result = if let Some(contract) = &contract {
-        let response_sha256 = match readonly::save_response(response, &records, contract) {
-            Ok(digest) => digest,
-            Err(error) => {
-                let failure = bound(
-                    json!({"schema_version":1,"type":"invocation_failed","session_id":session_id,"turn_id":checkpoint.completed_turn,"reason":"invalid_output","cleanup":cleanup,"usage":completed.result.usage}),
-                );
+    let mut completed = turn(session, prompt, effects.clone(), &log, &cancel).await?;
+    let mut rejected: Vec<Value> = Vec::new();
+    // The completed session keeps its lock until the terminal receipt is written.
+    let (result, _session) = loop {
+        let cleanup = completed.result.cleanup;
+        if completed.result.reason != playtime_core::StopReason::AgentFinished
+            || cleanup != playtime_protocol::events::CleanupOutcome::Complete
+        {
+            let failure = repairs(
+                kind,
+                &rejected,
+                bound(
+                    json!({"schema_version":1,"type":format!("{prefix}_failed"),"session_id":session_id,"reason":completed.result.reason,"cleanup":cleanup,"usage":completed.result.usage}),
+                ),
+            );
+            if kind != Kind::Worker {
                 records.write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
-                emit(&log, failure).await?;
-                return Err(error);
             }
-        };
-        bound(
-            json!({"schema_version":1,"type":"invocation_finished","session_id":session_id,"turn_id":checkpoint.completed_turn,"cleanup":cleanup,"usage":completed.result.usage,"response_sha256":response_sha256}),
-        )
-    } else {
-        let (report, report_sha256) = worker::save_report(
-            response,
-            &records,
-            &artifact_directory,
-            effects.lock().await.evidence(),
-        )?;
-        json!({"schema_version":1,"type":"worker_finished","session_id":session_id,"turn_id":checkpoint.completed_turn,"cleanup":cleanup,"status":report.status,"usage":completed.result.usage,"report_sha256":report_sha256})
+            emit(&log, failure).await?;
+            return Err("worker turn did not finish; no automatic replay".into());
+        }
+        let session = completed
+            .session
+            .take()
+            .ok_or("completed session unavailable")?;
+        let (turn_id, response) = final_response(&session)?;
+        match kind {
+            Kind::Worker => {
+                let (report, report_sha256) = worker::save_report(
+                    &response,
+                    &records,
+                    &artifact_directory,
+                    effects.lock().await.evidence(),
+                )?;
+                break (
+                    json!({"schema_version":1,"type":"worker_finished","session_id":session_id,"turn_id":turn_id,"cleanup":cleanup,"status":report.status,"usage":completed.result.usage,"report_sha256":report_sha256}),
+                    session,
+                );
+            }
+            Kind::Readonly => {
+                let contract = contract.as_ref().ok_or("missing output contract")?;
+                match readonly::save_response(&response, &records, contract) {
+                    Ok(response_sha256) => {
+                        break (
+                            bound(
+                                json!({"schema_version":1,"type":"invocation_finished","session_id":session_id,"turn_id":turn_id,"cleanup":cleanup,"usage":completed.result.usage,"response_sha256":response_sha256}),
+                            ),
+                            session,
+                        );
+                    }
+                    Err(error) => {
+                        let failure = bound(
+                            json!({"schema_version":1,"type":"invocation_failed","session_id":session_id,"turn_id":turn_id,"reason":"invalid_output","cleanup":cleanup,"usage":completed.result.usage}),
+                        );
+                        records
+                            .write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
+                        emit(&log, failure).await?;
+                        return Err(error);
+                    }
+                }
+            }
+            Kind::Contract => {
+                let spec = spec.as_ref().ok_or("missing output contract")?;
+                let raw = match rejected.len() {
+                    0 => "response.raw.txt".to_owned(),
+                    attempt => format!("response.repair-{attempt}.raw.txt"),
+                };
+                let saved = contract::save_response(
+                    &response,
+                    &records,
+                    &raw,
+                    spec,
+                    &artifact_directory,
+                    effects.lock().await.evidence(),
+                )?;
+                let rejection = match saved {
+                    Ok(response_sha256) => {
+                        break (
+                            repairs(
+                                kind,
+                                &rejected,
+                                bound(
+                                    json!({"schema_version":1,"type":"invocation_finished","session_id":session_id,"turn_id":turn_id,"cleanup":cleanup,"usage":completed.result.usage,"response_sha256":response_sha256}),
+                                ),
+                            ),
+                            session,
+                        );
+                    }
+                    Err(rejection) => rejection,
+                };
+                // The rejected turn is complete, so stopping here leaves the session
+                // resumable. A cancelled repair turn would fence it instead.
+                let mut repair =
+                    (rejected.len() as u32) < args.repair_turns && !cancel.is_cancelled();
+                if repair && let Some(tools) = &docker_tools {
+                    match tools.effects(model.clone()).await {
+                        Ok(next) => effects.lock().await.inner = next,
+                        Err(error) => {
+                            eprintln!("playtime-task: repair turn unavailable: {error}");
+                            repair = false;
+                        }
+                    }
+                }
+                if !repair {
+                    let failure = repairs(
+                        kind,
+                        &rejected,
+                        bound(
+                            json!({"schema_version":1,"type":"invocation_failed","session_id":session_id,"turn_id":turn_id,"reason":rejection.reason,"detail":rejection.detail,"cleanup":cleanup,"usage":completed.result.usage}),
+                        ),
+                    );
+                    records.write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
+                    emit(&log, failure).await?;
+                    return Err(rejection.into());
+                }
+                rejected.push(json!({"turn_id":turn_id,"reason":rejection.reason,"detail":rejection.detail,"cleanup":cleanup,"usage":completed.result.usage}));
+                completed = turn(
+                    session,
+                    contract::repair_request(&rejection),
+                    effects.clone(),
+                    &log,
+                    &cancel,
+                )
+                .await?;
+            }
+        }
     };
     records.write_new(
         &format!("{prefix}-result.json"),

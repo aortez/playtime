@@ -242,7 +242,8 @@ if '--describe-protocol' in sys.argv:
     if '--role' in sys.argv and os.environ.get('FIXTURE_MODE') != 'missing-readonly':
         print(json.dumps({'protocol':'playtime-readonly','version':1,'capability':'playtime-readonly-v1','roles':['setup','supervisor','reviewer'],'report':'structured-result-v1','output_contract':'json-schema-subset-v1','continuation':'none','transport':'strata-responses-v1','tool_backends':{'native':'project-native-v1'}}))
         sys.exit(0)
-    print(json.dumps({'protocol':'playtime-worker','version':2 if os.environ.get('FIXTURE_MODE')=='wrong-protocol' else 1, 'tool_backends': {} if os.environ.get('FIXTURE_MODE')=='missing-native' else {'native':'project-native-v1'}}))
+    contract = {} if os.environ.get('FIXTURE_MODE') == 'missing-contract' else {'capability':'playtime-worker-contract-v1','output_contract':'json-schema-subset-v1','report':'structured-result-v1','evidence':'evidence-ref-v1','continuation':'completed-session-only','transport':'strata-responses-v1','repair_turns':1}
+    print(json.dumps({'protocol':'playtime-worker','version':2 if os.environ.get('FIXTURE_MODE')=='wrong-protocol' else 1, 'tool_backends': {} if os.environ.get('FIXTURE_MODE')=='missing-native' else {'native':'project-native-v1'}, 'contract_invocation': contract}))
 elif '--check-inputs' in sys.argv:
     assert not (root/'started').exists()
     if os.environ.get('FIXTURE_MODE') == 'invalid-readonly-input':
@@ -301,6 +302,56 @@ else:
             self.assertFalse((self.root/'started').exists())
             _,err=child.communicate(b'Assignment',timeout=10)
             self.assertEqual(child.returncode,0,err)
+
+    def contract_fixture(self):
+        import hashlib
+        args = self.worker_fixture()
+        schema = self.root / 'records' / 'schema.json'
+        schema.write_text('{"type":"object","properties":{},"additionalProperties":false}')
+        schema.chmod(0o600)
+        return args + ['--output-contract', str(schema), '--output-contract-sha256', hashlib.sha256(schema.read_bytes()).hexdigest()]
+
+    def test_worker_contract_pins_request_and_keeps_version_one_arguments_unchanged(self):
+        import hashlib
+        args = self.contract_fixture()
+        result = subprocess.run(self.command('framework-gyro-m-fast', *args, '--evidence-property', 'verification', '--repair-turns', '1'),
+                                input='Assignment', env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        child = json.loads((self.root / 'client').read_text())
+        self.assertEqual(child[child.index('--request-sha256') + 1], hashlib.sha256(b'Assignment').hexdigest())
+        self.assertEqual(child[child.index('--evidence-property') + 1], 'verification')
+        self.assertIn('--image-lock', child)
+        self.assertTrue((self.root / 'restored').exists())
+        # A version-one worker is launched exactly as before, with no pinned request.
+        for marker in ('client', 'started'):
+            (self.root / marker).unlink()
+        result = subprocess.run(self.command('framework-gyro-m-fast', *args[:args.index('--output-contract')]),
+                                input='Assignment', env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('--request-sha256', json.loads((self.root / 'client').read_text()))
+
+    def test_worker_contract_rejections_precede_inference_acquisition(self):
+        args = self.contract_fixture()
+        plain = args[:args.index('--output-contract')]
+        inside = self.root / 'project' / 'schema.json'
+        inside.write_text('{}')
+        moved = args.copy()
+        moved[moved.index('--output-contract') + 1] = str(inside)
+        cases = [(args, 'Changed', ''), (args, 'Assignment', 'missing-contract'),
+                 ([*args, '--repair-turns', '2'], 'Assignment', ''),
+                 ([*args, '--worker-session', 'ptw-' + 'a' * 64], 'Assignment', ''),
+                 ([*args, '--role', 'reviewer'], 'Assignment', ''),
+                 ([*args[:-1], 'invalid'], 'Assignment', ''),
+                 (moved, 'Assignment', ''),
+                 ([*plain, '--evidence-property', 'verification'], 'Assignment', ''),
+                 ([*plain, '--repair-turns', '1'], 'Assignment', ''),
+                 ([*plain, '--output-contract-sha256', 'a' * 64], 'Assignment', ''),
+                 ([*plain, '--worker-session', 'ptc-' + 'a' * 64], 'Assignment', '')]
+        for argv, delivered, mode in cases:
+            result = subprocess.run(self.command('framework-gyro-m-fast', *argv), input=delivered,
+                                    env=dict(self.env, FIXTURE_MODE=mode), capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0, (argv, mode))
+            self.assertFalse((self.root / 'started').exists(), (argv, mode))
 
     def readonly_fixture(self):
         import hashlib
