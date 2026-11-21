@@ -128,6 +128,11 @@ async fn unexpected_image_mounts_identity_and_bridge_profile_fail_before_creatio
             json!({"Volumes":{"/unexpected":{}}}),
             Failure::Unsupported,
         ),
+        (
+            "Config",
+            json!({"Labels":{"org.opencontainers.image.title":"base","io.playtime.run":"other"}}),
+            Failure::Unsupported,
+        ),
     ] {
         let port = Arc::new(ScriptedTransport::default());
         port.push(Operation::Version, response(version()));

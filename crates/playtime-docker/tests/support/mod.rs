@@ -233,6 +233,10 @@ impl Transport for Fake {
                 s.next_id += 1;
                 let mut v = container(&p.container, &id, false);
                 v["Config"]["Labels"] = json!(p.labels());
+                // Docker reports the user the create command asked for.
+                let argv = Operation::CreateProject(p.clone()).argv();
+                let user = argv.iter().position(|arg| arg == "--user").unwrap() + 1;
+                v["Config"]["User"] = json!(argv[user]);
                 v["HostConfig"]["Mounts"] = json!([{"Type":"bind","Source":p.root.path(),"Target":"/work","BindOptions":{"Propagation":"rprivate","NonRecursive":true}}]);
                 v["Mounts"] = json!([{"Type":"bind","Source":p.root.path(),"Destination":"/work","Mode":"","RW":true,"Propagation":"rprivate"}]);
                 s.containers.insert(id.clone(), v);

@@ -10,6 +10,21 @@ pub const BRIDGE_SHA256: &str = "4e76de37f73cbaf512b22039af3850b2fbdb647d652f05a
 pub const STOP_GRACE: Duration = Duration::from_secs(180);
 pub const CLEANUP_BOUND: Duration = Duration::from_secs(20);
 pub const TIMER: &str = "import os,signal,sys,time\ndeadline=int(sys.argv[1])\nwhile True:\n remaining=deadline-time.monotonic_ns()\n if remaining<=0: os.kill(os.getpid(),signal.SIGKILL)\n time.sleep(min(remaining/1000000000,1))\n";
+/// PID 1 runs `TIMER` with the image's own interpreter. Experiment containers use
+/// Playtime's locked workshop image, so PID 1 runs as root there, out of the
+/// bridge user's reach. A project's image is untrusted, and without a user
+/// namespace container uid 0 is host uid 0: with the project bind-mounted, it could
+/// leave root-owned setuid files in the host tree. Project containers therefore run
+/// PID 1 as an unprivileged uid that also differs from the bridge's 1000.
+pub const WORKSHOP_TIMER_USER: &str = "0:0";
+pub const PROJECT_TIMER_USER: &str = "65534:65534";
+pub(crate) fn timer_user(project: bool) -> &'static str {
+    if project {
+        PROJECT_TIMER_USER
+    } else {
+        WORKSHOP_TIMER_USER
+    }
+}
 
 pub(crate) fn hash(bytes: &[u8]) -> String {
     Sha256::digest(bytes)

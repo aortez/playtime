@@ -86,14 +86,15 @@ Symlinks resolve in the container namespace. Model commands run through the
 locked bridge as uid 1000. The container has no external network, a read-only root,
 no extra capabilities, no Docker socket and no mounts for host credentials or
 session records. It uses two CPU cores, 4 GiB memory without extra swap, 256 PIDs
-and 256 MiB `/tmp`. The immutable PID-1 timer also bounds lifetime if the client
-disappears. These are enforced container limits; **project files have no aggregate
+and 256 MiB `/tmp`. The PID-1 timer runs as uid 65534 and also bounds lifetime if
+the client disappears. A prepared project image supplies that timer's interpreter,
+so there only owned cleanup is authoritative. These are enforced container limits; **project files have no aggregate
 disk quota**. The experiment sandbox still uses its original bounded tmpfs volume.
 
 The current locked image provides Bash, Git, Python 3.12, Node/npm, GCC/G++, Make,
 rg and SQLite. Rust/Cargo and Go are not installed, and external dependency
-downloads are unavailable. The model is told these limits. A separate reviewed
-image/toolchain update is needed for builds requiring those tools.
+downloads are unavailable. The model is told these limits. Builds that need other
+tools can use a [prepared project environment](rust-project-environments.md).
 
 Admission and the live native probe verify the same directory identity; each tool
 checks the selected host path and exact owned container again. Other host programs

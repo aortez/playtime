@@ -218,6 +218,19 @@ impl Engine {
                 "unexpected image volumes or build hooks",
             ));
         }
+        // Containers inherit image labels. One in Playtime's ownership namespace
+        // would make every container from this image fail identity verification,
+        // which strands it with its project reservation still held.
+        if image["Config"]["Labels"]
+            .as_object()
+            .is_some_and(|labels| labels.keys().any(|key| key.starts_with("io.playtime.")))
+        {
+            return Err(Error::new(
+                Failure::Unsupported,
+                "readiness",
+                "image carries a reserved io.playtime label",
+            ));
+        }
         Ok(ReadyImage {
             engine: self.clone(),
             image: id.into(),
@@ -502,10 +515,26 @@ pub(crate) fn verify_container_mount(
     } else {
         (l.memory_bytes, l.pids)
     };
+    let labels_match = if let Some(project) = project {
+        // Development images inherit descriptive labels from their base images.
+        // Require the complete Playtime ownership namespace exactly; unrelated
+        // image metadata does not establish or invalidate container ownership.
+        let expected = project.labels();
+        c["Labels"].as_object().is_some_and(|actual| {
+            expected
+                .iter()
+                .all(|(key, value)| actual.get(key) == Some(&json!(value)))
+                && actual
+                    .keys()
+                    .all(|key| !key.starts_with("io.playtime.") || expected.contains_key(key))
+        })
+    } else {
+        c["Labels"] == json!(p.labels())
+    };
     if value["Name"] != format!("/{}", p.name)
         || value["Image"] != p.image
         || c["Image"] != p.image
-        || c["Labels"] != json!(project.map_or_else(|| p.labels(), |p| p.labels()))
+        || !labels_match
         || c["Entrypoint"] != json!([PYTHON])
         || c["Cmd"]
             != json!([
@@ -516,7 +545,7 @@ pub(crate) fn verify_container_mount(
                 TIMER,
                 p.deadline_monotonic_ns.to_string()
             ])
-        || c["User"] != "0:0"
+        || c["User"] != timer_user(project.is_some())
         || c["WorkingDir"] != "/"
         || c["Healthcheck"]["Test"] != json!(["NONE"])
         || !empty(&c["Volumes"])

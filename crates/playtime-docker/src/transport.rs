@@ -210,7 +210,7 @@ fn create_args(p: &Proposal, project: Option<&crate::project::ProjectProposal>) 
         "--security-opt",
         "no-new-privileges",
         "--user",
-        "0:0",
+        timer_user(project.is_some()),
         "--log-driver",
         "none",
         "--restart",

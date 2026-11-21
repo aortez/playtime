@@ -201,6 +201,71 @@ async fn uncertain_tool_fences_without_replay_then_exact_cleanup_reopens_directo
     drop(t.open().unwrap());
 }
 #[tokio::test]
+async fn image_metadata_labels_are_allowed_but_extra_ownership_labels_are_not() {
+    let t = Tree::new();
+    let f = Fixture::new().await;
+    let mut w = workspace(&f, Arc::new(t.open().unwrap())).await;
+    w.start_workspace(deadline(), CancellationToken::new())
+        .await
+        .unwrap();
+    for container in f.fake.state.lock().unwrap().containers.values_mut() {
+        container["Config"]["Labels"]["org.opencontainers.image.version"] = json!("24.04");
+    }
+    assert!(tool(&mut w).await.is_ok());
+    for container in f.fake.state.lock().unwrap().containers.values_mut() {
+        container["Config"]["Labels"]["io.playtime.unexpected"] = json!("foreign");
+    }
+    assert!(tool(&mut w).await.is_err());
+    assert!(
+        !w.cleanup(deadline(), CancellationToken::new())
+            .await
+            .complete()
+    );
+    for container in f.fake.state.lock().unwrap().containers.values_mut() {
+        container["Config"]["Labels"]
+            .as_object_mut()
+            .unwrap()
+            .remove("io.playtime.unexpected");
+    }
+    assert!(
+        w.cleanup(deadline(), CancellationToken::new())
+            .await
+            .complete()
+    );
+}
+#[tokio::test]
+async fn project_timer_runs_as_an_unprivileged_user() {
+    // The timer is the project image's interpreter, so it must not be host root.
+    let t = Tree::new();
+    let f = Fixture::new().await;
+    let mut w = workspace(&f, Arc::new(t.open().unwrap())).await;
+    w.start_workspace(deadline(), CancellationToken::new())
+        .await
+        .unwrap();
+    let argv = f
+        .fake
+        .seen()
+        .iter()
+        .find_map(|op| match op {
+            transport::Operation::CreateProject(p) => {
+                Some(transport::Operation::CreateProject(p.clone()).argv())
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        argv.windows(2)
+            .any(|pair| pair[0] == "--user" && pair[1] == "65534:65534"),
+        "{argv:?}"
+    );
+    assert!(tool(&mut w).await.is_ok());
+    assert!(
+        w.cleanup(deadline(), CancellationToken::new())
+            .await
+            .complete()
+    );
+}
+#[tokio::test]
 async fn changed_mount_or_network_never_executes_or_removes_unverified_container() {
     for (pointer, value) in [
         ("/HostConfig/Mounts/0/Source", json!("/other")),
@@ -214,6 +279,7 @@ async fn changed_mount_or_network_never_executes_or_removes_unverified_container
             "/Config/Labels/io.playtime.project",
             json!("another-project"),
         ),
+        ("/Config/User", json!("0:0")),
     ] {
         let t = Tree::new();
         let f = Fixture::new().await;
