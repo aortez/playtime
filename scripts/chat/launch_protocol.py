@@ -74,12 +74,17 @@ def cleanup_budget(preset):
             + OWNER_STOP_GRACE + KILL_GRACE + CLEANUP_SLACK)
 
 
-def describe(preset, profile):
-    """Answer `--describe-launch` read-only: no SSH, no model, nothing acquired."""
+def require_cleanup_budget(preset, profile):
     budget = cleanup_budget(preset)
     if budget > MAX_CLEANUP_BUDGET:
         raise LaunchError(f"profile {profile} needs {budget}s of cleanup, above the "
                           f"{MAX_CLEANUP_BUDGET}s this protocol allows")
+    return budget
+
+
+def describe(preset, profile):
+    """Answer `--describe-launch` read-only: no SSH, no model, nothing acquired."""
+    budget = require_cleanup_budget(preset, profile)
     print(json.dumps({"schema_version": SCHEMA_VERSION, "protocol": PROTOCOL,
                       "max_prompt_bytes": MAX_PROMPT_BYTES,
                       "cleanup_timeout_seconds": budget}))
@@ -152,6 +157,13 @@ def exact_keys(value, expected, what):
 def absolute(value, field):
     if not isinstance(value, str) or not value.startswith("/"):
         raise LaunchError(f"launch request {field} must be an absolute path")
+    # Refuse what the filesystem calls would reject only after the claim exists.
+    if "\0" in value:
+        raise LaunchError(f"launch request {field} contains a NUL character")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise LaunchError(f"launch request {field} is not valid Unicode text") from None
     return Path(value)
 
 
@@ -403,11 +415,11 @@ class Launch:
             log(f"launch receipt could not be published: {error}")
             return None
 
-    def abort(self, error):
-        """Report an exception the wrapper raised before its own cleanup ran."""
+    def abort(self, error, signals=()):
+        """Report an exception or signal that ended the launch before its own cleanup ran."""
         if self.published is not None:
             return self.published
-        outcome = "timed_out" if self.timed_out else "failed"
+        outcome = "cancelled" if signals else "timed_out" if self.timed_out else "failed"
         tools = "not_acquired" if not self.tools_acquired else "unresolved"
         owner = "not_acquired" if not self.inference_acquired else "unresolved"
         try:
@@ -427,6 +439,7 @@ class Launch:
 
 def begin(preset, profile, request_path):
     """Validate and claim a request before acquiring any execution resource."""
+    require_cleanup_budget(preset, profile)
     path = Path(request_path)
     if not path.is_absolute():
         # A relative name would resolve against whatever directory the launcher
@@ -440,8 +453,9 @@ def begin(preset, profile, request_path):
     request.claim()
     try:
         request.check_inputs()
-    except LaunchError as error:
+    except Exception:
         # The receipt slot is usable, so say why this attempt is not.
+        # Any failure counts: once the claim exists, every exit needs a receipt.
         try:
             launch.publish("failed", "not_acquired", "not_acquired", None)
         except Exception as failure:

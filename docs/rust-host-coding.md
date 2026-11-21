@@ -1,4 +1,4 @@
-# Interactive host coding
+# Host coding
 
 `--preset coding-host` uses Playtime's terminal client, saved conversations and
 shared compacting controller with the pinned Codex-derived coding prompt. Tools
@@ -25,6 +25,11 @@ come from the user's groups and host setup. There is no filesystem, network,
 device or IPC sandbox, sudo API, CPU/memory quota, or claimed protection of
 same-user session records. State and the installed client stay separate from the
 checkout to avoid accidental edits, but host execution can access them.
+
+The one-shot [`launcher_v1` contract](rust-chat-launcher.md#one-shot-launch-contract)
+runs a single `coding-host` turn for a calling program, with the same trust. Its
+tools run as the invoking user with the access described above, and no terminal
+shows the turn while it runs; the caller's timeout and signals are the only controls.
 
 ## Tools and process lifetime
 

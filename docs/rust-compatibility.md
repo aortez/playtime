@@ -1896,13 +1896,15 @@ of model chunks and terminal cancellation remains serviced by the existing loop.
 controller decisions, event schemas, model/prompt identities, saved configuration
 fingerprints, tool behavior or experiment goldens change.
 
-### One-shot launcher input and cleanup receipt (2026-11-18)
+## One-shot launcher input and cleanup receipt (2026-11-18)
 
 Added `--prompt-file` as an alternative to `--prompt` for a fresh one-turn console
 session, preserving exact bounded UTF-8 bytes. JSON output accepts either source.
 The opt-in coding-host completion receipt binds launch ID, prompt digest, outcome
-and local-tool cleanup. The wrapper's new `launcher_v1` request/receipt interface
-adds inference-owner cleanup and a retained dispatch claim. These additions do not
-change existing worker/read-only protocols, saved conversations or golden event
-schemas. CPU fixtures cover the added contract, and an installed copy passed live
-completion, cancellation and replay checks on Framework.
+and local-tool cleanup; the client refuses an existing receipt or a receipt
+directory that isn't private before the turn starts. The wrapper's new
+`launcher_v1` request/receipt interface adds inference-owner cleanup and a retained
+dispatch claim. These additions do not change existing worker/read-only protocols,
+saved conversations or golden event schemas. CPU fixtures cover the added contract,
+and an installed copy passed live completion, cancellation and replay checks on
+Framework.

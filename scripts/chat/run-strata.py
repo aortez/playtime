@@ -162,9 +162,10 @@ def worker_option(args, key, default=None):
     return default
 
 
-def session(preset, profile, args, launch=None):
+def session(preset, profile, args, launch=None, signals=None):
     # Wrapper flags precede chat arguments, so a prompt whose text is literally
     # "--full-verify" remains an ordinary prompt value.
+    import launch_protocol
     import project_environment
 
     worker = args[:1] == ["--worker"]
@@ -184,6 +185,8 @@ def session(preset, profile, args, launch=None):
             full_verify |= args[0] == "--full-verify"
             force_picker |= args[0] == "--sessions"
             args = args[1:]
+        elif args[0] in (launch_protocol.REQUEST_FLAG, launch_protocol.DESCRIBE_FLAG):
+            raise RuntimeError(f"{args[0]} must directly follow the profile")
         elif args[0] == "--preset" or args[0].startswith("--preset="):
             if selected_preset is not None:
                 raise RuntimeError("select only one chat preset")
@@ -264,6 +267,9 @@ def session(preset, profile, args, launch=None):
             raise RuntimeError("installed task lacks the read-only invocation contract")
         if native and protocol.get("tool_backends", {}).get("native") != "project-native-v1":
             raise RuntimeError("installed worker lacks project-native-v1")
+    # Refuse unknown chat options before touching the remote host. Workshop chat
+    # also gets this from the environment scan, which host and native tools skip.
+    project_environment.workspace_arguments(selection_args)
     client_args = [str(executable), "--model-lock", str(lock_path)]
     if not native and not host_tools:
         image_path = project_environment.resolve(selection_args, PACKAGE, environment)
@@ -333,7 +339,8 @@ def session(preset, profile, args, launch=None):
     events = queue.Queue(maxsize=256)
     stopped = threading.Event()
     failed = threading.Event()
-    signals = []
+    # A one-shot launch records signals from before its claim; share that list.
+    signals = [] if signals is None else signals
     previous = {}
     result = 1
     owner_code = None
@@ -377,7 +384,10 @@ def session(preset, profile, args, launch=None):
             transcript.write(f"{channel}: {line}")
             transcript.flush()
             if channel == "stderr":
-                print(line, end="", file=sys.stderr, flush=True)
+                # A launch caller reads owner.log instead, so an unread caller pipe
+                # can never stall this loop's deadline or cleanup.
+                if launch is None:
+                    print(line, end="", file=sys.stderr, flush=True)
                 owner_label = "Basalt" if basalt else "Gyro-M"
                 prefixes = [f"{owner_label}: {verb} {profile}; logs: " for verb in ("starting", "reusing")]
                 prefix = next((p for p in prefixes if line.startswith(p)), None)
@@ -398,6 +408,8 @@ def session(preset, profile, args, launch=None):
     try:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             previous[sig] = signal.signal(sig, interrupted)
+        if signals:
+            raise InterruptedError(f"received signal {signals[0]}")
         owner = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
         if launch is not None:
@@ -447,12 +459,19 @@ def session(preset, profile, args, launch=None):
         log(f"verified in {verification_seconds:.1f}s; {stats['reused_files']} cached, "
             f"{stats['hashed_files']} hashed ({stats['hashed_bytes'] / 1e9:.2f} GB read); "
             f"starting {profile} {'read-only invocation' if read_only else 'worker' if worker else 'chat'} in {project_environment.workspace_arguments(selection_args)[0]}")
+        streams = {}
         if launch is not None:
             args = launch.attach(args)
-        child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
-                                  *client_args[1:], *args],
-                                 stdin=subprocess.DEVNULL if headless or launch is not None else None,
-                                 env=client_environment)
+            # The client's raw output stays with this run's evidence, for the same reason.
+            streams = {name: (evidence / f"client.{name}").open("xb") for name in ("stdout", "stderr")}
+        try:
+            child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
+                                      *client_args[1:], *args],
+                                     stdin=subprocess.DEVNULL if headless or launch is not None else None,
+                                     env=client_environment, **streams)
+        finally:
+            for stream in streams.values():
+                stream.close()
         if launch is not None:
             launch.note("tools")
         while child.poll() is None:
@@ -483,6 +502,10 @@ def session(preset, profile, args, launch=None):
             if heartbeats.is_alive():
                 result = 1
         if owner is not None:
+            # The owner speaks for the model only by exiting after this EOF or
+            # release. An earlier exit is lost ownership, whatever its code.
+            if owner.poll() is not None:
+                failed.set()
             park = result == 0 and child is not None and child.returncode == 0 and not failed.is_set() and not signals
             if launch is not None:
                 completion, _ = launch.read_completion()
@@ -559,13 +582,25 @@ def one_shot(preset, profile, request_path):
     """Honor exactly one launcher_v1 request and report through its own receipt."""
     import launch_protocol
 
-    launch = launch_protocol.begin(preset, profile, request_path)
+    # Record signals before the claim exists. After it, every exit must publish a
+    # receipt, and a signal is still a cancellation.
+    signals = []
+    previous = {sig: signal.signal(sig, lambda signum, _frame: signals.append(signum))
+                for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
     try:
-        return session(preset, profile, launch.chat_arguments(), launch=launch)
-    except BaseException as error:
-        # Actor acquisition flags keep early failures distinct from unknown cleanup.
-        launch.abort(error)
-        raise
+        launch = launch_protocol.begin(preset, profile, request_path)
+        if signals:
+            launch.abort(f"received signal {signals[0]}", signals)
+            return 128 + signals[0]
+        try:
+            return session(preset, profile, launch.chat_arguments(), launch=launch, signals=signals)
+        except BaseException as error:
+            # Actor acquisition flags keep early failures distinct from unknown cleanup.
+            launch.abort(error, signals)
+            raise
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def main(args):

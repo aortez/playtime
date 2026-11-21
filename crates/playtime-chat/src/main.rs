@@ -302,6 +302,9 @@ async fn main_run(mut args: Args) -> Result<i32> {
     if args.completion_receipt.is_some() && args.preset != Preset::CodingHost {
         return Err("completion receipts currently require --preset coding-host".into());
     }
+    if let Some(path) = &args.completion_receipt {
+        oneshot::check_slot(path)?;
+    }
     if args.preset == Preset::CodingHost
         && (args.image_lock.is_some() || matches!(args.agent_prompt, AgentPrompt::Minimal))
     {
@@ -723,21 +726,27 @@ async fn main_run(mut args: Args) -> Result<i32> {
     } else {
         Ok(())
     };
-    if let Some(path) = &args.completion_receipt {
-        oneshot::completion(
-            path,
-            args.launch_id.as_deref().ok_or("missing launch ID")?,
-            args.prompt.as_deref().ok_or("missing one-shot prompt")?,
-            one_shot_outcome,
-            if cleanup.is_ok() {
-                "confirmed"
-            } else {
-                "unresolved"
-            },
-            &session_path,
-        )?;
-    }
+    // Report unresolved cleanup ahead of a failed receipt write. Without the
+    // receipt, the launcher already reports the tools as unresolved.
+    let receipt = args
+        .completion_receipt
+        .as_deref()
+        .map_or(Ok(()), |path| -> Result<()> {
+            oneshot::completion(
+                path,
+                args.launch_id.as_deref().ok_or("missing launch ID")?,
+                args.prompt.as_deref().ok_or("missing one-shot prompt")?,
+                one_shot_outcome,
+                if cleanup.is_ok() {
+                    "confirmed"
+                } else {
+                    "unresolved"
+                },
+                &session_path,
+            )
+        });
     cleanup?;
+    receipt?;
     let restart = result?;
     if let Some(session) = restart {
         let path = PathBuf::from(

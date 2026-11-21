@@ -25,6 +25,18 @@ pub fn prompt(path: &Path) -> Result<String> {
     Ok(text)
 }
 
+/// Refuses a receipt that could never be written, before the turn runs.
+pub fn check_slot(path: &Path) -> Result<()> {
+    PrivateDirectory::open(path.parent().ok_or("receipt needs a parent")?, false)?;
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("invalid receipt name")?;
+    if path.symlink_metadata().is_ok() {
+        return Err(format!("completion receipt {} already exists", path.display()).into());
+    }
+    Ok(())
+}
+
 pub fn completion(
     path: &Path,
     launch_id: &str,
@@ -63,6 +75,8 @@ mod tests {
         ));
         PrivateDirectory::open(&root, true).unwrap();
         let path = root.join("receipt.json");
+        check_slot(&path).unwrap();
+        assert!(check_slot(&root.join("missing").join("receipt.json")).is_err());
         completion(
             &path,
             "launch-example",
@@ -83,6 +97,7 @@ mod tests {
                 "session_id":"/private/session"
             })
         );
+        assert!(check_slot(&path).is_err());
         assert!(completion(&path, "other", "changed", "failed", "unresolved", &root).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         std::fs::remove_dir_all(root).unwrap();

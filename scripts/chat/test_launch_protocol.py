@@ -68,6 +68,8 @@ prompt = pathlib.Path(value('--prompt-file')).read_bytes()
     'argv': argv, 'cwd': os.getcwd(), 'prompt_bytes': len(prompt),
     'prompt_sha256': hashlib.sha256(prompt).hexdigest(),
     'prompt_text': prompt.decode('utf-8') if mode == 'echo' else None}))
+print('fixture client stdout', flush=True)
+print('fixture client stderr', file=sys.stderr, flush=True)
 def complete(outcome, tools, digest=None, launch=None, schema=1):
     if '--completion-receipt' not in argv:
         return
@@ -106,8 +108,8 @@ if mode == 'turn-failed':
 if mode == 'turn-timed-out':
     complete('timed_out', 'confirmed')
     sys.exit(1)
-# 'owner-loss' is the shared fake-helper mode that kills the model mid-turn.
-if mode in ('hang', 'owner-loss'):
+# 'owner-loss' and 'owner-exit-zero' are shared fake-helper modes that end the owner mid-turn.
+if mode in ('hang', 'owner-loss', 'owner-exit-zero'):
     while True:
         time.sleep(.05)
 if mode == 'delayed-cleanup':
@@ -146,6 +148,9 @@ sys.exit(0)
 
     def receipt_report(self):
         return json.loads(self.receipt.read_text())
+
+    def preset(self):
+        return json.loads((self.package / "presets.json").read_text())["profiles"]["framework-gyro-m-fast"]
 
     def evidence(self):
         directories = list((self.root / ".local/state/playtime-launcher").iterdir())
@@ -340,6 +345,10 @@ sys.exit(0)
                "uppercase hash": self.request_text(prompt_sha256="A" * 64),
                "short hash": self.request_text(prompt_sha256="abc"),
                "relative prompt": self.request_text(prompt_file="prompt.txt"),
+               "NUL in prompt path": self.request_text(prompt_file="/tmp/a\x00b"),
+               "lone surrogate in prompt path": self.request_text(prompt_file="/tmp/\ud800"),
+               "NUL in workspace": self.request_text(workspace=str(self.project) + "\x00"),
+               "lone surrogate in receipt path": self.request_text(receipt_file=str(self.caller / "\ud800")),
                "zero timeout": self.request_text(timeout_seconds=0),
                "huge timeout": self.request_text(timeout_seconds=86_401),
                "fractional timeout": self.request_text(timeout_seconds=60.5),
@@ -355,8 +364,34 @@ sys.exit(0)
                                         text=True, timeout=10)
                 self.assertNotEqual(result.returncode, 0, label)
                 self.assertFalse(self.receipt.exists(), label)
+                self.assertFalse(self.receipt.with_name("receipt.json.started").exists(), label)
                 self.assertFalse((self.root / "started").exists(), label)
                 self.assertFalse((self.root / "client").exists(), label)
+
+    def test_any_failure_after_the_claim_still_publishes_a_receipt(self):
+        with mock.patch.object(protocol.Request, "check_inputs", side_effect=RuntimeError("disk vanished")):
+            with self.assertRaisesRegex(RuntimeError, "disk vanished"):
+                protocol.begin(self.preset(), "framework-gyro-m-fast", str(self.write_request()))
+        report = self.receipt_report()
+        self.assertEqual((report["outcome"], report["local_tools"], report["inference_owner"]),
+                         ("failed", "not_acquired", "not_acquired"))
+
+    def test_signal_after_the_claim_publishes_a_cancelled_receipt_without_starting(self):
+        # The window between the claim and the session's own signal handlers.
+        import launch_protocol
+        begin = launch_protocol.begin
+
+        def begin_then_signal(*args):
+            launch = begin(*args)
+            signal.raise_signal(signal.SIGTERM)
+            return launch
+        with mock.patch.object(launch_protocol, "begin", begin_then_signal), \
+                mock.patch.object(test_launcher.launcher, "session", side_effect=AssertionError("session started")):
+            code = test_launcher.launcher.one_shot(self.preset(), "framework-gyro-m-fast", str(self.write_request()))
+        self.assertEqual(code, 128 + signal.SIGTERM)
+        report = self.receipt_report()
+        self.assertEqual((report["outcome"], report["local_tools"], report["inference_owner"]),
+                         ("cancelled", "not_acquired", "not_acquired"))
 
     def test_relative_request_name_is_refused(self):
         self.write_request()
@@ -416,6 +451,18 @@ sys.exit(0)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse((self.root / "started").exists())
 
+    def test_launch_flags_after_other_wrapper_flags_are_refused_before_ownership(self):
+        for argv in (("--full-verify", protocol.DESCRIBE_FLAG),
+                     ("--preset", "coding-host", protocol.DESCRIBE_FLAG),
+                     ("--full-verify", protocol.REQUEST_FLAG, str(self.write_request()))):
+            with self.subTest(argv=argv):
+                result = subprocess.run(self.command("framework-gyro-m-fast", *argv), env=self.env,
+                                        cwd=self.root, capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("must directly follow the profile", result.stderr)
+                self.assertFalse((self.root / "started").exists())
+                self.assertFalse(self.receipt.with_name("receipt.json.started").exists())
+
     def test_describe_launch_reports_the_contract_without_acquiring_anything(self):
         result = subprocess.run(self.command("framework-gyro-m-fast", protocol.DESCRIBE_FLAG),
                                 env=self.env, cwd=self.root, capture_output=True, text=True, timeout=10)
@@ -437,10 +484,12 @@ sys.exit(0)
                 self.assertLessEqual(budget, protocol.MAX_CLEANUP_BUDGET)
 
     def test_a_preset_that_cannot_fit_the_cleanup_bound_is_refused(self):
-        preset = dict(json.loads((self.package / "presets.json").read_text())["profiles"]
-                      ["framework-gyro-m-fast"], cleanup_timeout=400)
+        preset = dict(self.preset(), cleanup_timeout=400)
         with self.assertRaises(protocol.LaunchError):
             protocol.describe(preset, "framework-gyro-m-fast")
+        with self.assertRaisesRegex(protocol.LaunchError, "cleanup"):
+            protocol.begin(preset, "framework-gyro-m-fast", str(self.write_request()))
+        self.assertFalse(self.receipt.with_name("receipt.json.started").exists())
 
     def test_receipt_publication_exposes_only_complete_bytes(self):
         launch = protocol.begin({"cleanup_timeout": 1}, "fixture", self.write_request())
@@ -503,6 +552,23 @@ sys.exit(0)
                 if process.poll() is None:
                     process.kill()
                     process.wait()
+
+    def test_owner_exit_before_release_is_unresolved_even_when_it_exits_zero(self):
+        result = self.launch("owner-exit-zero")
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("lost the inference host owner", result.stderr)
+        self.assertEqual(json.loads((self.evidence() / "exit.json").read_text())["owner_exit"], 0)
+        self.assertEqual(self.receipt_report()["inference_owner"], "unresolved")
+
+    def test_launch_output_stays_in_its_evidence_not_the_callers_pipes(self):
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("fixture client", result.stdout + result.stderr)
+        self.assertNotIn("Gyro-M:", result.stderr)
+        evidence = self.evidence()
+        self.assertEqual((evidence / "client.stdout").read_text(), "fixture client stdout\n")
+        self.assertEqual((evidence / "client.stderr").read_text(), "fixture client stderr\n")
+        self.assertIn("Gyro-M: starting", (evidence / "owner.log").read_text())
 
     def test_forced_owner_shutdown_is_unresolved_even_when_it_exits_zero(self):
         path = self.package / "presets.json"

@@ -309,6 +309,7 @@ A caller can run `~/.local/lib/playtime-chat/run-strata.py PROFILE --describe-la
 acquiring a model. The JSON response identifies schema 1, `launcher_v1`, the prompt
 byte limit and a profile-specific cleanup timeout. This is capability inspection,
 not readiness or a reservation. Model and effort settings remain profile-owned.
+Both launch flags must directly follow the profile.
 
 `~/.local/lib/playtime-chat/run-strata.py PROFILE --launch-request /absolute/request.json` accepts
 only that request, without additional chat flags:
@@ -321,13 +322,15 @@ The request and prompt must be bounded regular files; keys are strict. The recei
 parent must already exist, belong to the caller and have no group/other access.
 The wrapper retains an exclusive `receipt.json.started` claim before acquiring
 an actor. A claim or existing receipt rejects re-entry, including after a crash;
-a fresh deliberate attempt uses a new ID/path. Do not remove a claim to retry an
+a fresh deliberate attempt needs a new receipt path; the launch ID only correlates
+the request with its receipts. Do not remove a claim to retry an
 uncertain task. The claim is evidence, not a recovery command.
 
 The wrapper freezes the validated prompt into its private evidence, selects a
 fresh `coding-host` one-shot conversation and uses the existing owner, model
 verification and chat path. The task timeout includes startup, verification and
-the turn. SIGINT/SIGTERM requests cancellation; the caller must then allow the
+the turn. SIGINT, SIGTERM or SIGHUP requests cancellation, including while the
+request is still being claimed; the caller must then allow the
 advertised cleanup budget before deciding that ownership is unresolved. Host
 coding remains trusted same-user execution with its ordinary network access.
 
@@ -340,9 +343,13 @@ alone does not substitute for either acknowledgement. Publication exposes comple
 JSON atomically and never overwrites another receipt. File and parent-directory
 sync must succeed before the wrapper acknowledges publication.
 
-Raw client output, the copied prompt, client completion and `exit.json` remain in
-the launcher's private evidence directory. Missing or invalid receipts must remain
-unknown to callers; this interface never automatically resumes/replays a request.
+The client's raw output (`client.stdout`, `client.stderr`), the helper's log
+(`owner.log`), the copied prompt, the client completion and `exit.json` stay in the
+launcher's private evidence directory, which the wrapper's first stderr line names.
+The wrapper writes only a few short status lines to stderr itself, so a caller that
+leaves its pipes unread can't stall the deadline or cleanup. Missing or invalid
+receipts must remain unknown to callers; this interface never automatically
+resumes/replays a request.
 
 On November 20, 2026, a separately installed copy of this launcher ran these
 requests on Framework with `framework-gyro-m-fast`:

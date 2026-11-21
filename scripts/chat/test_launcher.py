@@ -72,8 +72,8 @@ else:
     print('Gyro-M: ' + verb + ' ' + profile + '; logs: ' + str(root / state / '20261113T123456Z-123'), file=sys.stderr, flush=True)
     print('GYRO_READY ' + json.dumps({'model':'fixture', 'context':131072 if bird else 163840, 'drafting':'dflash2'}), flush=True)
     while True:
-        if mode == 'owner-loss' and (root / 'client').exists():
-            sys.exit(1)
+        if mode in ('owner-loss', 'owner-exit-zero') and (root / 'client').exists():
+            sys.exit(1 if mode == 'owner-loss' else 0)
         if select.select([sys.stdin], [], [], .05)[0]:
             line = sys.stdin.readline()
             if not line:
@@ -217,6 +217,12 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         result = self.run_fixture('', '--preset', 'coding-host', '--environment', 'general')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('cannot select a Docker environment', result.stderr)
+        self.assertFalse((self.root / 'started').exists())
+
+    def test_host_preset_rejects_unknown_chat_options_before_ownership(self):
+        result = self.run_fixture('', '--preset', 'coding-host', '--bogus')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('unsupported chat option: --bogus', result.stderr)
         self.assertFalse((self.root / 'started').exists())
 
     def test_host_preset_help_does_not_acquire_inference(self):
