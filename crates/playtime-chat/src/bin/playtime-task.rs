@@ -48,6 +48,8 @@ struct Args {
     evidence_property: Option<String>,
     #[arg(long, default_value_t = 0)]
     repair_turns: u32,
+    #[arg(long)]
+    caller_deadline_unix_ms: Option<u64>,
     #[arg(long, value_enum, default_value = "docker")]
     tool_backend: ToolBackend,
     #[arg(long)]
@@ -297,6 +299,13 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     if args.repair_turns > contract::MAX_REPAIR_TURNS {
         return Err("at most one repair turn is supported".into());
     }
+    if kind != Kind::Contract && args.caller_deadline_unix_ms.is_some() {
+        return Err("a caller deadline belongs to worker contract invocations".into());
+    }
+    let caller_deadline = args
+        .caller_deadline_unix_ms
+        .map(contract::CallerDeadline::new)
+        .transpose()?;
     let workspace = args.workspace.ok_or("missing workspace")?.canonicalize()?;
     let run_dir = args
         .run_dir
@@ -446,6 +455,7 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             spec,
             prompt.as_bytes(),
             args.repair_turns,
+            args.caller_deadline_unix_ms,
             execution.clone(),
         )),
         (None, None) => None,
@@ -666,6 +676,18 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
                 // resumable. A cancelled repair turn would fence it instead.
                 let mut repair =
                     (rejected.len() as u32) < args.repair_turns && !cancel.is_cancelled();
+                // The caller stops the worker at its deadline, so a repair turn that
+                // couldn't use its whole wall budget first is never started.
+                let late = repair
+                    && caller_deadline.as_ref().is_some_and(|deadline| {
+                        !deadline.allows(Duration::from_secs(args.wall_seconds))
+                    });
+                if late {
+                    eprintln!(
+                        "playtime-task: repair turn skipped: less than --wall-seconds remains before the caller deadline"
+                    );
+                    repair = false;
+                }
                 if repair && let Some(tools) = &docker_tools {
                     match tools.effects(model.clone()).await {
                         Ok(next) => effects.lock().await.inner = next,
@@ -676,13 +698,16 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
                     }
                 }
                 if !repair {
-                    let failure = repairs(
+                    let mut failure = repairs(
                         kind,
                         &rejected,
                         bound(
                             json!({"schema_version":1,"type":"invocation_failed","session_id":session_id,"turn_id":turn_id,"reason":rejection.reason,"detail":rejection.detail,"cleanup":cleanup,"usage":completed.result.usage}),
                         ),
                     );
+                    if late {
+                        failure["repair_skipped"] = "caller_deadline".into();
+                    }
                     records.write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
                     emit(&log, failure).await?;
                     return Err(rejection.into());

@@ -14,6 +14,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     sync::{Mutex, mpsc},
@@ -466,7 +467,7 @@ fn version_one_worker_and_read_only_probes_keep_their_pinned_values() {
             "capability":"playtime-worker-contract-v1","roles":["worker"],
             "report":"structured-result-v1","output_contract":"json-schema-subset-v1",
             "evidence":"evidence-ref-v1","continuation":"completed-session-only","repair_turns":1,
-            "transport":"strata-responses-v1",
+            "caller_deadline":"unix-ms-v1","transport":"strata-responses-v1",
             "tool_backends":{"docker":"project-docker-v1","native":"project-native-v1"}})
     );
     let helper = worker["native_helper_sha256"].clone();
@@ -566,6 +567,29 @@ fn contract_input_check_binds_request_contract_and_evidence_without_an_endpoint(
     );
     assert!(!run.join("invocation.json").exists());
     assert!(with(&[]).status.success());
+    // A caller deadline is recorded as given, and only when supplied.
+    let deadline = (SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 3_600_000)
+        .to_string();
+    let timed = with(&[
+        "--repair-turns",
+        "1",
+        "--caller-deadline-unix-ms",
+        &deadline,
+    ]);
+    assert!(
+        timed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&timed.stderr)
+    );
+    let timed: Value = serde_json::from_slice(&timed.stdout).unwrap();
+    assert_eq!(
+        timed["invocation"]["caller_deadline_unix_ms"],
+        deadline.parse::<u64>().unwrap()
+    );
 
     let version_one_session = format!("ptw-{}", "a".repeat(64));
     for (name, rejected) in [
@@ -588,6 +612,14 @@ fn contract_input_check_binds_request_contract_and_evidence_without_an_endpoint(
             check(&["--evidence-property", "verification"]),
         ),
         ("repair without a contract", check(&["--repair-turns", "1"])),
+        (
+            "passed caller deadline",
+            with(&["--caller-deadline-unix-ms", "1"]),
+        ),
+        (
+            "caller deadline without a contract",
+            check(&["--caller-deadline-unix-ms", deadline.as_str()]),
+        ),
         (
             "hash without a contract",
             check(&["--request-sha256", request_hash.as_str()]),

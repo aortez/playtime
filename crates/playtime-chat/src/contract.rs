@@ -8,7 +8,10 @@ use crate::{
 use playtime_engine::chat::ConversationConfig;
 use playtime_local::PrivateDirectory;
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 pub const PROTOCOL: &str = "playtime-worker-contract";
 pub const CAPABILITY: &str = "playtime-worker-contract-v1";
@@ -21,7 +24,8 @@ pub fn capability() -> Value {
     json!({"protocol":PROTOCOL,"version":1,"capability":CAPABILITY,"roles":["worker"],
         "report":"structured-result-v1","output_contract":"json-schema-subset-v1",
         "evidence":EVIDENCE,"continuation":"completed-session-only",
-        "repair_turns":MAX_REPAIR_TURNS,"transport":"strata-responses-v1",
+        "repair_turns":MAX_REPAIR_TURNS,"caller_deadline":"unix-ms-v1",
+        "transport":"strata-responses-v1",
         "tool_backends":{"docker":"project-docker-v1","native":native_project::CAPABILITY}})
 }
 
@@ -100,10 +104,45 @@ impl Spec {
     }
 }
 
-pub fn binding(spec: &Spec, request: &[u8], repair_turns: u32, execution: Value) -> Value {
-    json!({"capability":CAPABILITY,"role":"worker","output_contract_sha256":spec.contract.sha256(),
-        "request_sha256":digest(request),"evidence_property":spec.evidence_property,
-        "repair_turns":repair_turns,"execution":execution})
+/// When the caller stops the worker: the wall-clock time at which it sends
+/// SIGTERM, before any cleanup allowance. It is measured once on the monotonic
+/// clock, so a later wall-clock change can't move it.
+pub struct CallerDeadline(Instant);
+impl CallerDeadline {
+    pub fn new(unix_ms: u64) -> Result<Self> {
+        let remaining = Duration::from_millis(unix_ms)
+            .checked_sub(SystemTime::now().duration_since(UNIX_EPOCH)?)
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or("the caller deadline has already passed")?;
+        Ok(Self(
+            Instant::now()
+                .checked_add(remaining)
+                .ok_or("the caller deadline is out of range")?,
+        ))
+    }
+    /// Whether a turn starting now could use its whole wall budget first.
+    pub fn allows(&self, wall: Duration) -> bool {
+        self.0.saturating_duration_since(Instant::now()) >= wall
+    }
+}
+
+/// The caller's deadline is recorded as given, and only when supplied, so
+/// other invocations keep their receipt bytes. It stays out of the session
+/// fingerprint, so a resumed session may carry a different one.
+pub fn binding(
+    spec: &Spec,
+    request: &[u8],
+    repair_turns: u32,
+    caller_deadline_unix_ms: Option<u64>,
+    execution: Value,
+) -> Value {
+    let mut binding = json!({"capability":CAPABILITY,"role":"worker",
+        "output_contract_sha256":spec.contract.sha256(),"request_sha256":digest(request),
+        "evidence_property":spec.evidence_property,"repair_turns":repair_turns,"execution":execution});
+    if let Some(unix_ms) = caller_deadline_unix_ms {
+        binding["caller_deadline_unix_ms"] = unix_ms.into();
+    }
+    binding
 }
 
 /// Replace the version-one report instructions on a worker configuration. The
@@ -291,17 +330,29 @@ mod tests {
     #[test]
     fn binding_and_fingerprint_follow_the_contract_and_evidence_property() {
         let spec = Spec::new(contract(&schema()), Some("verification".into())).unwrap();
-        let bound = binding(&spec, b"task", 1, json!({"capability":"project-docker-v1"}));
+        let bound = binding(
+            &spec,
+            b"task",
+            1,
+            None,
+            json!({"capability":"project-docker-v1"}),
+        );
         assert_eq!(bound["capability"], CAPABILITY);
         assert_eq!(bound["output_contract_sha256"], spec.contract().sha256());
         assert_eq!(bound["request_sha256"], digest(b"task"));
         assert_eq!(bound["evidence_property"], "verification");
         assert_eq!(bound["repair_turns"], 1);
+        assert!(bound.get("caller_deadline_unix_ms").is_none());
+        assert_eq!(
+            binding(&spec, b"task", 1, Some(1_800_000_000_000), json!({}))["caller_deadline_unix_ms"],
+            1_800_000_000_000_u64
+        );
         assert_eq!(
             binding(
                 &Spec::new(contract(&schema()), None).unwrap(),
                 b"task",
                 0,
+                None,
                 json!({})
             )["evidence_property"],
             Value::Null
@@ -315,6 +366,20 @@ mod tests {
         assert!(session_id(&format!("ptc-{}", "a".repeat(64))).is_ok());
         assert!(session_id(&format!("ptc-{}", "A".repeat(64))).is_err());
         assert!(session_id("ptc-short").is_err());
+    }
+
+    #[test]
+    fn caller_deadline_allows_only_a_whole_turn_before_it() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let deadline = CallerDeadline::new(now + 600_000).unwrap();
+        assert!(deadline.allows(Duration::from_secs(300)));
+        assert!(!deadline.allows(Duration::from_secs(900)));
+        for passed in [0, now - 1_000, now] {
+            assert!(CallerDeadline::new(passed).is_err(), "{passed}");
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -166,7 +166,12 @@ impl Launch {
 
 /// Run the task binary once against Docker and the scripted model. `inputs` are
 /// extra private files for the run directory; `arguments` may name them.
-async fn launch(script: Script, inputs: &[(&str, &[u8])], arguments: &[&str]) -> Launch {
+async fn launch(
+    script: Script,
+    succeeds: bool,
+    inputs: &[(&str, &[u8])],
+    arguments: &[&str],
+) -> Launch {
     let root = std::env::temp_dir().join(format!(
         "contract-docker-{}",
         Token::generate().unwrap().expose()
@@ -217,8 +222,9 @@ async fn launch(script: Script, inputs: &[(&str, &[u8])], arguments: &[&str]) ->
     .expect("task deadline")
     .unwrap();
     server.abort();
-    assert!(
+    assert_eq!(
         output.status.success(),
+        succeeds,
         "evidence retained in {}: {}",
         root.display(),
         String::from_utf8_lossy(&output.stderr)
@@ -241,18 +247,30 @@ fn read(path: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "explicit Docker gate; needs the locked workshop image and no live model"]
-async fn rejected_report_is_repaired_in_a_second_owned_container_and_bound_in_receipts() {
-    let contract = serde_json::to_vec(&json!({"type":"object","additionalProperties":false,
+fn verification_contract() -> Vec<u8> {
+    serde_json::to_vec(&json!({"type":"object","additionalProperties":false,
         "required":["status","verification"],
         "properties":{"status":{"type":"string","enum":["checkpoint","completed"]},
             "verification":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,
                 "required":["command","exit_code","log_path"],
                 "properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"log_path":{"type":"string"}}}}}}))
-    .unwrap();
+    .unwrap()
+}
+
+/// The wall-clock time `after` from now, in Unix milliseconds.
+fn unix_ms_after(after: Duration) -> u64 {
+    (SystemTime::now().duration_since(UNIX_EPOCH).unwrap() + after).as_millis() as u64
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "explicit Docker gate; needs the locked workshop image and no live model"]
+async fn rejected_report_is_repaired_in_a_second_owned_container_and_bound_in_receipts() {
+    let contract = verification_contract();
+    // Far enough away that the repair turn could use its whole budget.
+    let deadline = unix_ms_after(Duration::from_secs(3600));
     let launched = launch(
         Script::FencedThenClean,
+        true,
         &[("schema.json", &contract)],
         &[
             "--output-contract",
@@ -265,6 +283,8 @@ async fn rejected_report_is_repaired_in_a_second_owned_container_and_bound_in_re
             "verification",
             "--repair-turns",
             "1",
+            "--caller-deadline-unix-ms",
+            &deadline.to_string(),
         ],
     )
     .await;
@@ -286,7 +306,7 @@ async fn rejected_report_is_repaired_in_a_second_owned_container_and_bound_in_re
         json!({"capability":"playtime-worker-contract-v1","role":"worker",
             "output_contract_sha256":digest(&contract),"request_sha256":digest(REQUEST),
             "evidence_property":"verification","repair_turns":1,
-            "execution":{"capability":"project-docker-v1"}})
+            "caller_deadline_unix_ms":deadline,"execution":{"capability":"project-docker-v1"}})
     );
     assert_eq!(
         read(&run.join("invocation.json"))["invocation"],
@@ -334,8 +354,57 @@ async fn rejected_report_is_repaired_in_a_second_owned_container_and_bound_in_re
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "explicit Docker gate; needs the locked workshop image and no live model"]
+async fn repair_turn_that_would_outlast_the_caller_deadline_never_starts() {
+    let contract = verification_contract();
+    // The caller would stop the worker before a whole 120-second turn could run.
+    let deadline = unix_ms_after(Duration::from_secs(100));
+    let launched = launch(
+        Script::FencedThenClean,
+        false,
+        &[("schema.json", &contract)],
+        &[
+            "--output-contract",
+            "schema.json",
+            "--output-contract-sha256",
+            &digest(&contract),
+            "--request-sha256",
+            &digest(REQUEST),
+            "--evidence-property",
+            "verification",
+            "--repair-turns",
+            "1",
+            "--caller-deadline-unix-ms",
+            &deadline.to_string(),
+        ],
+    )
+    .await;
+    let run = &launched.run;
+    let result = read(&run.join("invocation-result.json"));
+    assert_eq!(result["type"], "invocation_failed");
+    assert_eq!(result["reason"], "invalid_output");
+    assert_eq!(result["repair_skipped"], "caller_deadline");
+    assert_eq!(result["repair_turns_used"], 0);
+    assert_eq!(result["cleanup"]["status"], "complete");
+    assert_eq!(result["invocation"]["caller_deadline_unix_ms"], deadline);
+    assert_eq!(
+        read(&run.join("invocation.json"))["invocation"],
+        result["invocation"]
+    );
+    let events = launched.events();
+    assert_eq!(events[0]["invocation"], result["invocation"]);
+    assert_eq!(events.last().unwrap(), &result);
+    // Only the rejected turn ran, and its completed session stays resumable.
+    assert!(run.join("response.raw.txt").exists());
+    assert!(!run.join("response.repair-1.raw.txt").exists());
+    assert!(!run.join("response.json").exists());
+    assert!(String::from_utf8_lossy(&launched.output.stderr).contains("repair turn skipped"));
+    std::fs::remove_dir_all(&launched.root).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "explicit Docker gate; needs the locked workshop image and no live model"]
 async fn version_one_worker_keeps_its_stream_files_and_report_on_the_shared_path() {
-    let launched = launch(Script::VersionOne, &[], &[]).await;
+    let launched = launch(Script::VersionOne, true, &[], &[]).await;
     let run = &launched.run;
     let result = read(&run.join("worker-result.json"));
     let report = std::fs::read(run.join("worker-report.json")).unwrap();
