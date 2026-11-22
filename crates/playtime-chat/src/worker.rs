@@ -367,7 +367,11 @@ pub fn native_config(
     wall_seconds: u64,
 ) -> Result<playtime_engine::chat::ConversationConfig> {
     use playtime_core::{CommonLimits, CommonParameters, RunMode, Sha256Digest, WorkshopLimits};
-    use playtime_engine::{ToolPolicy, compaction::CompactionSettings};
+    use playtime_engine::{
+        ToolPolicy,
+        compaction::CompactionSettings,
+        execution::{ExecutionConfig, ToolProfile},
+    };
     let policy = workspace.policy();
     let binding = serde_json::to_vec(&workspace.binding())?;
     let workspace_id = Sha256Digest::new(
@@ -390,48 +394,62 @@ pub fn native_config(
     if policy.mode == "read_only" {
         instructions.push_str(" This invocation is read-only: inspect source and evidence, do not edit or run write-requiring checks. The workspace and persistent cache are mounted read-only.");
     }
+    let mut execution = ExecutionConfig::workshop(
+        CommonParameters {
+            sampling_seed: 1042,
+            limits: CommonLimits {
+                wall_seconds: wall_seconds.try_into()?,
+                generated_tokens: 32768.try_into()?,
+                tokens_per_call: 8192.try_into()?,
+                context_tokens: lock.identity.context_tokens.try_into()?,
+                model_seconds: 300.try_into()?,
+                command_seconds: u64::from(policy.limits.command_seconds).try_into()?,
+                output_bytes: u64::from(policy.limits.output_bytes).try_into()?,
+                log_bytes: (16 * 1024 * 1024).try_into()?,
+            },
+            workshop: WorkshopLimits {
+                // The sandbox has no CPU quota. A fixed nominal value keeps the
+                // binding independent of the CPU count the worker happens to see.
+                cpu_cores: 1.0,
+                memory_bytes: policy.limits.memory_bytes.try_into()?,
+                workspace_bytes: (1024 * 1024).try_into()?,
+                tmp_bytes: (512 * 1024 * 1024).try_into()?,
+                pids: policy.limits.processes.try_into()?,
+            },
+        },
+        ToolPolicy::ConfirmedExternal {
+            return_overhead_ms: 1000,
+        },
+    );
+    execution.tool_profile = ToolProfile::NativeV1;
+    let network = if policy.mode == "edit" {
+        format!(
+            "Commands have a private network with outbound NAT for dependencies; host loopback services are unreachable. Cargo's registry/git downloads and temporary files under {} persist",
+            policy.cache.display()
+        )
+    } else {
+        format!(
+            "Commands have no network. Cargo's registry/git downloads under {} are read-only",
+            policy.cache.display()
+        )
+    };
     let config = playtime_engine::chat::ConversationConfig {
         schema_version: 1,
         model: lock.fingerprint()?,
         workspace: workspace_id,
         instructions,
         inventory: format!(
-            "Native project tools run as uid {} gid {} in a Bubblewrap filesystem/PID sandbox at {}. Mode: {}. Approved toolchain: {}. Network is enabled for dependencies. HOME/Cargo/temp caches under {} persist; processes end after every command. Controller state, credentials and Docker sockets are not mounted. There is no aggregate disk/memory quota or CPU quota. Per-process address-space bound: {} bytes; per-UID process bound: {}. Docker-dependent checks require separate operator execution.",
+            "Native project tools run as uid {} gid {} in a Bubblewrap filesystem/PID/network sandbox at {}. Mode: {}. Approved toolchain: {}. {network}. Each command starts with an empty HOME and Cargo configuration, and its processes end when it returns. Controller state, credentials and Docker sockets are not mounted. There is no aggregate disk/memory quota or CPU quota. Per-process address-space bound: {} bytes; per-UID process bound: {}. Docker-dependent checks require separate operator execution.",
             policy.agent_uid,
             policy.agent_gid,
             policy.workspace.display(),
             policy.mode,
             policy.toolchain.display(),
-            policy.cache.display(),
             policy.limits.memory_bytes,
             policy.limits.processes
         ),
         mode: RunMode::LiveSmoke,
-        execution: playtime_engine::execution::ExecutionConfig::workshop(
-            CommonParameters {
-                sampling_seed: 1042,
-                limits: CommonLimits {
-                    wall_seconds: wall_seconds.try_into()?,
-                    generated_tokens: 32768.try_into()?,
-                    tokens_per_call: 8192.try_into()?,
-                    context_tokens: lock.identity.context_tokens.try_into()?,
-                    model_seconds: 300.try_into()?,
-                    command_seconds: u64::from(policy.limits.command_seconds).try_into()?,
-                    output_bytes: u64::from(policy.limits.output_bytes).try_into()?,
-                    log_bytes: (16 * 1024 * 1024).try_into()?,
-                },
-                workshop: WorkshopLimits {
-                    cpu_cores: std::thread::available_parallelism()?.get() as f64,
-                    memory_bytes: policy.limits.memory_bytes.try_into()?,
-                    workspace_bytes: (1024 * 1024).try_into()?,
-                    tmp_bytes: (512 * 1024 * 1024).try_into()?,
-                    pids: policy.limits.processes.try_into()?,
-                },
-            },
-            ToolPolicy::ConfirmedExternal {
-                return_overhead_ms: 1000,
-            },
-        ),
+        execution,
         compaction: CompactionSettings {
             allow_finish_run: false,
             summary_tokens: 4096.try_into()?,

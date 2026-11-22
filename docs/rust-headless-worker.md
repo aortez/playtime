@@ -159,6 +159,10 @@ Resume with `--worker-session ID` only after a completed turn. Model, workspace,
 image and limits must match. Missing/incompatible sessions fail without a fresh
 fallback. Chat/Codex IDs cannot be adopted as worker sessions.
 
+With Docker tools, the Docker connection and locked-image check follow the
+`worker_started` event and precede model verification, so an unavailable daemon
+or image sends no model request and creates no session.
+
 SIGINT, SIGTERM and SIGHUP cancel the shared driver and clean project tools before
 releasing remote ownership. Uncertain tools/containers keep the existing durable
 project fence. There is no replay, implicit recovery, publication or second agent
@@ -329,14 +333,15 @@ cargo test -p playtime-chat --test contract_docker --locked -- --ignored
 ```
 
 This runs the real task binary against real Docker with a scripted loopback
-model, three times. The first contract run makes a tool call, returns a fenced
+model, four times. The first contract run makes a tool call, returns a fenced
 result that is rejected, and is repaired in a second owned container, under a
 caller deadline an hour away. The second has the same script, but its deadline
 leaves less than one turn, so it ends with the rejection and no repair turn
-starts. The other run is a version-one worker on the same task path, whose
-stream, files and receipt keep their shape. Neither runs a model or qualifies native tools, the dedicated
-account or how well a model uses the correction. No caller uses the contract
-invocation yet.
+starts. The third is a version-one worker on the same task path, whose stream,
+files and receipt keep their shape. The last names a locked image that is absent,
+so it stops after admission, with no model request and no session. None runs a
+model or qualifies native tools, the dedicated account or how well a model uses
+the correction. No caller uses the contract invocation yet.
 
 ### Live check, November 20
 

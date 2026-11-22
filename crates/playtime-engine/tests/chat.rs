@@ -312,12 +312,16 @@ fn legacy_configuration_bytes_and_host_profiles_round_trip() {
     // The field order and omitted workshop profile are the schema-one wire
     // contract: changing them would invalidate saved checkpoint fingerprints.
     let mut cfg = config();
-    for profile in [ToolProfile::Workshop, ToolProfile::HostV1] {
+    for profile in [
+        ToolProfile::Workshop,
+        ToolProfile::HostV1,
+        ToolProfile::NativeV1,
+    ] {
         cfg.execution.tool_profile = profile;
-        let suffix = if profile == ToolProfile::HostV1 {
-            ",\"tool_profile\":\"host_v1\""
-        } else {
-            ""
+        let suffix = match profile {
+            ToolProfile::Workshop => "",
+            ToolProfile::HostV1 => ",\"tool_profile\":\"host_v1\"",
+            ToolProfile::NativeV1 => ",\"tool_profile\":\"native_v1\"",
         };
         let expected = format!(
             "{{\"schema_version\":1,\"model\":{},\"workspace\":{},\"instructions\":{},\"inventory\":{},\"mode\":\"simulation\",\"tool_policy\":{},\"parameters\":{},\"compaction\":{{\"schema_version\":1,\"trigger_percent\":75,\"recent_exchanges\":2,\"summary_tokens\":256,\"instructions\":{},\"allow_finish_run\":false{suffix}}}}}",
@@ -335,13 +339,28 @@ fn legacy_configuration_bytes_and_host_profiles_round_trip() {
         assert_eq!(loaded.fingerprint().unwrap(), cfg.fingerprint().unwrap());
         assert_eq!(
             loaded.tools().len(),
-            if profile == ToolProfile::Workshop {
-                3
-            } else {
-                7
-            }
+            if profile == ToolProfile::HostV1 { 7 } else { 3 }
         );
     }
+}
+
+#[test]
+fn native_tools_describe_the_sandbox_with_the_workshop_vocabulary() {
+    use playtime_engine::execution::ToolProfile;
+    let workshop = ToolProfile::Workshop.tools(false);
+    let native = ToolProfile::NativeV1.tools(false);
+    // Same names and argument schemas, so validation and the bridges agree.
+    for (workshop, native) in workshop.iter().zip(&native) {
+        assert_eq!(workshop["function"]["name"], native["function"]["name"]);
+        assert_eq!(
+            workshop["function"]["parameters"],
+            native["function"]["parameters"]
+        );
+    }
+    assert_eq!(workshop.len(), native.len());
+    let text = serde_json::to_string(&native).unwrap();
+    assert!(!text.contains("/work") && !text.contains("workshop"));
+    assert!(text.contains("background processes stop when it returns"));
 }
 
 #[test]

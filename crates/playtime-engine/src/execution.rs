@@ -10,6 +10,9 @@ pub enum ToolProfile {
     #[default]
     Workshop,
     HostV1,
+    /// The workshop vocabulary, described for the per-command native sandbox at
+    /// the checkout's host path.
+    NativeV1,
 }
 impl ToolProfile {
     pub(crate) fn is_workshop(&self) -> bool {
@@ -20,6 +23,8 @@ impl ToolProfile {
             Self::Workshop => crate::compaction::tools(allow_finish_run),
             Self::HostV1 => serde_json::from_str(include_str!("host-tools-v1.json"))
                 .expect("embedded host tool contract"),
+            Self::NativeV1 => serde_json::from_str(include_str!("native-tools-v1.json"))
+                .expect("embedded native tool contract"),
         }
     }
 }
@@ -49,7 +54,7 @@ impl ExecutionConfig {
     pub fn validate(&self) -> Result<(), InvalidValue> {
         self.limits.validate()?;
         self.tool_policy.validate(&self.limits)?;
-        if self.tool_profile == ToolProfile::Workshop && self.workshop.is_none() {
+        if self.tool_profile != ToolProfile::HostV1 && self.workshop.is_none() {
             return Err(InvalidValue("workshop execution needs resource limits"));
         }
         self.controller_parameters().validate()
