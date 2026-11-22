@@ -19,6 +19,6 @@ mod types;
 mod validation;
 
 pub use control::*;
-pub use controller::Controller;
+pub use controller::{Controller, LIFECYCLE_MS};
 pub use policy::SessionInput;
 pub use types::*;

@@ -1923,3 +1923,19 @@ now selects this invocation and is refused without its hashes, instead of being
 refused as a read-only input. No conversation, archive or experiment golden
 changes. Fixtures and the opt-in Docker gate use a scripted model; they establish
 no live model, native account or caller integration.
+
+## Caller deadline for the contract repair turn (2026-11-21)
+
+The worker contract invocation gains `--caller-deadline-unix-ms`, advertised as
+`contract_invocation.caller_deadline: "unix-ms-v1"`. A repair turn starts only if
+`--wall-seconds` plus the turn's 20-second cleanup bound remain before the
+caller's deadline. Otherwise
+`invocation_failed` and `invocation-result.json` add
+`"repair_skipped": "caller_deadline"`. The binding gains `caller_deadline_unix_ms`
+only when the option is given, outside the session fingerprint, and a deadline
+that has already passed is an input error. The wrapper accepts the option only
+with an output contract, and only when the installed task advertises it. Without
+the option, receipts, events, files and session fingerprints are unchanged. The
+protocol-1 and read-only probe fields are unchanged too; `contract_invocation`
+gains one key. Fixtures and the Docker gate use a scripted model; no caller
+passes the option yet.

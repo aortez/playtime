@@ -100,7 +100,7 @@ def worker_arguments(args, read_only=False):
         allowed |= {"--role"}
         allowed -= {"--worker-session"}
     else:
-        allowed |= {"--evidence-property", "--repair-turns"}
+        allowed |= {"--caller-deadline-unix-ms", "--evidence-property", "--repair-turns"}
     values = {}
     index = 0
     while index < len(args):
@@ -127,7 +127,8 @@ def worker_arguments(args, read_only=False):
     # A worker's output contract selects the contract invocation; its options
     # mean nothing to a version-one worker.
     contract = not read_only and "--output-contract" in values
-    if not read_only and not contract and values.keys() & {"--output-contract-sha256", "--evidence-property", "--repair-turns"}:
+    if not read_only and not contract and values.keys() & {"--output-contract-sha256", "--evidence-property", "--repair-turns",
+                                                           "--caller-deadline-unix-ms"}:
         raise RuntimeError("contract options need --output-contract")
     if contract and (not re.fullmatch(r"[0-9a-f]{64}", values.get("--output-contract-sha256", ""))
                      or values.get("--repair-turns", "0") not in ("0", "1")):
@@ -284,7 +285,9 @@ def session(preset, profile, args, launch=None, signals=None):
                          or offered.get("evidence") != "evidence-ref-v1"
                          or offered.get("continuation") != "completed-session-only"
                          or offered.get("transport") != transport
-                         or int(worker_option(args, "--repair-turns", "0")) > offered.get("repair_turns", 0)):
+                         or int(worker_option(args, "--repair-turns", "0")) > offered.get("repair_turns", 0)
+                         or (worker_option(args, "--caller-deadline-unix-ms") is not None
+                             and offered.get("caller_deadline") != "unix-ms-v1")):
             raise RuntimeError("installed task lacks the worker contract invocation")
         if native and protocol.get("tool_backends", {}).get("native") != "project-native-v1":
             raise RuntimeError("installed worker lacks project-native-v1")

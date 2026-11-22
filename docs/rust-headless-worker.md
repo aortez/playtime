@@ -195,8 +195,8 @@ Select it on the worker role by passing an output contract:
 
 The wrapper freezes `--request-sha256` from the delivered request, as it does for
 read-only roles; direct `playtime-task` callers pass it themselves.
-`--evidence-property` and `--repair-turns` are optional and are refused without a
-contract. Native tools need an `edit` policy. The worker probe advertises the
+`--evidence-property`, `--repair-turns` and `--caller-deadline-unix-ms` are
+optional and are refused without a contract. Native tools need an `edit` policy. The worker probe advertises the
 capability under a new top-level key and leaves every existing field alone:
 
 ```json
@@ -205,7 +205,8 @@ capability under a new top-level key and leaves every existing field alone:
   "capability": "playtime-worker-contract-v1", "roles": ["worker"],
   "report": "structured-result-v1", "output_contract": "json-schema-subset-v1",
   "evidence": "evidence-ref-v1", "continuation": "completed-session-only",
-  "repair_turns": 1, "transport": "strata-responses-v1",
+  "repair_turns": 1, "caller_deadline": "unix-ms-v1",
+  "transport": "strata-responses-v1",
   "tool_backends": {"docker": "project-docker-v1", "native": "project-native-v1"}
 }
 ```
@@ -250,6 +251,18 @@ new owned container, so a caller must budget up to twice `--wall-seconds` plus
 cleanup. No repair turn starts after cancellation. A repair turn that is itself
 interrupted leaves the session fenced like any other interrupted turn.
 
+`--caller-deadline-unix-ms N` (`unix-ms-v1`) says when the caller stops the
+worker: the Unix time, in milliseconds, at which it sends SIGTERM, before any
+cleanup allowance it grants. The harness measures it once on the monotonic clock
+at startup. A repair turn starts only if `--wall-seconds` plus the turn's
+20-second cleanup bound fit before the deadline. Otherwise the invocation ends
+with the rejection as if no repair turn were enabled, adding
+`"repair_skipped": "caller_deadline"`, and the session stays resumable. An allowed
+repair turn therefore normally finishes its tool cleanup and receipt before the
+signal, though the wrapper's inference cleanup can still run past it. The first
+turn is unaffected. A deadline that has already passed is an input error, so the
+wrapper's input check refuses it before acquiring the model.
+
 ### Records and receipts
 
 The invocation uses the read-only family of files and events, and never adds an
@@ -270,6 +283,10 @@ The startup event, terminal event and `invocation.json` carry the same binding:
  "execution": {"capability": "project-docker-v1"}}
 ```
 
+With `--caller-deadline-unix-ms`, the binding also has `caller_deadline_unix_ms`,
+exactly as given. It stays out of the configuration fingerprint, so a resumed
+session may run under a different deadline.
+
 `invocation_finished` adds `turn_id`, `cleanup`, `usage` and `response_sha256`
 for the accepted turn, plus `repair_turns_used`. When a repair turn ran,
 `rejected` lists the rejected turn's `turn_id`, `reason`, `detail`, `cleanup` and
@@ -278,14 +295,16 @@ There is no status echo: the caller reads status from the validated result.
 After a completed turn, `invocation_failed` has `reason` `invalid_output` (not
 one JSON object, or not matching the contract) or `evidence_unresolved` (a
 citation that is unknown, duplicated, changed or incomplete), with `detail` and
-`turn_id`. Other failures keep the driver's stop reason. Startup errors may still
+`turn_id`, plus `repair_skipped` when the caller deadline stopped an enabled repair
+turn. Other failures keep the driver's stop reason. Startup errors may still
 end without a terminal event.
 
 ### Verification
 
 `cargo test -p playtime-chat --locked` covers contract admission, the derived
 model-facing shape, typed rejections, repair with live evidence, per-invocation
-evidence, session binding and the unchanged protocol-1 and read-only probes. The
+evidence, session binding, the caller deadline's admission and binding, and the
+unchanged protocol-1 and read-only probes. The
 launcher suite covers the wrapper's gate. With the locked workshop image present:
 
 ```sh
@@ -293,10 +312,12 @@ cargo test -p playtime-chat --test contract_docker --locked -- --ignored
 ```
 
 This runs the real task binary against real Docker with a scripted loopback
-model, twice. The contract run makes a tool call, returns a fenced result that
-is rejected, and is repaired in a second owned container. The other run is a
-version-one worker on the same task path, whose stream, files and receipt keep
-their shape. Neither runs a model or qualifies native tools, the dedicated
+model, three times. The first contract run makes a tool call, returns a fenced
+result that is rejected, and is repaired in a second owned container, under a
+caller deadline an hour away. The second has the same script, but its deadline
+leaves less than one turn, so it ends with the rejection and no repair turn
+starts. The other run is a version-one worker on the same task path, whose
+stream, files and receipt keep their shape. Neither runs a model or qualifies native tools, the dedicated
 account or how well a model uses the correction. No caller uses the contract
 invocation yet.
 
