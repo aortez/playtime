@@ -1978,3 +1978,25 @@ configuration, credentials, installed binaries and `home/` are no longer used,
 build afterwards recompiles registry dependencies because their source path
 changed. The native inventory describes the new network and cache, which also
 changes the configuration fingerprint.
+
+## Shorter evidence references and launcher cleanup grace (2026-11-22)
+
+Evidence references, the `evidence_log_path` that each exec result returns and a
+model cites as `evidence_ref`, now carry an 8-character lowercase hex nonce instead
+of a 64-character one: `tool-<nonce>-<effect>.json`. The model copies each
+reference whole, and one wrong character among 64 got the result rejected. This
+applies to worker protocol 1, contract invocations and read-only roles alike. It
+shortens the retained artifact names and the canonical `log_path` values, but no
+report, receipt or event shape, instruction bytes or golden changes. References
+still resolve only within the invocation that committed them. An installed copy
+ran one contract invocation on Framework `framework-gyro-m-fast` with Docker
+tools and Devbot's worker schema as the contract: the model fixed a one-line bug,
+cited its test run's 8-character reference exactly, and the result was accepted
+without a repair turn.
+
+The owner wrapper now gives the chat client 60 seconds instead of 45 to clean up
+after SIGTERM. That covers coding-host's worst case of 50 seconds; a client that
+slow was killed and reported `unresolved` before. Every profile's `--describe-launch` cleanup
+budget grows by 15 seconds, to 255 for `framework-gyro-m-fast`. The wrapper also
+takes each cleanup wait from the constants its budget sums, instead of repeating
+them as literals.

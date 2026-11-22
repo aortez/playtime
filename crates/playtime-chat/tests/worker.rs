@@ -204,6 +204,25 @@ async fn shared_driver_retains_evidence_and_resumes_worker_history() {
     }
 }
 #[tokio::test]
+async fn references_carry_a_short_invocation_nonce() {
+    let root = Root::new();
+    PrivateDirectory::open(&root.0, true).unwrap();
+    let mut effects =
+        worker::EvidenceEffects::new(Fixture::default(), root.0.clone(), 65536).unwrap();
+    let reference = capture(&mut effects, 1, "check").await;
+    // The model copies each reference whole.
+    let nonce = reference
+        .strip_prefix("tool-")
+        .and_then(|rest| rest.strip_suffix("-1.json"))
+        .unwrap();
+    assert_eq!(nonce.len(), 8);
+    assert!(
+        nonce
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    );
+}
+#[tokio::test]
 async fn verification_must_match_captured_commands_and_exit_codes() {
     let root = Root::new();
     let dir = PrivateDirectory::open(&root.0, true).unwrap();

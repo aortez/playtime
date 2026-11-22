@@ -50,8 +50,14 @@ CLIENT_COMPLETION = "client-completion.json"
 # grace the wrapper really spends: the verifier and SSH child each fall back from
 # terminate to kill, the client gets its full tool-cleanup grace, the heartbeat
 # thread is joined, and the warm-session helper gets the preset's own budget.
+# run-strata.py waits with these same constants, so the budget can't drift from
+# the waits it covers.
 VERIFIER_STOP_GRACE = 5
-CLIENT_CLEANUP_GRACE = 45
+# The slowest client is coding-host chat. After SIGTERM it waits up to 20 seconds
+# for an in-flight host tool's cancel reply, then up to 30 for the host-tools
+# helper to exit (crates/playtime-chat/src/host.rs). The rest is margin for its
+# records and completion receipt.
+CLIENT_CLEANUP_GRACE = 60
 HEARTBEAT_JOIN = 2
 OWNER_STOP_GRACE = 5
 KILL_GRACE = 5

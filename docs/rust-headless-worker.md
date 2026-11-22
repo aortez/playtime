@@ -79,8 +79,11 @@ for their respective statuses; a report never supplies independent authority.
 The model-facing report uses the same top-level fields, but each selected check is
 `{"evidence_ref":"tool-<invocation>-<effect>.json"}`. The model copies the entire
 `evidence_log_path` from its exec result; it never constructs an identifier or
-transcribes a command. `<invocation>` is a fresh 64-character lowercase hex nonce
-for each invocation, including completed-session continuation. `<effect>` is the
+transcribes a command. `<invocation>` is a fresh 8-character lowercase hex nonce
+for each invocation, including completed-session continuation. It is short because
+the model copies it, and it only has to tell this invocation's references from
+earlier ones in the same history: each invocation writes its own artifact
+directory and resolves only references it committed. `<effect>` is the
 controller effect ID. The reference is also the retained artifact's basename.
 The existing context fitter preserves `evidence_log_path` when shortening output;
 no context or compaction policy changes are required.
