@@ -29,7 +29,7 @@ fn reference(body: &str) -> String {
         .filter_map(|(at, _)| {
             let rest = &body[at..];
             let name = rest.get(..rest.find(".json")? + 5)?;
-            name.get(5..69)?
+            name.get(5..13)?
                 .bytes()
                 .all(|b| b.is_ascii_hexdigit())
                 .then(|| name.to_owned())

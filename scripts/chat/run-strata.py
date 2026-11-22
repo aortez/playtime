@@ -46,7 +46,6 @@ import time
 PACKAGE = Path(__file__).resolve().parent
 STATUS_TIMEOUT = 8
 VERIFY_TIMEOUT = 600
-CLIENT_CLEANUP_TIMEOUT = 45
 
 
 def log(message):
@@ -90,13 +89,15 @@ def private_run_directory():
 
 
 def stop_process(process, grace):
+    import launch_protocol
+
     if process is not None and process.poll() is None:
         process.terminate()
         try:
             process.wait(timeout=grace)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=5)
+            process.wait(timeout=launch_protocol.KILL_GRACE)
 
 
 def check_ready(ready, lock):
@@ -537,7 +538,8 @@ def session(preset, profile, args, launch=None, signals=None):
         # every other EOF asks the owner to shut the model down.
         for sig in previous:
             signal.signal(sig, signal.SIG_IGN)
-        for process, grace in ((verification, 5), (child, CLIENT_CLEANUP_TIMEOUT)):
+        for process, grace in ((verification, launch_protocol.VERIFIER_STOP_GRACE),
+                               (child, launch_protocol.CLIENT_CLEANUP_GRACE)):
             try:
                 stop_process(process, grace)
             except (OSError, subprocess.TimeoutExpired) as error:
@@ -545,7 +547,7 @@ def session(preset, profile, args, launch=None, signals=None):
                 result = 1
         stopped.set()
         if heartbeats is not None:
-            heartbeats.join(timeout=2)
+            heartbeats.join(timeout=launch_protocol.HEARTBEAT_JOIN)
             if heartbeats.is_alive():
                 result = 1
         if owner is not None:
@@ -575,7 +577,7 @@ def session(preset, profile, args, launch=None, signals=None):
                 failed.set()
                 log("host restoration was not confirmed; inspect the helper logs before another launch")
                 try:
-                    stop_process(owner, 5)
+                    stop_process(owner, launch_protocol.OWNER_STOP_GRACE)
                 except (OSError, subprocess.TimeoutExpired) as error:
                     log(f"SSH cleanup was not confirmed: {error}")
                 result = 1

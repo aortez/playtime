@@ -218,7 +218,7 @@ records model readiness, verification and total time to starting the client;
 `host.json` also records hashed/reused file and byte counts. Startup messages show
 the phase durations without needing to pipe the interactive prompt through `ts`.
 Remote helper logs keep their existing location. The host stays owned while the
-console shuts down local tools, with up to 45 seconds for graceful client cleanup.
+console shuts down local tools, with up to 60 seconds for graceful client cleanup.
 Only a zero client exit with confirmed cleanup sends `GYRO_RELEASE` before EOF.
 The supervisor then verifies that no inference request remains and parks the
 model. EOF without that release, lost SSH, verification failure or failed client

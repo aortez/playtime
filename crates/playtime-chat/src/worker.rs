@@ -80,7 +80,11 @@ impl<E> EvidenceEffects<E> {
             inner,
             artifacts,
             remaining_bytes,
-            invocation: Token::generate()?.expose(),
+            // The model copies each reference whole, so the nonce stays short. It only
+            // has to tell this invocation's references from earlier ones in a resumed
+            // history: each invocation writes its own artifact directory and resolves
+            // only the names it committed.
+            invocation: Token::generate()?.expose()[..8].to_owned(),
             evidence: CommittedEvidence::default(),
             all_tools: false,
         })

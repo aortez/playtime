@@ -469,7 +469,7 @@ sys.exit(0)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout),
                          {"schema_version": 1, "protocol": "launcher_v1",
-                          "max_prompt_bytes": 262144, "cleanup_timeout_seconds": 240})
+                          "max_prompt_bytes": 262144, "cleanup_timeout_seconds": 255})
         for name in ("started", "verified", "client", "status", "stop-warm"):
             self.assertFalse((self.root / name).exists(), name)
         self.assertFalse((self.root / ".local/state/playtime-launcher").exists())
