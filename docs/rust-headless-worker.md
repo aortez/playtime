@@ -19,7 +19,10 @@ which reads no other package file. Only explicit environment preparation reads
 files. Nothing else in the package adds code: the launcher never imports from its
 own directory and runs its two modules from source, never from `__pycache__`. If
 the caller already loaded either module, such as from bytes it verified, the
-launcher keeps that module.
+launcher keeps that module. Under a caller that pins these files, a new module
+fails to import until the caller pins it too, and any other new file a launch
+reads goes unpinned. So record any addition to this list in
+`docs/rust-compatibility.md` before installing it.
 
 A trusted caller prepares a new private run directory and UTF-8 request file
 outside the project. Supply the same request on stdin, after recording process
