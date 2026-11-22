@@ -5,6 +5,29 @@ Configuration and locks sit next to this program, outside the selected project.
 Status checks only invoke the remote helper's read-only status command.
 """
 
+import sys
+
+if __name__ == "__main__":
+    # Run as a program, the launcher never imports from its own directory, and it
+    # runs its two modules from their source, never from or into __pycache__. So
+    # a file added to the package, such as one named like an optional
+    # standard-library module, adds no code. `os` is already loaded or frozen, so
+    # importing it searches nothing.
+    import os
+
+    _package = os.path.dirname(os.path.realpath(__file__))
+    sys.path[:] = [entry for entry in sys.path if os.path.realpath(entry or os.curdir) != _package]
+    # They load one at a time with this directory off the import path, so at load
+    # time each may import only the standard library.
+    for _name in ("launch_protocol", "project_environment"):
+        # A caller that already loaded one, such as from bytes it verified, keeps it.
+        if _name not in sys.modules:
+            _path = os.path.join(_package, _name + ".py")
+            with open(_path, "rb") as _source:
+                _module = sys.modules[_name] = type(sys)(_name)
+                _module.__file__ = _path
+                exec(compile(_source.read(), _path, "exec"), _module.__dict__)
+
 import hashlib
 import json
 import os
@@ -16,7 +39,6 @@ import signal
 import socket
 import stat
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -217,7 +239,8 @@ def session(preset, profile, args, launch=None, signals=None):
                 raise RuntimeError("read-only invocations cannot prepare a Docker environment")
             if full_verify or force_picker or environment is not None or selected_preset is not None:
                 raise RuntimeError("environment preparation accepts only --workspace")
-            return subprocess.call([sys.executable, str(PACKAGE / "project_environment.py"), *args[1:]])
+            # Isolated mode keeps the package directory off this run's import path too.
+            return subprocess.call([sys.executable, "-I", str(PACKAGE / "project_environment.py"), *args[1:]])
         else:
             break
     for arg in args:

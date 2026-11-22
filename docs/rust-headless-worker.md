@@ -10,6 +10,23 @@ Install with `PLAYTIME_CHAT_INSTALL_DIR=/private/package
 scripts/install-chat-launcher.sh` (one shell command). The package includes both
 chat and task binaries; install candidates separately from daily-use chat.
 
+A worker or read-only launch reads only these package files: `run-strata.py`, its
+modules `launch_protocol.py` and `project_environment.py`, `presets.json`, the
+selected preset's model lock and, for Docker tools, `general.lock.json`. It also
+sends `verify-strata-host.py` to the inference host and runs `playtime-task`,
+which reads no other package file. Only explicit environment preparation reads
+`tool.py`. A caller that verifies the package before launching should pin these
+files. Nothing else in the package adds code: the launcher never imports from its
+own directory and runs its two modules from source, never from `__pycache__`. If
+the caller already loaded either module, such as from bytes it verified, the
+launcher keeps that module. Under a caller that pins these files, a new module
+fails to import until the caller pins it too, and any other new file a launch
+reads goes unpinned. So record any addition to this list in
+`docs/rust-compatibility.md` before installing it. Both modules also import only
+the standard library at load time, and must keep doing so: the launcher and such
+a caller load them one at a time, with the package directory off the import path,
+so a load-time import of one by the other can fail.
+
 A trusted caller prepares a new private run directory and UTF-8 request file
 outside the project. Supply the same request on stdin, after recording process
 ownership:
