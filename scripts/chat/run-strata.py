@@ -17,6 +17,8 @@ if __name__ == "__main__":
 
     _package = os.path.dirname(os.path.realpath(__file__))
     sys.path[:] = [entry for entry in sys.path if os.path.realpath(entry or os.curdir) != _package]
+    # They load one at a time with this directory off the import path, so at load
+    # time each may import only the standard library.
     for _name in ("launch_protocol", "project_environment"):
         # A caller that already loaded one, such as from bytes it verified, keeps it.
         if _name not in sys.modules:
