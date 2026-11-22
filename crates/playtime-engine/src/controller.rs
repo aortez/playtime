@@ -20,7 +20,9 @@ use crate::{
 
 const FINAL_LOG_RESERVE: u64 = 65536;
 const CHECKPOINT_MS: u64 = 80000;
-const LIFECYCLE_MS: u64 = 20000;
+/// Bound for each lifecycle effect, including a run's final cleanup, from when
+/// it starts. The run's wall deadline doesn't shorten it.
+pub const LIFECYCLE_MS: u64 = 20000;
 const MODEL_BYTES: u64 = 4 * 1024 * 1024;
 const CHUNK_BYTES: u64 = 512 * 1024;
 

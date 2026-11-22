@@ -120,9 +120,11 @@ impl CallerDeadline {
                 .ok_or("the caller deadline is out of range")?,
         ))
     }
-    /// Whether a turn starting now could use its whole wall budget first.
+    /// Whether a turn starting now could use its whole wall budget and finish
+    /// its bounded cleanup first, so its receipt normally lands before the signal.
     pub fn allows(&self, wall: Duration) -> bool {
-        self.0.saturating_duration_since(Instant::now()) >= wall
+        self.0.saturating_duration_since(Instant::now())
+            >= wall + Duration::from_millis(playtime_engine::LIFECYCLE_MS)
     }
 }
 
@@ -375,8 +377,9 @@ mod tests {
             .unwrap()
             .as_millis() as u64;
         let deadline = CallerDeadline::new(now + 600_000).unwrap();
-        assert!(deadline.allows(Duration::from_secs(300)));
-        assert!(!deadline.allows(Duration::from_secs(900)));
+        assert!(deadline.allows(Duration::from_secs(570)));
+        // The turn's 20-second cleanup bound must fit as well.
+        assert!(!deadline.allows(Duration::from_secs(590)));
         for passed in [0, now - 1_000, now] {
             assert!(CallerDeadline::new(passed).is_err(), "{passed}");
         }

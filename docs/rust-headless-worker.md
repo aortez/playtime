@@ -254,11 +254,14 @@ interrupted leaves the session fenced like any other interrupted turn.
 `--caller-deadline-unix-ms N` (`unix-ms-v1`) says when the caller stops the
 worker: the Unix time, in milliseconds, at which it sends SIGTERM, before any
 cleanup allowance it grants. The harness measures it once on the monotonic clock
-at startup, and starts a repair turn only if at least `--wall-seconds` remain
-before it. Otherwise the invocation ends with the rejection as if no repair turn
-were enabled, adding `"repair_skipped": "caller_deadline"`, and the session stays
-resumable. The first turn is unaffected. A deadline that has already passed is an
-input error, so the wrapper's input check refuses it before acquiring the model.
+at startup. A repair turn starts only if `--wall-seconds` plus the turn's
+20-second cleanup bound fit before the deadline. Otherwise the invocation ends
+with the rejection as if no repair turn were enabled, adding
+`"repair_skipped": "caller_deadline"`, and the session stays resumable. An allowed
+repair turn therefore normally finishes its tool cleanup and receipt before the
+signal, though the wrapper's inference cleanup can still run past it. The first
+turn is unaffected. A deadline that has already passed is an input error, so the
+wrapper's input check refuses it before acquiring the model.
 
 ### Records and receipts
 

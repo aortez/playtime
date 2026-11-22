@@ -677,14 +677,14 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
                 let mut repair =
                     (rejected.len() as u32) < args.repair_turns && !cancel.is_cancelled();
                 // The caller stops the worker at its deadline, so a repair turn that
-                // couldn't use its whole wall budget first is never started.
+                // couldn't use its whole wall budget and clean up first never starts.
                 let late = repair
                     && caller_deadline.as_ref().is_some_and(|deadline| {
                         !deadline.allows(Duration::from_secs(args.wall_seconds))
                     });
                 if late {
                     eprintln!(
-                        "playtime-task: repair turn skipped: less than --wall-seconds remains before the caller deadline"
+                        "playtime-task: repair turn skipped: it could not finish and clean up before the caller deadline"
                     );
                     repair = false;
                 }

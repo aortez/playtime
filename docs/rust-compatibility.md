@@ -1928,7 +1928,8 @@ no live model, native account or caller integration.
 
 The worker contract invocation gains `--caller-deadline-unix-ms`, advertised as
 `contract_invocation.caller_deadline: "unix-ms-v1"`. A repair turn starts only if
-at least `--wall-seconds` remain before the caller's deadline. Otherwise
+`--wall-seconds` plus the turn's 20-second cleanup bound remain before the
+caller's deadline. Otherwise
 `invocation_failed` and `invocation-result.json` add
 `"repair_skipped": "caller_deadline"`. The binding gains `caller_deadline_unix_ms`
 only when the option is given, outside the session fingerprint, and a deadline
