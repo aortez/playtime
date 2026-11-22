@@ -164,14 +164,17 @@ impl Launch {
     }
 }
 
-/// Run the task binary once against Docker and the scripted model. `inputs` are
-/// extra private files for the run directory; `arguments` may name them.
-async fn launch(
-    script: Script,
-    succeeds: bool,
-    inputs: &[(&str, &[u8])],
-    arguments: &[&str],
-) -> Launch {
+fn repository() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+}
+
+/// A private root with an empty workspace, and a run directory holding the
+/// request, the model lock and `inputs`. Returns the root, workspace and run.
+fn prepare(inputs: &[(&str, &[u8])]) -> (PathBuf, PathBuf, PathBuf) {
     let root = std::env::temp_dir().join(format!(
         "contract-docker-{}",
         Token::generate().unwrap().expose()
@@ -190,32 +193,47 @@ async fn launch(
     for (name, bytes) in inputs {
         records.write_new(name, bytes).unwrap();
     }
+    (root, workspace, run)
+}
+
+/// The task binary's command line for one Docker run of `prepare`'s files.
+fn task(root: &Path, run: &Path, endpoint: &str, image_lock: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_playtime-task"));
+    command
+        .current_dir(run)
+        .arg("--endpoint")
+        .arg(endpoint)
+        .args(["--model-lock", "model.lock.json"])
+        .arg("--image-lock")
+        .arg(image_lock)
+        .arg("--state-dir")
+        .arg(root.join("state"))
+        .arg("--workspace")
+        .arg(root.join("workspace"))
+        .arg("--run-dir")
+        .arg(run)
+        .args(["--request", "prompt.txt", "--wall-seconds", "120"])
+        .stdin(std::process::Stdio::null());
+    command
+}
+
+/// Run the task binary once against Docker and the scripted model. `inputs` are
+/// extra private files for the run directory; `arguments` may name them.
+async fn launch(
+    script: Script,
+    succeeds: bool,
+    inputs: &[(&str, &[u8])],
+    arguments: &[&str],
+) -> Launch {
+    let (root, workspace, run) = prepare(inputs);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
     let server = tokio::spawn(serve(listener, script));
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let image_lock = repository().join("environments/general.lock.json");
     let output = tokio::time::timeout(
         Duration::from_secs(240),
-        tokio::process::Command::new(env!("CARGO_BIN_EXE_playtime-task"))
-            .current_dir(&run)
-            .arg("--endpoint")
-            .arg(&endpoint)
-            .args(["--model-lock", "model.lock.json"])
-            .arg("--image-lock")
-            .arg(repository.join("environments/general.lock.json"))
-            .arg("--state-dir")
-            .arg(root.join("state"))
-            .arg("--workspace")
-            .arg(&workspace)
-            .arg("--run-dir")
-            .arg(&run)
-            .args(["--request", "prompt.txt", "--wall-seconds", "120"])
+        task(&root, &run, &endpoint, &image_lock)
             .args(arguments)
-            .stdin(std::process::Stdio::null())
             .output(),
     )
     .await
@@ -477,4 +495,41 @@ async fn version_one_worker_keeps_its_stream_files_and_report_on_the_shared_path
         ]
     );
     std::fs::remove_dir_all(&launched.root).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "explicit Docker gate; needs a reachable Docker daemon and no live model"]
+async fn absent_image_stops_before_any_model_request_or_session() {
+    let mut lock = read(&repository().join("environments/general.lock.json"));
+    lock["image_id"] = json!(format!("sha256:{}", "0".repeat(64)));
+    let (root, _, run) = prepare(&[("absent.lock.json", &serde_json::to_vec(&lock).unwrap())]);
+    // Bound but never served: any model request would wait in its backlog.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let output = tokio::time::timeout(
+        Duration::from_secs(60),
+        task(&root, &run, &endpoint, &run.join("absent.lock.json")).output(),
+    )
+    .await
+    .expect("task deadline")
+    .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success() && stderr.contains("locked image absent"),
+        "{stderr}"
+    );
+    // Admission finished; Docker then failed before the model or a session.
+    assert!(run.join("worker-invoked.json").exists());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), listener.accept())
+            .await
+            .is_err()
+    );
+    let sessions = std::fs::read_dir(root.join("state"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.starts_with("ptw-"))
+        .count();
+    assert_eq!(sessions, 0);
+    std::fs::remove_dir_all(&root).unwrap();
 }

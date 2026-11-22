@@ -1939,3 +1939,42 @@ the option, receipts, events, files and session fingerprints are unchanged. The
 protocol-1 and read-only probe fields are unchanged too; `contract_invocation`
 gains one key. Fixtures and the Docker gate use a scripted model; no caller
 passes the option yet.
+
+## Native project tool fixes (2026-11-21)
+
+Native configurations, for worker, read-only and contract invocations alike, use
+a new `native_v1` tool profile instead of the workshop profile. Its tool names and
+argument schemas are the workshop's, so validation and the Docker bridge agree;
+only the descriptions change, to name the per-command sandbox at the checkout's
+host path instead of `/work` and processes that outlive compaction. As for host
+sessions, their `compaction_configured` settings now record the profile. Their
+recorded CPU value is a fixed nominal 1.0 instead of the host's visible CPU count,
+which also exceeded the 64-core limit on larger hosts. Both change the native
+configuration fingerprint, so native sessions created by earlier builds do not
+resume; the helper digest changes too. Docker sessions, the workshop profile and
+its tools, the instruction bytes and event types of worker protocol 1 and the
+read-only and contract protocols, and every conversation, archive and experiment
+golden are unchanged.
+
+Model-reachable values the helper refuses, and requests over 256 KiB, now return
+an error result instead of stopping the turn or fencing the workspace. The file
+tools follow the Docker bridge: a relative `cwd` resolves against the checkout, a
+read cut inside a character returns a replacement character and binary files
+return the bridge's error, and `write_file` creates parent directories, reports its
+absolute path and accepts NUL characters in content. Admission now also refuses
+Git credentials in the checkout, an agent account that can log in, and hosts
+without Yama ptrace restrictions. On the Docker path of `playtime-task`, Docker
+connect and readiness now run before model verification and session creation.
+
+Each edit-mode `exec` now gets a private network namespace with slirp4netns NAT
+and no route to the host's loopback, instead of the host's network; read-only
+commands and the file tools have no network. `HOME` and `CARGO_HOME` are private to
+each command, at `/tmp/home` and `/tmp/cargo`; only Cargo's registry and Git
+downloads and its package-cache locks are shared through the cache's `cargo/`.
+Admission now requires `cargo/git/` and `cargo/registry/` instead of `home/`, and a
+root-owned `/usr/bin/slirp4netns` for edit policies. A cache's earlier Cargo
+configuration, credentials, installed binaries and `home/` are no longer used,
+`$CARGO_HOME/../target` no longer names a directory in the cache, and the first
+build afterwards recompiles registry dependencies because their source path
+changed. The native inventory describes the new network and cache, which also
+changes the configuration fingerprint.

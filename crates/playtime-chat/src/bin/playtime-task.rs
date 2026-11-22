@@ -504,6 +504,31 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         bound(json!({"schema_version":1,"type":format!("{prefix}_started"),"session_id":session_id,"execution":execution})),
     )
     .await?;
+    // Reach Docker before the model or a new session, so an outage leaves neither behind.
+    let docker = match docker_environment {
+        Some((directory, image_bytes)) => {
+            let transport = Arc::new(Cli::resolve(
+                std::path::Path::new("/usr/bin/docker"),
+                std::path::Path::new("/var/run/docker.sock"),
+                &state.join(format!("docker-{}", Token::generate()?.expose())),
+            )?);
+            let engine = docker::Engine::connect(
+                transport,
+                Instant::now() + Duration::from_secs(20),
+                cancel.clone(),
+            )
+            .await?;
+            let ready = engine
+                .readiness(
+                    &image_bytes,
+                    Instant::now() + Duration::from_secs(20),
+                    cancel.clone(),
+                )
+                .await?;
+            Some((engine, ready, directory, image_bytes))
+        }
+        None => None,
+    };
     let mut client = Client::new(
         Endpoint::parse(args.endpoint.as_deref().ok_or("missing endpoint")?)?,
         lock,
@@ -522,7 +547,7 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     })
     .await??;
     if !resume {
-        if let Some((_, image_bytes)) = &docker_environment {
+        if let Some((_, _, _, image_bytes)) = &docker {
             playtime_chat::environment::save(&session_path, image_bytes)?;
         } else {
             PrivateDirectory::open(&session_path, false)?
@@ -540,25 +565,7 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             workspace,
         }))
     } else {
-        let (directory, image_bytes) = docker_environment.ok_or("missing Docker environment")?;
-        let transport = Arc::new(Cli::resolve(
-            std::path::Path::new("/usr/bin/docker"),
-            std::path::Path::new("/var/run/docker.sock"),
-            &state.join(format!("docker-{}", Token::generate()?.expose())),
-        )?);
-        let engine = docker::Engine::connect(
-            transport,
-            Instant::now() + Duration::from_secs(20),
-            cancel.clone(),
-        )
-        .await?;
-        let ready = engine
-            .readiness(
-                &image_bytes,
-                Instant::now() + Duration::from_secs(20),
-                cancel.clone(),
-            )
-            .await?;
+        let (engine, ready, directory, _) = docker.ok_or("missing Docker environment")?;
         let tools = DockerTools {
             engine,
             ready,

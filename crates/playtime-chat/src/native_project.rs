@@ -145,6 +145,10 @@ impl Workspace {
             return Err("native helper differs from this runtime build".into());
         }
         trusted(&policy.toolchain, true)?;
+        // The helper gives edit commands their network through this binary.
+        if policy.mode == "edit" && trusted(Path::new("/usr/bin/slirp4netns"), false).is_err() {
+            return Err("native edit policies require a root-owned /usr/bin/slirp4netns".into());
+        }
         if policy.workspace != workspace.canonicalize()? {
             return Err("native policy belongs to another workspace".into());
         }
@@ -169,15 +173,7 @@ impl Workspace {
         if fs::metadata(&policy.cache)?.uid() != policy.agent_uid {
             return Err("native cache must belong to agent".into());
         }
-        for name in ["home", "cargo", "tmp"] {
-            let directory = policy.cache.join(name);
-            if directory.canonicalize()? != directory
-                || !directory.is_dir()
-                || fs::metadata(&directory)?.uid() != policy.agent_uid
-            {
-                return Err("native cache subdirectories must be provisioned for agent".into());
-            }
-        }
+        cache_provisioned(&policy)?;
         let mut protected = protected.to_vec();
         protected.extend([
             state.to_owned(),
@@ -195,6 +191,21 @@ impl Workspace {
         if !git.is_dir() || git.canonicalize()? != git {
             return Err("native workspace must have a standalone .git directory".into());
         }
+        // Tools can read both; Git reads the second when worktree config is enabled.
+        for name in ["config", "config.worktree"] {
+            let path = git.join(name);
+            if path.exists() {
+                let text = String::from_utf8_lossy(&read_limited(&path, 1024 * 1024)?).into_owned();
+                if let Some(reason) = git_config_error(&text) {
+                    return Err(format!("native workspace refused: {reason}").into());
+                }
+            }
+        }
+        ptrace_contained()?;
+        agent_account(
+            &policy,
+            &String::from_utf8_lossy(&read_limited(Path::new("/etc/passwd"), 4 << 20)?),
+        )?;
         let git = fs::metadata(git)?;
         let git_identity = json!({"device":git.dev(),"inode":git.ino()});
         let metadata = fs::metadata(workspace)?;
@@ -241,6 +252,9 @@ impl Workspace {
         if self.policy.mode == "read_only" && request.name == "write_file" {
             return Ok(json!({"error":"write_file denied by read-only policy"}));
         }
+        if let Some(error) = argument_error(&request.arguments) {
+            return Ok(json!({ "error": error }));
+        }
         let remaining = deadline
             .saturating_duration_since(Instant::now())
             .saturating_sub(Duration::from_secs(1));
@@ -255,7 +269,7 @@ impl Workspace {
         let mut input = serde_json::to_vec(&request)?;
         input.push(b'\n');
         if input.len() > 262144 {
-            return Err("native request exceeds 256 KiB".into());
+            return Ok(json!({"error":"native tool request exceeds 256 KiB"}));
         }
         let marker = serde_json::to_vec(
             &json!({"capability":CAPABILITY,"binding":self.binding(),"request":request}),
@@ -406,6 +420,131 @@ impl Workspace {
     }
 }
 
+/// Model-chosen values the helper would refuse. Refusing them here dispatches
+/// nothing, so the model gets an error result and no fence is written.
+fn argument_error(arguments: &Value) -> Option<&'static str> {
+    if ["command", "cwd", "path"].iter().any(|field| {
+        arguments[field]
+            .as_str()
+            .is_some_and(|text| text.contains('\0'))
+    }) {
+        return Some("tool text arguments cannot contain NUL characters");
+    }
+    if arguments
+        .get("offset_bytes")
+        .is_some_and(|offset| offset.as_u64().is_none())
+    {
+        return Some("offset_bytes must be a non-negative integer");
+    }
+    if arguments.get("timeout_seconds").is_some_and(|seconds| {
+        !seconds
+            .as_f64()
+            .is_some_and(|seconds| seconds.is_finite() && seconds > 0.0)
+    }) {
+        return Some("timeout_seconds must be a positive number");
+    }
+    None
+}
+
+/// Tools can read the Git config and reach the network, so credentials there
+/// could leave with them. A line check for the usual places, not a parser:
+/// whole-line comments are skipped and nothing is unquoted or joined.
+fn git_config_error(config: &str) -> Option<&'static str> {
+    for line in config.lines() {
+        let line = line.trim().to_ascii_lowercase();
+        if line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with("[include") {
+            return Some("its Git config includes other files");
+        }
+        // A helper can be an inline script that prints a password.
+        if line.starts_with("[credential") {
+            return Some("its Git config configures credentials");
+        }
+        if line
+            .split_once('=')
+            .is_some_and(|(key, _)| key.trim() == "extraheader")
+        {
+            return Some("its Git config sets HTTP headers, which can carry credentials");
+        }
+        let mut rest = line.as_str();
+        while let Some(index) = rest.find("://") {
+            let scheme = rest[..index]
+                .rsplit(|c: char| !(c.is_ascii_alphanumeric() || "+-.".contains(c)))
+                .next()
+                .unwrap_or("");
+            let authority = rest[index + 3..]
+                .split(|c: char| c == '/' || c == '"' || c.is_whitespace())
+                .next()
+                .unwrap_or("");
+            // An SSH login name is not a secret; any HTTP user or password may be.
+            if authority
+                .rsplit_once('@')
+                .is_some_and(|(user, _)| scheme.starts_with("http") || user.contains(':'))
+            {
+                return Some("a Git remote URL carries credentials");
+            }
+            rest = &rest[index + 3..];
+        }
+    }
+    None
+}
+
+/// Every tool runs as the same agent UID, so none may attach to a process it
+/// did not start, such as the sandbox's own init.
+fn ptrace_contained() -> Result<()> {
+    let scope = fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope").unwrap_or_default();
+    if scope.trim().parse::<u8>().is_ok_and(|scope| scope >= 1) {
+        Ok(())
+    } else {
+        Err("native tools require kernel.yama.ptrace_scope of 1 or higher".into())
+    }
+}
+
+const NOLOGIN_SHELLS: [&str; 4] = [
+    "/usr/sbin/nologin",
+    "/sbin/nologin",
+    "/usr/bin/false",
+    "/bin/false",
+];
+
+/// A tool must not be able to start processes outside its sandbox by logging
+/// in. The helper also checks the locked password, which only root can read.
+fn agent_account(policy: &Policy, passwd: &str) -> Result<()> {
+    let uid = policy.agent_uid.to_string();
+    let entries: Vec<Vec<&str>> = passwd
+        .lines()
+        .map(|line| line.split(':').collect::<Vec<_>>())
+        .filter(|entry| entry.len() == 7 && entry[2] == uid)
+        .collect();
+    let [entry] = entries.as_slice() else {
+        return Err("native agent account needs exactly one local passwd entry".into());
+    };
+    if !NOLOGIN_SHELLS.contains(&entry[6]) {
+        return Err("native agent account must not have a login shell".into());
+    }
+    let home = Path::new(entry[5]);
+    for path in [resolved(home), resolved(&home.join(".ssh"))] {
+        if [&policy.workspace, &policy.cache, &policy.toolchain]
+            .iter()
+            .any(|root| path.starts_with(root))
+        {
+            return Err("native agent home and SSH keys must lie outside the tool mounts".into());
+        }
+    }
+    Ok(())
+}
+
+/// Like realpath: links in the existing part are resolved, a missing tail is kept.
+fn resolved(path: &Path) -> PathBuf {
+    match (path.canonicalize(), path.parent(), path.file_name()) {
+        (Ok(path), _, _) => path,
+        (Err(_), Some(parent), Some(name)) => resolved(parent).join(name),
+        _ => path.to_path_buf(),
+    }
+}
+
 async fn read_bounded(mut stream: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>> {
     let mut retained = Vec::new();
     let mut buffer = [0; 8192];
@@ -476,6 +615,24 @@ impl<E: Effects> Effects for ProjectEffects<E> {
         residuals.extend(self.inner.cleanup(deadline).await);
         residuals
     }
+}
+
+/// Each command's HOME and CARGO_HOME are private, so only Cargo's downloads
+/// (`cargo/git`, `cargo/registry`) and the edit TMPDIR live in the shared cache.
+fn cache_provisioned(policy: &Policy) -> Result<()> {
+    for name in ["cargo", "cargo/git", "cargo/registry", "tmp"] {
+        let directory = policy.cache.join(name);
+        let owned = directory.canonicalize().is_ok_and(|path| path == directory)
+            && fs::metadata(&directory)
+                .is_ok_and(|info| info.is_dir() && info.uid() == policy.agent_uid);
+        if !owned {
+            return Err(
+                "native cache needs agent-owned cargo/, cargo/git/, cargo/registry/ and tmp/ directories"
+                    .into(),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn verify_binding(
@@ -549,7 +706,12 @@ mod tests {
                 Token::generate().unwrap().expose()
             ));
             PrivateDirectory::open(&root, true).unwrap();
-            for name in ["workspace/src", "cache/home", "cache/cargo", "cache/tmp"] {
+            for name in [
+                "workspace/src",
+                "cache/cargo/git",
+                "cache/cargo/registry",
+                "cache/tmp",
+            ] {
                 fs::create_dir_all(root.join(name)).unwrap();
             }
             assert!(
@@ -846,6 +1008,131 @@ mod tests {
         assert_eq!(result["stderr"].as_str().unwrap().len(), 65536);
         assert_eq!(result["output_truncated"], true);
         assert!(workspace.cleanup().is_empty());
+    }
+
+    #[tokio::test]
+    async fn model_argument_refusals_dispatch_nothing_and_leave_no_fence() {
+        let root = Root::new();
+        let mut workspace = root.workspace();
+        for (name, arguments) in [
+            ("read_file", json!({"path":"x","offset_bytes":-1})),
+            (
+                "exec",
+                json!({"command":"touch should-not-run","timeout_seconds":0}),
+            ),
+            (
+                "exec",
+                json!({"command":"touch should-not-run","timeout_seconds":-0.5}),
+            ),
+            ("exec", json!({"command":"touch should-not-run\u{0}"})),
+            (
+                "exec",
+                json!({"command":"touch should-not-run","cwd":"src\u{0}"}),
+            ),
+            ("write_file", json!({"path":"x\u{0}","content":"x"})),
+            (
+                "write_file",
+                json!({"path":"should-not-run","content":"x".repeat(300_000)}),
+            ),
+        ] {
+            let request = ToolRequest {
+                name: name.into(),
+                arguments,
+            };
+            let result = workspace
+                .tool(
+                    &request,
+                    Instant::now() + Duration::from_secs(10),
+                    CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            assert!(result["error"].is_string(), "{result}");
+            assert!(workspace.cleanup().is_empty());
+            assert!(!root.0.join("state/active").exists());
+        }
+        assert!(!root.0.join("workspace/should-not-run").exists());
+    }
+
+    #[test]
+    fn git_config_credentials_are_refused_but_ssh_logins_are_not() {
+        for clean in [
+            "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = ssh://git@github.com/o/r.git\n",
+            "[remote \"origin\"]\n\turl = git@github.com:o/r.git\n\tpushurl = https://github.com/o/r\n",
+            "# url = https://user:token@example.com/\n",
+        ] {
+            assert_eq!(git_config_error(clean), None, "{clean}");
+        }
+        for leaking in [
+            "[remote \"origin\"]\n\turl = https://x-access-token:secret@github.com/o/r\n",
+            "[remote \"origin\"]\n\turl = https://ghp_secret@github.com/o/r\n",
+            "[remote \"origin\"]\n\tpushUrl = ssh://user:secret@host/r\n",
+            "[url \"https://user:secret@github.com/\"]\n\tinsteadOf = https://github.com/\n",
+            "[http]\n\textraHeader = AUTHORIZATION: basic c2VjcmV0\n",
+            "[http \"https://github.com/\"]\n\textraheader=Authorization: bearer x\n",
+            "[include]\n\tpath = secrets\n",
+            "[includeIf \"gitdir:/w/\"]\n\tpath = secrets\n",
+            "[credential]\n\thelper = \"!f() { echo password=secret; }; f\"\n",
+            "[credential \"https://github.com\"]\n\tusername = x\n",
+        ] {
+            assert!(git_config_error(leaking).is_some(), "{leaking}");
+        }
+    }
+
+    #[test]
+    fn agent_account_cannot_log_in_or_expose_its_keys() {
+        let root = Root::new();
+        let workspace = root.workspace();
+        let policy = workspace.policy();
+        let account = |home: &Path, shell: &str| {
+            agent_account(
+                policy,
+                &format!(
+                    "root:x:0:0::/root:/bin/bash\nagent:x:{}:{}::{}:{shell}\n",
+                    policy.agent_uid,
+                    policy.agent_gid,
+                    home.display()
+                ),
+            )
+        };
+        let outside = root.0.join("agent-home");
+        account(&outside, "/usr/sbin/nologin").unwrap();
+        account(&outside, "/bin/false").unwrap();
+        assert!(account(&outside, "/bin/bash").is_err());
+        assert!(account(&policy.cache.join("home"), "/usr/sbin/nologin").is_err());
+        assert!(account(&policy.workspace, "/usr/sbin/nologin").is_err());
+        assert!(agent_account(policy, "root:x:0:0::/root:/bin/bash\n").is_err());
+    }
+
+    #[test]
+    fn native_tools_are_described_for_the_sandbox_and_bind_no_host_cpu_count() {
+        let root = Root::new();
+        let workspace = root.workspace();
+        let lock = serde_json::from_str(include_str!(
+            "../../../models/framework-strata-gyro-m-fast-v1.lock.json"
+        ))
+        .unwrap();
+        let config = worker::native_config(&lock, &workspace, 60).unwrap();
+        assert_eq!(
+            config.execution.tool_profile,
+            playtime_engine::execution::ToolProfile::NativeV1
+        );
+        assert!((config.execution.workshop.as_ref().unwrap().cpu_cores - 1.0).abs() < f64::EPSILON);
+        let tools = serde_json::to_string(&config.tools()).unwrap();
+        assert!(tools.contains("project checkout") && !tools.contains("/work"));
+    }
+
+    #[test]
+    fn cache_must_provide_the_shared_cargo_downloads_and_temporary_directory() {
+        let root = Root::new();
+        let workspace = root.workspace();
+        let policy = workspace.policy();
+        cache_provisioned(policy).unwrap();
+        let registry = policy.cache.join("cargo/registry");
+        fs::remove_dir(&registry).unwrap();
+        assert!(cache_provisioned(policy).is_err());
+        std::os::unix::fs::symlink(policy.cache.join("tmp"), &registry).unwrap();
+        assert!(cache_provisioned(policy).is_err());
     }
 
     #[test]

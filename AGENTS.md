@@ -83,8 +83,10 @@ legacy general-workshop inventory. Validate new images with actual project build
 and an owned chat/restart smoke, in addition to the bridge probe and fixtures.
 The opt-in `project-native-v1` worker adapter uses a reviewed root-owned policy,
 a fixed installed helper and Bubblewrap after dropping to a dedicated account.
-Keep controller state/evidence outside tool mounts, preserve the shared workspace
-lease and uncertain-tool fence, and never fall back to unrestricted execution.
+Keep controller state/evidence outside tool mounts and host loopback out of each
+command's private network, preserve the shared workspace lease and uncertain-tool
+fence, issue a cleanup receipt only after reaping the sandbox's init, and never
+fall back to unrestricted execution.
 Run `./scripts/test-rust-native-project.sh` for native-tool changes; this same-UID
 namespace gate does not establish privileged launch or dedicated-account isolation.
 See `docs/rust-native-project-tools.md` for separate installed-account qualification.
