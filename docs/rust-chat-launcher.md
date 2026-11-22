@@ -46,6 +46,9 @@ Install from this checkout on the workstation where the project lives:
 
 This builds the release client and installs the binary, wrapper, verifier and
 reviewed locks under `~/.local/lib/playtime-chat`, outside the writable project.
+The wrapper never imports from that directory and runs its two modules from
+source, so a file added there, or a `__pycache__`, adds no code. The [headless
+worker guide](rust-headless-worker.md) lists the files a worker launch reads.
 It requires Python 3.11+ on both ends and the locked local Docker workshop image.
 Framework uses the existing `framework` SSH alias and its Gyro owner helpers.
 Bird uses `oldman@oldman-bird.local`, `~/.ssh/id_ed25519_oldman_bird_codex` and its

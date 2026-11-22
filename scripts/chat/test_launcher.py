@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import marshal
 import os
 from pathlib import Path
 import pty
@@ -467,6 +468,52 @@ else:
         result = self.run_fixture('', '--prepare-environment', '--help')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.root / 'started').exists())
+
+    def test_files_added_to_the_package_cannot_add_code(self):
+        planted = self.root / 'planted'
+        planted.mkdir()
+        # Two standard modules, and optional ones the standard library tries but
+        # lacks on Linux, so their lookups reach every import path entry.
+        for name in ('json', 'subprocess', '_winapi', 'msvcrt', 'nt'):
+            (self.package / f'{name}.py').write_text(f"open({str(planted / name)!r}, 'w').close()\n")
+        # Its header matches the source's size and mtime, so an ordinary import
+        # would run this bytecode instead of the source.
+        source = self.package / 'launch_protocol.py'
+        info = source.stat()
+        cached = Path(importlib.util.cache_from_source(str(source)))
+        cached.parent.mkdir()
+        code = compile(f"open({str(planted / 'bytecode')!r}, 'w').close()\n", str(source), 'exec')
+        cached.write_bytes(importlib.util.MAGIC_NUMBER + bytes(4) + int(info.st_mtime).to_bytes(4, 'little')
+                           + (info.st_size & 0xFFFFFFFF).to_bytes(4, 'little') + marshal.dumps(code))
+        # A caller that appends the package to the import path. It loads what
+        # runpy imports first, so only the launcher's own imports are tested.
+        appended = ('import pkgutil, runpy, sys; sys.path.append(sys.argv[1]); del sys.argv[:2]; '
+                    "runpy.run_path(sys.argv[0], run_name='__main__')")
+        # Preparation imports both modules and runs one of them as a program.
+        arguments = ['framework-gyro-m-fast', '--prepare-environment', '--help']
+        for command in (self.command(*arguments),
+                        [sys.executable, '-I', '-S', '-B', '-c', appended, str(self.package),
+                         str(self.package / 'run-strata.py'), *arguments]):
+            with self.subTest(command=command[1]):
+                result = subprocess.run(command, env=self.env, cwd=self.root, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('--workspace', result.stdout)
+                self.assertEqual(list(planted.iterdir()), [])
+                # Nothing read the planted bytecode, and nothing wrote more.
+                self.assertEqual([path.name for path in cached.parent.iterdir()], [cached.name])
+
+    def test_modules_a_caller_already_loaded_are_kept(self):
+        # This caller runs the launcher from bytes it read itself, with its own
+        # launch_protocol, so a file read again could differ from what it checked.
+        caller = ('import sys; path = sys.argv.pop(1); module = sys.modules["launch_protocol"] = type(sys)("launch_protocol"); '
+                  'module.DESCRIBE_FLAG = "--describe-launch"; '
+                  'module.describe = lambda preset, profile: print("caller module") or 0; '
+                  'exec(compile(open(path, "rb").read(), path, "exec"), {"__name__": "__main__", "__file__": path})')
+        result = subprocess.run([sys.executable, '-I', '-S', '-B', '-c', caller, str(self.package / 'run-strata.py'),
+                                 'framework-gyro-m-fast', '--describe-launch'],
+                                env=self.env, cwd=self.root, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'caller module\n')
 
     def test_picker_cancel_and_failure_never_start_host(self):
         for mode, expected in [('picker-cancel', 0), ('picker-failure', 2)]:
