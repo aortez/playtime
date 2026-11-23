@@ -240,6 +240,13 @@ impl Policy {
         }
         Ok(Self::Compaction(Box::new(policy)))
     }
+    /// The uncalibrated size of a compaction policy's initial context and the bound
+    /// `compaction` requires it to stay under.
+    pub(crate) fn initial_context(
+        config: &crate::compaction::PolicyConfig,
+    ) -> Result<(u64, u64), playtime_core::InvalidValue> {
+        Ok(compaction::Compaction::new(config)?.initial_context())
+    }
     pub fn propose(&mut self, view: View<'_>, _context: &ContextWindow) -> Proposal {
         match self {
             Self::Memento(policy) => policy.propose(view.memento()),

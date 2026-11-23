@@ -92,6 +92,25 @@ fn chat() -> Chat {
 }
 
 #[test]
+fn the_initial_context_fits_only_under_its_limit() {
+    let policy = policy();
+    let root = |bytes: usize| {
+        vec![
+            json!({"role":"system", "content":"Use only the selected workspace."}),
+            json!({"role":"user", "content":"x".repeat(bytes)}),
+        ]
+    };
+    let limit = policy.initial_limit();
+    // Half of the 16,384-token context, less one 512-token reply, is tighter here
+    // than the work reserve.
+    assert_eq!(limit, 16384 / 2 - 512);
+    let largest = (limit - 1 - policy.initial_size(&root(0))) as usize;
+    assert_eq!(policy.initial_size(&root(largest)), limit - 1);
+    assert!(policy.initial_fits(&root(largest)));
+    assert!(!policy.initial_fits(&root(largest + 1)));
+}
+
+#[test]
 fn a_standalone_caller_compacts_then_continues_the_same_conversation() {
     let policy = policy();
     let mut chat = chat();

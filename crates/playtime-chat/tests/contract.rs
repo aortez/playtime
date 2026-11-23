@@ -501,6 +501,57 @@ fn version_one_worker_and_read_only_probes_keep_their_pinned_values() {
 }
 
 #[test]
+fn a_first_request_the_initial_context_cannot_fit_is_refused_before_anything_starts() {
+    let root = Root::new();
+    let workspace = root.0.join("workspace");
+    let run = root.0.join("run");
+    PrivateDirectory::open(&workspace, true).unwrap();
+    let records = PrivateDirectory::open(&run, true).unwrap();
+    // Within the 256 KiB request limit, but more than Framework's context admits
+    // while each byte counts as a token.
+    records
+        .write_new("prompt.txt", "x".repeat(200_000).as_bytes())
+        .unwrap();
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let run_task = |extra: &[&str]| {
+        task()
+            .args(extra)
+            .arg("--state-dir")
+            .arg(root.0.join("state"))
+            .arg("--model-lock")
+            .arg(repository.join("models/framework-strata-gyro-m-fast-v1.lock.json"))
+            .arg("--image-lock")
+            .arg(repository.join("environments/general.lock.json"))
+            .arg("--workspace")
+            .arg(&workspace)
+            .arg("--run-dir")
+            .arg(&run)
+            .arg("--request")
+            .arg(run.join("prompt.txt"))
+            .output()
+            .unwrap()
+    };
+    // The real run gets the same refusal before it records, reaches Docker or
+    // contacts the endpoint.
+    for extra in [
+        &["--check-inputs"][..],
+        &["--endpoint", "http://127.0.0.1:9/v1"],
+    ] {
+        let refused = run_task(extra);
+        assert!(!refused.status.success());
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(stderr.contains("initial context is "), "{stderr}");
+        assert!(stderr.contains("and must be under 114688"), "{stderr}");
+    }
+    assert!(!run.join("worker-invoked.json").exists());
+    assert!(!run.join("worker-events.jsonl").exists());
+}
+
+#[test]
 fn contract_input_check_binds_request_contract_and_evidence_without_an_endpoint() {
     let root = Root::new();
     let workspace = root.0.join("workspace");

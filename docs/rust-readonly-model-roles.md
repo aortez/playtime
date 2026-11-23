@@ -52,7 +52,9 @@ SSH agent; the local task child does not inherit `SSH_AUTH_SOCK`.
 Direct `playtime-task` calls take the same options without `--read-only`, plus
 `--request-sha256 HEX`, `--model-lock LOCK` and `--endpoint URL`. Direct callers
 must already hold and verify the endpoint and enforce their own durable process
-start gate. `--check-inputs` checks local admission without acquiring inference.
+start gate. `--check-inputs` checks local admission without acquiring inference,
+including the first turn's context rule, so a request too large for the model's
+context is refused with its size and the limit before inference is acquired.
 The wrapper owns model/image/endpoint selection, rejects a Docker environment for
 native tools, probes the selected capability and checks inputs before acquiring
 the inference host. Host verification, cancellation and release are unchanged.

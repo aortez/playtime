@@ -214,6 +214,15 @@ impl Compaction {
         self.context_policy.initial_fits(&self.root)
     }
 
+    /// The initial context's uncalibrated size and the bound `initial_fits` keeps
+    /// it under.
+    pub fn initial_context(&self) -> (u64, u64) {
+        (
+            self.context_policy.initial_size(&self.root),
+            self.context_policy.initial_limit(),
+        )
+    }
+
     pub fn propose(&mut self, view: View<'_>, context: &ContextWindow) -> Proposal {
         match self.stage {
             Stage::Starting => Proposal::StartWorkspace,

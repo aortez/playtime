@@ -440,6 +440,18 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             None => config,
         }
     };
+    // A new session's first turn would refuse this context only after the wrapper
+    // has acquired the model. The same rule here refuses it before anything starts,
+    // and says by how much. A resumed session keeps the context it began with.
+    if !resume {
+        let (size, limit) = config.initial_context(&prompt)?;
+        if size >= limit {
+            return Err(format!(
+                "initial context is {size} encoded bytes of instructions, request and tools, and must be under {limit}: until the model has replied once, each byte counts as a token, and one reply must still fit below the compaction trigger and inside the context's reserves"
+            )
+            .into());
+        }
+    }
     let execution = native_workspace
         .as_ref()
         .map(native_project::Workspace::binding)

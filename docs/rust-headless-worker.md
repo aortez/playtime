@@ -41,6 +41,11 @@ ownership:
 The run directory and state ancestors must be owned and protected from other
 users' writes; run/session directories must be mode 0700. `--check-inputs` checks
 local paths, configuration and completed-session compatibility before inference.
+For a new session it also applies the first turn's context rule: until the model
+has replied once, each encoded byte of the instructions, request and tools counts
+as a token, and with one reply that must stay below the compaction trigger and
+inside the context's reserves. A request that can't fit is refused with its size
+and the limit, which is 114,688 bytes on `framework-gyro-m-fast`.
 The run directory must not have been invoked before; `artifacts/` must be empty.
 `--environment /private/project-environment.lock.json` selects a previously
 prepared project image. Worker launches never open a picker or implicitly build
