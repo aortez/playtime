@@ -18,6 +18,7 @@ use playtime_local::{PrivateDirectory, read_private, replace_private};
 use playtime_protocol::{api::*, events::EventEnvelope};
 use std::{
     collections::BTreeMap,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -477,6 +478,7 @@ fn action_error(action: &Action, error: String) -> Data {
         Action::Definition(_) => Data::DefinitionError(error),
         Action::SaveRecipe(_) => Data::RecipeSaveProgress(Mutation::Rejected(error)),
         Action::RecoverRecipe(..) => Data::RecipeSaveProgress(Mutation::Unresolved(error)),
+        Action::ChooseSeedFiles | Action::ReadSeedFiles(_) => Data::SeedFiles(vec![Err(error)]),
         Action::Preview(..) => Data::PreviewError(error),
         Action::Launch(..) => Data::LaunchProgress(Mutation::Rejected(error), None),
         Action::Recover(..) => Data::LaunchProgress(recovery_unresolved(error), None),
@@ -821,6 +823,21 @@ async fn perform(s: &Session, out: &Out, command: Command, previews: Arc<Semapho
             .await?;
             out.send(tag, None, Data::RecipeSaveReceipts(receipts))
                 .await;
+        }
+        Action::ChooseSeedFiles => {
+            // The portal dialog runs on its own thread; a cancelled one adds nothing.
+            let chosen = rfd::AsyncFileDialog::new()
+                .set_title("Add seed files")
+                .pick_files()
+                .await
+                .unwrap_or_default();
+            let paths = chosen.iter().map(|f| f.path().to_path_buf()).collect();
+            let files = local(move || Ok(read_seed_files(paths))).await?;
+            out.send(tag, None, Data::SeedFiles(files)).await;
+        }
+        Action::ReadSeedFiles(paths) => {
+            let files = local(move || Ok(read_seed_files(paths))).await?;
+            out.send(tag, None, Data::SeedFiles(files)).await;
         }
         Action::SaveRecipe(request) => {
             let pending = client.prepare_recipe_save(request).map_err(safe)?;
@@ -1372,6 +1389,13 @@ async fn admission(
     }
     Ok(())
 }
+fn read_seed_files(paths: Vec<PathBuf>) -> Vec<std::result::Result<SeedUpload, String>> {
+    paths
+        .iter()
+        .map(|path| playtime_client::seeds::read_seed_file(path))
+        .collect()
+}
+
 async fn recipe_save(
     s: &Session,
     out: &Out,
@@ -1381,7 +1405,9 @@ async fn recipe_save(
 ) {
     out.send(tag, None, Data::RecipeSaveProgress(Mutation::Submitting))
         .await;
-    let result = if attempt == LaunchAttempt::Lookup {
+    // A confirmed receipt keeps no seed contents to send again, so a retry
+    // looks it up instead.
+    let result = if attempt == LaunchAttempt::Lookup || receipt.saved_execution.is_some() {
         s.client.lookup_recipe_save(&receipt.pending).await
     } else {
         s.client.save_recipe(&receipt.pending).await

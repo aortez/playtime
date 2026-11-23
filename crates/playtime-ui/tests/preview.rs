@@ -178,3 +178,46 @@ async fn long_preview_text_leaves_room_to_read_every_source_page() {
     assert!(prepared.inventory.ends_with(" …"));
     assert!(prepared.source.text.len() < prepared.source.total);
 }
+
+#[tokio::test]
+async fn saved_definitions_state_where_their_seed_files_came_from() {
+    let app = common::demo(true).await;
+    let mut original = app.model.preview.unwrap().value;
+    let seed_lines = |preview: &playtime_protocol::api::Preview| {
+        prepare_preview(preview.clone())
+            .sections
+            .into_iter()
+            .find(|s| s.title == "Seed files")
+            .unwrap()
+            .lines
+    };
+    original.seeds.files = 1;
+    original.seeds.bytes = 1;
+    original.effective_configuration = json!({"recipe":{"seeds":{"notes.txt":"x"}}});
+    // A catalog recipe's preview has no saved definition, so it states no origin.
+    assert_eq!(
+        seed_lines(&original),
+        ["1 files · 1 byte total", "notes.txt · 1 byte"]
+    );
+    for (definition, expected) in [
+        (json!({}), "Seed files from the catalog recipe"),
+        (json!({"seed_origin":"uploaded"}), "Uploaded seed files"),
+        (
+            json!({"seed_origin":"later"}),
+            "Unrecognized seed-file origin; inspect the full frozen preview.",
+        ),
+    ] {
+        original.effective_configuration["definition"] = definition;
+        let lines = seed_lines(&original);
+        assert_eq!(lines[1], expected, "{lines:?}");
+        assert_eq!(lines[2], "notes.txt · 1 byte");
+    }
+    original.seeds.files = 0;
+    original.seeds.bytes = 0;
+    original.effective_configuration =
+        json!({"recipe":{"seeds":{}},"definition":{"seed_origin":"empty"}});
+    assert_eq!(seed_lines(&original)[1], "Started without seed files");
+    // A saved recipe that kept a catalog recipe's empty set says nothing more.
+    original.effective_configuration = json!({"seeds":{},"definition":{}});
+    assert_eq!(seed_lines(&original).len(), 1);
+}

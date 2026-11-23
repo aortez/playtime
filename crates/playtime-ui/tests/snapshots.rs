@@ -293,6 +293,8 @@ async fn reviewed_workbench_screens() {
             Inspector::Details,
             false,
         ),
+        ("seed-files", true, false, Inspector::Details, false),
+        ("seed-files-narrow", true, true, Inspector::Details, false),
         ("session-memory", false, false, Inspector::Details, false),
         (
             "session-memory-narrow",
@@ -351,11 +353,35 @@ async fn reviewed_workbench_screens() {
             common::long_recipe_runs().await
         } else if name.starts_with("model-settings") || name.starts_with("recipe-model") {
             common::model_settings_editor().await
-        } else if name.starts_with("recipe-editor") {
+        } else if name.starts_with("recipe-editor") || name.starts_with("seed-files") {
             common::recipe_editor().await
         } else {
             common::demo(launcher).await
         };
+        if name.starts_with("seed-files") {
+            // Synthetic files, read the way the editor reads them. One name is
+            // listed twice and one file isn't text.
+            let local = playtime_test_support::TestRoot::new().unwrap();
+            let read = |dir: &str, name: &str, text: &str| {
+                let path = local.join(dir).join(name);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, text).unwrap();
+                playtime_client::seeds::read_seed_file(&path)
+            };
+            let seeds = &mut app.model.authoring.draft.as_mut().unwrap().seeds;
+            seeds.add(vec![
+                read("a", "palette.txt", "background: #10141c\naccent: #e0a040\n"),
+                read(
+                    "a",
+                    "starting-notes.md",
+                    "# Starting notes\n\nTry the palette on one small scene first.\n",
+                ),
+            ]);
+            seeds.add(vec![
+                read("b", "palette.txt", "background: #ffffff\n"),
+                Err("/srv/examples/sketch.png isn't UTF-8 text".into()),
+            ]);
+        }
         if name.starts_with("compaction-editor") {
             app.model.authoring.draft = None;
             app.model.edit_recipe(true);
@@ -637,6 +663,25 @@ async fn reviewed_workbench_screens() {
             use egui_kittest::kittest::Queryable;
             h.get_by_label("Inspector").click();
             h.run();
+        }
+        if name.starts_with("seed-files") {
+            use egui_kittest::kittest::Queryable;
+            h.get_by_label("Seed files · 2 files uploaded").click();
+            h.run();
+            if narrow {
+                h.get_by_label("Remove starting-notes.md").scroll_to_me();
+                h.run();
+            }
+            // Away from text and buttons.
+            h.input_mut()
+                .events
+                .push(egui::Event::PointerMoved(if narrow {
+                    egui::pos2(800.0, 520.0)
+                } else {
+                    egui::pos2(1000.0, 640.0)
+                }));
+            // Let the hover highlight fade.
+            h.run_steps(30);
         }
         if name.starts_with("harness-editor") {
             use egui_kittest::kittest::Queryable;

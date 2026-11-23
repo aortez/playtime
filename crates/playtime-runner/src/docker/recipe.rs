@@ -95,11 +95,11 @@ pub const BOUNDS: Bounds = Bounds {
     thinking: ["low", "medium", "high"],
     text_bytes: 65_536,
     name_bytes: 128,
-    seed_files: 16,
-    seed_file_bytes: 131_072,
-    seed_encoded_bytes: 196_608,
-    seed_bytes: 524_288,
-    seed_path_bytes: 200,
+    seed_files: playtime_protocol::api::SEED_FILES,
+    seed_file_bytes: playtime_protocol::api::SEED_FILE_BYTES,
+    seed_encoded_bytes: playtime_protocol::api::SEED_ENCODED_BYTES,
+    seed_bytes: playtime_protocol::api::SEED_BYTES,
+    seed_path_bytes: playtime_protocol::api::SEED_PATH_BYTES,
 };
 /// Recipe ids the daemon already uses for its built-in runs.
 const RESERVED: [&str; 3] = ["two-session", super::RECIPE, super::LIVE_RECIPE];
@@ -195,8 +195,14 @@ impl Recipe {
         }
         self.check_seeds(w.workspace_bytes.get())
     }
-    fn check_seeds(&self, workspace_bytes: u64) -> Result<()> {
-        let invalid = |what: &str| Err(Error::Invalid(format!("recipe {}: {what}", self.id)));
+    pub(super) fn check_seeds(&self, workspace_bytes: u64) -> Result<()> {
+        match self.seed_problem(workspace_bytes)? {
+            Some(what) => Err(Error::Invalid(format!("recipe {}: {what}", self.id))),
+            None => Ok(()),
+        }
+    }
+    /// Why the seed files don't fit their bounds, named for whoever chose them.
+    pub(super) fn seed_problem(&self, workspace_bytes: u64) -> Result<Option<String>> {
         let b = &BOUNDS;
         let mut directories = BTreeSet::from(["seeds".to_owned()]);
         let mut total = 0;
@@ -210,19 +216,31 @@ impl Recipe {
                         || part.chars().any(char::is_control)
                 })
             {
-                return invalid("a seed path must be relative, plain and bounded");
+                return Ok(Some(format!(
+                    "seed path {path:?} must be relative and plain, with at most {} bytes",
+                    b.seed_path_bytes
+                )));
             }
             if self
                 .seeds
                 .keys()
                 .any(|other| other.starts_with(&format!("{path}/")))
             {
-                return invalid("a seed path is both a file and a directory");
+                return Ok(Some(format!(
+                    "seed path {path:?} is both a file and a directory"
+                )));
             }
-            if content.len() > b.seed_file_bytes
-                || serde_json::to_string(content)?.len() > b.seed_encoded_bytes
-            {
-                return invalid("a seed file exceeds its bound");
+            if content.len() > b.seed_file_bytes {
+                return Ok(Some(format!(
+                    "seed file {path:?} has more than {} bytes",
+                    b.seed_file_bytes
+                )));
+            }
+            if serde_json::to_string(content)?.len() > b.seed_encoded_bytes {
+                return Ok(Some(format!(
+                    "seed file {path:?} has more than {} bytes once JSON escapes it",
+                    b.seed_encoded_bytes
+                )));
             }
             total += content.len();
             for depth in 1..parts.len() {
@@ -231,14 +249,25 @@ impl Recipe {
         }
         // Seeds leave the agent at least half of the workspace.
         let entries = (self.seeds.len() + directories.len()) as u64;
-        if self.seeds.len() > b.seed_files
-            || total > b.seed_bytes
-            || total as u64 * 2 > workspace_bytes
-            || entries * 2 > u64::from(self.workspace_entries)
-        {
-            return invalid("the seeds exceed their bounds");
-        }
-        Ok(())
+        Ok(if self.seeds.len() > b.seed_files {
+            Some(format!("there are more than {} seed files", b.seed_files))
+        } else if total > b.seed_bytes {
+            Some(format!(
+                "the seed files have more than {} bytes in total",
+                b.seed_bytes
+            ))
+        } else if total as u64 * 2 > workspace_bytes {
+            Some(format!(
+                "the seed files take more than half of the {workspace_bytes}-byte workspace"
+            ))
+        } else if entries * 2 > u64::from(self.workspace_entries) {
+            Some(format!(
+                "the seed files and their directories take more than half of the workspace's {} entries",
+                self.workspace_entries
+            ))
+        } else {
+            None
+        })
     }
     /// A fixed recipe whose frozen template goes into the profile digest, so a
     /// bundle and a daemon agree on how recipes freeze.
@@ -587,6 +616,134 @@ mod tests {
         assert!(definition.executable().is_err());
         profile.definition = Some(definition);
         assert!(profile.validate().is_err());
+    }
+    #[test]
+    fn a_save_may_empty_or_upload_seed_files_within_their_bounds() {
+        use playtime_protocol::api::{RecipeSource, SeedOrigin, SeedSelection, SeedUpload};
+        let upload = |path: &str, content: &str| SeedUpload {
+            path: path.into(),
+            size_bytes: content.len() as u64,
+            sha256: playtime_storage::sha256(content.as_bytes()).to_string(),
+            content: content.into(),
+        };
+        let mut definition = super::super::FrozenRecipe::current(recipe()).unwrap();
+        assert_eq!(definition.seed_origin, None);
+        let catalog = serde_json::to_value(&definition).unwrap();
+        assert!(catalog.get("seed_origin").is_none());
+        // Only a save records an origin.
+        let mut unsaved = definition.clone();
+        unsaved.select_seeds(&SeedSelection::Empty).unwrap();
+        assert!(unsaved.validate().is_err());
+        definition.recipe.id = "saved-seeded".into();
+        definition.source = Some(RecipeSource {
+            execution_recipe_id: playtime_protocol::api::RecipeId::new("curiosity").unwrap(),
+            definition_digest: "a".repeat(64),
+        });
+        let files = vec![
+            upload("palette.txt", "blue\n"),
+            upload("notes/plan.md", "# Plan\n"),
+        ];
+        let mut uploaded = definition.clone();
+        uploaded
+            .select_seeds(&SeedSelection::Uploaded { files })
+            .unwrap();
+        uploaded.validate().unwrap();
+        assert_eq!(uploaded.seed_origin, Some(SeedOrigin::Uploaded));
+        assert_eq!(uploaded.recipe.seeds["notes/plan.md"], "# Plan\n");
+        assert_eq!(uploaded.recipe.seeds.len(), 2);
+        // The origin reaches the profile that a run archives.
+        let mut profile =
+            Profile::freeze_recipe(uploaded.recipe.clone(), selection(), daemon(), host()).unwrap();
+        profile.definition = Some(uploaded.clone());
+        profile.validate().unwrap();
+        let json = serde_json::to_value(&profile).unwrap();
+        assert_eq!(json["definition"]["seed_origin"], "uploaded");
+        assert_eq!(json["recipe"]["seeds"]["palette.txt"], "blue\n");
+        let mut empty = uploaded.clone();
+        empty.select_seeds(&SeedSelection::Empty).unwrap();
+        empty.validate().unwrap();
+        assert_eq!(empty.seed_origin, Some(SeedOrigin::Empty));
+        assert!(empty.recipe.seeds.is_empty());
+        // The origin must describe the files.
+        let mut contradicted = empty.clone();
+        contradicted.seed_origin = Some(SeedOrigin::Uploaded);
+        assert!(contradicted.validate().is_err());
+        let mut contradicted = uploaded.clone();
+        contradicted.seed_origin = Some(SeedOrigin::Empty);
+        assert!(contradicted.validate().is_err());
+        let mut mismatched = upload("a.txt", "abc");
+        mismatched.size_bytes = 4;
+        let mut misdigested = upload("a.txt", "abc");
+        misdigested.sha256 = "0".repeat(64);
+        let deep = |i: usize| upload(&format!("{i}/{}x.txt", "d/".repeat(40)), "x");
+        for (files, expected) in [
+            (vec![], "needs at least one file"),
+            (
+                vec![mismatched],
+                "doesn't match its stated size and SHA-256",
+            ),
+            (
+                vec![misdigested],
+                "doesn't match its stated size and SHA-256",
+            ),
+            (
+                vec![upload("a.txt", "1"), upload("a.txt", "2")],
+                "appears more than once",
+            ),
+            (vec![upload("../a.txt", "1")], "must be relative and plain"),
+            (vec![upload("/a.txt", "1")], "must be relative and plain"),
+            (vec![upload("a//b.txt", "1")], "must be relative and plain"),
+            (vec![upload("a\tb.txt", "1")], "must be relative and plain"),
+            (
+                vec![upload(&"a".repeat(201), "1")],
+                "must be relative and plain",
+            ),
+            (
+                vec![upload("a", "1"), upload("a/b", "2")],
+                "both a file and a directory",
+            ),
+            (
+                vec![upload("big.txt", &"x".repeat(131_073))],
+                "more than 131072 bytes",
+            ),
+            (
+                vec![upload("escaped.txt", &"\u{1}".repeat(40_000))],
+                "once JSON escapes it",
+            ),
+            (
+                (0..17).map(|i| upload(&format!("{i}.txt"), "x")).collect(),
+                "more than 16 seed files",
+            ),
+            (
+                (0..5)
+                    .map(|i| upload(&format!("{i}.txt"), &"x".repeat(131_072)))
+                    .collect(),
+                "more than 524288 bytes in total",
+            ),
+            (
+                (0..16).map(deep).collect(),
+                "more than half of the workspace's 900 entries",
+            ),
+        ] {
+            let mut refused = definition.clone();
+            let problem = refused
+                .select_seeds(&SeedSelection::Uploaded { files })
+                .unwrap_err();
+            assert!(problem.contains(expected), "{problem}");
+            assert_eq!(refused.recipe.seeds, definition.recipe.seeds);
+            assert_eq!(refused.seed_origin, None);
+        }
+        let mut small = definition.clone();
+        small.recipe.parameters.workshop.workspace_bytes = NonZeroU64::new(1000).unwrap();
+        let problem = small
+            .select_seeds(&SeedSelection::Uploaded {
+                files: vec![upload("a.txt", &"x".repeat(501))],
+            })
+            .unwrap_err();
+        assert!(
+            problem.contains("more than half of the 1000-byte workspace"),
+            "{problem}"
+        );
     }
     #[test]
     fn a_frozen_recipe_profile_must_match_its_recipe() {

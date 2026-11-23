@@ -63,6 +63,7 @@ fn coding_sources_load_their_task_inputs_and_admit_continuous_execution() {
 fn clone_request(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Clone {
         request: CloneRecipeRequest {
+            seeds: None,
             compaction: None,
             harness: None,
             model_registration: None,
@@ -80,6 +81,7 @@ fn revise(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
     RecipeMutation::Revise {
         recipe_id: definition.saved.as_ref().unwrap().recipe_id.clone(),
         request: ReviseRecipeRequest {
+            seeds: None,
             compaction: None,
             harness: None,
             model_registration: None,
@@ -92,6 +94,21 @@ fn revise(definition: &RecipeDefinition, name: &str) -> RecipeMutation {
 }
 fn key(value: &str) -> IdempotencyKey {
     IdempotencyKey::new(value).unwrap()
+}
+fn upload(path: &str, content: &str) -> SeedUpload {
+    SeedUpload {
+        path: path.into(),
+        size_bytes: content.len() as u64,
+        sha256: playtime_storage::sha256(content.as_bytes()).to_string(),
+        content: content.into(),
+    }
+}
+fn with_seeds(mut request: RecipeMutation, seeds: SeedSelection) -> RecipeMutation {
+    match &mut request {
+        RecipeMutation::Clone { request } => request.seeds = Some(seeds),
+        RecipeMutation::Revise { request, .. } => request.seeds = Some(seeds),
+    }
+    request
 }
 async fn setup(root: &Temp) -> (Ledger, Catalog, RecipeDefinition) {
     let ledger = Ledger::open(&root.0).await.unwrap();
@@ -1053,4 +1070,234 @@ async fn inherited_settings_do_not_bypass_context_validation_on_clone_or_revisio
         .await
         .unwrap();
     catalog.check().await.unwrap();
+}
+
+#[tokio::test]
+async fn seed_files_are_uploaded_or_emptied_and_kept_by_later_saves() {
+    let root = Temp::new();
+    let (_ledger, catalog, source) = setup(&root).await;
+    assert!(!source.seeds.is_empty());
+    assert_eq!(source.seed_origin, None);
+    let files = vec![
+        upload("palette.txt", "blue\n"),
+        upload("notes/plan.md", "# Plan\n"),
+    ];
+    let uploaded = |name| {
+        with_seeds(
+            clone_request(&source, name),
+            SeedSelection::Uploaded {
+                files: files.clone(),
+            },
+        )
+    };
+    // A refused set names the problem and doesn't use up the key.
+    let mut wrong = files.clone();
+    wrong[0].sha256 = "0".repeat(64);
+    let error = catalog
+        .save(
+            key("seeded"),
+            with_seeds(
+                clone_request(&source, "seeded"),
+                SeedSelection::Uploaded { files: wrong },
+            ),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "invalid_parameters");
+    assert_eq!(
+        error.0.message,
+        "Can't use these seed files: seed file \"palette.txt\" doesn't match its stated size and SHA-256."
+    );
+    let saved = catalog
+        .save(key("seeded"), uploaded("seeded"))
+        .await
+        .unwrap();
+    assert!(!saved.replayed);
+    let a = saved.definition;
+    assert_eq!(a.seed_origin, Some(SeedOrigin::Uploaded));
+    assert_eq!(
+        a.seeds,
+        [
+            RecipeSeed {
+                path: "notes/plan.md".into(),
+                size_bytes: 7,
+                sha256: files[1].sha256.clone(),
+            },
+            RecipeSeed {
+                path: "palette.txt".into(),
+                size_bytes: 5,
+                sha256: files[0].sha256.clone(),
+            },
+        ]
+    );
+    // Execution reads the frozen bytes, not the source recipe's files.
+    let (frozen, _) = catalog
+        .frozen(a.execution_recipe_id.as_str())
+        .await
+        .unwrap();
+    assert_eq!(
+        frozen.recipe.seeds,
+        std::collections::BTreeMap::from([
+            ("notes/plan.md".to_owned(), "# Plan\n".to_owned()),
+            ("palette.txt".to_owned(), "blue\n".to_owned()),
+        ])
+    );
+    assert_eq!(frozen.seed_origin, Some(SeedOrigin::Uploaded));
+    // The same key replays the save; other contents under it conflict.
+    let replay = catalog
+        .save(key("seeded"), uploaded("seeded"))
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.definition, a);
+    let changed = with_seeds(
+        clone_request(&source, "seeded"),
+        SeedSelection::Uploaded {
+            files: vec![upload("palette.txt", "red\n")],
+        },
+    );
+    assert_eq!(
+        catalog
+            .save(key("seeded"), changed)
+            .await
+            .unwrap_err()
+            .code(),
+        "idempotency_conflict"
+    );
+    // Leaving the files out keeps them, in a revision or a clone.
+    let b = catalog
+        .save(key("kept"), revise(&a, "kept"))
+        .await
+        .unwrap()
+        .definition;
+    assert_eq!((&b.seeds, b.seed_origin), (&a.seeds, a.seed_origin));
+    let copy = catalog
+        .save(key("copy"), clone_request(&b, "copy"))
+        .await
+        .unwrap()
+        .definition;
+    assert_eq!((&copy.seeds, copy.seed_origin), (&a.seeds, a.seed_origin));
+    let c = catalog
+        .save(
+            key("emptied"),
+            with_seeds(revise(&b, "emptied"), SeedSelection::Empty),
+        )
+        .await
+        .unwrap()
+        .definition;
+    assert!(c.seeds.is_empty());
+    assert_eq!(c.seed_origin, Some(SeedOrigin::Empty));
+    let d = catalog
+        .save(key("still-empty"), revise(&c, "still empty"))
+        .await
+        .unwrap()
+        .definition;
+    assert!(d.seeds.is_empty());
+    assert_eq!(d.seed_origin, Some(SeedOrigin::Empty));
+    let empty_clone = catalog
+        .save(
+            key("empty-clone"),
+            with_seeds(clone_request(&source, "empty clone"), SeedSelection::Empty),
+        )
+        .await
+        .unwrap()
+        .definition;
+    assert!(empty_clone.seeds.is_empty());
+    assert_eq!(empty_clone.seed_origin, Some(SeedOrigin::Empty));
+    // Earlier revisions and the catalog recipe keep their files and digests.
+    assert_eq!(catalog.definition(&a.execution_recipe_id).await.unwrap(), a);
+    assert_eq!(
+        catalog
+            .definition(&source.execution_recipe_id)
+            .await
+            .unwrap(),
+        source
+    );
+}
+
+#[tokio::test]
+async fn uploaded_seed_files_save_over_http_and_confirmed_receipts_drop_their_contents() {
+    let root = Temp::new();
+    let (ledger, catalog, source) = setup(&root).await;
+    let service = ServiceId::new(ledger.service_id().as_str()).unwrap();
+    let fixture = Arc::new(Fixture::with_catalog(service.clone(), catalog));
+    let token = Token::generate().unwrap();
+    let server = Server::new(fixture, token.clone())
+        .unwrap()
+        .listen("127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
+    let client = Client::connect(&server.endpoint(), token, Some(service))
+        .await
+        .unwrap();
+    assert!(
+        client
+            .capabilities()
+            .features
+            .iter()
+            .any(|f| f == RECIPE_SEED_FILES)
+    );
+    // The client reads the file; the service only ever sees its bytes.
+    let local = Temp::new();
+    std::fs::write(local.0.join("palette.txt"), "palette: blue\n").unwrap();
+    let file = playtime_client::seeds::read_seed_file(&local.0.join("palette.txt")).unwrap();
+    let pending = client
+        .prepare_recipe_save(with_seeds(
+            clone_request(&source, "uploaded"),
+            SeedSelection::Uploaded {
+                files: vec![file.clone()],
+            },
+        ))
+        .unwrap();
+    let state = Temp::new();
+    let store = RecipeSaveStore::new(&state.0);
+    let receipt = store.save(&pending, client.endpoint()).unwrap();
+    let saved = client.save_recipe(&pending).await.unwrap();
+    assert_eq!(saved.definition.seed_origin, Some(SeedOrigin::Uploaded));
+    assert_eq!(saved.definition.seeds[0].sha256, file.sha256);
+    let confirmed = store.acknowledge(&receipt, &saved).unwrap();
+    let text = std::fs::read_to_string(
+        state
+            .0
+            .join("recipe-saves")
+            .join(format!("{}.json", pending.key)),
+    )
+    .unwrap();
+    assert!(text.contains(&file.sha256));
+    assert!(!text.contains("palette: blue"));
+    assert_eq!(store.read(&pending.key).unwrap().unwrap(), confirmed);
+    assert!(store.list().unwrap().is_empty());
+    // A confirmed receipt can be looked up and acknowledged again, and
+    // recording the same request finds it. Sent again without its contents,
+    // it no longer matches the saved request.
+    let found = client.lookup_recipe_save(&confirmed.pending).await.unwrap();
+    assert!(found.replayed);
+    assert_eq!(found.definition, saved.definition);
+    store.acknowledge(&confirmed, &found).unwrap();
+    assert_eq!(store.save(&pending, client.endpoint()).unwrap(), confirmed);
+    assert_eq!(
+        client
+            .save_recipe(&confirmed.pending)
+            .await
+            .unwrap_err()
+            .api_code(),
+        Some("idempotency_conflict")
+    );
+    // Over HTTP a refusal carries only its code, so editors check the bounds
+    // before saving.
+    let mut wrong = file.clone();
+    wrong.size_bytes += 1;
+    let refused = client
+        .prepare_recipe_save(with_seeds(
+            clone_request(&source, "refused"),
+            SeedSelection::Uploaded { files: vec![wrong] },
+        ))
+        .unwrap();
+    match client.save_recipe(&refused).await {
+        Err(playtime_client::Error::Api { response, .. }) => {
+            assert_eq!(response.code, "invalid_parameters");
+            assert_eq!(response.message, "Invalid requested parameters");
+        }
+        other => panic!("expected a refusal: {other:?}"),
+    }
 }

@@ -24,6 +24,7 @@ pub struct Tag {
     pub registration_read: u64,
     pub registration: u64,
     pub registration_receipts: u64,
+    pub seed_files: u64,
 }
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Disclosure {
@@ -271,6 +272,9 @@ pub enum Action {
     SaveRecipe(RecipeMutation),
     RecoverRecipe(IdempotencyKey, bool),
     RecipeSaveReceipts,
+    /// Opens the desktop's file chooser, then reads the chosen files.
+    ChooseSeedFiles,
+    ReadSeedFiles(Vec<PathBuf>),
     Runs(Option<String>),
     RunModel(RunId, playtime_protocol::archive::ContentRef),
     Receipts(Option<IdempotencyKey>),
@@ -331,6 +335,8 @@ pub enum Data {
     RecipeSaveProgress(Mutation),
     RecipeSaved(Box<RecipeSaveResponse>),
     RecipeSaveReceipts(Vec<playtime_client::recipes::RecipeSaveReceipt>),
+    /// Each local file read for the draft, or why it couldn't be used.
+    SeedFiles(Vec<Result<SeedUpload, String>>),
     Runs(Page<RunView>),
     Receipts(Vec<LaunchReceipt>, Option<IdempotencyKey>),
     Preview(Box<PreviewView>),
@@ -602,6 +608,12 @@ impl Model {
                 Action::Preview(..) => self.previewing = false,
                 Action::SaveRecipe(_) | Action::RecoverRecipe(..) => {
                     self.authoring.save = Mutation::Unresolved(self.notice.clone())
+                }
+                Action::ChooseSeedFiles | Action::ReadSeedFiles(_) => {
+                    if let Some(draft) = &mut self.authoring.draft {
+                        draft.seeds.reading = false;
+                        draft.seeds.errors = vec![self.notice.clone()];
+                    }
                 }
                 _ => (),
             }
@@ -1040,6 +1052,10 @@ impl Model {
         {
             return;
         }
+        if matches!(&reply.data, Data::SeedFiles(_)) && reply.tag.seed_files != self.tag.seed_files
+        {
+            return;
+        }
         if matches!(reply.data, Data::Trace(..)) && reply.tag.selection != self.tag.selection {
             return;
         }
@@ -1294,6 +1310,12 @@ impl Model {
             }
             Data::RecipeSaveReceipts(receipts) => {
                 self.authoring.receipts = receipts;
+            }
+            Data::SeedFiles(files) => {
+                if let Some(draft) = &mut self.authoring.draft {
+                    draft.seeds.reading = false;
+                    draft.seeds.add(files);
+                }
             }
             Data::RecipeSaved(response) => {
                 self.authoring.save = Mutation::Accepted;

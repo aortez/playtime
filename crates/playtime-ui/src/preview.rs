@@ -267,6 +267,19 @@ pub fn prepare(value: Preview) -> PreviewView {
         thousands(value.seeds.files),
         bytes(value.seeds.bytes)
     )];
+    // Only a saved definition records where its seed files came from.
+    if config.get("definition").is_some_and(Value::is_object) {
+        let origin = config.pointer("/definition/seed_origin");
+        match origin.map(|origin| serde_json::from_value(origin.clone())) {
+            None if value.seeds.files == 0 => (),
+            None => seed_lines.push(crate::seed_files::origin_label(None).into()),
+            Some(Ok(origin)) => {
+                seed_lines.push(crate::seed_files::origin_label(Some(origin)).into())
+            }
+            Some(Err(_)) => seed_lines
+                .push("Unrecognized seed-file origin; inspect the full frozen preview.".into()),
+        }
+    }
     if let Some(seeds) = config
         .pointer("/recipe/seeds")
         .or_else(|| config.get("seeds"))

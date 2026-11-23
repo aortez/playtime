@@ -2016,3 +2016,20 @@ the run directory without records, like other input refusals. Requests that fit,
 resumed sessions, the turn's own check, records and goldens are unchanged. The
 engine now exposes the rule's size and limit, and computes `initial_fits` from
 them.
+
+## Seed-file uploads in saved recipes (2026-11-23)
+
+Clone and revise requests may add `seeds` (`recipe_seed_files_v1`) to start
+without seed files or to upload them inline. A definition whose save replaced its
+files records `seed_origin`. Catalog definitions and earlier saves omit it, so
+their bytes, digests, request JSON and keys are unchanged. The OpenAPI golden
+gains `SeedSelection`, `SeedUpload`, `SeedOrigin` and the optional `seeds` and
+`seed_origin` fields; the reviewed difference is additions only. The Docker profile digest adds a
+`recipe_seed_origin` marker, so a daemon refuses an older worker bundle; rebuild
+the static bundle when upgrading. Client save receipts may hold up to 5 MiB, and
+confirmed ones drop seed contents, so the client compares a save's echoed request
+without them. The workbench adds `rfd` 0.18.0 with only its XDG portal backend, which falls
+back to zenity.
+Eleven editor screenshots gain the collapsed **Seed files** row, and the new
+`seed-files` pair shows the open section; all were reviewed with the pinned
+renderer.

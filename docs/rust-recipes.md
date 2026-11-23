@@ -74,7 +74,8 @@ other at startup.
 The [seed bundle catalog and authoring helper](../seed-bundles/README.md) provides
 file-based create, clone, list, and validate operations. A recipe selects the
 bundle's `seeds/<id>` directory; its optional independent assessment is not sent
-to the model. The workbench still inherits these files rather than editing them.
+to the model. A saved recipe can replace them; see
+[seed files in saved recipes](#seed-files-in-saved-recipes).
 
 A recipe's seed directory is read at daemon startup and frozen into the recipe:
 at most 16 regular UTF-8 files, each at most 131,072 bytes (128 KiB), and 512 KiB
@@ -182,7 +183,8 @@ it after verified worker termination and resource cleanup; see
 Services advertise `recipe_authoring_v1`. In the workbench, select a catalog
 recipe, choose **Clone recipe**, edit its name and prompt, and **Save revision**.
 Select **Edit recipe** on a saved recipe to create its next revision. Harness
-settings, whole-run budgets, protocol, and seeds remain inherited and read-only.
+settings, whole-run budgets and protocol remain inherited and read-only. Seed
+files can be [replaced or emptied](#seed-files-in-saved-recipes).
 The [harness picker](#versioned-harness-selection-109-step-a) selects a supported
 versioned identity. The [registered model picker](#registered-model-selection)
 changes model identity in
@@ -455,3 +457,49 @@ The subsequent [smoke prompt and gate follow-up](rust-live-model.md#evidence)
 clarified command grouping and corrected the gate's text-based session selector.
 The full live CLI/workbench gate then passed with the original limits and model
 settings; its new evidence is recorded there alongside the retained failures.
+
+## Seed files in saved recipes
+
+Services that advertise `recipe_seed_files_v1` let a clone or revision replace
+its seed files. These are the files under `/work/seeds`, not the numeric sampling
+seed. The recipe editor's **Seed files** section offers three choices:
+
+- **Use source recipe files**, the default, keeps the source revision's files.
+  The request leaves out `seeds`.
+- **Start empty** saves a revision without seed files.
+- **Use uploaded files** saves the listed files. **Add files…** opens the
+  desktop's file chooser, or zenity's where no portal answers. The path field
+  takes an absolute or `~/` path, for systems with neither.
+
+The workbench reads each chosen file once, off the render thread, and lists its
+name, size and SHA-256. It refuses links, directories, special files, contents
+that aren't UTF-8 and names with control characters. Each file goes directly
+under `/work/seeds` under its own name; folders, archives and binary files aren't
+uploaded. Adding a file whose name is already listed asks whether to replace the
+listed file or skip the new one. Before saving, the editor checks the bounds: at
+most 16 files, each at most 131,072 bytes (196,608 once JSON escapes it), at most
+524,288 bytes in total, and at most half of the recipe's workspace bytes and
+entries. The service checks them again, but its HTTP refusal says only
+`invalid_parameters`.
+
+A request sends `seeds` as `{"origin": "empty"}` or as `{"origin": "uploaded",
+"files": [...]}`, each file with its relative `path`, `size_bytes`, lowercase hex
+`sha256` and exact UTF-8 `content`. The service refuses a file whose content
+doesn't match its size and digest, a repeated path, and the bounds above. It
+never reads a client path, and it keeps no upload store: the files become part
+of the immutable saved definition.
+
+A definition records `seed_origin`, `empty` or `uploaded`, once a save replaces
+its files. Later revisions and clones that leave out `seeds` keep the files and
+their origin. Catalog definitions omit the field, so existing definitions keep
+their bytes and digests. The editor and the frozen preview show the origin, the
+run archive's frozen configuration records it, and runs freeze each file's bytes
+as before.
+
+A private save receipt holds the whole request, file contents included, until
+the save is confirmed. A confirmed receipt keeps each file's path, size and
+digest but not its contents, so it's only looked up, never sent again. Receipts
+are bounded at 5 MiB.
+
+The worker profile digest includes the new definition field, so rebuild the
+static worker bundle when upgrading the daemon.

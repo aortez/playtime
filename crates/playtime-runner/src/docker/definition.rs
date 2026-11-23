@@ -3,7 +3,7 @@ use super::{IMAGE_LOCK, MODEL_LOCK, RETURN_OVERHEAD_MS, Recipe};
 use crate::{Error, Result};
 use playtime_protocol::api::{
     CONTINUOUS_COMPACTION_V1, MEMENTO_TURNS_V1, RecipeDefinition, RecipeId, RecipeSeed,
-    RecipeSource, SavedRecipe,
+    RecipeSource, SavedRecipe, SeedOrigin, SeedSelection,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,6 +24,10 @@ pub struct FrozenRecipe {
     /// Selected immutable authority. model_lock remains the base recipe provenance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_registration: Option<playtime_protocol::api::RegisteredModel>,
+    /// Set when a save emptied or uploaded the seed files. Catalog files leave
+    /// it absent, so their definitions keep their bytes and digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_origin: Option<SeedOrigin>,
 }
 /// Harness-specific inputs frozen at selection, independent of the source's
 /// inactive memento instructions and allocations.
@@ -119,9 +123,51 @@ impl FrozenRecipe {
             source: None,
             model_capabilities: None,
             model_registration: None,
+            seed_origin: None,
         };
         value.validate()?;
         Ok(value)
+    }
+    /// Replaces the seed files with a save's explicit selection. Each upload
+    /// must match its stated size and digest, and the set must fit the recipe's
+    /// bounds. The error says which file or bound failed.
+    pub fn select_seeds(&mut self, selection: &SeedSelection) -> std::result::Result<(), String> {
+        let (seeds, origin) = match selection {
+            SeedSelection::Empty => (Default::default(), SeedOrigin::Empty),
+            SeedSelection::Uploaded { files } => {
+                if files.is_empty() {
+                    return Err("an uploaded seed set needs at least one file".into());
+                }
+                let mut seeds = std::collections::BTreeMap::new();
+                for file in files {
+                    if file.content.len() as u64 != file.size_bytes
+                        || playtime_storage::sha256(file.content.as_bytes()).to_string()
+                            != file.sha256
+                    {
+                        return Err(format!(
+                            "seed file {:?} doesn't match its stated size and SHA-256",
+                            file.path
+                        ));
+                    }
+                    if seeds
+                        .insert(file.path.clone(), file.content.clone())
+                        .is_some()
+                    {
+                        return Err(format!("seed path {:?} appears more than once", file.path));
+                    }
+                }
+                (seeds, SeedOrigin::Uploaded)
+            }
+        };
+        let mut recipe = self.recipe.clone();
+        recipe.seeds = seeds;
+        let workspace = recipe.parameters.workshop.workspace_bytes.get();
+        if let Some(problem) = recipe.seed_problem(workspace).map_err(|e| e.to_string())? {
+            return Err(problem);
+        }
+        self.recipe = recipe;
+        self.seed_origin = Some(origin);
+        Ok(())
     }
     /// Structural validation intentionally does not require current identities.
     pub fn validate(&self) -> Result<()> {
@@ -161,6 +207,15 @@ impl FrozenRecipe {
         } else {
             self.recipe
                 .check_for_harness(false, self.compaction.is_some())?;
+        }
+        // Only a save records an origin, and the origin must describe the files.
+        if self.seed_origin.is_some() && self.source.is_none()
+            || self.seed_origin == Some(SeedOrigin::Empty) && !self.recipe.seeds.is_empty()
+            || self.seed_origin == Some(SeedOrigin::Uploaded) && self.recipe.seeds.is_empty()
+        {
+            return Err(Error::Invalid(
+                "seed origin contradicts the seed files".into(),
+            ));
         }
         if let Some(c) = &self.model_capabilities {
             // Retained evidence belongs to its own lock, not whichever model
@@ -234,6 +289,7 @@ impl FrozenRecipe {
     pub fn view(&self, saved: Option<SavedRecipe>) -> Result<RecipeDefinition> {
         self.validate()?;
         let mut inherited = serde_json::to_value(self)?;
+        inherited.as_object_mut().unwrap().remove("seed_origin");
         let recipe = inherited["recipe"].as_object_mut().unwrap();
         for field in ["id", "name", "prompt", "seeds"] {
             recipe.remove(field);
@@ -258,6 +314,7 @@ impl FrozenRecipe {
                     sha256: playtime_storage::sha256(content.as_bytes()).to_string(),
                 })
                 .collect(),
+            seed_origin: self.seed_origin,
         })
     }
 }

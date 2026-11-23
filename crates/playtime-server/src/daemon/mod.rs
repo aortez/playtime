@@ -708,6 +708,7 @@ impl Application for Daemon {
                 MODEL_SETTINGS.into(),
                 RECIPE_MODEL_SELECTION.into(),
                 RECIPE_MODEL_EXECUTION.into(),
+                RECIPE_SEED_FILES.into(),
                 "keyed_launch".into(),
                 "event_stream".into(),
                 "verified_artifacts".into(),

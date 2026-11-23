@@ -455,3 +455,20 @@ with reasons `selected_model_unsupported`, `selected_model_missing_or_changed`, 
 `model_unavailable`. Accepted launch keys still replay the original admission.
 Synthetic HTTP/UI tests establish no native capability or inference support.
 See [registered model selection](rust-recipes.md#registered-model-selection).
+
+### Seed-file authoring
+
+`recipe_seed_files_v1` adds optional `seeds` to clone/revise requests:
+`{"origin": "empty"}`, or `{"origin": "uploaded", "files": [...]}` with each file's
+relative `path`, `size_bytes`, lowercase hex `sha256` and exact UTF-8 `content`.
+Omission keeps the source revision's files. The service checks each file against
+its stated size and digest, refuses repeated paths, and applies the recipe's seed
+bounds inside the save transaction. A refusal is `invalid_parameters` (422) with
+the generic message, without moving the head or accepting the key, so clients
+check the bounds before sending; `SEED_FILES` and the related protocol constants
+name them. The saved definition gains `seed_origin` (`empty` or `uploaded`),
+which catalog definitions omit, so their bytes and digests are unchanged. The
+save response echoes the request, contents included, and the definition lists
+each file's size and digest. Confirmed client receipts drop the contents and are
+only looked up. Old request JSON without `seeds` is unchanged, and the ledger stays
+at 7. See [seed files in saved recipes](rust-recipes.md#seed-files-in-saved-recipes).

@@ -682,6 +682,7 @@ async fn ledger_seven_adds_empty_registry_without_rewriting_saved_recipes() {
             key("saved"),
             RecipeMutation::Clone {
                 request: CloneRecipeRequest {
+                    seeds: None,
                     compaction: None,
                     harness: None,
                     model_registration: None,
