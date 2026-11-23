@@ -239,6 +239,7 @@ async fn main() -> Result<()> {
     settings.reasoning = RecipeReasoning::Off;
     let pending = client.prepare_recipe_save(RecipeMutation::Clone {
         request: CloneRecipeRequest {
+            seeds: None,
             compaction: continuous.then(|| CompactionSettings { summary_tokens: 512, instructions: "Summarize the checked progress in at most 300 characters. Preserve the task, next command and any uncertainty. Return only the summary; no tools.".into(), ..Default::default() }),
             harness: Some(HarnessId::new(if continuous { CONTINUOUS_COMPACTION_V1 } else { MEMENTO_TURNS_V1 })?),
             source: RecipeSource {

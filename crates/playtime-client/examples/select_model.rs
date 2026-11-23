@@ -48,6 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source = client.recipe_definition(&RecipeId::new(&args[1])?).await?;
     let pending = client.prepare_recipe_save(RecipeMutation::Clone {
         request: CloneRecipeRequest {
+            seeds: None,
             compaction: None,
             harness: None,
             source: RecipeSource {

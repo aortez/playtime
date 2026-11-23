@@ -19,6 +19,7 @@ fn clone(
 ) -> RecipeMutation {
     RecipeMutation::Clone {
         request: CloneRecipeRequest {
+            seeds: None,
             compaction: None,
             harness: None,
             source: RecipeSource {
@@ -36,6 +37,7 @@ fn revise(source: &RecipeDefinition) -> RecipeMutation {
     RecipeMutation::Revise {
         recipe_id: source.saved.as_ref().unwrap().recipe_id.clone(),
         request: ReviseRecipeRequest {
+            seeds: None,
             compaction: None,
             harness: None,
             expected_head: source.execution_recipe_id.clone(),

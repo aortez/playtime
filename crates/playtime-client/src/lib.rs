@@ -8,6 +8,7 @@ pub use checkpoints::CheckpointIndexRead;
 mod events;
 pub mod recipes;
 pub mod report;
+pub mod seeds;
 pub mod state;
 pub mod words;
 pub mod workspace;

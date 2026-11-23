@@ -14,8 +14,8 @@ daemon.
 
 A service with `recipe_authoring_v1` enables **Clone recipe** and **Edit recipe**.
 The editor changes the name, prompt, versioned harness selection, registered model
-selection and supported model settings. Whole-run budgets, protocol and seeds stay
-read-only. Model settings include
+selection, supported model settings and, with `recipe_seed_files_v1`, seed files.
+Whole-run budgets and protocol stay read-only. Model settings include
 reasoning, sampling, context capacity and ordinary-response/handoff caps; reset
 buttons restore values from when editing began and changes remain visible. Save creates an immutable revision and refreshes its execution preview.
 **Refresh recipes** updates listed heads without replacing the selected execution
@@ -23,10 +23,23 @@ revision. Save receipts have their own recovery controls and persist across UI
 restarts; unsaved text does not. Editing remains available when execution preview
 reports unavailable Docker or Ollama. See [saved recipes](rust-recipes.md#saved-recipes-and-prompt-editing).
 
+The **Seed files** section keeps the source files, starts empty, or uses uploaded
+files. **Add files…** opens the desktop file chooser through the XDG portal (the
+`rfd` crate, which loads the system's libdbus at run time), or zenity's where no
+portal answers; the path field covers systems with neither. The backend reads and
+hashes each file off the render thread, and a reply for a discarded draft is
+ignored. A name that is already listed waits for **Replace** or **Skip**, and the
+editor checks the counts and sizes before saving. The saved definition and preview
+state where the files came from, and the run archive records it. See
+[seed files in saved recipes](rust-recipes.md#seed-files-in-saved-recipes).
+
 Reviewed editor views: [wide](../crates/playtime-ui/tests/snapshots/recipe-editor.png)
 and [narrow](../crates/playtime-ui/tests/snapshots/recipe-editor-narrow.png).
 The model settings form has separate [wide](../crates/playtime-ui/tests/snapshots/model-settings.png)
 and [narrow](../crates/playtime-ui/tests/snapshots/model-settings-narrow.png) views.
+The seed-file section with uploaded files, an unreadable file and a repeated name
+has [wide](../crates/playtime-ui/tests/snapshots/seed-files.png) and
+[narrow](../crates/playtime-ui/tests/snapshots/seed-files-narrow.png) views.
 
 ## Installed model browser
 

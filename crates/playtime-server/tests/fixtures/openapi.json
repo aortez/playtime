@@ -661,6 +661,17 @@
           "prompt": {
             "type": "string"
           },
+          "seeds": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeedSelection",
+                "description": "Omission keeps the source revision's seed files."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source": {
             "$ref": "#/components/schemas/RecipeSource"
           }
@@ -2405,6 +2416,17 @@
             "minimum": 0,
             "type": "integer"
           },
+          "seed_origin": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeedOrigin",
+                "description": "Absent when the seed files are the catalog recipe's own."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "seeds": {
             "items": {
               "$ref": "#/components/schemas/RecipeSeed"
@@ -2985,6 +3007,17 @@
           },
           "prompt": {
             "type": "string"
+          },
+          "seeds": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SeedSelection",
+                "description": "Omission keeps the previous revision's seed files."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3268,6 +3301,55 @@
         ],
         "type": "object"
       },
+      "SeedOrigin": {
+        "description": "Where a definition's seed files came from when they aren't its catalog\nrecipe's files.",
+        "enum": [
+          "empty",
+          "uploaded"
+        ],
+        "type": "string"
+      },
+      "SeedSelection": {
+        "description": "Replaces the source revision's seed files. These are the files under\n`/work/seeds`, not the numeric sampling seed.",
+        "oneOf": [
+          {
+            "properties": {
+              "origin": {
+                "enum": [
+                  "empty"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "origin"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "At least one file. Each one is sent whole, so the service never reads a\nclient path.",
+            "properties": {
+              "files": {
+                "items": {
+                  "$ref": "#/components/schemas/SeedUpload"
+                },
+                "type": "array"
+              },
+              "origin": {
+                "enum": [
+                  "uploaded"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "files",
+              "origin"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "SeedSummary": {
         "properties": {
           "bytes": {
@@ -3291,6 +3373,36 @@
           "files",
           "bytes",
           "digests"
+        ],
+        "type": "object"
+      },
+      "SeedUpload": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "The file's exact UTF-8 text.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Relative path under `/work/seeds`.",
+            "type": "string"
+          },
+          "sha256": {
+            "description": "Lowercase hex SHA-256 of `content`. The service refuses a mismatch.",
+            "type": "string"
+          },
+          "size_bytes": {
+            "description": "Byte length of `content`. The service refuses a mismatch.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "size_bytes",
+          "sha256",
+          "content"
         ],
         "type": "object"
       },

@@ -9,7 +9,19 @@ pub const MODEL_SETTINGS: &str = "recipe_model_settings_v1";
 
 pub const RECIPE_AUTHORING: &str = "recipe_authoring_v1";
 
+/// Saves may replace a recipe's seed files with an empty or uploaded set.
+pub const RECIPE_SEED_FILES: &str = "recipe_seed_files_v1";
+
 pub const RECIPE_CONTEXT_CEILING: u64 = 131_072;
+
+/// Seed-file bounds that clients can check before sending a set. The service
+/// also keeps a set within half of the recipe's workspace.
+pub const SEED_FILES: usize = 16;
+pub const SEED_FILE_BYTES: usize = 131_072;
+/// A file's bound once JSON escapes its control characters.
+pub const SEED_ENCODED_BYTES: usize = 196_608;
+pub const SEED_BYTES: usize = 524_288;
+pub const SEED_PATH_BYTES: usize = 200;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -37,6 +49,43 @@ pub struct RecipeSeed {
     pub sha256: String,
 }
 
+/// Where a definition's seed files came from when they aren't its catalog
+/// recipe's files.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SeedOrigin {
+    /// A save chose to start without seed files.
+    Empty,
+    /// A save replaced the files with ones a client uploaded.
+    Uploaded,
+}
+
+/// Replaces the source revision's seed files. These are the files under
+/// `/work/seeds`, not the numeric sampling seed.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "origin", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SeedSelection {
+    Empty,
+    /// At least one file. Each one is sent whole, so the service never reads a
+    /// client path.
+    Uploaded {
+        files: Vec<SeedUpload>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SeedUpload {
+    /// Relative path under `/work/seeds`.
+    pub path: String,
+    /// Byte length of `content`. The service refuses a mismatch.
+    pub size_bytes: u64,
+    /// Lowercase hex SHA-256 of `content`. The service refuses a mismatch.
+    pub sha256: String,
+    /// The file's exact UTF-8 text.
+    pub content: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RecipeDefinition {
@@ -51,6 +100,9 @@ pub struct RecipeDefinition {
     #[schema(value_type = Object)]
     pub inherited: Value,
     pub seeds: Vec<RecipeSeed>,
+    /// Absent when the seed files are the catalog recipe's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_origin: Option<SeedOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_registration: Option<ModelRegistrationSummary>,
 }
@@ -73,6 +125,9 @@ pub struct CloneRecipeRequest {
     /// Omission inherits the source revision's model. Selecting a different registration defaults context to its reviewed window unless model_settings is supplied; other settings are inherited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_registration: Option<ModelRegistrationId>,
+    /// Omission keeps the source revision's seed files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeds: Option<SeedSelection>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -93,6 +148,18 @@ pub struct ReviseRecipeRequest {
     /// Omission inherits the source revision's model. Selecting a different registration defaults context to its reviewed window unless model_settings is supplied; other settings are inherited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_registration: Option<ModelRegistrationId>,
+    /// Omission keeps the previous revision's seed files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeds: Option<SeedSelection>,
+}
+
+impl RecipeMutation {
+    pub fn seeds(&self) -> Option<&SeedSelection> {
+        match self {
+            Self::Clone { request } => request.seeds.as_ref(),
+            Self::Revise { request, .. } => request.seeds.as_ref(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]

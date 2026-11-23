@@ -398,6 +398,13 @@ fn save_recipe(
             .apply_model_settings(settings)
             .map_err(settings_error)?;
     }
+    if let Some(selection) = request.seeds() {
+        definition.select_seeds(selection).map_err(|problem| {
+            let mut error = invalid();
+            error.0.message = format!("Can't use these seed files: {problem}.");
+            error
+        })?;
+    }
     definition.validate().map_err(|_| invalid())?;
     definition
         .check_model_settings(&definition.model_settings().map_err(settings_error)?)
@@ -781,6 +788,7 @@ mod tests {
             .unwrap();
         let request = RecipeMutation::Clone {
             request: CloneRecipeRequest {
+                seeds: None,
                 compaction: None,
                 harness: None,
                 model_registration: None,

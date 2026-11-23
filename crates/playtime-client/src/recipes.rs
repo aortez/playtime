@@ -67,7 +67,7 @@ impl Client {
         .await
     }
     pub fn prepare_recipe_save(&self, request: RecipeMutation) -> Result<PendingRecipeSave> {
-        self.check_harness_selection(&request)?;
+        self.check_request_features(&request)?;
         let mut bytes = [0; 24];
         getrandom::fill(&mut bytes).map_err(|_| Error::Io)?;
         Ok(PendingRecipeSave {
@@ -89,7 +89,7 @@ impl Client {
     }
     pub async fn save_recipe(&self, pending: &PendingRecipeSave) -> Result<RecipeSaveResponse> {
         self.check_recipe_save(pending)?;
-        self.check_harness_selection(&pending.request)?;
+        self.check_request_features(&pending.request)?;
         let request = match &pending.request {
             RecipeMutation::Clone { request } => {
                 self.request(Method::POST, "saved-recipes").json(request)
@@ -117,12 +117,15 @@ impl Client {
         validate_save(&response, pending)?;
         Ok(response)
     }
-    fn check_harness_selection(&self, request: &RecipeMutation) -> Result<()> {
-        check_harness_features(&self.capabilities().features, request)
+    fn check_request_features(&self, request: &RecipeMutation) -> Result<()> {
+        check_request_features(&self.capabilities().features, request)
     }
 }
-/// Refuses harness fields that the service doesn't advertise.
-fn check_harness_features(features: &[String], request: &RecipeMutation) -> Result<()> {
+/// Refuses harness and seed-file fields that the service doesn't advertise.
+fn check_request_features(features: &[String], request: &RecipeMutation) -> Result<()> {
+    if request.seeds().is_some() && !features.iter().any(|f| f == RECIPE_SEED_FILES) {
+        return Err(Error::UnsupportedCapability);
+    }
     if (compaction_settings(request).is_some()
         || selected_harness(request).is_some_and(|id| id.as_str() == CONTINUOUS_COMPACTION_V1))
         && !features.iter().any(|f| f == RECIPE_COMPACTION_SETTINGS)
@@ -181,8 +184,10 @@ fn validate_definition(value: &RecipeDefinition) -> Result<()> {
         || value.name.len() > 128
         || value.prompt.len() > 65536
         || !value.inherited.is_object()
-        || value.seeds.len() > 16
+        || value.seeds.len() > SEED_FILES
         || value.seeds.iter().any(|s| !is_digest(&s.sha256))
+        || value.seed_origin == Some(SeedOrigin::Empty) && !value.seeds.is_empty()
+        || value.seed_origin == Some(SeedOrigin::Uploaded) && value.seeds.is_empty()
         || value.model_registration.as_ref().is_some_and(|m| {
             !m.identity.valid()
                 || serde_json::to_value(m).ok().as_ref()
@@ -219,9 +224,11 @@ fn validate_save(response: &RecipeSaveResponse, pending: &PendingRecipeSave) -> 
     let definition = &response.definition;
     let saved = definition.saved.as_ref().ok_or(Error::InvalidResponse)?;
     let source = definition.source.as_ref().ok_or(Error::InvalidResponse)?;
+    // A confirmed receipt keeps no seed contents. The definition's seed list
+    // still has to match each file's size and digest below.
     if response.service_id != pending.service_id
         || response.key != pending.key
-        || response.request != pending.request
+        || without_contents(&response.request) != without_contents(&pending.request)
     {
         return Err(Error::InvalidResponse);
     }
@@ -279,6 +286,27 @@ fn validate_save(response: &RecipeSaveResponse, pending: &PendingRecipeSave) -> 
     if &definition.name != name || &definition.prompt != prompt {
         return Err(Error::InvalidResponse);
     }
+    let seeds_match = match pending.request.seeds() {
+        None => true,
+        Some(SeedSelection::Empty) => {
+            definition.seeds.is_empty() && definition.seed_origin == Some(SeedOrigin::Empty)
+        }
+        Some(SeedSelection::Uploaded { files }) => {
+            let mut sent: Vec<_> = files
+                .iter()
+                .map(|f| RecipeSeed {
+                    path: f.path.clone(),
+                    size_bytes: f.size_bytes,
+                    sha256: f.sha256.clone(),
+                })
+                .collect();
+            sent.sort_by(|a, b| a.path.cmp(&b.path));
+            definition.seeds == sent && definition.seed_origin == Some(SeedOrigin::Uploaded)
+        }
+    };
+    if !seeds_match {
+        return Err(Error::InvalidResponse);
+    }
     Ok(())
 }
 
@@ -320,6 +348,35 @@ impl RecipeSaveReceipt {
         Ok(())
     }
 }
+/// A receipt holds its whole request, seed files included, until the save is
+/// confirmed. The service accepts requests of up to 4 MiB.
+const RECEIPT_BYTES: u64 = 5 << 20;
+
+/// A request with each uploaded seed file's path, size and digest but not its
+/// contents.
+fn without_contents(request: &RecipeMutation) -> RecipeMutation {
+    let mut request = request.clone();
+    let seeds = match &mut request {
+        RecipeMutation::Clone { request } => &mut request.seeds,
+        RecipeMutation::Revise { request, .. } => &mut request.seeds,
+    };
+    if let Some(SeedSelection::Uploaded { files }) = seeds {
+        for file in files {
+            file.content.clear();
+        }
+    }
+    request
+}
+
+/// A confirmed save is only looked up, never sent again, so its receipt drops
+/// the seed contents.
+fn confirmed(pending: &PendingRecipeSave) -> PendingRecipeSave {
+    PendingRecipeSave {
+        request: without_contents(&pending.request),
+        ..pending.clone()
+    }
+}
+
 pub struct RecipeSaveStore {
     directory: PathBuf,
 }
@@ -343,7 +400,12 @@ impl RecipeSaveStore {
         let directory = self.open(true)?;
         let _lock = directory.lock()?;
         if let Some(old) = read(&directory, &pending.key)? {
-            if old.pending != *pending {
+            let same = if old.saved_execution.is_some() {
+                old.pending == confirmed(pending)
+            } else {
+                old.pending == *pending
+            };
+            if !same {
                 return Err(StateError::Conflict);
             }
             return Ok(old);
@@ -357,7 +419,7 @@ impl RecipeSaveStore {
             saved_execution: None,
         };
         let bytes = serde_json::to_vec(&receipt).map_err(|_| StateError::Invalid)?;
-        if bytes.len() > 1 << 20 {
+        if bytes.len() as u64 > RECEIPT_BYTES {
             return Err(StateError::Invalid);
         }
         directory.write_new(&format!("{}.json", pending.key), &bytes)?;
@@ -380,7 +442,7 @@ impl RecipeSaveStore {
         let directory = self.open(false)?;
         let _lock = directory.lock()?;
         let mut stored = read(&directory, &receipt.pending.key)?.ok_or(StateError::Invalid)?;
-        if stored.pending != receipt.pending
+        if confirmed(&stored.pending) != confirmed(&receipt.pending)
             || stored
                 .saved_execution
                 .as_ref()
@@ -388,6 +450,7 @@ impl RecipeSaveStore {
         {
             return Err(StateError::Conflict);
         }
+        stored.pending = confirmed(&stored.pending);
         stored.saved_execution = Some(response.definition.execution_recipe_id.clone());
         directory.replace(
             &format!("{}.json", receipt.pending.key),
@@ -443,7 +506,7 @@ fn read(
     directory: &PrivateDirectory,
     key: &IdempotencyKey,
 ) -> std::result::Result<Option<RecipeSaveReceipt>, StateError> {
-    let bytes = match directory.read(&format!("{key}.json"), 1 << 20) {
+    let bytes = match directory.read(&format!("{key}.json"), RECEIPT_BYTES) {
         Ok(b) => b,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
@@ -468,6 +531,7 @@ mod tests {
         let revise = |allow_finish_run| RecipeMutation::Revise {
             recipe_id: RecipeId::new("continuous").unwrap(),
             request: ReviseRecipeRequest {
+                seeds: None,
                 compaction: Some(CompactionSettings {
                     allow_finish_run,
                     ..Default::default()
@@ -481,12 +545,37 @@ mod tests {
             },
         };
         let older = [RECIPE_COMPACTION_SETTINGS.to_owned()];
-        check_harness_features(&older, &revise(true)).unwrap();
+        check_request_features(&older, &revise(true)).unwrap();
         assert!(matches!(
-            check_harness_features(&older, &revise(false)),
+            check_request_features(&older, &revise(false)),
             Err(Error::UnsupportedCapability)
         ));
         let current = [older[0].clone(), RECIPE_COMPACTION_FINISH.to_owned()];
-        check_harness_features(&current, &revise(false)).unwrap();
+        check_request_features(&current, &revise(false)).unwrap();
+    }
+    #[test]
+    fn seed_files_need_a_service_that_offers_them() {
+        let clone = |seeds| RecipeMutation::Clone {
+            request: CloneRecipeRequest {
+                compaction: None,
+                harness: None,
+                model_registration: None,
+                model_settings: None,
+                source: RecipeSource {
+                    execution_recipe_id: RecipeId::new("curiosity").unwrap(),
+                    definition_digest: "a".repeat(64),
+                },
+                name: "Seeded".into(),
+                prompt: "Explore.".into(),
+                seeds,
+            },
+        };
+        check_request_features(&[], &clone(None)).unwrap();
+        assert!(matches!(
+            check_request_features(&[], &clone(Some(SeedSelection::Empty))),
+            Err(Error::UnsupportedCapability)
+        ));
+        let current = [RECIPE_SEED_FILES.to_owned()];
+        check_request_features(&current, &clone(Some(SeedSelection::Empty))).unwrap();
     }
 }

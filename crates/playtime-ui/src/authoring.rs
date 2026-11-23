@@ -24,6 +24,7 @@ pub struct Draft {
     pub prompt: String,
     pub settings: Option<crate::model_settings::SettingsDraft>,
     pub model_registration: Option<ModelRegistrationSummary>,
+    pub seeds: crate::seed_files::Draft,
 }
 impl Draft {
     pub fn continuous(&self) -> bool {
@@ -94,6 +95,7 @@ impl Draft {
                     expected_head: self.original.execution_recipe_id.clone(),
                     name: self.name.clone(),
                     prompt: self.prompt.clone(),
+                    seeds: self.seeds.selection()?,
                 },
             }
         } else {
@@ -112,6 +114,7 @@ impl Draft {
                     },
                     name: self.name.clone(),
                     prompt: self.prompt.clone(),
+                    seeds: self.seeds.selection()?,
                 },
             }
         };
@@ -174,7 +177,10 @@ impl Model {
                     .settings
                     .clone()
                     .map(crate::model_settings::SettingsDraft::new),
+                seeds: crate::seed_files::Draft::new(&view.value),
             });
+            // Files read for an earlier draft don't belong to this one.
+            self.tag.seed_files += 1;
             self.preview = None;
             if self.authoring.model_selection_enabled {
                 self.refresh_registrations();
@@ -197,9 +203,28 @@ impl Model {
             return;
         }
         self.authoring.draft = None;
+        self.tag.seed_files += 1;
         if let Some(recipe) = self.recipe.clone() {
             self.choose_recipe(recipe, self.mode);
         }
+    }
+    /// Asks the backend to read local files into the draft's upload list.
+    pub fn read_seed_files(&mut self, request: crate::seed_files::Request) {
+        if self.authoring.pending() {
+            return;
+        }
+        let Some(draft) = &mut self.authoring.draft else {
+            return;
+        };
+        if draft.seeds.reading {
+            return;
+        }
+        draft.seeds.reading = true;
+        draft.seeds.errors.clear();
+        self.command(match request {
+            crate::seed_files::Request::Choose => Action::ChooseSeedFiles,
+            crate::seed_files::Request::Read(paths) => Action::ReadSeedFiles(paths),
+        });
     }
 }
 
@@ -287,6 +312,11 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
             .max_height(180.0)
             .show(ui, |ui| {
                 ui.monospace(&definition.inherited);
+                if !definition.value.seeds.is_empty() || definition.value.seed_origin.is_some() {
+                    ui.label(crate::seed_files::origin_label(
+                        definition.value.seed_origin,
+                    ));
+                }
                 for seed in &definition.value.seeds {
                     ui.label(format!(
                         "{} · {} bytes · {}",
@@ -393,6 +423,13 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
                 });
         });
         ui.label(format!("{} / 65,536 prompt bytes", draft.prompt.len()));
+        let seed_request = crate::seed_files::draw(
+            ui,
+            &mut draft.seeds,
+            &definition.value.seeds,
+            definition.value.seed_origin,
+            busy,
+        );
         if model.authoring.model_selection_enabled {
             if model.registrations.loading {
                 ui.label("Reading registered model choices…");
@@ -430,6 +467,9 @@ pub fn draw(model: &mut Model, ui: &mut egui::Ui) {
             draft.clone = true;
         }
         let valid = draft.valid();
+        if let Some(request) = seed_request {
+            model.read_seed_files(request);
+        }
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(!busy && valid, egui::Button::new("Save revision"))
