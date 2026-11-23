@@ -119,6 +119,15 @@ impl ConversationConfig {
         crate::policy::validate_chat_history(self, &saved.history)
     }
 
+    /// A new conversation's first context as `Controller::chat` checks it: its size
+    /// in encoded bytes, which count as tokens until the model has replied once,
+    /// and the bound that size must stay under. Callers use it to refuse an input
+    /// before acquiring a model.
+    pub fn initial_context(&self, input: &str) -> Result<(u64, u64), InvalidValue> {
+        let runtime = self.runtime(input, None)?;
+        crate::policy::Policy::initial_context(runtime.compaction.as_ref().unwrap())
+    }
+
     pub(crate) fn runtime(
         &self,
         input: &str,

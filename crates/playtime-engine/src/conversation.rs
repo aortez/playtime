@@ -110,11 +110,26 @@ impl ContextPolicy {
         &self.tools
     }
 
+    /// Encoded bytes of these initial messages with the tools. Until a model reply
+    /// calibrates the context, `initial_fits` counts each byte as a token.
+    pub fn initial_size(&self, messages: &[Value]) -> u64 {
+        encoded_size(&json!({"messages":messages, "tools":self.tools}))
+    }
+
+    /// `initial_fits` admits an initial size under this bound, which leaves room for
+    /// one reply below the compaction trigger and beside the work reserve.
+    pub fn initial_limit(&self) -> u64 {
+        let context = self.limits.context_tokens.get();
+        let reply = self.limits.tokens_per_call.get();
+        let trigger = self.settings.threshold(context).saturating_sub(reply);
+        let reserve = context
+            .saturating_sub(reply)
+            .saturating_sub(work_reserve(&self.limits, &self.settings));
+        trigger.min(reserve)
+    }
+
     pub fn initial_fits(&self, messages: &[Value]) -> bool {
-        let input = encoded_size(&json!({"messages":messages, "tools":self.tools}));
-        let projected = input.saturating_add(self.limits.tokens_per_call.get());
-        projected < self.settings.threshold(self.limits.context_tokens.get())
-            && self.fits_reserve(projected)
+        self.initial_size(messages) < self.initial_limit()
     }
 
     pub fn plan(&self, history: &impl History, context: &ContextWindow, budget: Budget) -> Plan {

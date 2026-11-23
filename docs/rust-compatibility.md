@@ -2000,3 +2000,19 @@ slow was killed and reported `unresolved` before. Every profile's `--describe-la
 budget grows by 15 seconds, to 255 for `framework-gyro-m-fast`. The wrapper also
 takes each cleanup wait from the constants its budget sums, instead of repeating
 them as literals.
+
+## First-turn context check before inference (2026-11-22)
+
+`playtime-task` now applies a new session's first-turn context rule before it
+records anything, reaches Docker or contacts the endpoint. So `--check-inputs`,
+and with it the wrapper's input check, refuses a request whose initial context
+can't fit. Before, the first turn refused it only after the wrapper had acquired
+the model, and the failed client then made the launcher shut down a warm model.
+The rule is unchanged: until the model has replied once, each encoded byte of the
+instructions, request and tools counts as a token, and with one reply that must
+stay below the compaction trigger and inside the context's reserves. The refusal
+names the size and the limit, 114,688 bytes on `framework-gyro-m-fast`, and leaves
+the run directory without records, like other input refusals. Requests that fit,
+resumed sessions, the turn's own check, records and goldens are unchanged. The
+engine now exposes the rule's size and limit, and computes `initial_fits` from
+them.
