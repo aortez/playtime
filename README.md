@@ -42,9 +42,10 @@ rustup target add x86_64-unknown-linux-musl --toolchain 1.94.1
 defaults, data lives in `/home/data2/playtime` and the connection file is
 `/home/data2/playtime/root/.playtime/connection.json`. `./go.sh --help` lists the
 data-directory, target configuration, and unit settings. By default the launcher
-loads `config/inference-targets.example.json`, with Bird and Framework available
-in the inference-target picker. Set `PLAYTIME_TARGETS` to use another JSON file,
-or `PLAYTIME_OLLAMA` for the legacy single-endpoint workflow (not both).
+loads `config/inference-targets.example.json`, with Framework's Strata host in the
+inference-target picker; each run holds it through the chat launcher, which
+`go.sh` installs beside the worker bundle. Set `PLAYTIME_TARGETS` to use another
+JSON file, or `PLAYTIME_OLLAMA` for the legacy single-endpoint workflow (not both).
 
 ```sh
 ./go.sh --no-build   # Reopen the workbench using the existing build.

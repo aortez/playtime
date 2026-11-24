@@ -122,8 +122,9 @@ of the model host (#67, #70).
 `./go.sh` builds the worker bundle and the binaries from its checkout, starts
 the daemon as the user unit `playtimed-go` with its data under
 `/home/data2/playtime`, and opens the workbench. The daemon keeps running when
-the workbench closes, and the script won't restart it while a run is going,
-since a daemon from another build may not be able to follow the run.
+the workbench closes, and the script won't restart it while a run is starting
+or going: a daemon from another build may not be able to follow the run, and a
+Strata run loses its host when the daemon that holds it stops.
 `./go.sh --no-build` reopens the workbench, `./go.sh --stop` stops the daemon
 between runs, and `./go.sh --help` lists its settings.
 

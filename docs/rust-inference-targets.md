@@ -1,18 +1,20 @@
 # Named inference targets
 
-Playtime can use multiple configured Ollama machines from one daemon. Choose the
-inference target for each launch; the recipe still owns its exact model identity,
-harness, prompt, sampling settings, context, seeds and budgets. The Docker
-workshop stays on the controller machine. Selecting a target does not move tools
-or workspace files to the inference host.
+Playtime can use multiple configured inference machines from one daemon: Ollama
+endpoints, and [Strata hosts](#strata-targets) that the daemon holds for each run
+through the chat launcher. Choose the inference target for each launch; the
+recipe still owns its exact model identity, harness, prompt, sampling settings,
+context, seeds and budgets. The Docker workshop stays on the controller machine.
+Selecting a target does not move tools or workspace files to the inference host.
 
 ## Configure and launch
 
-`./go.sh` builds and starts the workbench with the Bird/Framework example
-configuration by default. Use `PLAYTIME_TARGETS=/absolute/targets.json ./go.sh`
-for a custom configuration. `PLAYTIME_OLLAMA=http://host:11434 ./go.sh` retains
-the legacy single-endpoint workflow; do not set both variables. An already
-running daemon opened with `--no-build` keeps its existing configuration.
+`./go.sh` builds and starts the workbench with the example configuration by
+default, which holds Framework's Strata host. Use
+`PLAYTIME_TARGETS=/absolute/targets.json ./go.sh` for a custom configuration.
+`PLAYTIME_OLLAMA=http://host:11434 ./go.sh` retains the legacy single-endpoint
+workflow; do not set both variables. An already running daemon opened with
+`--no-build` keeps its existing configuration.
 
 The normal workbench lists runs from its persistent main service root. Earlier
 experiments may have separate histories: `./go.sh --no-build --history` lists
@@ -25,15 +27,17 @@ builds refuse it. Open a copy to keep an evidence root unchanged.
 Use the printed history-specific stop command to stop its daemon between runs.
 
 Start with [`config/inference-targets.example.json`](../config/inference-targets.example.json).
-It defines `bird` (RTX 4090) and `framework` (Radeon 8060S). Copy it to your own
-configuration and adjust endpoints or add machines. The format is versioned JSON,
-limited to 16 unique target IDs and 64 KiB. The providers are `ollama` and
+It defines `framework`, a [Strata target](#strata-targets) for the chat
+launcher's `framework-gyro-m-fast` profile. Copy it to your own configuration to
+add machines. The format is versioned JSON, limited to 16 unique target IDs and
+64 KiB. The providers are `ollama` and
 [`strata`](#strata-targets). Names are display labels, not attested hardware
 identities.
 
 Rebuild the daemon, CLI/UI and frozen worker bundle together. The new worker
 capability digest covers named-target execution; old bundles cannot execute it.
-See [development](development.md#build) for the build commands. Then:
+See [development](development.md#build) for the build commands. Then, with
+Ollama targets named `bird` and `framework`:
 
 ```sh
 target/debug/playtimed --root /absolute/service-root --bundle /absolute/new-bundle \
@@ -121,7 +125,13 @@ profile instead of an endpoint:
 ```
 
 The daemon then needs `--strata-launcher /absolute/chat-launcher-package`, the
-installed launcher package. It runs the launcher with `/usr/bin/python3 -I` and
+installed launcher package. `go.sh` installs the launcher's scripts and locks from
+the same checkout beside each worker bundle, with
+`scripts/install-chat-launcher.sh --hold-only`, and passes that package. Holds
+run `ssh` as the daemon's user, so the daemon needs the same non-interactive SSH
+access to the host as the chat launcher. A systemd user unit gets the user
+manager's environment, including `SSH_AUTH_SOCK` when the desktop session
+exported it. The daemon runs the launcher with `/usr/bin/python3 -I` and
 `PATH=/usr/bin:/bin`, whatever its own environment. At startup it asks the
 launcher to describe the profile's hold (`run-strata.py PROFILE
 --describe-hold`), and the package's copy of the profile's lock must be byte for
@@ -137,7 +147,14 @@ recipes, from the catalog or saved, with `--mode experiment`; each request sends
 the recipe's sampling over the lock's other settings, as
 [the recipe catalog](rust-recipes.md#on-a-strata-target) describes. A saved
 recipe that selected a registered Ollama model or the continuous harness is
-refused as `selected_model_unsupported`.
+refused as `selected_model_unsupported`. With the example configuration:
+
+```sh
+playtime --connection-file /absolute/service-root/.playtime/connection.json \
+  --target framework run live-two-session --mode live_smoke --idempotency-key framework-smoke-1 --wait
+playtime --connection-file /absolute/service-root/.playtime/connection.json \
+  --target framework run curiosity --idempotency-key framework-curiosity-1 --wait
+```
 
 Every preview on a Strata target freezes the lock and a template host without an
 endpoint, so the preview revision doesn't depend on which server a hold lends
@@ -179,7 +196,8 @@ together and waits for each, so a systemd unit that runs it should send the stop
 signal only to the daemon (`KillMode=mixed`) and allow a stop timeout longer than
 one hold's whole wait above, about 8 minutes for Framework's profile. Otherwise
 systemd signals the holds' SSH sessions too, and the host's helper stops the
-server only once it sees the lost session.
+server only once it sees the lost session. `go.sh` starts its unit with
+`KillMode=mixed` and a ten-minute stop timeout.
 
 The machine-wide live-run lock still allows one live run at a time across
 checkouts. Other clients of the same host, such as the chat console, hold it

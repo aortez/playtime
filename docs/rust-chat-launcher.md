@@ -46,6 +46,10 @@ Install from this checkout on the workstation where the project lives:
 
 This builds the release client and installs the binary, wrapper, verifier and
 reviewed locks under `~/.local/lib/playtime-chat`, outside the writable project.
+`PLAYTIME_CHAT_INSTALL_DIR` picks another absolute directory. `--hold-only`
+installs the same files without building or installing the chat binaries, which
+is all a daemon's [Strata holds](rust-inference-targets.md#strata-targets) use;
+`go.sh` installs one this way beside each worker bundle.
 The wrapper never imports from that directory and runs its two modules from
 source, so a file added there, or a `__pycache__`, adds no code. The [headless
 worker guide](rust-headless-worker.md) lists the files a worker launch reads.
