@@ -2,18 +2,19 @@
 
 Playtime can use multiple configured inference machines from one daemon: Ollama
 endpoints, and [Strata hosts](#strata-targets) that the daemon holds for each run
-through the chat launcher. Choose the inference target for each launch; the recipe still owns its exact model identity,
-harness, prompt, sampling settings, context, seeds and budgets. The Docker
-workshop stays on the controller machine. Selecting a target does not move tools
-or workspace files to the inference host.
+through the chat launcher. Choose the inference target for each launch; the
+recipe still owns its exact model identity, harness, prompt, sampling settings,
+context, seeds and budgets. The Docker workshop stays on the controller machine.
+Selecting a target does not move tools or workspace files to the inference host.
 
 ## Configure and launch
 
 `./go.sh` builds and starts the workbench with the example configuration by
-default, which holds Framework's Strata host. Use `PLAYTIME_TARGETS=/absolute/targets.json ./go.sh`
-for a custom configuration. `PLAYTIME_OLLAMA=http://host:11434 ./go.sh` retains
-the legacy single-endpoint workflow; do not set both variables. An already
-running daemon opened with `--no-build` keeps its existing configuration.
+default, which holds Framework's Strata host. Use
+`PLAYTIME_TARGETS=/absolute/targets.json ./go.sh` for a custom configuration.
+`PLAYTIME_OLLAMA=http://host:11434 ./go.sh` retains the legacy single-endpoint
+workflow; do not set both variables. An already running daemon opened with
+`--no-build` keeps its existing configuration.
 
 The normal workbench lists runs from its persistent main service root. Earlier
 experiments may have separate histories: `./go.sh --no-build --history` lists
@@ -28,8 +29,8 @@ Use the printed history-specific stop command to stop its daemon between runs.
 Start with [`config/inference-targets.example.json`](../config/inference-targets.example.json).
 It defines `framework`, a [Strata target](#strata-targets) for the chat
 launcher's `framework-gyro-m-fast` profile. Copy it to your own configuration to
-add machines. The format is versioned JSON,
-limited to 16 unique target IDs and 64 KiB. The providers are `ollama` and
+add machines. The format is versioned JSON, limited to 16 unique target IDs and
+64 KiB. The providers are `ollama` and
 [`strata`](#strata-targets). Names are display labels, not attested hardware
 identities.
 
@@ -130,7 +131,7 @@ the same checkout beside each worker bundle, with
 run `ssh` as the daemon's user, so the daemon needs the same non-interactive SSH
 access to the host as the chat launcher. A systemd user unit gets the user
 manager's environment, including `SSH_AUTH_SOCK` when the desktop session
-exported it. It runs the launcher with `/usr/bin/python3 -I` and
+exported it. The daemon runs the launcher with `/usr/bin/python3 -I` and
 `PATH=/usr/bin:/bin`, whatever its own environment. At startup it asks the
 launcher to describe the profile's hold (`run-strata.py PROFILE
 --describe-hold`), and the package's copy of the profile's lock must be byte for
