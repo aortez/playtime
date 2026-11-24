@@ -737,9 +737,11 @@ impl Archive {
         &self,
         id: &str,
     ) -> life::Result<playtime_runner::docker::NativeProfile> {
-        // Recipes run only on Ollama models so far.
-        if self.strata.is_some() {
-            return Err(Error::Invalid("selected model unsupported"));
+        if let Some(strata) = &self.strata {
+            return self
+                .strata_recipe_profile(id, strata)
+                .await
+                .map(|p| playtime_runner::docker::NativeProfile::Memento(Box::new(p)));
         }
         if !id.starts_with("saved-") {
             return self
@@ -747,19 +749,7 @@ impl Archive {
                 .map(|p| playtime_runner::docker::NativeProfile::Memento(Box::new(p)))
                 .ok_or(Error::Invalid("execution unavailable"));
         }
-        let (definition, _) = self
-            .authoring
-            .as_ref()
-            .ok_or(Error::Invalid("execution unavailable"))?
-            .frozen(id)
-            .await
-            .map_err(|error| {
-                Error::Invalid(if error.code() == "not_found" {
-                    "unsupported recipe or mode"
-                } else {
-                    "invalid saved recipe"
-                })
-            })?;
+        let definition = self.saved_definition(id).await?;
         definition.executable().map_err(|_| {
             Error::Invalid(if definition.model_registration.is_some() {
                 "selected model unsupported"
@@ -787,13 +777,74 @@ impl Archive {
             .map_err(|_| Error::Invalid("invalid saved recipe"))?;
         Ok(profile)
     }
-    pub async fn authored_preview(&self, id: &str) -> life::Result<Preview> {
-        let profile = self.authored_profile(id).await?;
-        self.live
+    async fn saved_definition(
+        &self,
+        id: &str,
+    ) -> life::Result<playtime_runner::docker::FrozenRecipe> {
+        let (definition, _) = self
+            .authoring
             .as_ref()
             .ok_or(Error::Invalid("execution unavailable"))?
-            .ready(profile.model())
-            .await?;
+            .frozen(id)
+            .await
+            .map_err(|error| {
+                Error::Invalid(if error.code() == "not_found" {
+                    "unsupported recipe or mode"
+                } else {
+                    "invalid saved recipe"
+                })
+            })?;
+        Ok(definition)
+    }
+    /// A memento recipe on a Strata target: its sampling over the lock's other
+    /// settings, on the template host that a hold fills in. That host isn't
+    /// valid yet, so the profile is validated once the hold has lent one.
+    async fn strata_recipe_profile(
+        &self,
+        id: &str,
+        strata: &super::strata::StrataTarget,
+    ) -> life::Result<playtime_runner::docker::Profile> {
+        let docker = self
+            .docker
+            .as_ref()
+            .ok_or(Error::Invalid("execution unavailable"))?;
+        let (selection, daemon) = (docker.selection.clone(), docker.daemon.clone());
+        let (lock, host) = (strata.lock_name.as_str(), strata.template());
+        if !id.starts_with("saved-") {
+            let recipe = self
+                .recipes
+                .get(id)
+                .ok_or(Error::Invalid("execution unavailable"))?;
+            return playtime_runner::docker::Profile::freeze_strata_recipe(
+                recipe.clone(),
+                selection,
+                daemon,
+                lock,
+                host,
+            )
+            .map_err(|_| Error::Invalid("selected model unsupported"));
+        }
+        let definition = self.saved_definition(id).await?;
+        definition
+            .executable()
+            .map_err(|_| Error::Invalid("execution unavailable"))?;
+        // Strata runs neither a registered Ollama model nor the continuous
+        // harness, and refuses sampling that it doesn't take.
+        playtime_runner::docker::Profile::freeze_strata_definition(
+            definition, selection, daemon, lock, host,
+        )
+        .map_err(|_| Error::Invalid("selected model unsupported"))
+    }
+    pub async fn authored_preview(&self, id: &str) -> life::Result<Preview> {
+        let profile = self.authored_profile(id).await?;
+        // A Strata host is checked through its launcher instead.
+        if self.strata.is_none() {
+            self.live
+                .as_ref()
+                .ok_or(Error::Invalid("execution unavailable"))?
+                .ready(profile.model())
+                .await?;
+        }
         let (mut preview, seeds) = match &profile {
             playtime_runner::docker::NativeProfile::Memento(p) => (
                 self.model_preview(p, id, RunMode::Experiment),
@@ -1392,20 +1443,19 @@ impl Archive {
             token_limit: preview.parameters.limits.generated_tokens.get(),
         })
     }
-    /// The live smoke on the host a hold lent, held before the worker's
-    /// startup window opens. The hold's own messages go to a private log.
+    /// The run's profile on the host a hold lent, held before the worker's
+    /// startup window opens. `profile` has the template host, so a run that
+    /// can't freeze never holds the host. The hold's own messages go to a
+    /// private log.
     async fn held_profile(
         &self,
         admission: &Admission,
+        mut profile: playtime_runner::docker::Profile,
     ) -> life::Result<playtime_runner::docker::Profile> {
-        let (docker, strata) = (
-            self.docker
-                .as_ref()
-                .ok_or(Error::Invalid("execution unavailable"))?,
-            self.strata
-                .clone()
-                .ok_or(Error::Invalid("execution unavailable"))?,
-        );
+        let strata = self
+            .strata
+            .clone()
+            .ok_or(Error::Invalid("execution unavailable"))?;
         let directory = self.root.join(".playtime/strata-holds");
         let log = directory.join(format!("{}.log", admission.run_id.as_str()));
         tokio::task::spawn_blocking(move || create_private_dir(&directory))
@@ -1416,13 +1466,10 @@ impl Archive {
             .acquire(&admission.run_id, strata.clone(), &log)
             .await?;
         // The daemon ends the hold if anything after this fails.
-        let profile = playtime_runner::docker::Profile::freeze_strata_live(
-            docker.selection.clone(),
-            docker.daemon.clone(),
-            &strata.lock_name,
-            host,
-        )
-        .map_err(|_| Error::Invalid("invalid Strata profile"))?;
+        match profile.model.as_mut() {
+            Some(playtime_runner::docker::LiveModel::Strata(model)) => model.host = host,
+            _ => return Err(Error::Invalid("invalid Strata profile")),
+        }
         profile
             .validate()
             .map_err(|_| Error::Invalid("invalid Strata profile"))?;
@@ -1438,15 +1485,27 @@ impl Archive {
                     .map(|p| playtime_runner::docker::NativeProfile::Memento(Box::new(p))),
             ),
             Launch::LiveSmoke if self.strata.is_some() => {
+                let template = self
+                    .live_profile()
+                    .ok_or(Error::Invalid("execution unavailable"))?;
                 Some(Some(playtime_runner::docker::NativeProfile::Memento(
-                    Box::new(self.held_profile(admission).await?),
+                    Box::new(self.held_profile(admission, template).await?),
                 )))
             }
             Launch::LiveSmoke => Some(
                 self.live_profile()
                     .map(|p| playtime_runner::docker::NativeProfile::Memento(Box::new(p))),
             ),
-            Launch::Catalog(id) => Some(Some(self.authored_profile(id).await?)),
+            Launch::Catalog(id) => match self.authored_profile(id).await? {
+                playtime_runner::docker::NativeProfile::Memento(template)
+                    if self.strata.is_some() =>
+                {
+                    Some(Some(playtime_runner::docker::NativeProfile::Memento(
+                        Box::new(self.held_profile(admission, *template).await?),
+                    )))
+                }
+                profile => Some(Some(profile)),
+            },
         }
         .map(|profile| profile.ok_or(Error::Invalid("unsupported recipe or mode")))
         .transpose()?;

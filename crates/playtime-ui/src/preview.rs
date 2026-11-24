@@ -230,7 +230,8 @@ pub fn prepare(value: Preview) -> PreviewView {
         ));
     }
     if adapter == Some("strata") {
-        // The lock's reviewed settings, which every request sends.
+        // What every request sends: the lock's settings, with a recipe's
+        // sampling over them.
         model_lines.extend([
             format!(
                 "Thinking: {} · Summary thinking: {}",

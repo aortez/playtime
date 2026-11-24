@@ -3,7 +3,7 @@
 //! The worker accepts any frozen recipe within the same bounds.
 use super::{
     IMAGE_LOCK, LIVE_SCENARIO, LiveHost, LiveModel, MODEL_LOCK, OllamaModel, Profile,
-    RETURN_OVERHEAD_MS,
+    RETURN_OVERHEAD_MS, StrataHost, StrataModel,
 };
 use crate::{Error, Result};
 use playtime_core::{MemoryCondition, RunMode, RunParameters};
@@ -366,11 +366,82 @@ impl Profile {
         profile.definition = Some(definition);
         Ok(profile)
     }
+    /// A recipe on a reviewed Strata lock: the recipe's sampling over the
+    /// lock's other settings, for the host a daemon's hold lends.
+    pub fn freeze_strata_recipe(
+        recipe: Recipe,
+        selection: Selection,
+        daemon: DaemonIdentity,
+        lock_name: &str,
+        host: StrataHost,
+    ) -> Result<Self> {
+        recipe.check()?;
+        Self::freeze_checked_strata_recipe(recipe, selection, daemon, lock_name, host)
+    }
+    /// A saved memento recipe on a reviewed Strata lock. A recipe that selected
+    /// a registered Ollama model names another model, so it doesn't freeze.
+    pub fn freeze_strata_definition(
+        definition: super::FrozenRecipe,
+        selection: Selection,
+        daemon: DaemonIdentity,
+        lock_name: &str,
+        host: StrataHost,
+    ) -> Result<Self> {
+        definition.executable()?;
+        if definition.compaction.is_some() {
+            return Err(Error::Invalid(
+                "continuous recipes don't run on Strata models yet".into(),
+            ));
+        }
+        if definition.model_registration.is_some() {
+            return Err(Error::Invalid(
+                "the recipe selected a registered Ollama model".into(),
+            ));
+        }
+        let mut profile = Self::freeze_checked_strata_recipe(
+            definition.recipe.clone(),
+            selection,
+            daemon,
+            lock_name,
+            host,
+        )?;
+        profile.definition = Some(definition);
+        Ok(profile)
+    }
+    fn freeze_checked_strata_recipe(
+        recipe: Recipe,
+        selection: Selection,
+        daemon: DaemonIdentity,
+        lock_name: &str,
+        host: StrataHost,
+    ) -> Result<Self> {
+        let model = StrataModel::freeze_recipe(
+            lock_name,
+            host,
+            recipe.parameters.limits.context_tokens.get(),
+            &recipe.model,
+        )?;
+        Self::freeze_checked_recipe_on(recipe, selection, daemon, LiveModel::Strata(model))
+    }
     pub(super) fn freeze_checked_recipe(
         recipe: Recipe,
         selection: Selection,
         daemon: DaemonIdentity,
         host: LiveHost,
+    ) -> Result<Self> {
+        let model = LiveModel::Ollama(OllamaModel {
+            registration: None,
+            lock: serde_json::from_slice(MODEL_LOCK)?,
+            settings: settings(recipe.parameters.limits.context_tokens.get(), &recipe.model),
+            host,
+        });
+        Self::freeze_checked_recipe_on(recipe, selection, daemon, model)
+    }
+    fn freeze_checked_recipe_on(
+        recipe: Recipe,
+        selection: Selection,
+        daemon: DaemonIdentity,
+        model: LiveModel,
     ) -> Result<Self> {
         let p = recipe.parameters.clone();
         let (l, w) = (&p.limits, &p.workshop);
@@ -418,12 +489,7 @@ impl Profile {
                 ..StorageLimits::default()
             },
             command_return_ms: RETURN_OVERHEAD_MS,
-            model: Some(LiveModel::Ollama(OllamaModel {
-                registration: None,
-                lock: serde_json::from_slice(MODEL_LOCK)?,
-                settings: settings(l.context_tokens.get(), &recipe.model),
-                host,
-            })),
+            model: Some(model),
             recipe: Some(recipe),
             definition: None,
         })

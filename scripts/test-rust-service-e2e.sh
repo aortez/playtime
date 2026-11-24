@@ -5,6 +5,8 @@ if [[ $# == 2 && $1 == --case && $2 == normal ]]; then
     playtime_service_case=normal
 elif [[ $# == 2 && $1 == --case && $2 == lifecycle ]]; then
     playtime_service_case=lifecycle
+elif [[ $# == 2 && $1 == --case && $2 == strata-holds ]]; then
+    playtime_service_case=strata-holds
 elif [[ $# == 4 && $1 == --case && $2 == lifecycle && $3 == --backend && $4 == systemd ]]; then
     playtime_service_case=lifecycle-systemd
 elif [[ $# == 4 && $1 == --case && $2 == run-and-view && $3 == --backend && $4 == docker-scripted ]]; then
@@ -14,7 +16,8 @@ elif [[ $# == 4 && $1 == --case && $2 == run-and-view && $3 == --backend && $4 =
 elif [[ $# == 4 && $1 == --case && $2 == run-and-view && $3 == --backend && $4 == strata ]]; then
     playtime_service_case=strata
 else
-    echo 'usage: ./scripts/test-rust-service-e2e.sh --case normal | --case lifecycle [--backend systemd] | --case run-and-view --backend docker-scripted|live|strata' >&2
+    echo 'usage: ./scripts/test-rust-service-e2e.sh --case normal | --case lifecycle [--backend systemd] | --case strata-holds | --case run-and-view --backend docker-scripted|live|strata' >&2
+    echo 'The strata-holds case drives a Strata target with a scripted launcher, without a worker or model.' >&2
     echo 'The live backend uses PLAYTIME_LIVE_ENDPOINT (default http://oldman-bird.local:11434).' >&2
     echo 'The strata backend holds PLAYTIME_STRATA_PROFILE (default framework-gyro-m-fast) through the' >&2
     echo 'chat launcher package PLAYTIME_STRATA_LAUNCHER (default ~/.local/lib/playtime-chat).' >&2
@@ -37,7 +40,7 @@ if [[ $playtime_service_case == live || $playtime_service_case == strata ]] \
 fi
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 playtime_service_root=$(mktemp -d "${TMPDIR:-/tmp}/playtime-service.XXXXXXXX")
-if [[ $playtime_service_case == normal || $playtime_service_case == lifecycle* ]]; then
+if [[ $playtime_service_case == normal || $playtime_service_case == lifecycle* || $playtime_service_case == strata-holds ]]; then
     trap 'rm -rf -- "$playtime_service_root"' EXIT
 else
     echo "Run-and-view evidence: $playtime_service_root"
@@ -45,7 +48,7 @@ fi
 # Explicit build stage. Neither daemon admission nor worker execution runs Cargo.
 cargo run --locked -p xtask -- bundle-worker --output "$playtime_service_root/bundle"
 playtime_service_features=()
-if [[ $playtime_service_case != normal && $playtime_service_case != lifecycle* ]]; then
+if [[ $playtime_service_case != normal && $playtime_service_case != lifecycle* && $playtime_service_case != strata-holds ]]; then
     playtime_service_features=(--features playtime-ui/ui-snapshots)
 fi
 cargo build --locked -p playtime-server -p playtime-cli -p playtime-ui --bin playtimed --bin playtime --example service-e2e "${playtime_service_features[@]}" --message-format=json-render-diagnostics > "$playtime_service_root/build.jsonl"
@@ -76,13 +79,15 @@ if case == 'live':
     args += ['--live', sys.argv[3]]
 if case == 'strata':
     args += ['--strata-launcher', sys.argv[4], '--strata-profile', sys.argv[5]]
-if case not in ('normal', 'lifecycle', 'lifecycle-systemd'):
+if case == 'strata-holds':
+    args += ['--strata-holds', str(pathlib.Path('recipes').resolve())]
+if case not in ('normal', 'lifecycle', 'lifecycle-systemd', 'strata-holds'):
     args += ['--screenshot', str(root / 'workbench.png'), '--evidence', str(root / 'evidence')]
 try:
     # Live runs twice: once from the CLI and once from the workbench. A Strata
     # hold of a cold host may take half an hour; the gate's own deadlines
     # come first, so that it stops its daemon and the daemon ends its holds.
-    result = subprocess.run(args, timeout={'normal': 120, 'lifecycle': 120, 'lifecycle-systemd': 180, 'run-and-view': 540, 'live': 900, 'strata': 5400}[case])
+    result = subprocess.run(args, timeout={'normal': 120, 'lifecycle': 120, 'lifecycle-systemd': 180, 'strata-holds': 300, 'run-and-view': 540, 'live': 900, 'strata': 5400}[case])
     sys.exit(result.returncode)
 except subprocess.TimeoutExpired:
     sys.exit(f'{case} service gate exceeded its total deadline; ownership evidence is retained')

@@ -131,16 +131,22 @@ it again. The target's model is its lock, so the model browser refuses the
 target as `unsupported_capability`. The daemon advertises `strata_targets_v1`
 when it has a Strata target.
 
-So far a Strata target runs only the archived live smoke, `live-two-session`
-with `--mode live_smoke`, which sends the lock's own settings; recipes there are
-refused. Its preview freezes the lock and a template host without an endpoint,
-so the preview revision doesn't depend on which server a hold lends later. The
-preview reads the host's state through the launcher's read-only `--status`, and
-it isn't ready unless the host is ready or starts on launch. Admission reads the
-state again: a busy host is refused as `run_busy`, and any other state that a
-hold would refuse as `model_unavailable`. Until this daemon's previous hold has
-parked or stopped its server, the preview isn't ready and admission is refused
-as `run_busy` too.
+A Strata target runs the archived live smoke, `live-two-session` with
+`--mode live_smoke`, which sends the lock's own settings. It also runs memento
+recipes, from the catalog or saved, with `--mode experiment`; each request sends
+the recipe's sampling over the lock's other settings, as
+[the recipe catalog](rust-recipes.md#on-a-strata-target) describes. A saved
+recipe that selected a registered Ollama model or the continuous harness is
+refused as `selected_model_unsupported`.
+
+Every preview on a Strata target freezes the lock and a template host without an
+endpoint, so the preview revision doesn't depend on which server a hold lends
+later. The preview reads the host's state through the launcher's read-only
+`--status`, and it isn't ready unless the host is ready or starts on launch.
+Admission reads the state again: a busy host is refused as `run_busy`, and any
+other state that a hold would refuse as `execution_unavailable` with the reason
+`model_unavailable`. Until this daemon's previous hold has parked or stopped its
+server, the preview isn't ready and admission is refused as `run_busy` too.
 
 Preparation holds the host through `run-strata.py PROFILE --hold`. The launcher
 starts or reuses the reviewed server, verifies its artifacts against the lock and
@@ -178,6 +184,34 @@ server only once it sees the lost session.
 The machine-wide live-run lock still allows one live run at a time across
 checkouts. Other clients of the same host, such as the chat console, hold it
 through the same launcher, which refuses a second hold as busy.
+
+### Hold gate
+
+```sh
+./scripts/test-rust-service-e2e.sh --case strata-holds
+```
+
+This gate needs Docker and the locked image, but no model, host or worker. The
+real daemon gets a Strata target whose launcher package is a script that plays
+the hold protocol and carries the reviewed Framework lock. Through the CLI and
+the client, it checks:
+
+- the live smoke's and `curiosity`'s previews, with the recipe's sampling over
+  the lock's settings and no endpoint frozen;
+- a busy host, which neither preview calls ready and admission refuses as
+  `run_busy`;
+- an unreachable host, which admission refuses as `model_unavailable`;
+- a hold the launcher refuses;
+- a lent server that isn't the lock's model, which is the Strata crate's fixture
+  server;
+- a hold that verified another lock;
+- a pending hold, during which the host is busy, and its cancellation, which
+  abandons it and frees the host.
+
+Each failed preparation must leave its run `preparation_failed`, and each
+release must succeed. After SIGTERM, the daemon's hold log must show each hold's
+refusal and ending in order, and no host lent. A failed gate keeps its root,
+with the daemon's stderr. It takes about half a minute after the build.
 
 ### Strata gate
 

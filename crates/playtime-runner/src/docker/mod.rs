@@ -77,8 +77,17 @@ pub fn digest() -> Result<Sha256Digest> {
     let templates = [
         Profile::freeze(selection.clone(), daemon.clone())?.template()?,
         Profile::freeze_live(selection.clone(), daemon.clone(), host.clone())?.template()?,
-        Profile::freeze_strata_live(selection.clone(), daemon.clone(), strata_lock, held)?
+        Profile::freeze_strata_live(selection.clone(), daemon.clone(), strata_lock, held.clone())?
             .template()?,
+        // How a recipe's sampling maps onto a Strata lock's settings.
+        Profile::freeze_strata_recipe(
+            Recipe::reference()?,
+            selection.clone(),
+            daemon.clone(),
+            strata_lock,
+            held,
+        )?
+        .template()?,
         serde_json::to_value(strata::reviewed_locks()?)?,
         Profile::freeze_recipe(
             Recipe::reference()?,
@@ -306,10 +315,24 @@ impl Profile {
             (Some(LiveModel::Strata(model)), None) => {
                 Self::freeze_strata_live(selection, daemon, &model.lock_name, model.host.clone())?
             }
-            (Some(LiveModel::Strata(_)), Some(_)) => {
-                return Err(Error::Invalid(
-                    "recipes don't run on Strata models yet".into(),
-                ));
+            (Some(LiveModel::Strata(model)), Some(recipe)) => {
+                if let Some(definition) = &self.definition {
+                    Self::freeze_strata_definition(
+                        definition.clone(),
+                        selection,
+                        daemon,
+                        &model.lock_name,
+                        model.host.clone(),
+                    )?
+                } else {
+                    Self::freeze_strata_recipe(
+                        recipe.clone(),
+                        selection,
+                        daemon,
+                        &model.lock_name,
+                        model.host.clone(),
+                    )?
+                }
             }
             (Some(LiveModel::Ollama(model)), Some(recipe)) => {
                 if let Some(definition) = &self.definition {
@@ -628,7 +651,7 @@ mod tests {
         let again = Profile::freeze_strata_live(selection(), daemon(), FRAMEWORK, again).unwrap();
         again.validate().unwrap();
         assert_eq!(again.template().unwrap(), live.template().unwrap());
-        // Only compiled locks freeze, and recipes don't run on Strata yet.
+        // Only compiled locks freeze, and a live smoke can't pass for a recipe.
         assert!(
             Profile::freeze_strata_live(
                 selection(),
@@ -641,6 +664,101 @@ mod tests {
         let mut recipe = live.clone();
         recipe.recipe = Some(Recipe::reference().unwrap());
         assert!(recipe.validate().is_err());
+    }
+    #[test]
+    fn a_recipe_on_strata_sends_its_sampling_over_the_locks_other_settings() {
+        let recipe = Recipe::reference().unwrap();
+        let freeze = |recipe: Recipe| {
+            Profile::freeze_strata_recipe(recipe, selection(), daemon(), FRAMEWORK, held())
+        };
+        let profile = freeze(recipe.clone()).unwrap();
+        profile.validate().unwrap();
+        assert_eq!(profile.mode, RunMode::Experiment);
+        let model = profile.model.as_ref().unwrap().strata().unwrap();
+        // The reference recipe chooses high reasoning, temperature 0.8, top-p
+        // 0.95, top-k 40 and repeat penalty 1.0. The rest are the lock's.
+        let lock = model.lock.settings.clone();
+        assert_eq!(
+            model.settings,
+            playtime_strata::Settings {
+                thinking: playtime_strata::Thinking::High,
+                temperature: 0.8,
+                top_p: 0.95,
+                top_k: 40,
+                repetition_penalty: 1.0,
+                ..lock.clone()
+            }
+        );
+        // Everything but the model is what the recipe freezes on Ollama.
+        let mut ollama = serde_json::to_value(
+            Profile::freeze_recipe(recipe.clone(), selection(), daemon(), host()).unwrap(),
+        )
+        .unwrap();
+        let mut strata = serde_json::to_value(&profile).unwrap();
+        ollama.as_object_mut().unwrap().remove("model");
+        strata.as_object_mut().unwrap().remove("model");
+        assert_eq!(strata, ollama);
+        rejects(
+            &profile,
+            &[
+                ("/model/settings/temperature", serde_json::json!(0.6)),
+                ("/model/settings/thinking", serde_json::json!("medium")),
+                ("/model/settings/min_p", serde_json::json!(0.05)),
+                ("/recipe/model/top_k", serde_json::json!(20)),
+                (
+                    "/model/lock_name",
+                    serde_json::json!("fixture-strata-gyro-m"),
+                ),
+                ("/model/host/started", serde_json::json!(0)),
+            ],
+        );
+        // Model default reasoning is the lock's. Ollama's on and off aren't
+        // reasoning levels, and a sampler value the server doesn't take is
+        // refused rather than clamped.
+        let mut default = recipe.clone();
+        default.model.thinking = "default".into();
+        let default = freeze(default).unwrap();
+        let settings = &default.model.as_ref().unwrap().strata().unwrap().settings;
+        assert_eq!(settings.thinking, lock.thinking);
+        for thinking in ["on", "off"] {
+            let mut other = recipe.clone();
+            other.model.thinking = thinking.into();
+            assert!(freeze(other).is_err(), "{thinking}");
+        }
+        let mut penalty = recipe.clone();
+        penalty.model.repeat_penalty = 0.05;
+        assert!(freeze(penalty).is_err());
+    }
+    /// The daemon freezes a Strata run's profile on its target's template
+    /// host, then swaps in the host that the run's hold lent.
+    #[test]
+    fn a_strata_profile_on_the_template_host_takes_the_held_one() {
+        let template = StrataHost {
+            endpoint: String::new(),
+            started: 0,
+            verification: serde_json::Value::Null,
+            ..held()
+        };
+        let freezes: [fn(StrataHost) -> Result<Profile>; 2] = [
+            |host| Profile::freeze_strata_live(selection(), daemon(), FRAMEWORK, host),
+            |host| {
+                let recipe = Recipe::reference()?;
+                Profile::freeze_strata_recipe(recipe, selection(), daemon(), FRAMEWORK, host)
+            },
+        ];
+        for freeze in freezes {
+            let mut profile = freeze(template.clone()).unwrap();
+            assert!(profile.validate().is_err(), "a template host isn't valid");
+            match profile.model.as_mut() {
+                Some(LiveModel::Strata(model)) => model.host = held(),
+                _ => panic!("not a Strata profile"),
+            }
+            profile.validate().unwrap();
+            assert_eq!(
+                serde_json::to_value(&profile).unwrap(),
+                serde_json::to_value(freeze(held()).unwrap()).unwrap()
+            );
+        }
     }
     #[test]
     fn frozen_lock_copies_match_the_repository_locks() {

@@ -824,6 +824,26 @@ fn authoring_startup_tolerates_only_execution_limitations() {
         "catalog_corrupt"
     );
 }
+#[test]
+fn a_launch_refuses_an_unready_strata_target_as_its_preview_does() {
+    for reason in [
+        "Strata host unavailable",
+        "Strata launcher unavailable",
+        "Strata targets need --strata-launcher",
+        "a Strata target needs a launcher profile",
+        "the Strata launcher must be an absolute path",
+        "the Strata target's lock isn't a reviewed one",
+        "the Strata launcher's lock differs from the reviewed one",
+    ] {
+        let launch = super::lifecycle(Error::Invalid(reason));
+        let preview = super::execution_unavailable(Error::Invalid(reason));
+        assert_eq!(
+            (launch.code(), &launch.0.details),
+            (preview.code(), &preview.0.details),
+            "{reason}"
+        );
+    }
+}
 /// A refused release's reply, as the HTTP error filter delivers it.
 async fn refusal_details(remaining: &[Remaining]) -> serde_json::Map<String, serde_json::Value> {
     let response = crate::http::error_response(super::release_refused(remaining), None);

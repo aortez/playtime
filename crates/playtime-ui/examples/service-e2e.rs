@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
     let mut evidence: Option<PathBuf> = None;
     let mut lifecycle = false;
     let mut systemd = false;
+    let mut strata_holds: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
         if flag == "--docker-scripted" {
@@ -90,6 +91,7 @@ async fn main() -> Result<()> {
             "--bundle" => bundle = Some(path),
             "--screenshot" => screenshot = Some(path),
             "--evidence" => evidence = Some(path),
+            "--strata-holds" => strata_holds = Some(path),
             _ => return Err("unknown flag".into()),
         }
     }
@@ -101,6 +103,13 @@ async fn main() -> Result<()> {
     }
     if lifecycle && docker || systemd && !lifecycle {
         return Err("--lifecycle runs the simulation only, and --systemd needs it".into());
+    }
+    // The hold gate drives its own daemon with the catalog in this directory.
+    if let Some(recipes) = strata_holds {
+        if docker || lifecycle || screenshot.is_some() || evidence.is_some() {
+            return Err("--strata-holds runs alone".into());
+        }
+        return playtime_test_support::strata_holds::run(&cli, &daemon, &bundle, &recipes).await;
     }
     let strata = match (strata_launcher, strata_profile) {
         (Some(launcher), Some(profile)) if live.is_none() => Some((launcher, profile)),
