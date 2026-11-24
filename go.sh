@@ -4,9 +4,10 @@
 # The daemon runs as a systemd user service on a persistent data directory, so
 # it outlives this script and the workbench, and a running experiment is never
 # interrupted. The script builds the worker bundle and release builds of the
-# playtimed, playtime and playtime-ui binaries, starts or restarts the daemon
-# with the recipe catalog and named inference targets, prints the useful
-# commands and opens the workbench.
+# playtimed, playtime and playtime-ui binaries, and installs the chat launcher's
+# scripts and locks beside the bundle for Strata targets. It starts or restarts
+# the daemon with the recipe catalog, named inference targets and that launcher,
+# prints the useful commands and opens the workbench.
 set -euo pipefail
 
 usage() {
@@ -24,7 +25,8 @@ Environment:
                    Default: /home/data2/playtime when /home/data2 exists,
                    otherwise $XDG_DATA_HOME/playtime. The daemon refuses a root
                    with a group- or world-writable parent.
-  PLAYTIME_TARGETS Named-target JSON file. Default: config/inference-targets.example.json.
+  PLAYTIME_TARGETS Named-target JSON file. Default: config/inference-targets.example.json,
+                   Framework's Strata host.
   PLAYTIME_OLLAMA  Use one legacy Ollama endpoint instead of named targets.
                    Cannot be combined with PLAYTIME_TARGETS.
   PLAYTIME_UNIT    systemd user unit name. Default: playtimed-go.
@@ -44,6 +46,7 @@ else
 fi
 [[ $data = /* ]] || data=$PWD/$data
 root=$data/root
+launcher=
 build=1
 stop=0
 history=0
@@ -136,8 +139,8 @@ fi
 
 # The daemon refuses a root with a group- or world-writable parent, so create
 # directories private and check every parent before building anything.
-(umask 077 && mkdir -p "$data" "$data/bundles" "$root")
-chmod 700 "$data" "$data/bundles" "$root"
+(umask 077 && mkdir -p "$data" "$data/bundles" "$data/launchers" "$root")
+chmod 700 "$data" "$data/bundles" "$data/launchers" "$root"
 for start_dir in "$data" "$root"; do
     dir=$start_dir
     while [[ $dir != / ]]; do
@@ -165,9 +168,18 @@ if (( build )); then
     say "Building playtimed, playtime and playtime-ui"
     cargo build --quiet --locked --release -p playtime-server --bin playtimed -p playtime-cli --bin playtime \
         -p playtime-ui --bin playtime-ui
+    # A Strata target's holds run the launcher from the same checkout, whose
+    # locks must be the ones this daemon build compiled.
+    launcher=$data/launchers/${bundle##*/}
+    say "Installing the Strata launcher package: $launcher"
+    PLAYTIME_CHAT_INSTALL_DIR=$launcher "$here/scripts/install-chat-launcher.sh" --hold-only > /dev/null
     printf '%s\n' "$bundle" > "$data/bundle.latest"
-    # Keep the three newest bundles. Runs keep their own frozen copies.
-    find "$data/bundles" -mindepth 1 -maxdepth 1 -type d | sort | head -n -3 | xargs -r rm -rf
+    printf '%s\n' "$launcher" > "$data/launcher.latest"
+    # Keep the three newest builds. Runs keep their own frozen bundle copies.
+    for builds in "$data/bundles" "$data/launchers"; do
+        find "$builds" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z | head -z -n -3 \
+            | xargs -0 -r rm -rf --
+    done
     if daemon_active; then
         # An experiment may have started while the build ran.
         if worker_active; then
@@ -180,6 +192,11 @@ elif ! daemon_active; then
     bundle=$(cat "$data/bundle.latest" 2> /dev/null || true)
     [[ -n $bundle && -d $bundle ]] || die "no bundle recorded under $data; run without --no-build first"
     [[ -x target/release/playtimed ]] || die "no target/release/playtimed; run without --no-build first"
+    launcher=$(cat "$data/launcher.latest" 2> /dev/null || true)
+    if [[ -z $launcher || ! -d $launcher ]]; then
+        launcher=
+        say "No Strata launcher package is recorded under $data, so Strata targets stay unavailable until a build installs one."
+    fi
 else
     say "Reusing $unit as configured. Target changes require a restart (run without --no-build)."
 fi
@@ -194,11 +211,18 @@ if ! daemon_active; then
     fi
     systemctl --user reset-failed "$unit" 2> /dev/null || true
     rm -f "$conn"
+    strata_args=()
+    if [[ -z ${PLAYTIME_OLLAMA:-} && -n $launcher ]]; then
+        strata_args=(--strata-launcher "$launcher")
+    fi
     say "Starting $unit on $root"
+    # A stopping daemon ends its Strata holds and waits for each, about eight
+    # minutes at most for Framework. So systemd signals only the daemon, not
+    # the holds' SSH sessions, and gives it ten minutes.
     systemd-run --user --quiet --unit "$unit" --description "Playtime daemon from $here" \
-        --working-directory "$here" \
+        --working-directory "$here" --property KillMode=mixed --property TimeoutStopSec=600 \
         "$here/target/release/playtimed" --listen 127.0.0.1:0 --root "$root" --bundle "$bundle" \
-        --docker-scripted "${inference_args[@]}" --recipes "$here/recipes"
+        --docker-scripted "${inference_args[@]}" "${strata_args[@]}" --recipes "$here/recipes"
     for _ in $(seq 240); do
         [[ -f $conn ]] && break
         if ! daemon_active; then

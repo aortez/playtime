@@ -196,3 +196,26 @@ fn a_strata_target_names_a_launcher_profile_and_no_endpoint() {
     unknown["targets"][1]["launcher"] = "/opt/launcher".into();
     assert!(serde_json::from_value::<InferenceTargets>(unknown).is_err());
 }
+/// `go.sh` starts the daemon with the example configuration, whose launcher
+/// profile must hold a lock this build compiled.
+#[test]
+fn the_example_configuration_holds_framework_through_a_reviewed_lock() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let file = playtime_server::targets::load(&root.join("config/inference-targets.example.json"))
+        .unwrap();
+    let [framework] = file.targets.as_slice() else {
+        panic!("the example configures one target");
+    };
+    assert_eq!(
+        (framework.id.as_str(), &framework.provider),
+        ("framework", &InferenceProvider::Strata)
+    );
+    let presets: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("scripts/chat/presets.json")).unwrap())
+            .unwrap();
+    let profile = framework.profile.as_deref().unwrap();
+    let lock = presets["profiles"][profile]["model_lock"].as_str().unwrap();
+    let name = lock.strip_suffix(".lock.json").unwrap();
+    assert_eq!(name, "framework-strata-gyro-m-fast-v2");
+    assert!(playtime_runner::docker::strata_lock_names().any(|n| n == name));
+}
