@@ -2067,3 +2067,18 @@ resume; no other difference is accepted. The verifier's `--discover` mode now
 reads Strata hosts too. The first v2 launch rehashes the model files, because the
 hash cache is keyed by the reviewed host identity. Basalt fingerprints, the engine
 protocol and all goldens are unchanged.
+
+## Strata worker port (#233, 2026-11-23)
+
+The archived live profile's model is now `LiveModel::Ollama` or
+`LiveModel::Strata`. The Ollama record keeps its fields and bytes; a Strata record
+adds `provider: "strata"`, the reviewed lock name and lock, request settings and
+the held host's profile, endpoint, server `started` value, verifier report and
+live-run lock. The Docker profile digest gains the Strata smoke template, the
+reviewed Strata locks and a `strata_model_port` marker, so worker bundles built
+before this refuse Strata profiles. A Strata run's `model_chunk` records are new:
+`strata_deltas` chunks in the existing message shape, then one `strata_call`
+chunk per request. They carry no Ollama timing chunk, so contention stays
+unknown rather than clear. `playtime_strata::Client::with_server_start` is
+additive. No archived run, recipe or golden changes, and the daemon doesn't
+freeze Strata profiles yet.

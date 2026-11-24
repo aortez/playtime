@@ -143,6 +143,7 @@ impl ContinuousProfile {
             let model = self
                 .model
                 .as_ref()
+                .and_then(LiveModel::ollama)
                 .ok_or_else(|| Error::Invalid("continuous recipes require a live model".into()))?;
             let expected = Self::freeze_definition(
                 definition.clone(),
@@ -179,6 +180,9 @@ impl ContinuousProfile {
         }
         self.config.settings.validate(&self.config.parameters)?;
         if let Some(model) = &self.model {
+            let model = model.ollama().ok_or_else(|| {
+                Error::Invalid("continuous profiles don't run Strata models yet".into())
+            })?;
             if !model.host.valid() {
                 return Err(Error::Invalid("invalid continuous model host".into()));
             }
@@ -210,7 +214,7 @@ impl ContinuousProfile {
         let mut base =
             Profile::freeze_checked_recipe(definition.recipe.clone(), selection, daemon, host)?;
         if let Some(selected) = &definition.model_registration {
-            let model = base.model.as_mut().unwrap();
+            let model = base.model.as_mut().and_then(LiveModel::ollama_mut).unwrap();
             model.lock = super::registered_model::selected_lock(selected);
             model.registration = Some(selected.summary.clone());
         }

@@ -17,7 +17,7 @@ use playtime_ollama::{
 use playtime_protocol::worker::Binding;
 use playtime_runner::{
     CheckpointBytes, Effects, Error, Result,
-    docker::{CompletedResponse, LiveModel, NativeProfile},
+    docker::{CompletedResponse, LiveModel, NativeProfile, OllamaModel},
 };
 use playtime_storage::CommittedFrontier;
 use playtime_worker_control::{Bootstrap, boot_ms, write_once};
@@ -108,6 +108,7 @@ struct Actor {
 enum Model {
     Scripted(VecDeque<playtime_engine::simulation::ModelScript>),
     Live(Box<Live>),
+    Strata(Box<crate::strata::Strata>),
     ContinuousScripted {
         work: VecDeque<CompletedResponse>,
         summaries: VecDeque<CompletedResponse>,
@@ -127,7 +128,7 @@ struct Live {
     limits: playtime_ollama::Limits,
 }
 impl Live {
-    fn prepare(model: &LiveModel) -> crate::Result<Self> {
+    fn prepare(model: &OllamaModel) -> crate::Result<Self> {
         // The static worker can't resolve mDNS names, so it connects only to
         // the addresses the daemon resolved and froze. It has no TLS: the
         // endpoint is plain HTTP and the trust setting is unused.
@@ -142,7 +143,7 @@ impl Live {
         .map_err(invalid)?;
         Self::with_transport(Box::new(transport), model)
     }
-    fn with_transport(transport: Box<dyn Transport>, model: &LiveModel) -> crate::Result<Self> {
+    fn with_transport(transport: Box<dyn Transport>, model: &OllamaModel) -> crate::Result<Self> {
         let limits = playtime_ollama::Limits::default();
         let adapter = if model.registration.is_some() {
             Adapter::with_model(Port(transport), model.execution_model()?, limits.clone())
@@ -216,8 +217,8 @@ fn invalid(_: playtime_ollama::Failure) -> crate::Error {
 /// Native records arrive about once per token. They're coalesced into at most
 /// two chunks a second, which keeps long runs inside their event-log budget and
 /// lets live readers keep up.
-const CHUNK_INTERVAL: Duration = Duration::from_millis(500);
-const CHUNK_TEXT_BYTES: usize = 16 * 1024;
+pub(crate) const CHUNK_INTERVAL: Duration = Duration::from_millis(500);
+pub(crate) const CHUNK_TEXT_BYTES: usize = 16 * 1024;
 /// Message deltas from native records not yet sent as a chunk.
 #[derive(Default)]
 struct Pending {
@@ -331,6 +332,20 @@ fn outcome(result: ChatResult) -> Outcome {
     }
 }
 impl Actor {
+    /// Checks the live model is still the frozen one, before a session or
+    /// workspace starts.
+    async fn verify_model(&mut self, deadline: Instant, cancel: &CancellationToken) -> Result<()> {
+        match &mut self.model {
+            Model::Live(live) => live
+                .adapter
+                .inspect(false, deadline, cancel)
+                .await
+                .map(drop)
+                .map_err(|e| Error::Invalid(format!("live model identity: {e}"))),
+            Model::Strata(strata) => strata.verify(deadline, cancel).await,
+            Model::Scripted(_) | Model::ContinuousScripted { .. } => Ok(()),
+        }
+    }
     /// Writes a recipe's frozen seeds into `/work/seeds` through the fixed
     /// bridge, as uid 1000, before session 1's first request. Any failure stops
     /// the run before the model is asked anything.
@@ -380,12 +395,7 @@ impl Actor {
                         "memento cannot start a run-scoped workspace".into(),
                     ));
                 }
-                if let Model::Live(live) = &mut self.model {
-                    live.adapter
-                        .inspect(false, deadline, &cancel)
-                        .await
-                        .map_err(|e| Error::Invalid(format!("live model identity: {e}")))?;
-                }
+                self.verify_model(deadline, &cancel).await?;
                 self.sandbox
                     .initialize(deadline, cancel.clone())
                     .await
@@ -404,12 +414,7 @@ impl Actor {
                     ));
                 }
                 // A changed model stops the run before this session dispatches.
-                if let Model::Live(live) = &mut self.model {
-                    live.adapter
-                        .inspect(false, deadline, &cancel)
-                        .await
-                        .map_err(|e| Error::Invalid(format!("live model identity: {e}")))?;
-                }
+                self.verify_model(deadline, &cancel).await?;
                 if *ordinal == 1 {
                     self.sandbox
                         .initialize(deadline, cancel.clone())
@@ -456,6 +461,11 @@ impl Actor {
                 }
                 Model::Live(live) => {
                     live.chat(effect.id, request, deadline, &cancel, &self.chunks)
+                        .await?
+                }
+                Model::Strata(strata) => {
+                    strata
+                        .complete(effect.id, request, deadline, &cancel, &self.chunks)
                         .await?
                 }
             },
@@ -653,6 +663,17 @@ fn capture_profile(
     .map_err(|e| Error::Capacity(e.to_string()))
 }
 
+/// The Strata port, once its server process is verified. Without that this
+/// worker fails before Begin.
+async fn strata_model(
+    model: &playtime_runner::docker::StrataModel,
+    deadline: Instant,
+) -> crate::Result<Model> {
+    let mut strata = crate::strata::Strata::prepare(model)?;
+    strata.verify(deadline, &CancellationToken::new()).await?;
+    Ok(Model::Strata(Box::new(strata)))
+}
+
 pub(crate) struct NativeEffects {
     prepared: Option<(ReadyImage, Ownership, Arc<Journal>, PathBuf, Model)>,
     profile: EffectProfile,
@@ -726,7 +747,7 @@ impl NativeEffects {
                 summaries: profile.summary_responses.clone().into(),
             },
             None => Model::Scripted(profile.models.clone().into()),
-            Some(model) => {
+            Some(LiveModel::Ollama(model)) => {
                 let mut live = Live::prepare(model)?;
                 if model.registration.is_some() {
                     live.adapter
@@ -736,6 +757,7 @@ impl NativeEffects {
                 }
                 Model::Live(Box::new(live))
             }
+            Some(LiveModel::Strata(model)) => strata_model(model, deadline).await?,
         };
         Ok(Self {
             prepared: Some((ready, owner, journal, bootstrap.private_dir.clone(), model)),

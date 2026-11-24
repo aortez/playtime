@@ -2,7 +2,8 @@
 //! compiled bounds below, then frozen with the live model into a run's profile.
 //! The worker accepts any frozen recipe within the same bounds.
 use super::{
-    IMAGE_LOCK, LIVE_SCENARIO, LiveHost, LiveModel, MODEL_LOCK, Profile, RETURN_OVERHEAD_MS,
+    IMAGE_LOCK, LIVE_SCENARIO, LiveHost, LiveModel, MODEL_LOCK, OllamaModel, Profile,
+    RETURN_OVERHEAD_MS,
 };
 use crate::{Error, Result};
 use playtime_core::{MemoryCondition, RunMode, RunParameters};
@@ -354,7 +355,11 @@ impl Profile {
         let mut profile =
             Self::freeze_checked_recipe(definition.recipe.clone(), selection, daemon, host)?;
         if let Some(selected) = &definition.model_registration {
-            let model = profile.model.as_mut().expect("recipe model");
+            let model = profile
+                .model
+                .as_mut()
+                .and_then(LiveModel::ollama_mut)
+                .expect("recipe model");
             model.lock = super::registered_model::selected_lock(selected);
             model.registration = Some(selected.summary.clone());
         }
@@ -413,12 +418,12 @@ impl Profile {
                 ..StorageLimits::default()
             },
             command_return_ms: RETURN_OVERHEAD_MS,
-            model: Some(LiveModel {
+            model: Some(LiveModel::Ollama(OllamaModel {
                 registration: None,
                 lock: serde_json::from_slice(MODEL_LOCK)?,
                 settings: settings(l.context_tokens.get(), &recipe.model),
                 host,
-            }),
+            })),
             recipe: Some(recipe),
             definition: None,
         })
@@ -510,7 +515,7 @@ mod tests {
             (900, 16 << 20, 8192)
         );
         assert_eq!(profile.storage.event_log_bytes, 64 << 20);
-        let settings = &profile.model.as_ref().unwrap().settings;
+        let settings = &profile.model.as_ref().unwrap().ollama().unwrap().settings;
         assert_eq!(settings["thinking"], "high");
         assert_eq!(settings["context_tokens"], 65536);
         // The archive freezes the recipe itself, seeds included.

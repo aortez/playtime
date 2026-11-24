@@ -68,7 +68,7 @@ fn selected_execution_projects_the_exact_lock_without_rewriting_base_provenance(
     definition.executable().unwrap();
     let frozen = profile(definition.clone());
     frozen.validate().unwrap();
-    let model = frozen.model.as_ref().unwrap();
+    let model = frozen.model.as_ref().unwrap().ollama().unwrap();
     model.execution_model().unwrap(); // independently verifies the canonical hash
     assert_eq!(model.lock["name"], "qwen3:1.7b");
     assert_eq!(model.settings["thinking"], false);
@@ -171,7 +171,13 @@ fn large_model_profiles_preserve_identity_and_refuse_inherited_unsupported_reaso
             selected.executable().unwrap();
             let frozen = profile(selected.clone());
             frozen.validate().unwrap();
-            let execution = frozen.model.unwrap().execution_model().unwrap();
+            let execution = frozen
+                .model
+                .unwrap()
+                .ollama()
+                .unwrap()
+                .execution_model()
+                .unwrap();
             assert_eq!(execution.name, model.summary.identity.name);
             assert_eq!(execution.digest, model.summary.identity.digest);
             assert_eq!(execution.definition, model.definition);
@@ -262,7 +268,7 @@ fn ornith_gpu_placement_is_part_of_the_reviewed_definition() {
         selected.executable().unwrap();
         let frozen = profile(selected.clone());
         assert_eq!(
-            frozen.model.unwrap().lock["definition"]["parameters"],
+            frozen.model.unwrap().ollama().unwrap().lock["definition"]["parameters"],
             model.definition["parameters"]
         );
         selected.model_registration.as_mut().unwrap().definition["parameters"] =

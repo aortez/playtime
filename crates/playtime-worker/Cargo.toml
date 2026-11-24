@@ -14,6 +14,7 @@ playtime-runner.workspace = true
 playtime-engine.workspace = true
 playtime-ollama.workspace = true
 playtime-storage.workspace = true
+playtime-strata.workspace = true
 playtime-worker-control.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -23,6 +24,8 @@ time.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
+# Runs the synthetic Strata lock that the fixture server's metadata produces.
+playtime-runner = { workspace = true, features = ["strata-fixture"] }
 
 [lints]
 workspace = true

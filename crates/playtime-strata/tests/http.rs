@@ -227,6 +227,22 @@ async fn metadata_and_process_identity_are_checked_before_every_dispatch() {
 }
 
 #[tokio::test]
+async fn a_client_bound_to_one_server_process_refuses_another_before_its_first_dispatch() {
+    let server = Server::new(Reply::Complete).await;
+    let bound = |started| {
+        Client::new(server.endpoint.clone(), lock(), Limits::default())
+            .unwrap()
+            .with_server_start(started)
+    };
+    let result = call(&mut bound(99)).await;
+    assert_eq!(result.remote, RemoteState::NotDispatched);
+    assert_eq!(result.completion.unwrap_err().kind, FailureKind::Identity);
+    assert_eq!(server.posts(), 0);
+    assert!(call(&mut bound(100)).await.completion.is_ok());
+    assert_eq!(server.posts(), 1);
+}
+
+#[tokio::test]
 async fn a_dispatched_failure_is_never_retried_or_reported_as_zero_usage() {
     for reply in [
         Reply::Eof,

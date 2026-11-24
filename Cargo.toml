@@ -93,7 +93,9 @@ debug = "line-tables-only"
 debug = "line-tables-only"
 [profile.test.package.playtime-docker]
 debug = "line-tables-only"
-# The live worker also links an HTTP client. Third-party dependencies keep line
-# tables only, so the worker's own test image still fits that bound.
+# The worker's tests also drive real HTTP clients. A workspace build enables the
+# Ollama crate's default TLS, so reqwest links rustls and aws-lc into that test
+# image too. Third-party dependencies carry no debug info in test builds, so the
+# image still fits the bound with room to grow.
 [profile.test.package."*"]
-debug = "line-tables-only"
+debug = false

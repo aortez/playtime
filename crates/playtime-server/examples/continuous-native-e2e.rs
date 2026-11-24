@@ -8,7 +8,7 @@ use playtime_protocol::{
 };
 use playtime_runner::{
     ArchiveQueries,
-    docker::{ContinuousProfile, LiveHost, LiveModel},
+    docker::{ContinuousProfile, LiveHost, LiveModel, OllamaModel},
 };
 use playtime_server::lifecycle::{PreparedLaunch, ports::Supervisor, systemd::SystemdSupervisor};
 use playtime_storage::ArchiveReader;
@@ -64,7 +64,7 @@ fn live_model(endpoint: &str, root: &Path, name: &str, backend: &str) -> Result<
         ],
         live_lock: root.to_path_buf(),
     };
-    Ok(LiveModel {
+    Ok(LiveModel::Ollama(OllamaModel {
         lock: json!({"name":id.name,"digest":id.digest,"ollama_version":id.backend_version,
             "definition_sha256":id.definition_sha256,"definition":registered.definition,"modelfile":""}),
         settings: serde_json::to_value(playtime_ollama::EffectiveSettings {
@@ -74,7 +74,7 @@ fn live_model(endpoint: &str, root: &Path, name: &str, backend: &str) -> Result<
         })?,
         host,
         registration: Some(registered.summary),
-    })
+    }))
 }
 
 #[tokio::main]

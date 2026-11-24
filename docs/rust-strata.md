@@ -130,6 +130,53 @@ is in [the fixture README](../crates/playtime-strata/tests/README.md). They laun
 no inference server, GPU workload or workshop. Run the repository-wide Rust and
 frozen Python checks as well.
 
+## Archived experiment worker (#233)
+
+The packaged experiment worker also reaches Strata, for the archived live smoke.
+`Profile::freeze_strata_live` freezes a `LiveModel::Strata` record: the reviewed
+lock by name, the request settings (the lock's own) and what the daemon's hold
+verified, namely the launcher profile, the loopback endpoint the hold lent, the
+server process's `started` value and the verifier report, whose host identity
+must be the lock's. The worker build compiles the reviewed locks it runs, now
+`framework-strata-gyro-m-fast-v2`, a copy of the `models/` lock that a test keeps
+equal. Validation refreezes the record, so another lock, other settings or a host
+that doesn't match the lock is refused, and a run whose context budget exceeds the
+lock's context doesn't freeze. Archived Ollama models have no `provider` field and
+keep their bytes. The daemon doesn't hold a Strata host yet, so nothing freezes
+this profile outside tests; recipes and continuous profiles refuse Strata for now.
+
+The worker binds its client to the frozen `started` value with
+`Client::with_server_start`, so even its first check refuses another server
+process. It checks the server at startup, before Begin, at each session start and
+before each request, and refuses a busy one. As in the chat driver, a request
+whose outcome is uncertain fences the port: nothing more is sent, not even a
+check. A request whose terminal event arrived, including a tool-parse failure the
+controller retries, doesn't.
+
+Streamed deltas reach the controller as `model_chunk` records while the request
+runs. They're coalesced like Ollama's native records, into at most one chunk
+every half second or 16 KiB of text. Each `strata_deltas` chunk carries a
+`message` with `thinking` and `content`, the shape the workbench and the trace
+already render, then the function-call argument deltas by item and name, and
+its delta count. After every request one `strata_call` chunk records the remote
+state (`not_dispatched`, `uncertain` or `terminal_observed`), the event count,
+received bytes, the latency the worker observed and, when it arrived, the
+terminal event. That event keeps its status, usage, timings and errors as sent;
+each output item keeps its identity and a `text_bytes` size, but not the text,
+which the response record already holds and which would otherwise count twice
+against the response's 4 MiB budget. Strata reports none of Ollama's durations,
+so the run's contention summary stays unknown.
+
+`cargo test -p playtime-worker --locked` runs the worker against a scripted
+loopback server, [`server.rs`](../crates/playtime-strata/tests/support/server.rs), on its own threads because the
+driver under test is synchronous. Its metadata produces the synthetic
+`fixture-strata-gyro-m` lock, which only the runner's `strata-fixture` feature
+compiles: the worker enables it for its tests, and it stays out of the profile
+digest. The tests cover a two-session run, a restarted server at a session
+start, refusals before Begin, a cut stream, missing usage, partial output
+committed during a slow response, the fence after cancellation or a deadline,
+and a retried tool-parse failure.
+
 ## Live smoke
 
 First acquire an idle target through its existing host session helper; do not

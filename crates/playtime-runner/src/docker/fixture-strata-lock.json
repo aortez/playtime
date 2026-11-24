@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "identity": {
+    "model": "fixture-gyro-m",
+    "engine": "0.1.58",
+    "context_tokens": 163840,
+    "model_path": "/fixture/gyro.gguf",
+    "template_sha256": "e87b8b915fc1917db35a25da9bc88d4d09bebf25018772da17a34d6e63838fc8",
+    "defaults": {
+      "temperature": 1.0
+    },
+    "template_capabilities": {
+      "supports_tools": true
+    },
+    "shared_settings": {
+      "defaults": {},
+      "shared": false
+    }
+  },
+  "host": {
+    "backend": "hip",
+    "quantization": "fixture",
+    "engine_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "artifacts_manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "launch_configuration_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "responses_source_sha256": "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b",
+    "server_release_manifest_sha256": "f49826e2c75d33790f0bce86651e740c0b40fe34c9e63e31b1134155e79466b6"
+  },
+  "settings": {
+    "thinking": "medium",
+    "summary_thinking": "none",
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "penalty_last_n": 64
+  }
+}

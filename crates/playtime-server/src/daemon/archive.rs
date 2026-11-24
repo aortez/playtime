@@ -224,7 +224,10 @@ impl Live {
             &limits,
         )
         .map_err(|_| Error::Invalid("live model unavailable"))?;
-        let mut adapter = if let Some(model) = model.filter(|m| m.registration.is_some()) {
+        let registered = model
+            .and_then(playtime_runner::docker::LiveModel::ollama)
+            .filter(|m| m.registration.is_some());
+        let mut adapter = if let Some(model) = registered {
             let identity = model
                 .execution_model()
                 .map_err(|_| Error::Invalid("selected model unsupported"))?;
@@ -266,7 +269,7 @@ mod model_readiness_tests {
         let id = &selected.summary.identity;
         let lock = serde_json::json!({"name":id.name,"digest":id.digest,"ollama_version":id.backend_version,
             "definition_sha256":id.definition_sha256,"definition":selected.definition,"modelfile":""});
-        let model = playtime_runner::docker::LiveModel {
+        let ollama = playtime_runner::docker::OllamaModel {
             registration: Some(selected.summary.clone()),
             lock,
             settings: serde_json::json!({}),
@@ -279,9 +282,10 @@ mod model_readiness_tests {
         };
         let live = Live {
             endpoint: playtime_ollama::Endpoint::parse(&fake.endpoint).unwrap(),
-            host: model.host.clone(),
+            host: ollama.host.clone(),
             reads: tokio::sync::Mutex::new(()),
         };
+        let model = playtime_runner::docker::LiveModel::Ollama(ollama);
         let tags = serde_json::json!({"models":[{"name":id.name,"digest":id.digest}]});
         {
             let mut state = fake.metadata.0.lock().unwrap();
@@ -754,7 +758,8 @@ impl Archive {
         preview.parameters = profile.definition.as_ref()?.recipe.parameters.clone();
         preview.prompt = profile.config.prompt.clone();
         preview.protocol = profile.config.protocol.clone();
-        let model = profile.model.as_ref()?;
+        // Continuous profiles don't run Strata models yet.
+        let model = profile.model.as_ref()?.ollama()?;
         preview.target = model.host.target.clone();
         preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"],
             "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"],
@@ -821,7 +826,8 @@ impl Archive {
         preview.parameters = profile.scenario.parameters.clone();
         preview.prompt = profile.scenario.prompt.clone();
         preview.protocol = profile.scenario.protocol.clone();
-        let model = profile.model.as_ref().unwrap();
+        // The daemon doesn't hold a Strata host yet, so it previews only Ollama.
+        let model = profile.model.as_ref().unwrap().ollama()?;
         preview.target = model.host.target.clone();
         preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"],
             "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"],

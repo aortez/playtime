@@ -5,6 +5,7 @@ mod elf;
 pub mod execution;
 mod files;
 mod native_profile;
+mod strata;
 
 pub use elf::verify_static_elf;
 pub use files::PrivateDirectory;
