@@ -190,7 +190,7 @@ pub struct Rejection {
     pub detail: String,
 }
 impl Rejection {
-    fn new(reason: &'static str, error: impl std::fmt::Display) -> Self {
+    pub(crate) fn new(reason: &'static str, error: impl std::fmt::Display) -> Self {
         let mut detail = error.to_string();
         if detail.len() > MAX_DETAIL {
             let mut end = MAX_DETAIL;

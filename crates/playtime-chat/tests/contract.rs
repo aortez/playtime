@@ -1,6 +1,6 @@
 use playtime_chat::{
     contract::{self, Spec},
-    readonly::{Contract, digest},
+    readonly::{self, Contract, Role, digest},
     runtime::{self, Effects},
     worker,
 };
@@ -324,6 +324,57 @@ async fn rejected_output_is_kept_and_one_repair_turn_cites_the_same_evidence() {
 }
 
 #[tokio::test]
+async fn a_read_only_repair_turn_answers_in_the_same_fresh_conversation() {
+    let root = Root::new();
+    let records = PrivateDirectory::open(&root.0.join("run"), true).unwrap();
+    let bytes = serde_json::to_vec(&json!({"type":"object","additionalProperties":false,
+        "required":["decision"],"properties":{"decision":{"type":"string","enum":["ready","blocked"]}}}))
+    .unwrap();
+    let contract = Contract::parse(bytes.clone(), &digest(&bytes)).unwrap();
+    let config = readonly::configure(worker_config(), Role::Reviewer, &contract).unwrap();
+    // The first answer ends before its JSON closes.
+    let effects = invocation(
+        &root.0.join("run/artifacts"),
+        vec![
+            Step::Reply(|_| r#"{"decision":"ready""#.into()),
+            Step::Reply(|_| r#"{"decision":"ready"}"#.into()),
+        ],
+        0,
+    );
+    let session = Session::create(&root.0.join("session"), config).unwrap();
+    let (session, response) = turn(session, "Review the change", &effects).await;
+    let rejection = readonly::save_response(&response, &records, "response.raw.txt", &contract)
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(rejection.reason, "invalid_output");
+    assert!(!root.0.join("run/response.json").exists());
+
+    let correction = readonly::repair_request(&rejection);
+    let (session, repaired) = turn(session, &correction, &effects).await;
+    let response_sha256 =
+        readonly::save_response(&repaired, &records, "response.repair-1.raw.txt", &contract)
+            .unwrap()
+            .unwrap();
+    // The model saw its rejected answer, then the harness's diagnosis.
+    let exchanges = &session.checkpoint().unwrap().history.exchanges;
+    assert_eq!(exchanges.len(), 2);
+    assert_eq!(exchanges[0].messages.last().unwrap()["content"], response);
+    assert_eq!(exchanges[1].messages[0]["content"], correction);
+    assert_eq!(
+        records.read("response.raw.txt", 65536).unwrap(),
+        response.as_bytes()
+    );
+    assert_eq!(
+        records.read("response.repair-1.raw.txt", 65536).unwrap(),
+        repaired.as_bytes()
+    );
+    assert_eq!(
+        digest(&records.read("response.json", 65536).unwrap()),
+        response_sha256
+    );
+}
+
+#[tokio::test]
 async fn shape_and_evidence_failures_are_typed_rejections() {
     let root = Root::new();
     let artifacts = root.0.join("run/artifacts");
@@ -488,12 +539,14 @@ fn version_one_worker_and_read_only_probes_keep_their_pinned_values() {
         readonly["roles"],
         json!(["setup", "supervisor", "reviewer"])
     );
+    assert_eq!(readonly["repair_turns"], 1);
     let reviewer = describe(&["--role", "reviewer"]);
     assert_eq!(
         reviewer,
         json!({"protocol":"playtime-readonly","version":1,"capability":"playtime-readonly-v1",
             "roles":["setup","supervisor","reviewer"],"report":"structured-result-v1",
             "output_contract":"json-schema-subset-v1","continuation":"none",
+            "repair_turns":1,"caller_deadline":"unix-ms-v1",
             "transport":"strata-responses-v1","tools":"project-native-v1",
             "tool_backends":{"native":"project-native-v1"},
             "native_policy_schema":1,"native_helper_sha256":helper})

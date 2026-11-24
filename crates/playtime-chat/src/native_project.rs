@@ -1326,7 +1326,9 @@ mod tests {
                     .unwrap()["content"]
                     .as_str()
                     .unwrap();
-                let saved = readonly::save_response(response, &records, &contract);
+                let saved =
+                    readonly::save_response(response, &records, "response.raw.txt", &contract)
+                        .unwrap();
                 assert_eq!(saved.is_err(), index == 2);
                 assert_eq!(
                     records.read("response.raw.txt", 1024).unwrap(),

@@ -241,7 +241,11 @@ import json, os, pathlib, sys
 root=pathlib.Path(os.environ['FIXTURE_ROOT'])
 if '--describe-protocol' in sys.argv:
     if '--role' in sys.argv and os.environ.get('FIXTURE_MODE') != 'missing-readonly':
-        print(json.dumps({'protocol':'playtime-readonly','version':1,'capability':'playtime-readonly-v1','roles':['setup','supervisor','reviewer'],'report':'structured-result-v1','output_contract':'json-schema-subset-v1','continuation':'none','transport':'strata-responses-v1','tool_backends':{'native':'project-native-v1'}}))
+        readonly = {'protocol':'playtime-readonly','version':1,'capability':'playtime-readonly-v1','roles':['setup','supervisor','reviewer'],'report':'structured-result-v1','output_contract':'json-schema-subset-v1','continuation':'none','transport':'strata-responses-v1','tool_backends':{'native':'project-native-v1'}}
+        # A package built before read-only repair turns offers neither field.
+        if os.environ.get('FIXTURE_MODE') != 'old-readonly':
+            readonly.update({'repair_turns':1,'caller_deadline':'unix-ms-v1'})
+        print(json.dumps(readonly))
         sys.exit(0)
     contract = {} if os.environ.get('FIXTURE_MODE') == 'missing-contract' else {'capability':'playtime-worker-contract-v1','output_contract':'json-schema-subset-v1','report':'structured-result-v1','evidence':'evidence-ref-v1','continuation':'completed-session-only','transport':'strata-responses-v1','repair_turns':1,'caller_deadline':'unix-ms-v1'}
     if os.environ.get('FIXTURE_MODE') == 'missing-deadline':
@@ -377,7 +381,8 @@ else:
         import hashlib
         args = self.readonly_fixture()
         self.env['SSH_AUTH_SOCK'] = '/trusted/fixture-agent'
-        with subprocess.Popen(self.command('framework-gyro-m-fast', *args), stdin=subprocess.PIPE,
+        offered = [*args, '--repair-turns', '1', '--caller-deadline-unix-ms', '1800000000000']
+        with subprocess.Popen(self.command('framework-gyro-m-fast', *offered), stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env) as child:
             time.sleep(.3)
             self.assertIsNone(child.poll())
@@ -387,8 +392,17 @@ else:
         child_args = json.loads((self.root / 'client').read_text())
         self.assertEqual(child_args[child_args.index('--request-sha256') + 1], hashlib.sha256(b'Assignment').hexdigest())
         self.assertIn('--role', child_args)
+        self.assertEqual(child_args[child_args.index('--repair-turns') + 1], '1')
+        self.assertEqual(child_args[child_args.index('--caller-deadline-unix-ms') + 1], '1800000000000')
         self.assertNotIn('--image-lock', child_args)
         self.assertTrue((self.root / 'restored').exists())
+        # An older package still runs read-only roles that ask for no repair turn.
+        for marker in ('client', 'started'):
+            (self.root / marker).unlink()
+        result = subprocess.run(self.command('framework-gyro-m-fast', *args), input='Assignment',
+                                env=dict(self.env, FIXTURE_MODE='old-readonly'), capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('--repair-turns', json.loads((self.root / 'client').read_text()))
 
     def test_readonly_rejections_precede_inference_acquisition(self):
         args = self.readonly_fixture()
@@ -398,6 +412,10 @@ else:
                  (args, 'Assignment', 'invalid-readonly-input'),
                  ([*args, '--worker-session', 'ptw-' + 'a' * 64], 'Assignment', ''),
                  ([*args, '--role', 'setup'], 'Assignment', ''),
+                 ([*args, '--repair-turns', '2'], 'Assignment', ''),
+                 ([*args, '--evidence-property', 'verification'], 'Assignment', ''),
+                 ([*args, '--repair-turns', '1'], 'Assignment', 'old-readonly'),
+                 ([*args, '--caller-deadline-unix-ms', '1800000000000'], 'Assignment', 'old-readonly'),
                  ([args[0], '--environment', 'general', *args[1:]], 'Assignment', '')]
         for argv, delivered, mode in cases:
             result = subprocess.run(self.command('framework-gyro-m-fast', *argv), input=delivered,

@@ -56,6 +56,41 @@ fn readonly_capability_is_separate_from_worker_reports_and_never_resumes() {
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("fresh invocations only"));
     }
+    // A read-only role may ask for one repair turn and a caller deadline, but never
+    // evidence resolution. An accepted option fails later, on the missing workspace.
+    let future = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        + 3_600_000)
+        .to_string();
+    for (extra, refusal) in [
+        (vec!["--repair-turns", "1"], "missing workspace"),
+        (
+            vec!["--repair-turns", "1", "--caller-deadline-unix-ms", &future],
+            "missing workspace",
+        ),
+        (vec!["--repair-turns", "2"], "at most one repair turn"),
+        (vec!["--caller-deadline-unix-ms", "1"], "already passed"),
+        (
+            vec!["--evidence-property", "verification"],
+            "evidence resolution belongs to worker contract invocations",
+        ),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_playtime-task"))
+            .args(["--role", "reviewer", "--tool-backend", "native"])
+            .args(["--output-contract", "/not/read", "--output-contract-sha256"])
+            .args(["00", "--request-sha256", "00", "--check-inputs"])
+            .args(&extra)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(refusal),
+            "{extra:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     // On the worker role an output contract selects the contract invocation, which
     // is refused without its pinned hashes. A stray hash alone selects nothing.
     for (arguments, refusal) in [
