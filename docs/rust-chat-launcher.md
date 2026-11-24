@@ -384,8 +384,9 @@ These are integration checks, not coding-quality measurements.
 
 ## Hold mode
 
-A calling process that runs its own client, such as the experiment daemon in
-#233, can hold a host instead of starting chat:
+A calling process that runs its own client, such as the experiment daemon for a
+[Strata target](rust-inference-targets.md#strata-targets), can hold a host
+instead of starting chat:
 
 ```sh
 run-strata.py framework-gyro-m-fast --describe-hold

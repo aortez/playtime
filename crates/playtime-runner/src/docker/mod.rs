@@ -27,7 +27,9 @@ pub use registered_model::{
     QWEN_38_27B_BF16_MODEL_LOCK, QWEN_CODER_NEXT_MODEL_LOCK, QWEN_MODEL_LOCK,
     align_reviewed_parameters, reviewed_identity_capabilities,
 };
-pub use strata::{StrataHost, StrataModel, StrataProvider, strata_lock, strata_lock_names};
+pub use strata::{
+    StrataHost, StrataModel, StrataProvider, strata_lock, strata_lock_names, strata_lock_sha256,
+};
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
 pub const LIVE_PROFILE: &str = "docker_live_no_seed_self_v1";
@@ -64,6 +66,7 @@ pub fn digest() -> Result<Sha256Digest> {
         live_lock: PathBuf::new(),
     };
     let held = StrataHost {
+        target: None,
         profile: String::new(),
         endpoint: String::new(),
         started: 0,
@@ -91,8 +94,9 @@ pub fn digest() -> Result<Sha256Digest> {
         // continuous profile without tool-call or summary recovery, the finish
         // choice, transcript summaries, tool-call summary retries or retained
         // tool and parse-failure observations. Nor may it decode a definition
-        // that records where its seed files came from, or a Strata model.
-        serde_json::json!({"strata_model_port": 1, "inference_targets": 1, "immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1, "continuous_tool_failure_history": 1, "continuous_failure_history": 3, "continuous_retry_attempt": 1, "terminal_parse_error_usage": 2, "recipe_seed_origin": 1}),
+        // that records where its seed files came from, or a Strata model on a
+        // named target.
+        serde_json::json!({"strata_model_port": 2, "inference_targets": 1, "immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1, "continuous_tool_failure_history": 1, "continuous_failure_history": 3, "continuous_retry_attempt": 1, "terminal_parse_error_usage": 2, "recipe_seed_origin": 1}),
         serde_json::from_slice(QWEN_MODEL_LOCK)?,
         serde_json::from_slice(QWEN_CODER_NEXT_MODEL_LOCK)?,
         serde_json::from_slice(QWEN_38_27B_BF16_MODEL_LOCK)?,
@@ -417,6 +421,7 @@ mod tests {
     fn held() -> StrataHost {
         let lock = strata_lock(FRAMEWORK).unwrap();
         StrataHost {
+            target: None,
             profile: "framework-gyro-m-fast".into(),
             endpoint: "http://127.0.0.1:41234/v1".into(),
             started: 1_763_900_000,
@@ -490,6 +495,7 @@ mod tests {
             name: "Framework".into(),
             provider: playtime_protocol::api::InferenceProvider::Ollama,
             endpoint: model.host.endpoint.clone(),
+            profile: None,
         });
         named.validate().unwrap();
         rejects(
@@ -591,6 +597,28 @@ mod tests {
                     serde_json::json!("2".repeat(64)),
                 ),
                 ("/model/host/live_lock", serde_json::json!("relative.lock")),
+            ],
+        );
+        // On a named target, the target is the hold's launcher profile.
+        let mut targeted = held();
+        targeted.target = Some(Box::new(playtime_protocol::api::InferenceTarget {
+            id: "framework-strata".into(),
+            name: "Framework Strata".into(),
+            provider: playtime_protocol::api::InferenceProvider::Strata,
+            endpoint: String::new(),
+            profile: Some("framework-gyro-m-fast".into()),
+        }));
+        let targeted =
+            Profile::freeze_strata_live(selection(), daemon(), FRAMEWORK, targeted).unwrap();
+        targeted.validate().unwrap();
+        rejects(
+            &targeted,
+            &[
+                (
+                    "/model/host/target/profile",
+                    serde_json::json!("bird-gyro-m-fast"),
+                ),
+                ("/model/host/target/provider", serde_json::json!("ollama")),
             ],
         );
         // A later hold of the same lock advertises the same template.

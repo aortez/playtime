@@ -1,7 +1,8 @@
 //! Production-service process gates. Normal uses simulated workshop effects and
 //! an explicitly selected CPU supervisor; Docker uses real tools and systemd,
-//! with scripted model replies or the live locked model. Lifecycle is the normal
-//! gate with the daemon killed and restarted while the run's worker is paused.
+//! with scripted model replies, the live locked model or a live Strata host that
+//! the daemon holds. Lifecycle is the normal gate with the daemon killed and
+//! restarted while the run's worker is paused.
 use crate::{Result, TestRoot, isolated, run_command};
 use playtime_client::{CheckpointIndexRead, Client, Observation, RetryPolicy};
 use playtime_core::{RunId, StopReason};
@@ -137,24 +138,61 @@ pub enum Backend {
     DockerScripted,
     /// Live model at this endpoint, with real Docker.
     Live(&'static str),
+    /// A live Strata host that the daemon holds for each run through this chat
+    /// launcher package and profile, with real Docker.
+    Strata(&'static str, &'static str),
 }
+/// The named target of the Strata backend's daemon.
+pub const STRATA_TARGET: &str = "strata-gate";
+/// How long a Strata hold may take before its worker starts: the launcher's
+/// startup and verification bounds for a cold, rehashed host, with margin.
+const HOLD_LIMIT: Duration = Duration::from_secs(30 * 60);
 impl Backend {
     pub fn docker(self) -> bool {
         self != Self::Simulation
+    }
+    /// A live model, so its outputs vary.
+    pub fn live(self) -> bool {
+        matches!(self, Self::Live(_) | Self::Strata(..))
     }
     pub fn recipe(self) -> &'static str {
         match self {
             Self::Simulation => "two-session",
             Self::DockerScripted => playtime_runner::docker::RECIPE,
-            Self::Live(_) => playtime_runner::docker::LIVE_RECIPE,
+            Self::Live(_) | Self::Strata(..) => playtime_runner::docker::LIVE_RECIPE,
         }
     }
     pub fn mode(self) -> &'static str {
         match self {
             Self::Simulation => "simulation",
             Self::DockerScripted => "scripted_smoke",
-            Self::Live(_) => "live_smoke",
+            Self::Live(_) | Self::Strata(..) => "live_smoke",
         }
+    }
+    /// The named target each launch selects, if any.
+    pub fn target(self) -> Option<&'static str> {
+        matches!(self, Self::Strata(..)).then_some(STRATA_TARGET)
+    }
+    /// The CLI arguments that launch this backend's run under `key`.
+    pub fn launch(self, key: &str) -> Vec<String> {
+        let mut args = Vec::new();
+        if let Some(target) = self.target() {
+            args.extend(["--target".to_owned(), target.to_owned()]);
+        }
+        args.extend(
+            [
+                "run",
+                self.recipe(),
+                "--mode",
+                self.mode(),
+                "--idempotency-key",
+                key,
+                "--format",
+                "json",
+            ]
+            .map(str::to_owned),
+        );
+        args
     }
     /// Start a daemon on its own new root, ready for the CLI.
     pub async fn daemon(
@@ -186,6 +224,21 @@ impl Backend {
             Self::DockerScripted => command.arg("--docker-scripted"),
             Self::Live(endpoint) => {
                 command.args(["--docker-scripted", "--ollama-endpoint", endpoint])
+            }
+            Self::Strata(launcher, profile) => {
+                let targets = root.join("strata-targets.json");
+                std::fs::write(
+                    &targets,
+                    serde_json::to_vec(&json!({"schema_version": 1, "targets": [{
+                        "id": STRATA_TARGET, "name": "Strata gate", "provider": "strata",
+                        "profile": profile}]}))?,
+                )?;
+                // Its hold lines, kept in the root if the gate fails.
+                command.stderr(std::fs::File::create(root.join("daemon-stderr.log"))?);
+                command
+                    .args(["--docker-scripted", "--targets"])
+                    .arg(&targets)
+                    .args(["--strata-launcher", launcher])
             }
         };
         command
@@ -228,6 +281,14 @@ pub struct NormalService {
     pub restart: Option<serde_json::Value>,
     /// The simulation runs under user systemd, not the CPU test supervisor.
     systemd: bool,
+    /// What the Strata daemon left once it stopped.
+    strata: Option<StrataEvidence>,
+}
+/// A stopped Strata daemon's stderr, which has each hold's lines, and each
+/// hold's launcher log by file name.
+struct StrataEvidence {
+    stderr: Vec<u8>,
+    logs: Vec<(String, Vec<u8>)>,
 }
 impl NormalService {
     pub async fn start(cli: &Path, daemon: &Path, bundle: &Path) -> Result<Self> {
@@ -243,6 +304,15 @@ impl NormalService {
         endpoint: &'static str,
     ) -> Result<Self> {
         Self::start_profile(cli, daemon, bundle, Backend::Live(endpoint)).await
+    }
+    pub async fn start_strata(
+        cli: &Path,
+        daemon: &Path,
+        bundle: &Path,
+        launcher: &'static str,
+        profile: &'static str,
+    ) -> Result<Self> {
+        Self::start_profile(cli, daemon, bundle, Backend::Strata(launcher, profile)).await
     }
     async fn start_profile(
         cli: &Path,
@@ -287,16 +357,7 @@ impl NormalService {
             cli,
             &root,
             Some(&connection),
-            [
-                "run",
-                backend.recipe(),
-                "--mode",
-                backend.mode(),
-                "--idempotency-key",
-                "normal-service-gate",
-                "--format",
-                "json",
-            ],
+            backend.launch("normal-service-gate"),
             &mut records,
         )
         .await?;
@@ -308,7 +369,7 @@ impl NormalService {
         // must retain one worker, not merely reuse a client-side receipt.
         let pending = client.prepare_launch(
             LaunchRequest {
-                target: None,
+                target: backend.target().map(str::to_owned),
                 recipe_id: acceptance.run.recipe_id.clone(),
                 mode: acceptance.run.mode,
                 preview_revision: acceptance.run.preview_revision.clone(),
@@ -333,6 +394,7 @@ impl NormalService {
             released,
             restart: None,
             systemd: false,
+            strata: None,
         };
         if !docker {
             this.verify(cli, &mut records).await?;
@@ -448,6 +510,7 @@ impl NormalService {
                 "orchestration_while_paused": paused.orchestration,
             })),
             systemd,
+            strata: None,
         };
         this.verify(cli, &mut records).await?;
         worker.exited().await?;
@@ -626,8 +689,13 @@ impl NormalService {
         daemon: &Path,
         bundle: &Path,
     ) -> Result<()> {
-        // The worker takes the lock before Begin; anchors appear only after Begin.
-        let deadline = Instant::now() + Duration::from_secs(60);
+        // The worker takes the lock before Begin; anchors appear only after
+        // Begin, which follows a Strata run's hold.
+        let deadline = Instant::now()
+            + match self.backend {
+                Backend::Strata(..) => HOLD_LIMIT,
+                _ => Duration::from_secs(60),
+            };
         while self.client.run(&self.run).await?.event_anchors.is_none() {
             if Instant::now() >= deadline {
                 return Err("live worker did not begin".into());
@@ -640,16 +708,7 @@ impl NormalService {
             cli,
             &root,
             Some(&connection),
-            [
-                "run",
-                self.backend.recipe(),
-                "--mode",
-                self.backend.mode(),
-                "--idempotency-key",
-                "other-checkout",
-                "--format",
-                "json",
-            ],
+            self.backend.launch("other-checkout"),
             &mut Vec::new(),
         )
         .await?;
@@ -679,7 +738,12 @@ impl NormalService {
         if self.view.backend.kind != BackendKind::Controller {
             return Err("service substituted fixture output".into());
         }
-        let deadline = Instant::now() + Duration::from_secs(20);
+        // A Strata run's worker begins only once the daemon holds the host.
+        let deadline = Instant::now()
+            + match self.backend {
+                Backend::Strata(..) => HOLD_LIMIT,
+                _ => Duration::from_secs(20),
+            };
         let initial = loop {
             let view = self.client.run(&self.run).await?;
             if view.event_anchors.is_some() {
@@ -702,7 +766,7 @@ impl NormalService {
             Duration::from_secs(match self.backend {
                 Backend::Simulation => 25,
                 Backend::DockerScripted => 180,
-                Backend::Live(_) => 300,
+                Backend::Live(_) | Backend::Strata(..) => 300,
             }),
             async {
                 loop {
@@ -739,7 +803,7 @@ impl NormalService {
         let exact = match self.backend {
             Backend::Simulation => Some(26),
             Backend::DockerScripted => Some(160),
-            Backend::Live(_) => None,
+            Backend::Live(_) | Backend::Strata(..) => None,
         };
         if self.view.orchestration.state != OrchestrationState::Terminal
             || self.view.outcome.as_ref().map(|o| o.reason) != Some(StopReason::AgentFinished)
@@ -871,7 +935,7 @@ impl NormalService {
         let saved = match self.backend {
             Backend::Simulation => bytes.as_slice(),
             Backend::DockerScripted => bytes.as_slice(),
-            Backend::Live(_) => bytes.trim_ascii(),
+            Backend::Live(_) | Backend::Strata(..) => bytes.trim_ascii(),
         };
         if saved
             != if self.backend.docker() {
@@ -888,7 +952,7 @@ impl NormalService {
                 .download(&self.run, artifact, &mut bytes, &cancel)
                 .await?;
             // Live images vary; the model was asked only for a 32x32 PNG.
-            if matches!(self.backend, Backend::Live(_))
+            if self.backend.live()
                 && artifact.name == "probe.png"
                 && (bytes.get(..8) != Some(b"\x89PNG\r\n\x1a\n".as_slice())
                     || bytes.get(16..24) != Some([0, 0, 0, 32, 0, 0, 0, 32].as_slice()))
@@ -927,16 +991,7 @@ impl NormalService {
             cli,
             &self.root,
             Some(&self.connection),
-            [
-                "run",
-                self.backend.recipe(),
-                "--mode",
-                self.backend.mode(),
-                "--idempotency-key",
-                "normal-service-gate",
-                "--format",
-                "json",
-            ],
+            self.backend.launch("normal-service-gate"),
             records,
         )
         .await?;
@@ -966,7 +1021,7 @@ impl NormalService {
         for checkpoint in offline.checkpoints()? {
             let index = checkpoint.index.ok_or("offline index absent")?;
             let outgoing = offline.content(&index.outgoing_memory.content)?;
-            if matches!(self.backend, Backend::Live(_)) {
+            if self.backend.live() {
                 if outgoing.is_empty() {
                     return Err("live session saved no memento".into());
                 }
@@ -1043,8 +1098,16 @@ impl NormalService {
             .await?
             .expect(0)?;
         }
-        if let Backend::Live(_) = self.backend {
-            live_streaming_and_timing(&history, &self.view)?;
+        match self.backend {
+            Backend::Live(_) => live_streaming_and_timing(&history, &self.view)?,
+            Backend::Strata(..) => {
+                let (long, calls_only) = strata_streaming(&history)?;
+                println!(
+                    "Strata streaming: {long} responses generated for 1.5 seconds or more with \
+                     text first; {calls_only} more only called tools"
+                );
+            }
+            _ => (),
         }
         self.artifacts = artifacts.clone();
         println!(
@@ -1054,13 +1117,18 @@ impl NormalService {
                 Backend::Simulation => "normal",
                 Backend::DockerScripted => "run-and-view",
                 Backend::Live(_) => "live-run-and-view",
+                Backend::Strata(..) => "strata-run-and-view",
             },"run_id":self.run,"frontier":final_frontier,"sessions":2,"known_tokens":usage.known_generated_tokens,"unknown_reserved_tokens":usage.unknown_reserved_tokens,"verified_artifacts":artifacts.len(),"copied_archive":true,"supervision":if self.backend.docker() || self.systemd { "real user systemd" } else { "CPU test; no systemd enforcement" },"released":self.released.as_ref().map(|r| json!({"run_id":r.run_id,"orchestration":r.orchestration,"cancellation":r.cancellation})),"restart":self.restart})
         );
         Ok(())
     }
     pub async fn stop(&mut self) -> Result<()> {
-        self.child.kill().await?;
-        self.child.wait().await?;
+        if let Backend::Strata(..) = self.backend {
+            self.stop_holds().await?;
+        } else {
+            self.child.kill().await?;
+            self.child.wait().await?;
+        }
         std::fs::remove_dir_all(self.root.join("service"))?;
         let offline =
             ArchiveQueries::offline(self.root.join("copied-archive"), StorageLimits::default())?;
@@ -1092,6 +1160,79 @@ impl NormalService {
                 destination.join("docker-absence.json"),
             )?;
         }
+        if let Some(StrataEvidence { stderr, logs }) = &self.strata {
+            let holds = destination.join("strata-holds");
+            std::fs::create_dir_all(&holds)?;
+            std::fs::write(destination.join("daemon-stderr.txt"), stderr)?;
+            for (name, log) in logs {
+                std::fs::write(holds.join(name), log)?;
+            }
+        }
+        Ok(())
+    }
+    /// Waits until this daemon would hold the Strata host again: its last
+    /// hold has parked or stopped the server, and the launcher reports the
+    /// host free. A run's terminal state comes before its hold ends.
+    pub async fn strata_idle(&self) -> Result<()> {
+        let target = self.backend.target().ok_or("not a Strata backend")?;
+        let recipe = RecipeId::new(self.backend.recipe())?;
+        let client = self.client.with_target(Some(target.to_owned()))?;
+        let deadline = Instant::now() + Duration::from_secs(600);
+        loop {
+            let preview = client
+                .preview(&recipe, playtime_core::RunMode::LiveSmoke)
+                .await?;
+            if preview.readiness.ready {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!("the Strata host stayed held: {:?}", preview.readiness).into());
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+    }
+    /// Stops the daemon as systemd would, so that it ends every hold, then
+    /// checks that each hold it took ended with its inference owner
+    /// confirmed, and that a completed run parked the model.
+    async fn stop_holds(&mut self) -> Result<()> {
+        let pid = self
+            .child
+            .id()
+            .and_then(|id| rustix::process::Pid::from_raw(id as i32))
+            .ok_or("the Strata daemon already exited")?;
+        rustix::process::kill_process(pid, rustix::process::Signal::TERM)?;
+        let stopped = tokio::time::timeout(Duration::from_secs(600), self.child.wait()).await;
+        if stopped.is_err() {
+            self.child.kill().await?;
+            self.child.wait().await?;
+            return Err("the Strata daemon didn't stop within 10 minutes".into());
+        }
+        let stderr = std::fs::read(self.root.join("daemon-stderr.log"))?;
+        let mut logs = Vec::new();
+        let holds = self.root.join("service/.playtime/strata-holds");
+        for entry in std::fs::read_dir(&holds)? {
+            let entry = entry?;
+            logs.push((
+                entry.file_name().to_string_lossy().into_owned(),
+                std::fs::read(entry.path())?,
+            ));
+        }
+        logs.sort();
+        let text = String::from_utf8_lossy(&stderr).into_owned();
+        self.strata = Some(StrataEvidence { stderr, logs });
+        let count = |needle: &str| text.lines().filter(|l| l.contains(needle)).count();
+        let lent = count(" lent http://");
+        let ended = count(" ended: ");
+        let confirmed = count("inference owner confirmed");
+        if lent == 0
+            || ended != lent
+            || confirmed < ended
+            || count(" ended: released, released true") == 0
+            || count("wrote no ending") + count("didn't exit") != 0
+        {
+            return Err(format!("a Strata hold didn't end cleanly:\n{text}").into());
+        }
+        println!("Strata holds: {lent} lent, all ended with the owner confirmed");
         Ok(())
     }
     async fn verify_docker_absence(&self) -> Result<()> {
@@ -1240,6 +1381,73 @@ fn live_streaming_and_timing(
         return Err(format!("possible GPU contention during the live run: {contention:?}").into());
     }
     Ok(())
+}
+/// Every Strata response streamed its deltas, and each request's own record saw
+/// the server's terminal event. A response that generated for 1.5 seconds or
+/// more, by the server's own timings, showed text at least 300 ms before it ended.
+/// Returns how many long responses streamed text and how many only called tools.
+fn strata_streaming(
+    history: &[playtime_protocol::events::EventEnvelope],
+) -> Result<(usize, usize)> {
+    let value = |e: &playtime_protocol::events::EventEnvelope| e.data["data"]["value"].clone();
+    let elapsed = |e: &playtime_protocol::events::EventEnvelope| e.data["elapsed_ms"].as_u64();
+    let (mut first_text, mut streamed, mut calls) =
+        (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
+    for e in observations(history, "model_chunk") {
+        let chunk = value(e);
+        let call = chunk["call"].as_u64();
+        match chunk["chunk"]["observation"].as_str() {
+            Some("strata_deltas") => {
+                streamed.entry(call).or_insert(());
+                let message = &chunk["chunk"]["message"];
+                if ["thinking", "content"]
+                    .iter()
+                    .any(|key| message[key].as_str().is_some_and(|t| !t.is_empty()))
+                {
+                    first_text.entry(call).or_insert(elapsed(e));
+                }
+            }
+            Some("strata_call") => {
+                if calls.insert(call, chunk["chunk"].clone()).is_some() {
+                    return Err("a Strata request recorded two calls".into());
+                }
+            }
+            _ => return Err(format!("a Strata run recorded another chunk: {chunk}").into()),
+        }
+    }
+    if calls.len() != observations(history, "model_request").count() {
+        return Err("a Strata request recorded no call".into());
+    }
+    let (mut long, mut calls_only) = (0, 0);
+    for e in observations(history, "model_response") {
+        let id = value(e)["call"].as_u64();
+        let call = calls.get(&id).ok_or("a Strata response recorded no call")?;
+        if call["remote"] != "terminal_observed" || call.get("terminal").is_none() {
+            return Err(
+                format!("a Strata response's request saw no terminal event: {call}").into(),
+            );
+        }
+        streamed
+            .get(&id)
+            .ok_or("a Strata response streamed no deltas")?;
+        let generated = call["terminal"]["timings"]["predicted_ms"]
+            .as_f64()
+            .ok_or("a Strata response recorded no generation time")?;
+        if generated < 1_500.0 {
+            continue;
+        }
+        // A response that only called a tool streamed its arguments, not text.
+        let Some(first) = first_text.get(&id).copied() else {
+            calls_only += 1;
+            continue;
+        };
+        long += 1;
+        let first = first.ok_or("a Strata chunk recorded no elapsed time")?;
+        if elapsed(e).unwrap_or(0) < first + 300 {
+            return Err("a long Strata response showed no partial output first".into());
+        }
+    }
+    Ok((long, calls_only))
 }
 /// Every response streamed a chunk, and each one generated for 1.5 seconds or
 /// more showed text at least 300 ms before it ended. Returns how many long
@@ -1468,6 +1676,7 @@ fn copy(source: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn fresh_conversation_uses_session_identity_and_checks_its_first_request() {
@@ -1570,5 +1779,98 @@ mod tests {
         let mut silent = history;
         silent.push(event(99, "model_response", 2000, json!({"call": 5})));
         assert!(long_responses_streamed(&silent).is_err());
+    }
+
+    #[test]
+    fn strata_responses_stream_deltas_and_record_each_call() {
+        let event = |sequence, kind, elapsed: u64, value| {
+            serde_json::from_value(json!({
+                "schema_version": 1, "run_id": "strata-streaming-test", "sequence": sequence,
+                "time": "2026-11-23T00:00:00Z", "kind": "controller_observation",
+                "data": {"session_id": "s1", "observation_kind": kind, "elapsed_ms": elapsed,
+                    "data": {"storage": "inline", "value": value}}
+            }))
+            .unwrap()
+        };
+        // One request: its deltas at `chunk_ms`, then its response at 2000 ms
+        // and its call record with the server's generation time.
+        let request = |history: &mut Vec<_>, call: u64, deltas: Value, chunk_ms, predicted_ms| {
+            let next = history.len() as u64 + 1;
+            history.push(event(next, "model_request", 0, json!({"call": call})));
+            history.push(event(
+                next + 1,
+                "model_chunk",
+                chunk_ms,
+                json!({"call": call, "chunk": deltas}),
+            ));
+            history.push(event(
+                next + 2,
+                "model_response",
+                2000,
+                json!({"call": call}),
+            ));
+            history.push(event(
+                next + 3,
+                "model_chunk",
+                2000,
+                json!({"call": call, "chunk": {"observation": "strata_call",
+                    "remote": "terminal_observed", "events": 40, "observed_ms": 2000,
+                    "terminal": {"type": "response.completed",
+                        "timings": {"predicted_ms": predicted_ms, "prompt_ms": 300.0}}}}),
+            ));
+        };
+        let thinking = json!({"observation": "strata_deltas", "deltas": 3,
+            "message": {"role": "assistant", "thinking": "Reading the notes"}});
+        let arguments = json!({"observation": "strata_deltas", "deltas": 5,
+            "message": {"role": "assistant"},
+            "arguments": [{"item_id": "fc_1", "name": "exec", "delta": "{\"command\":\"ls\"}"}]});
+        let mut history = Vec::new();
+        request(&mut history, 1, thinking.clone(), 100, 1600.0);
+        request(&mut history, 2, arguments, 1950, 1520.0);
+        // A short response needn't show anything early, even after a long prompt.
+        request(&mut history, 3, thinking.clone(), 1990, 400.0);
+        assert_eq!(strata_streaming(&history).unwrap(), (1, 1));
+        let mut late = history.clone();
+        request(&mut late, 4, thinking.clone(), 1900, 1600.0);
+        assert!(strata_streaming(&late).is_err());
+        // Every request has one call record that saw its terminal event, and
+        // the server's generation time.
+        fn call_record(history: &mut [playtime_protocol::events::EventEnvelope]) -> &mut Value {
+            let last = history.len() - 1;
+            &mut history[last].data["data"]["value"]["chunk"]
+        }
+        for change in [
+            json!({"remote": "uncertain"}),
+            json!({"terminal": {"type": "response.completed", "timings": {}}}),
+        ] {
+            let mut bad = history.clone();
+            for (key, value) in change.as_object().unwrap() {
+                call_record(&mut bad)[key] = value.clone();
+            }
+            assert!(strata_streaming(&bad).is_err(), "{change}");
+        }
+        let mut unterminated = history.clone();
+        call_record(&mut unterminated)
+            .as_object_mut()
+            .unwrap()
+            .remove("terminal");
+        assert!(strata_streaming(&unterminated).is_err());
+        let mut uncalled = history.clone();
+        uncalled.pop();
+        assert!(strata_streaming(&uncalled).is_err());
+        let mut twice = history.clone();
+        twice.push(twice[twice.len() - 1].clone());
+        assert!(strata_streaming(&twice).is_err());
+        let mut silent = history.clone();
+        silent.remove(1);
+        assert!(strata_streaming(&silent).is_err());
+        let mut other = history;
+        other.push(event(
+            99,
+            "model_chunk",
+            2000,
+            json!({"call": 1, "chunk": {"observation": "timing", "eval_duration": 1}}),
+        ));
+        assert!(strata_streaming(&other).is_err());
     }
 }

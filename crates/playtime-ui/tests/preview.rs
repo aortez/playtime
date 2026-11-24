@@ -119,6 +119,62 @@ async fn missing_malformed_and_bounded_metadata_never_invent_values() {
 }
 
 #[tokio::test]
+async fn a_strata_preview_names_its_lock_settings_and_held_host_without_ollama_labels() {
+    let app = common::demo(true).await;
+    let mut preview = preview_scene::live(app.model.preview.unwrap().value);
+    preview.target = Some(playtime_protocol::api::InferenceTarget {
+        id: "framework-strata".into(),
+        name: "Framework · Strata".into(),
+        provider: playtime_protocol::api::InferenceProvider::Strata,
+        endpoint: String::new(),
+        profile: Some("framework-gyro-m-fast".into()),
+    });
+    preview.model_identity = json!({
+        "adapter":"strata", "lock":"example-strata-lock-v1", "model":"example-model",
+        "engine":"0.1.58", "context_tokens":163840, "launcher_profile":"framework-gyro-m-fast",
+        "host":{"backend":"hip", "quantization":"TQ2_0", "server_release_manifest_sha256":"f".repeat(64)},
+        "settings":{"thinking":"medium", "summary_thinking":"none", "temperature":0.6, "top_p":0.95,
+            "top_k":20, "min_p":0.0, "repetition_penalty":1.0, "presence_penalty":0.0,
+            "frequency_penalty":0.0, "penalty_last_n":64}
+    });
+    let prepared = prepare_preview(preview);
+    let section = |title| {
+        prepared
+            .sections
+            .iter()
+            .find(|s| s.title == title)
+            .unwrap()
+            .lines
+            .join("\n")
+    };
+    let target = section("Inference target");
+    assert!(target.contains("Framework · Strata (framework-strata)"));
+    assert!(target.contains("Launcher profile: framework-gyro-m-fast"));
+    assert!(target.contains("Provider: Strata"));
+    let model = section("Model");
+    for expected in [
+        "Model: example-model · Lock: example-strata-lock-v1",
+        "Strata engine: 0.1.58 · Server context: 163,840 tokens",
+        "Host: hip backend · TQ2_0 quantization · Launcher profile: framework-gyro-m-fast",
+        "Thinking: medium · Summary thinking: none",
+        "Temperature: 0.6 · Top-p: 0.95 · Top-k: 20 · Min-p: 0.0",
+        "Repetition penalty: 1.0 · Presence penalty: 0.0 · Frequency penalty: 0.0 · Penalty window: 64 tokens",
+    ] {
+        assert!(model.contains(expected), "{model}");
+    }
+    let all = format!("{target}\n{model}");
+    for absent in [
+        "Ollama",
+        "Repeat penalty",
+        "Resolved addresses",
+        "unavailable",
+    ] {
+        assert!(!all.contains(absent), "{all}");
+    }
+    assert_eq!(prepared.model_name, None);
+}
+
+#[tokio::test]
 async fn archive_waiting_is_normal_and_scoped_to_the_selected_observation() {
     let mut model = common::demo(false).await.model;
     let run = model.selected.clone();

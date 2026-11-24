@@ -11,6 +11,7 @@ fn target(id: &str, endpoint: &str) -> InferenceTarget {
         name: id.into(),
         provider: InferenceProvider::Ollama,
         endpoint: endpoint.into(),
+        profile: None,
     }
 }
 #[tokio::test]
@@ -151,4 +152,47 @@ fn configuration_is_bounded_and_rejects_ambiguous_or_unsupported_targets() {
     let mut bad = valid;
     bad.schema_version = 2;
     assert!(!bad.valid());
+}
+#[test]
+fn a_strata_target_names_a_launcher_profile_and_no_endpoint() {
+    let file: InferenceTargets = serde_json::from_value(serde_json::json!({
+        "schema_version": 1,
+        "targets": [
+            {"id": "bird", "name": "Bird", "provider": "ollama", "endpoint": "http://127.0.0.1:11434"},
+            {"id": "framework-strata", "name": "Framework · Strata", "provider": "strata",
+             "profile": "framework-gyro-m-fast"},
+        ],
+    }))
+    .unwrap();
+    playtime_server::targets::validate(&file).unwrap();
+    let strata = &file.targets[1];
+    assert_eq!(strata.provider, InferenceProvider::Strata);
+    assert_eq!(strata.endpoint, "");
+    // It serializes as written, and an Ollama target keeps its shape.
+    let written = serde_json::to_value(&file).unwrap();
+    assert_eq!(
+        written["targets"][1],
+        serde_json::json!({"id": "framework-strata", "name": "Framework · Strata",
+            "provider": "strata", "profile": "framework-gyro-m-fast"})
+    );
+    assert!(written["targets"][0].get("profile").is_none());
+    for (index, field, value) in [
+        (1, "endpoint", serde_json::json!("http://127.0.0.1:8080")),
+        (1, "profile", serde_json::Value::Null),
+        (1, "profile", serde_json::json!("")),
+        (1, "profile", serde_json::json!("../framework")),
+        (1, "profile", serde_json::json!("x".repeat(65))),
+        (0, "profile", serde_json::json!("framework-gyro-m-fast")),
+    ] {
+        let mut bad = written.clone();
+        bad["targets"][index][field] = value.clone();
+        let bad: InferenceTargets = serde_json::from_value(bad).unwrap();
+        assert!(
+            playtime_server::targets::validate(&bad).is_err(),
+            "{index} {field} {value}"
+        );
+    }
+    let mut unknown = written;
+    unknown["targets"][1]["launcher"] = "/opt/launcher".into();
+    assert!(serde_json::from_value::<InferenceTargets>(unknown).is_err());
 }

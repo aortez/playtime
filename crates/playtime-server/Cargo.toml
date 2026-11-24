@@ -16,12 +16,14 @@ playtime-runner.workspace = true
 playtime-storage.workspace = true
 playtime-engine.workspace = true
 playtime-ollama.workspace = true
+playtime-strata.workspace = true
 rustix = { workspace = true, features = ["event", "process"] }
 serde.workspace = true
 serde_json.workspace = true
 utoipa.workspace = true
 axum.workspace = true
-tokio = { workspace = true, features = ["signal"] }
+# Strata holds run the chat launcher as a child process.
+tokio = { workspace = true, features = ["process", "signal"] }
 tokio-util.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true
@@ -39,6 +41,8 @@ zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] 
 
 [dev-dependencies]
 playtime-test-support.workspace = true
+# Hold tests lend the Strata fixture server, whose metadata is this lock.
+playtime-runner = { workspace = true, features = ["strata-fixture"] }
 tokio = { workspace = true, features = ["test-util"] }
 rustix = { workspace = true, features = ["process"] }
 playtime-client = { path = "../playtime-client" }

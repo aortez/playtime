@@ -18,6 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ollama_endpoint = None;
     let mut recipes = None;
     let mut targets = None;
+    let mut strata_launcher = None;
     let mut listen: SocketAddr = "127.0.0.1:8766".parse()?;
     let mut args = std::env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -32,7 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--ollama-endpoint" => ollama_endpoint = Some(args.next().ok_or("missing Ollama endpoint")?),
             "--targets" => targets = Some(PathBuf::from(args.next().ok_or("missing targets file")?)),
             "--recipes" => recipes = Some(PathBuf::from(args.next().ok_or("missing recipe directory")?)),
-            _ => return Err("usage: playtimed --root <existing-private-root> --bundle <frozen-bundle> [--listen 127.0.0.1:8766] [--cpu-test-supervisor] [--docker-scripted [--docker-executable <path>] [--docker-socket <path>] [--ollama-endpoint <http-url> | --targets <json-file>] [--recipes <catalog-directory>]]".into()),
+            "--strata-launcher" => strata_launcher = Some(PathBuf::from(args.next().ok_or("missing Strata launcher directory")?)),
+            _ => return Err("usage: playtimed --root <existing-private-root> --bundle <frozen-bundle> [--listen 127.0.0.1:8766] [--cpu-test-supervisor] [--docker-scripted [--docker-executable <path>] [--docker-socket <path>] [--ollama-endpoint <http-url> | --targets <json-file> [--strata-launcher <chat-launcher-package>]] [--recipes <catalog-directory>]]".into()),
         }
     }
     let root = root.ok_or("--root is required")?;
@@ -68,6 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     targets: vec![],
                 },
             },
+            strata_launcher.as_deref(),
         )
         .await?,
     );
@@ -96,5 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! { _ = tokio::signal::ctrl_c() => (), _ = terminate.recv() => () }
     server.stop().await?;
+    // Each hold's helper then stops its server, rather than at the hold's EOF.
+    daemon.close().await;
     Ok(())
 }

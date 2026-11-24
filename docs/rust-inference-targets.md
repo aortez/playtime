@@ -27,8 +27,9 @@ Use the printed history-specific stop command to stop its daemon between runs.
 Start with [`config/inference-targets.example.json`](../config/inference-targets.example.json).
 It defines `bird` (RTX 4090) and `framework` (Radeon 8060S). Copy it to your own
 configuration and adjust endpoints or add machines. The format is versioned JSON,
-limited to 16 unique target IDs and 64 KiB. Only `provider: "ollama"` is currently
-implemented. Names are display labels, not attested hardware identities.
+limited to 16 unique target IDs and 64 KiB. The providers are `ollama` and
+[`strata`](#strata-targets). Names are display labels, not attested hardware
+identities.
 
 Rebuild the daemon, CLI/UI and frozen worker bundle together. The new worker
 capability digest covers named-target execution; old bundles cannot execute it.
@@ -108,6 +109,117 @@ remain unlabelled; their endpoint evidence is unchanged.
 Current admission and local live-run exclusion are unchanged. This feature adds
 selection and provenance, not scheduling or exclusive ownership of remote Ollama.
 The operator coordinates other clients such as Codex.
+
+## Strata targets
+
+A target with `provider: "strata"` names a [chat launcher](rust-chat-launcher.md)
+profile instead of an endpoint:
+
+```json
+{"id": "framework-strata", "name": "Framework · Strata", "provider": "strata",
+ "profile": "framework-gyro-m-fast"}
+```
+
+The daemon then needs `--strata-launcher /absolute/chat-launcher-package`, the
+installed launcher package. It runs the launcher with `/usr/bin/python3 -I` and
+`PATH=/usr/bin:/bin`, whatever its own environment. At startup it asks the
+launcher to describe the profile's hold (`run-strata.py PROFILE
+--describe-hold`), and the package's copy of the profile's lock must be byte for
+byte one that this build compiled, now only `framework-strata-gyro-m-fast-v2`. A
+target that fails this is unavailable, and each later request for it describes
+it again. The target's model is its lock, so the model browser refuses the
+target as `unsupported_capability`. The daemon advertises `strata_targets_v1`
+when it has a Strata target.
+
+So far a Strata target runs only the archived live smoke, `live-two-session`
+with `--mode live_smoke`, which sends the lock's own settings; recipes there are
+refused. Its preview freezes the lock and a template host without an endpoint,
+so the preview revision doesn't depend on which server a hold lends later. The
+preview reads the host's state through the launcher's read-only `--status`, and
+it isn't ready unless the host is ready or starts on launch. Admission reads the
+state again: a busy host is refused as `run_busy`, and any other state that a
+hold would refuse as `model_unavailable`. Until this daemon's previous hold has
+parked or stopped its server, the preview isn't ready and admission is refused
+as `run_busy` too.
+
+Preparation holds the host through `run-strata.py PROFILE --hold`. The launcher
+starts or reuses the reviewed server, verifies its artifacts against the lock and
+lends a loopback forward. The daemon checks the lock's name and digest, that the
+verified host identity is the lock's and that the endpoint is loopback. Then it
+inspects the server itself, which must serve the lock's model with nothing in
+flight. It freezes the endpoint, the server's start identity and the verifier
+report into `model.host`, and the worker refuses any other server process. A
+hold may take the launcher's startup and verification bounds plus 75 seconds,
+about 27 minutes for Framework's profile. Cancelling the run abandons a hold
+that hasn't lent its host. A hold refused during preparation leaves the run
+`preparation_failed` and waiting for a release, as any failed preparation does,
+and no worker starts.
+
+When the worker stops, the daemon ends the hold. Only a run that completed
+normally, on the same server with nothing in flight, parks the model warm by
+sending `release`. Every other ending closes the hold, and the launcher stops the
+server. The daemon waits for the launcher's `ended` event and its exit, each
+within the profile's cleanup bound plus a minute, then sends SIGTERM and waits 30
+seconds more. It never kills a hold, which could orphan the hold's SSH session;
+one that still runs is logged and left to finish. Each hold's launcher messages
+go to `.playtime/strata-holds/RUN.log` under the service root. While a hold is
+active or still ending, a release of its run is refused with the hold as a
+remaining resource.
+
+Stopping the daemon ends every hold and stops their servers, so a Strata run
+doesn't survive a daemon restart: its worker's next request fails. A launcher
+whose daemon dies reads EOF and stops its server too. The daemon ends its holds
+together and waits for each, so a systemd unit that runs it should send the stop
+signal only to the daemon (`KillMode=mixed`) and allow a stop timeout longer than
+one hold's whole wait above, about 8 minutes for Framework's profile. Otherwise
+systemd signals the holds' SSH sessions too, and the host's helper stops the
+server only once it sees the lost session.
+
+The machine-wide live-run lock still allows one live run at a time across
+checkouts. Other clients of the same host, such as the chat console, hold it
+through the same launcher, which refuses a second hold as busy.
+
+### Strata gate
+
+```sh
+PLAYTIME_STRATA_LAUNCHER=/absolute/chat-launcher-package \
+  ./scripts/test-rust-service-e2e.sh --case run-and-view --backend strata
+```
+
+This is the [live gate](rust-live-model.md#evidence) on a Strata target. It holds
+`PLAYTIME_STRATA_PROFILE`, by default `framework-gyro-m-fast`, through a launcher
+package that has hold mode and the profile's reviewed lock. Like the live gate,
+it refuses to start while any Playtime worker unit is active, and it requires the
+same agent completion, files, checkpoints, mementos, copied archive and Docker
+cleanup. Another daemon root's admission must get `run_busy` while the run holds
+the live-run lock. Every response must follow streamed deltas, and its request's
+call record must have seen the server's terminal event. A response that generated
+for 1.5 seconds or more, by the server's `predicted_ms`, must show text at least
+300 ms before it ended, unless it only called tools. Strata reports none of
+Ollama's durations, so the run's contention summary stays unknown and the gate
+doesn't check it.
+
+Before the workbench's launch, the gate waits until the first hold has parked the
+server. At the end it stops the daemon with SIGTERM. Each hold must have ended
+with its inference owner confirmed, and at least one completed run must have
+parked the model. The daemon's stderr and each hold's launcher log are kept with
+the evidence. Holding a cold host may take half an hour.
+
+#### Native evidence, 2026-11-23
+
+The gate passed on Framework's `framework-gyro-m-fast` profile, through a
+launcher package staged from this checkout. CLI run `20261124T050557Z-d89eb9b3`
+completed both sessions with 961 known generated tokens, no unknown usage, 137
+records and complete Docker cleanup. Five of its responses generated for 1.5
+seconds or more, and each showed text first. Workbench launch
+`20261124T050711Z-1f8a8306` also finished `agent_finished`. The first hold
+started the model cold, ready in 31.5 seconds and verified in 1.3 seconds. The
+second reused the server that the first had parked, ready in 0.4 seconds. Both
+holds lent the same server process and ended `released`, with the inference
+owner confirmed. An earlier attempt failed before it reached the host: the daemon
+looked up `python3` through its own `PATH`, which the gate points at a missing
+directory. The daemon now runs the launcher with a fixed interpreter and `PATH`.
+Evidence is retained outside version control.
 
 ## Validation
 

@@ -227,7 +227,8 @@ tool call takes 1.52 s on the Framework and about 0.4 s on the RTX 4090. Every
 request must record timing, with no contention flagged.
 Finally it launches the same recipe from the workbench and records that run's
 outcome. Failed attempts are kept as records; the gate never loops. Set
-`PLAYTIME_LIVE_ENDPOINT` to use another endpoint.
+`PLAYTIME_LIVE_ENDPOINT` to use another endpoint. `--backend strata` runs the
+same gate on a [Strata target](rust-inference-targets.md#strata-gate).
 
 The first live attempt (run `20261018T214653Z-67973162`, evidence retained
 outside version control) ran end to end in 28 seconds: two checkpoints, complete

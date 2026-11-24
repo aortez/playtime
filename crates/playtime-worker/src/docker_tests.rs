@@ -236,6 +236,7 @@ const STRATA_FIXTURE: &str = "fixture-strata-gyro-m";
 /// What a hold of the fixture server would have verified.
 fn held(endpoint: &str, started: u64, root: &std::path::Path) -> StrataHost {
     StrataHost {
+        target: None,
         profile: "fixture-gyro-m".into(),
         endpoint: endpoint.into(),
         started,

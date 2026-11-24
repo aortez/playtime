@@ -27,17 +27,27 @@ pub fn strata_lock_names() -> impl Iterator<Item = &'static str> {
     REVIEWED.iter().chain(FIXTURE).map(|(name, _)| *name)
 }
 
-/// The compiled lock with this name, if this build runs it.
-pub fn strata_lock(name: &str) -> Result<ModelLock> {
-    let (_, bytes) = REVIEWED
+fn compiled(name: &str) -> Result<&'static [u8]> {
+    REVIEWED
         .iter()
         .chain(FIXTURE)
         .find(|(reviewed, _)| *reviewed == name)
-        .ok_or_else(|| Error::Invalid(format!("{name} is not a reviewed Strata lock")))?;
-    let lock: ModelLock = serde_json::from_slice(bytes)?;
+        .map(|(_, bytes)| *bytes)
+        .ok_or_else(|| Error::Invalid(format!("{name} is not a reviewed Strata lock")))
+}
+
+/// The compiled lock with this name, if this build runs it.
+pub fn strata_lock(name: &str) -> Result<ModelLock> {
+    let lock: ModelLock = serde_json::from_slice(compiled(name)?)?;
     lock.validate()
         .map_err(|e| Error::Invalid(format!("compiled Strata lock {name}: {e}")))?;
     Ok(lock)
+}
+
+/// The SHA-256 of the compiled lock file, which a launcher package's copy of
+/// the lock must match.
+pub fn strata_lock_sha256(name: &str) -> Result<String> {
+    Ok(playtime_storage::sha256(compiled(name)?).to_string())
 }
 
 /// Every reviewed lock, for the profile digest.
@@ -63,6 +73,10 @@ pub enum StrataProvider {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StrataHost {
+    /// The named target the run was launched on, if any. Boxed to keep
+    /// `LiveModel`'s variants close in size; it serializes the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<Box<playtime_protocol::api::InferenceTarget>>,
     /// The chat launcher profile whose hold lent the endpoint.
     pub profile: String,
     /// The hold's loopback forward to the server.
@@ -77,11 +91,12 @@ pub struct StrataHost {
 }
 impl StrataHost {
     fn valid(&self, lock: &ModelLock) -> bool {
-        (1..=64).contains(&self.profile.len())
-            && self
-                .profile
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        use playtime_protocol::api::{InferenceProvider, valid_profile};
+        self.target.as_ref().is_none_or(|t| {
+            t.valid()
+                && t.provider == InferenceProvider::Strata
+                && t.profile.as_ref() == Some(&self.profile)
+        }) && valid_profile(&self.profile)
             && playtime_strata::Endpoint::parse(&self.endpoint).is_ok()
             && self.started > 0
             && serde_json::to_value(&lock.host).is_ok_and(|host| self.verification["host"] == host)

@@ -1261,7 +1261,7 @@ impl Workbench {
                                 ui.label(&model.name);
                                 for line in &model.details { ui.label(line); }
                                 if let Some(endpoint) = &model.endpoint { ui.label(endpoint); }
-                                ui.label(format!("Digest: {}", model.digest));
+                                ui.label(format!("{}: {}", model.digest_label, model.digest));
                                 ui.separator();
                             }
                             Some(Err(error)) => { ui.label(format!("Archived model unavailable: {}", brief(error, 512))); }

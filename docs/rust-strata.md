@@ -142,8 +142,10 @@ must be the lock's. The worker build compiles the reviewed locks it runs, now
 equal. Validation refreezes the record, so another lock, other settings or a host
 that doesn't match the lock is refused, and a run whose context budget exceeds the
 lock's context doesn't freeze. Archived Ollama models have no `provider` field and
-keep their bytes. The daemon doesn't hold a Strata host yet, so nothing freezes
-this profile outside tests; recipes and continuous profiles refuse Strata for now.
+keep their bytes. The daemon freezes this profile for the live smoke on a
+[Strata target](rust-inference-targets.md#strata-targets), from the hold it takes
+for the run, and the host record keeps that target, whose profile must be the
+host's. Recipes and continuous profiles refuse Strata for now.
 
 The worker binds its client to the frozen `started` value with
 `Client::with_server_start`, so even its first check refuses another server

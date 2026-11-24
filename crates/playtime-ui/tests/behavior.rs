@@ -388,6 +388,7 @@ async fn changing_target_invalidates_preview_and_metadata_and_freezes_launch_tar
         name: id.into(),
         provider: InferenceProvider::Ollama,
         endpoint: format!("http://{id}:11434/"),
+        profile: None,
     };
     let mut model = Model::default();
     model.connection = ConnectionState::Connected;
@@ -440,6 +441,7 @@ fn model_metadata_waits_for_an_explicit_target() {
         name: id.into(),
         provider: InferenceProvider::Ollama,
         endpoint: format!("http://{id}:11434/"),
+        profile: None,
     };
     let inventory_on = |model: &Model, target: Option<&str>| {
         model

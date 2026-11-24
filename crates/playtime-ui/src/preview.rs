@@ -5,7 +5,7 @@ use crate::{
     progress,
     transcript::{self, excerpt, thousands},
 };
-use playtime_protocol::api::Preview;
+use playtime_protocol::api::{InferenceProvider, Preview};
 use serde_json::Value;
 
 // Reserve room for all three text excerpts and the bounded summary sections,
@@ -121,19 +121,25 @@ pub fn prepare(value: Preview) -> PreviewView {
     ));
     let mut sections = vec![section("Run limits", limits)];
     if let Some(target) = &value.target {
-        sections.insert(
-            0,
-            section(
-                "Inference target",
-                vec![
-                    format!("{} ({})", target.name, target.id),
-                    target.endpoint.clone(),
-                    "Provider: Ollama".into(),
-                    "GPU fit depends on the model and context; installed does not mean validated."
-                        .into(),
-                ],
-            ),
-        );
+        let lines = match target.provider {
+            InferenceProvider::Ollama => vec![
+                format!("{} ({})", target.name, target.id),
+                target.endpoint.clone(),
+                "Provider: Ollama".into(),
+                "GPU fit depends on the model and context; installed does not mean validated."
+                    .into(),
+            ],
+            InferenceProvider::Strata => vec![
+                format!("{} ({})", target.name, target.id),
+                format!(
+                    "Launcher profile: {}",
+                    target.profile.as_deref().unwrap_or("unavailable")
+                ),
+                "Provider: Strata".into(),
+                "The daemon holds the host for each run; the endpoint is lent at launch.".into(),
+            ],
+        };
+        sections.insert(0, section("Inference target", lines));
     }
     if let Some(harness) = &value.harness {
         sections.insert(0, section("Harness", crate::harness::lines(harness)));
@@ -145,6 +151,28 @@ pub fn prepare(value: Preview) -> PreviewView {
     let mut model_lines = match adapter {
         Some("fixture") => vec!["Fixture model · no inference".into()],
         Some("scripted") => vec!["Scripted model responses · no inference".into()],
+        Some("strata") => vec![
+            format!(
+                "Model: {} · Lock: {}",
+                field(model, "/model"),
+                field(model, "/lock")
+            ),
+            format!(
+                "Strata engine: {} · Server context: {} tokens",
+                field(model, "/engine"),
+                count(model, "/context_tokens")
+            ),
+            format!(
+                "Host: {} backend · {} quantization · Launcher profile: {}",
+                field(model, "/host/backend"),
+                field(model, "/host/quantization"),
+                field(model, "/launcher_profile")
+            ),
+            format!(
+                "Server release: {}",
+                short(model, "/host/server_release_manifest_sha256")
+            ),
+        ],
         _ => vec![
             format!(
                 "Model: {} · Digest: {}",
@@ -201,7 +229,34 @@ pub fn prepare(value: Preview) -> PreviewView {
             thousands(l.handoff_tokens.get())
         ));
     }
-    if !matches!(adapter, Some("fixture" | "scripted")) {
+    if adapter == Some("strata") {
+        // The lock's reviewed settings, which every request sends.
+        model_lines.extend([
+            format!(
+                "Thinking: {} · Summary thinking: {}",
+                field(model, "/settings/thinking"),
+                field(model, "/settings/summary_thinking")
+            ),
+            format!(
+                "Temperature: {} · Top-p: {} · Top-k: {} · Min-p: {}",
+                field(model, "/settings/temperature"),
+                field(model, "/settings/top_p"),
+                field(model, "/settings/top_k"),
+                field(model, "/settings/min_p")
+            ),
+            format!(
+                "Repetition penalty: {} · Presence penalty: {} · Frequency penalty: {} · Penalty window: {}",
+                field(model, "/settings/repetition_penalty"),
+                field(model, "/settings/presence_penalty"),
+                field(model, "/settings/frequency_penalty"),
+                model
+                    .pointer("/settings/penalty_last_n")
+                    .and_then(Value::as_u64)
+                    .map(|n| format!("{} tokens", thousands(n)))
+                    .unwrap_or_else(|| "unavailable".into())
+            ),
+        ]);
+    } else if !matches!(adapter, Some("fixture" | "scripted")) {
         model_lines.push(format!(
             "Thinking: {}",
             match model.pointer("/settings/thinking") {
