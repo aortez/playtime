@@ -2033,3 +2033,20 @@ back to zenity.
 Eleven editor screenshots gain the collapsed **Seed files** row, and the new
 `seed-files` pair shows the open section; all were reviewed with the pinned
 renderer.
+
+## Read-only repair turn (2026-11-23)
+
+Read-only roles accept the contract invocation's `--repair-turns 1` and
+`--caller-deadline-unix-ms`. Their probe, and the worker probe's
+`readonly_invocation`, gain `repair_turns: 1` and `caller_deadline: "unix-ms-v1"`.
+Both options are off by default. A repair turn sends one fixed correction request
+in the same fresh conversation and keeps the editing workers' records:
+`response.repair-1.raw.txt`, `repair_turns_used`, `rejected`, `detail` and
+`repair_skipped`. Without either option, bindings, files, events and receipts keep
+their bytes, with one exception: if writing a response file fails, the invocation
+now ends without a terminal receipt, like other persistence failures, instead of
+recording `invalid_output`. A version-one worker still refuses both options, with
+reworded refusals. The wrapper passes them only with `--read-only` and only to an
+installed task that advertises them. No conversation, archive or experiment golden
+changes. Fixtures use a scripted model; they don't show the live model completing
+a rejected object.

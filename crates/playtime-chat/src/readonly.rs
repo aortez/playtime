@@ -1,5 +1,9 @@
 //! Fresh, schema-validated read-only decisions over the shared conversation driver.
-use crate::{Result, native_project, worker};
+use crate::{
+    Result,
+    contract::{MAX_REPAIR_TURNS, Rejection},
+    native_project, worker,
+};
 use clap::ValueEnum;
 use playtime_engine::chat::ConversationConfig;
 use playtime_local::PrivateDirectory;
@@ -30,6 +34,7 @@ pub fn capability() -> Value {
     json!({"protocol":"playtime-readonly","version":1,"capability":CAPABILITY,
         "roles":["setup","supervisor","reviewer"],"report":"structured-result-v1",
         "output_contract":"json-schema-subset-v1","continuation":"none",
+        "repair_turns":MAX_REPAIR_TURNS,"caller_deadline":"unix-ms-v1",
         "transport":"strata-responses-v1","tools":"project-native-v1"})
 }
 
@@ -40,9 +45,25 @@ pub fn require_policy(role: Role, mode: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn binding(role: Role, contract: &Contract, request: &[u8], execution: Value) -> Value {
-    json!({"capability":CAPABILITY,"role":role,"output_contract_sha256":contract.sha256(),
-        "request_sha256":digest(request),"execution":execution})
+/// A repair turn and the caller's deadline are recorded only when the caller
+/// asks for them, so other invocations keep their receipt bytes.
+pub fn binding(
+    role: Role,
+    contract: &Contract,
+    request: &[u8],
+    repair_turns: u32,
+    caller_deadline_unix_ms: Option<u64>,
+    execution: Value,
+) -> Value {
+    let mut binding = json!({"capability":CAPABILITY,"role":role,"output_contract_sha256":contract.sha256(),
+        "request_sha256":digest(request),"execution":execution});
+    if repair_turns != 0 {
+        binding["repair_turns"] = repair_turns.into();
+    }
+    if let Some(unix_ms) = caller_deadline_unix_ms {
+        binding["caller_deadline_unix_ms"] = unix_ms.into();
+    }
+    binding
 }
 
 pub fn config(
@@ -79,18 +100,32 @@ pub fn configure(
     Ok(config)
 }
 
-/// Save the raw final text first, even if parsing/schema validation fails. Never
-/// repair output, replay tools, or turn a model decision into action authority.
+/// Save the exact model text first, then validate it. A rejection is returned
+/// for the caller's explicit repair policy. Nothing here repairs output, replays
+/// tools or turns a model decision into action authority.
 pub fn save_response(
     response: &str,
     records: &PrivateDirectory,
+    raw_name: &str,
     contract: &Contract,
-) -> Result<String> {
-    records.write_new("response.raw.txt", response.as_bytes())?;
-    let validated = contract.validate(response.as_bytes())?;
+) -> Result<std::result::Result<String, Rejection>> {
+    records.write_new(raw_name, response.as_bytes())?;
+    let validated = match contract.validate(response.as_bytes()) {
+        Ok(value) => value,
+        Err(error) => return Ok(Err(Rejection::new("invalid_output", error))),
+    };
     let bytes = serde_json::to_vec(&validated)?;
     records.write_new("response.json", &bytes)?;
-    Ok(digest(&bytes))
+    Ok(Ok(digest(&bytes)))
+}
+
+/// The one message a caller-enabled repair turn sends. Its text is the harness's
+/// own diagnosis; the rejected response stays in the conversation and on disk.
+pub fn repair_request(rejection: &Rejection) -> String {
+    format!(
+        "Your final response was not accepted ({}): {}. Reply with exactly one complete JSON object matching the trusted output contract, without prose or Markdown.",
+        rejection.reason, rejection.detail
+    )
 }
 
 #[cfg(test)]
@@ -179,6 +214,26 @@ mod tests {
         assert!(require_policy(Role::Worker, "read_only").is_err());
     }
     #[test]
+    fn binding_records_a_repair_turn_or_deadline_only_when_asked() {
+        let contract = contract(schema()).unwrap();
+        // Invocations without either keep the original binding's exact keys.
+        assert_eq!(
+            binding(Role::Setup, &contract, b"task", 0, None, json!({})),
+            json!({"capability":CAPABILITY,"role":"setup","output_contract_sha256":contract.sha256(),
+                "request_sha256":digest(b"task"),"execution":{}})
+        );
+        let offered = binding(
+            Role::Setup,
+            &contract,
+            b"task",
+            1,
+            Some(1_800_000_000_000),
+            json!({}),
+        );
+        assert_eq!(offered["repair_turns"], 1);
+        assert_eq!(offered["caller_deadline_unix_ms"], 1_800_000_000_000_u64);
+    }
+    #[test]
     fn raw_invalid_response_survives_and_is_never_repaired_or_overwritten() {
         let root = std::env::temp_dir().join(format!(
             "readonly-output-{}",
@@ -187,7 +242,10 @@ mod tests {
         let records = PrivateDirectory::open(&root, true).unwrap();
         let contract = contract(schema()).unwrap();
         let invalid = "```json\n{\"decision\":\"ready\"}\n```";
-        assert!(save_response(invalid, &records, &contract).is_err());
+        let rejection = save_response(invalid, &records, "response.raw.txt", &contract)
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(rejection.reason, "invalid_output");
         assert_eq!(
             records
                 .read("response.raw.txt", MAX_RESPONSE as u64)
@@ -195,12 +253,29 @@ mod tests {
             invalid.as_bytes()
         );
         assert!(!root.join("response.json").exists());
-        assert!(save_response(r#"{"decision":"ready","notes":[]}"#, &records, &contract).is_err());
+        let valid = r#"{"decision":"ready","notes":[]}"#;
+        assert!(save_response(valid, &records, "response.raw.txt", &contract).is_err());
         assert_eq!(
             records
                 .read("response.raw.txt", MAX_RESPONSE as u64)
                 .unwrap(),
             invalid.as_bytes()
+        );
+        // A repair turn's answer is kept beside the rejected one.
+        assert!(repair_request(&rejection).contains("(invalid_output)"));
+        let response_sha256 =
+            save_response(valid, &records, "response.repair-1.raw.txt", &contract)
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            records
+                .read("response.repair-1.raw.txt", MAX_RESPONSE as u64)
+                .unwrap(),
+            valid.as_bytes()
+        );
+        assert_eq!(
+            response_sha256,
+            digest(&records.read("response.json", MAX_RESPONSE as u64).unwrap())
         );
         std::fs::remove_dir_all(root).unwrap();
     }

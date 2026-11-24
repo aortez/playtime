@@ -93,7 +93,8 @@ See `docs/rust-native-project-tools.md` for separate installed-account qualifica
 Fresh read-only model roles use the same harness/native driver with explicit
 `playtime-readonly-v1` capability; see `docs/rust-readonly-model-roles.md`. Preserve
 worker/report v1, require read_only policy and a bounded pinned output contract,
-keep raw invalid output, and never resume worker/reviewer contexts across roles.
+keep raw invalid output, keep the opt-in repair turn bounded to one, and never
+resume worker/reviewer contexts across roles.
 Schema validity grants no domain authority. Run chat/protocol, launcher and native
 namespace gates for changes; fixtures do not qualify installed accounts or live roles.
 Editing workers may instead select the additive `playtime-worker-contract-v1`

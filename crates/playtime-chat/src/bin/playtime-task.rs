@@ -21,7 +21,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     os::unix::fs::OpenOptionsExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -109,6 +109,62 @@ enum Kind {
     Worker,
     Readonly,
     Contract,
+}
+
+/// What a caller reads to tell whether an attempt reached the model: the admitted
+/// inputs, the invocation record and the event log with its started event. Only
+/// `record_invocation` makes one and `connect` needs one, so all of them are on
+/// disk before the first model contact.
+struct Recorded {
+    log: Arc<std::sync::Mutex<Events>>,
+}
+
+async fn record_invocation(
+    records: &PrivateDirectory,
+    run_dir: &Path,
+    kind: Kind,
+    inputs: Option<(&[u8], &[u8])>,
+    invoked: &Value,
+    started: Value,
+) -> Result<Recorded> {
+    if let Some((contract, request)) = inputs {
+        records.write_new("output-contract.json", contract)?;
+        records.write_new("request.txt", request)?;
+    }
+    let (invoked_name, events_name) = if kind == Kind::Worker {
+        ("worker-invoked.json", "worker-events.jsonl")
+    } else {
+        ("invocation.json", "invocation-events.jsonl")
+    };
+    records.write_new(invoked_name, &serde_json::to_vec(invoked)?)?;
+    let log = Arc::new(std::sync::Mutex::new(Events {
+        file: OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(run_dir.join(events_name))?,
+        bytes: 0,
+    }));
+    emit(&log, started).await?;
+    Ok(Recorded { log })
+}
+
+/// Build the inference client and verify its endpoint, the first model contact.
+async fn connect(
+    _recorded: &Recorded,
+    endpoint: Option<&str>,
+    lock: ModelLock,
+    cancel: &CancellationToken,
+) -> Result<Client> {
+    let mut client = Client::new(
+        Endpoint::parse(endpoint.ok_or("missing endpoint")?)?,
+        lock,
+        Default::default(),
+    )?;
+    client
+        .verify(Instant::now() + Duration::from_secs(20), cancel)
+        .await?;
+    Ok(client)
 }
 
 /// What another Docker turn needs: each turn owns a new container.
@@ -210,9 +266,9 @@ fn final_response(session: &Session) -> Result<(Value, String)> {
     Ok((json!(checkpoint.completed_turn), response.to_owned()))
 }
 
-/// Contract receipts say whether a repair turn ran and keep what it rejected.
-fn repairs(kind: Kind, rejected: &[Value], mut value: Value) -> Value {
-    if kind == Kind::Contract {
+/// Receipts that report repair turns say whether one ran and keep what it rejected.
+fn repairs(reported: bool, rejected: &[Value], mut value: Value) -> Value {
+    if reported {
         value["repair_turns_used"] = rejected.len().into();
         if !rejected.is_empty() {
             value["rejected"] = rejected.to_vec().into();
@@ -291,16 +347,16 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             }
         }
     }
-    if kind != Kind::Contract && (args.evidence_property.is_some() || args.repair_turns != 0) {
+    if kind != Kind::Contract && args.evidence_property.is_some() {
+        return Err("evidence resolution belongs to worker contract invocations".into());
+    }
+    if kind == Kind::Worker && (args.repair_turns != 0 || args.caller_deadline_unix_ms.is_some()) {
         return Err(
-            "evidence resolution and repair turns belong to worker contract invocations".into(),
+            "repair turns and caller deadlines belong to contract and read-only invocations".into(),
         );
     }
     if args.repair_turns > contract::MAX_REPAIR_TURNS {
         return Err("at most one repair turn is supported".into());
-    }
-    if kind != Kind::Contract && args.caller_deadline_unix_ms.is_some() {
-        return Err("a caller deadline belongs to worker contract invocations".into());
     }
     let caller_deadline = args
         .caller_deadline_unix_ms
@@ -461,6 +517,8 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             args.role,
             contract,
             prompt.as_bytes(),
+            args.repair_turns,
+            args.caller_deadline_unix_ms,
             execution.clone(),
         )),
         (None, Some(spec)) => Some(contract::binding(
@@ -495,27 +553,24 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         );
         return Ok(());
     }
-    if let Some(contract) = contract
+    let inputs = contract
         .as_ref()
         .or(spec.as_ref().map(contract::Spec::contract))
-    {
-        records.write_new("output-contract.json", contract.bytes())?;
-        records.write_new("request.txt", prompt.as_bytes())?;
-    }
-    records.write_new(if kind == Kind::Worker {"worker-invoked.json"} else {"invocation.json"}, &serde_json::to_vec(&bound(json!({"schema_version":1,"session_id":session_id,"resume":resume,"configuration":config.fingerprint()?,"execution":execution})))?)?;
-    let log = Arc::new(std::sync::Mutex::new(Events {
-        file: OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(run_dir.join(format!("{prefix}-events.jsonl")))?,
-        bytes: 0,
-    }));
-    emit(
-        &log,
-        bound(json!({"schema_version":1,"type":format!("{prefix}_started"),"session_id":session_id,"execution":execution})),
+        .map(|contract| (contract.bytes(), prompt.as_bytes()));
+    let recorded = record_invocation(
+        &records,
+        &run_dir,
+        kind,
+        inputs,
+        &bound(
+            json!({"schema_version":1,"session_id":session_id,"resume":resume,"configuration":config.fingerprint()?,"execution":execution}),
+        ),
+        bound(
+            json!({"schema_version":1,"type":format!("{prefix}_started"),"session_id":session_id,"execution":execution}),
+        ),
     )
     .await?;
+    let log = recorded.log.clone();
     // Reach Docker before the model or a new session, so an outage leaves neither behind.
     let docker = match docker_environment {
         Some((directory, image_bytes)) => {
@@ -541,14 +596,7 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         }
         None => None,
     };
-    let mut client = Client::new(
-        Endpoint::parse(args.endpoint.as_deref().ok_or("missing endpoint")?)?,
-        lock,
-        Default::default(),
-    )?;
-    client
-        .verify(Instant::now() + Duration::from_secs(20), &cancel)
-        .await?;
+    let client = connect(&recorded, args.endpoint.as_deref(), lock, &cancel).await?;
     let saved_path = session_path.clone();
     let session = tokio::task::spawn_blocking(move || {
         if resume {
@@ -603,6 +651,9 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
     }));
     let mut completed = turn(session, prompt, effects.clone(), &log, &cancel).await?;
     let mut rejected: Vec<Value> = Vec::new();
+    // Contract receipts always report repair turns. Read-only receipts report them
+    // only when the caller offered one, so other invocations keep their bytes.
+    let reported = kind == Kind::Contract || (kind == Kind::Readonly && args.repair_turns > 0);
     // The completed session keeps its lock until the terminal receipt is written.
     let (result, _session) = loop {
         let cleanup = completed.result.cleanup;
@@ -610,7 +661,7 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             || cleanup != playtime_protocol::events::CleanupOutcome::Complete
         {
             let failure = repairs(
-                kind,
+                reported,
                 &rejected,
                 bound(
                     json!({"schema_version":1,"type":format!("{prefix}_failed"),"session_id":session_id,"reason":completed.result.reason,"cleanup":cleanup,"usage":completed.result.usage}),
@@ -627,7 +678,11 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             .take()
             .ok_or("completed session unavailable")?;
         let (turn_id, response) = final_response(&session)?;
-        match kind {
+        let raw = match rejected.len() {
+            0 => "response.raw.txt".to_owned(),
+            attempt => format!("response.repair-{attempt}.raw.txt"),
+        };
+        let saved = match kind {
             Kind::Worker => {
                 let (report, report_sha256) = worker::save_report(
                     &response,
@@ -640,108 +695,81 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
                     session,
                 );
             }
-            Kind::Readonly => {
-                let contract = contract.as_ref().ok_or("missing output contract")?;
-                match readonly::save_response(&response, &records, contract) {
-                    Ok(response_sha256) => {
-                        break (
-                            bound(
-                                json!({"schema_version":1,"type":"invocation_finished","session_id":session_id,"turn_id":turn_id,"cleanup":cleanup,"usage":completed.result.usage,"response_sha256":response_sha256}),
-                            ),
-                            session,
-                        );
-                    }
-                    Err(error) => {
-                        let failure = bound(
-                            json!({"schema_version":1,"type":"invocation_failed","session_id":session_id,"turn_id":turn_id,"reason":"invalid_output","cleanup":cleanup,"usage":completed.result.usage}),
-                        );
-                        records
-                            .write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
-                        emit(&log, failure).await?;
-                        return Err(error);
-                    }
-                }
-            }
-            Kind::Contract => {
-                let spec = spec.as_ref().ok_or("missing output contract")?;
-                let raw = match rejected.len() {
-                    0 => "response.raw.txt".to_owned(),
-                    attempt => format!("response.repair-{attempt}.raw.txt"),
-                };
-                let saved = contract::save_response(
-                    &response,
-                    &records,
-                    &raw,
-                    spec,
-                    &artifact_directory,
-                    effects.lock().await.evidence(),
-                )?;
-                let rejection = match saved {
-                    Ok(response_sha256) => {
-                        break (
-                            repairs(
-                                kind,
-                                &rejected,
-                                bound(
-                                    json!({"schema_version":1,"type":"invocation_finished","session_id":session_id,"turn_id":turn_id,"cleanup":cleanup,"usage":completed.result.usage,"response_sha256":response_sha256}),
-                                ),
-                            ),
-                            session,
-                        );
-                    }
-                    Err(rejection) => rejection,
-                };
-                // The rejected turn is complete, so stopping here leaves the session
-                // resumable. A cancelled repair turn would fence it instead.
-                let mut repair =
-                    (rejected.len() as u32) < args.repair_turns && !cancel.is_cancelled();
-                // The caller stops the worker at its deadline, so a repair turn that
-                // couldn't use its whole wall budget and clean up first never starts.
-                let late = repair
-                    && caller_deadline.as_ref().is_some_and(|deadline| {
-                        !deadline.allows(Duration::from_secs(args.wall_seconds))
-                    });
-                if late {
-                    eprintln!(
-                        "playtime-task: repair turn skipped: it could not finish and clean up before the caller deadline"
-                    );
-                    repair = false;
-                }
-                if repair && let Some(tools) = &docker_tools {
-                    match tools.effects(model.clone()).await {
-                        Ok(next) => effects.lock().await.inner = next,
-                        Err(error) => {
-                            eprintln!("playtime-task: repair turn unavailable: {error}");
-                            repair = false;
-                        }
-                    }
-                }
-                if !repair {
-                    let mut failure = repairs(
-                        kind,
+            Kind::Readonly => readonly::save_response(
+                &response,
+                &records,
+                &raw,
+                contract.as_ref().ok_or("missing output contract")?,
+            )?,
+            Kind::Contract => contract::save_response(
+                &response,
+                &records,
+                &raw,
+                spec.as_ref().ok_or("missing output contract")?,
+                &artifact_directory,
+                effects.lock().await.evidence(),
+            )?,
+        };
+        let rejection = match saved {
+            Ok(response_sha256) => {
+                break (
+                    repairs(
+                        reported,
                         &rejected,
                         bound(
-                            json!({"schema_version":1,"type":"invocation_failed","session_id":session_id,"turn_id":turn_id,"reason":rejection.reason,"detail":rejection.detail,"cleanup":cleanup,"usage":completed.result.usage}),
+                            json!({"schema_version":1,"type":"invocation_finished","session_id":session_id,"turn_id":turn_id,"cleanup":cleanup,"usage":completed.result.usage,"response_sha256":response_sha256}),
                         ),
-                    );
-                    if late {
-                        failure["repair_skipped"] = "caller_deadline".into();
-                    }
-                    records.write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
-                    emit(&log, failure).await?;
-                    return Err(rejection.into());
-                }
-                rejected.push(json!({"turn_id":turn_id,"reason":rejection.reason,"detail":rejection.detail,"cleanup":cleanup,"usage":completed.result.usage}));
-                completed = turn(
+                    ),
                     session,
-                    contract::repair_request(&rejection),
-                    effects.clone(),
-                    &log,
-                    &cancel,
-                )
-                .await?;
+                );
+            }
+            Err(rejection) => rejection,
+        };
+        // The rejected turn is complete, so stopping here leaves a contract session
+        // resumable. A cancelled repair turn would fence it instead.
+        let mut repair = (rejected.len() as u32) < args.repair_turns && !cancel.is_cancelled();
+        // The caller stops the worker at its deadline, so a repair turn that
+        // couldn't use its whole wall budget and clean up first never starts.
+        let late = repair
+            && caller_deadline
+                .as_ref()
+                .is_some_and(|deadline| !deadline.allows(Duration::from_secs(args.wall_seconds)));
+        if late {
+            eprintln!(
+                "playtime-task: repair turn skipped: it could not finish and clean up before the caller deadline"
+            );
+            repair = false;
+        }
+        if repair && let Some(tools) = &docker_tools {
+            match tools.effects(model.clone()).await {
+                Ok(next) => effects.lock().await.inner = next,
+                Err(error) => {
+                    eprintln!("playtime-task: repair turn unavailable: {error}");
+                    repair = false;
+                }
             }
         }
+        if !repair {
+            let mut failure = json!({"schema_version":1,"type":"invocation_failed","session_id":session_id,"turn_id":turn_id,"reason":rejection.reason,"cleanup":cleanup,"usage":completed.result.usage});
+            // A read-only invocation offered no repair turn keeps its original receipt.
+            if reported {
+                failure["detail"] = rejection.detail.as_str().into();
+            }
+            let mut failure = repairs(reported, &rejected, bound(failure));
+            if late {
+                failure["repair_skipped"] = "caller_deadline".into();
+            }
+            records.write_new("invocation-result.json", &serde_json::to_vec(&failure)?)?;
+            emit(&log, failure).await?;
+            return Err(rejection.into());
+        }
+        rejected.push(json!({"turn_id":turn_id,"reason":rejection.reason,"detail":rejection.detail,"cleanup":cleanup,"usage":completed.result.usage}));
+        let correction = if kind == Kind::Readonly {
+            readonly::repair_request(&rejection)
+        } else {
+            contract::repair_request(&rejection)
+        };
+        completed = turn(session, correction, effects.clone(), &log, &cancel).await?;
     };
     records.write_new(
         &format!("{prefix}-result.json"),
@@ -770,5 +798,46 @@ async fn main() {
     if let Err(error) = run(Args::parse(), cancel.clone()).await {
         eprintln!("playtime-task: {error}");
         std::process::exit(if cancel.is_cancelled() { 130 } else { 1 });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn invocation_records_exist_before_a_client_can_be_built() {
+        let root = std::env::temp_dir().join(format!(
+            "playtime-task-records-{}",
+            Token::generate().unwrap().expose()
+        ));
+        let records = PrivateDirectory::open(&root, true).unwrap();
+        let recorded = record_invocation(
+            &records,
+            &root,
+            Kind::Readonly,
+            Some(("{}".as_bytes(), "Assignment".as_bytes())),
+            &json!({"schema_version":1}),
+            json!({"type":"invocation_started"}),
+        )
+        .await
+        .unwrap();
+        // A caller may treat the absence of all four as proof that an attempt
+        // never reached the model, since `connect` needs what this returned.
+        for name in [
+            "output-contract.json",
+            "request.txt",
+            "invocation.json",
+            "invocation-events.jsonl",
+        ] {
+            assert!(root.join(name).is_file(), "{name}");
+        }
+        assert_eq!(records.read("request.txt", 64).unwrap(), b"Assignment");
+        assert_eq!(
+            std::fs::read_to_string(root.join("invocation-events.jsonl")).unwrap(),
+            "{\"type\":\"invocation_started\"}\n"
+        );
+        drop(recorded);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

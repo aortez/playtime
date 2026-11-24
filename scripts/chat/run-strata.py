@@ -119,11 +119,12 @@ def worker_arguments(args, read_only=False):
     allowed = {"--workspace", "--run-dir", "--request", "--state-dir", "--worker-session",
                "--protocol-version", "--wall-seconds", "--tool-backend", "--native-policy",
                "--output-contract", "--output-contract-sha256"}
+    allowed |= {"--caller-deadline-unix-ms", "--repair-turns"}
     if read_only:
         allowed |= {"--role"}
         allowed -= {"--worker-session"}
     else:
-        allowed |= {"--caller-deadline-unix-ms", "--evidence-property", "--repair-turns"}
+        allowed |= {"--evidence-property"}
     values = {}
     index = 0
     while index < len(args):
@@ -145,8 +146,10 @@ def worker_arguments(args, read_only=False):
                       or values.get("--tool-backend") != "native"
                       or not values.get("--native-policy")
                       or not values.get("--output-contract")
-                      or not re.fullmatch(r"[0-9a-f]{64}", values.get("--output-contract-sha256", ""))):
-        raise RuntimeError("read-only invocation needs an explicit role, native policy and output contract/hash")
+                      or not re.fullmatch(r"[0-9a-f]{64}", values.get("--output-contract-sha256", ""))
+                      or values.get("--repair-turns", "0") not in ("0", "1")):
+        raise RuntimeError("read-only invocation needs an explicit role, native policy, output contract/hash "
+                           "and at most one repair turn")
     # A worker's output contract selects the contract invocation; its options
     # mean nothing to a version-one worker.
     contract = not read_only and "--output-contract" in values
@@ -300,7 +303,10 @@ def session(preset, profile, args, launch=None, signals=None):
                           or protocol.get("output_contract") != "json-schema-subset-v1"
                           or protocol.get("report") != "structured-result-v1"
                           or protocol.get("continuation") != "none"
-                          or protocol.get("transport") != transport):
+                          or protocol.get("transport") != transport
+                          or int(worker_option(args, "--repair-turns", "0")) > protocol.get("repair_turns", 0)
+                          or (worker_option(args, "--caller-deadline-unix-ms") is not None
+                              and protocol.get("caller_deadline") != "unix-ms-v1")):
             raise RuntimeError("installed task lacks the read-only invocation contract")
         offered = protocol.get("contract_invocation", {})
         if contract and (offered.get("capability") != "playtime-worker-contract-v1"

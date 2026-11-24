@@ -78,6 +78,8 @@ Its JSON includes:
   "report": "structured-result-v1",
   "output_contract": "json-schema-subset-v1",
   "continuation": "none",
+  "repair_turns": 1,
+  "caller_deadline": "unix-ms-v1",
   "transport": "strata-responses-v1",
   "native_policy_schema": 1,
   "native_helper_sha256": "<installed helper digest>"
@@ -128,11 +130,38 @@ For example:
 The exact schema is included in trusted system instructions. This path uses
 prompting followed by local validation, not server-side constrained generation.
 The final response must be exactly one complete JSON object, at most 1 MiB; prose
-prefixes, Markdown fences, trailing objects and invalid values fail. There is no
-repair inference or automatic replay. Schema validity establishes shape only.
+prefixes, Markdown fences, trailing objects and invalid values fail. Nothing
+corrects the text or replays a request or tool; the caller may instead enable one
+repair turn, described below. Schema validity establishes shape only.
 Readiness, authorization, review acceptance and the meaning and validity of any
 evidence citations remain Devbot's responsibility. In particular, a schema-valid
 `approved` or `publish` value grants no authority to act.
+
+## Rejected output and the repair turn
+
+By default a rejected response ends the invocation with `invalid_output`. The
+session never resumes, so a caller that wants another answer starts a fresh
+invocation.
+
+`--repair-turns 1` lets the harness send one fixed correction request in the same
+conversation instead. It is off by default, and one turn is the maximum. The
+request names the rejection and the validator's diagnostic and asks again for
+exactly one JSON object matching the contract; it never contains corrected
+content. The model sees its rejected answer, so it can complete an object it
+ended early. The repair turn is a second full turn under the same frozen limits,
+policy and tool boundary, so a caller must budget up to twice `--wall-seconds`
+plus cleanup. It starts only after the rejected turn finished with confirmed
+cleanup, and never after cancellation.
+
+`--caller-deadline-unix-ms N` (`unix-ms-v1`) works as it does for
+[editing workers](rust-headless-worker.md#rejected-output-and-the-repair-turn): a
+repair turn starts only if `--wall-seconds` plus the turn's 20-second cleanup
+bound fit before the caller stops the task. Otherwise the invocation ends with
+the rejection and adds `"repair_skipped": "caller_deadline"`. A deadline that has
+already passed is an input error. The wrapper accepts both options only when the
+installed task advertises them.
+
+Without either option, the binding, records and receipts are unchanged.
 
 ## Boundary, sessions and evidence
 
@@ -167,6 +196,7 @@ The private run directory retains:
 | `invocation-events.jsonl` | Startup, streamed runtime observations and terminal event |
 | `artifacts/tool-<nonce>-<effect>.json` | Committed tool request/result, including read inspections and denied writes |
 | `response.raw.txt` | Exact completed model text, committed before parsing/validation |
+| `response.repair-1.raw.txt` | The repair turn's exact text, when one ran |
 | `response.json` | Validated JSON serialization, created only after successful validation |
 | `invocation-result.json` | Terminal success or observed failure receipt |
 
@@ -221,6 +251,15 @@ valid receipts. Startup has `schema_version:1`, `type:"invocation_started"`,
 `usage`; output validation failure uses `reason:"invalid_output"` and includes
 the completed `turn_id`. Failure never includes a response success digest.
 
+When the caller offers a repair turn, the binding has `repair_turns: 1`, and the
+terminal events and `invocation-result.json` add `repair_turns_used`. An
+`invalid_output` failure also has `detail`, plus `repair_skipped` when the caller
+deadline stopped the repair turn. If a repair turn ran, `rejected` lists the
+rejected turn's `turn_id`, `reason`, `detail`, `cleanup` and `usage`.
+`response_sha256` always covers the accepted answer's `response.json`. With
+`--caller-deadline-unix-ms`, the binding also has `caller_deadline_unix_ms`,
+exactly as given.
+
 Before accepting output, the caller checks the selected protocol/version, fresh
 session identity, exact frozen invocation binding, successful child and owner
 exit, completed cleanup, matching terminal receipt, and response hash. It then
@@ -232,8 +271,10 @@ model cannot choose the policy, contract, role, artifact directory or record nam
 Run `cargo test -p playtime-chat --locked`, protocol tests, launcher tests and
 `./scripts/test-rust-native-project.sh`, plus repository-wide required checks.
 Fixtures exercise fresh role contexts, contract/role/execution compatibility,
-malformed-output retention, source/read-tool inspection, write/source/Git/cache
-denial, cancellation and existing worker continuation. Namespace fixtures run as
+malformed-output retention, the repair turn's records and admission,
+source/read-tool inspection, write/source/Git/cache denial, cancellation and
+existing worker continuation. The repair-turn fixtures use a scripted model; they
+don't show that the live model completes a rejected object. Namespace fixtures run as
 the operator UID with the existing test-only helper launcher; they do not qualify
 sudo, the real dedicated account, model quality or live Strata inference.
 
