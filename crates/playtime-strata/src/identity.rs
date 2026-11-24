@@ -26,8 +26,9 @@ pub struct HostIdentity {
     pub artifacts_manifest_sha256: Sha256Digest,
     pub launch_configuration_sha256: Sha256Digest,
     pub responses_source_sha256: Sha256Digest,
-    /// Every file of the Strata server release the API server runs from. Locks
-    /// made before the verifier checked it omit it, so their bytes are unchanged.
+    /// Digest of the manifest of every file in the Strata server release the API
+    /// server runs from. Locks made before the verifier checked the release omit
+    /// it, so their bytes are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_release_manifest_sha256: Option<Sha256Digest>,
 }
