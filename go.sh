@@ -110,11 +110,23 @@ worker_active() {
     systemctl --user list-units 'playtime-*' --state=active --no-legend 2>/dev/null \
         | grep -E -q 'playtime-[0-9a-f]{32}\.service'
 }
+# The daemon holds its root's run lock while it prepares a run, which on a
+# Strata target includes holding the host, and the run's worker then takes it
+# over. Reading /proc/locks finds the lock without taking it, so a launch never
+# finds go.sh holding it.
+run_lock_held() {
+    local lock=$root/.playtime/run.lock major minor inode
+    [[ -f $lock ]] || return 1
+    read -r major minor inode < <(stat -L -c '%Hd %Ld %i' "$lock") || return 1
+    grep -q " $(printf '%02x:%02x' "$major" "$minor"):$inode " /proc/locks
+}
+# Restarting the daemon would interrupt either.
+experiment_active() { worker_active || run_lock_held; }
 daemon_active() { systemctl --user is-active --quiet "$unit"; }
 
 if (( stop )); then
-    if worker_active; then
-        die "an experiment is running on this machine; cancel it first, then stop the daemon"
+    if experiment_active; then
+        die "an experiment is running or starting; cancel it first, then stop the daemon"
     fi
     if daemon_active; then
         systemctl --user stop "$unit"
@@ -156,8 +168,8 @@ if (( avail_kb < 20 * 1024 * 1024 )); then
 fi
 
 if (( build )); then
-    if daemon_active && worker_active; then
-        die "an experiment is running on this machine, so $unit can't be restarted with a new build; use --no-build to open the workbench on it"
+    if daemon_active && experiment_active; then
+        die "an experiment is running or starting, so $unit can't be restarted with a new build; use --no-build to open the workbench on it"
     fi
     if command -v rustup > /dev/null && ! rustup target list --installed 2> /dev/null | grep -q '^x86_64-unknown-linux-musl$'; then
         die "the worker bundle needs the musl target: rustup target add x86_64-unknown-linux-musl"
@@ -182,8 +194,8 @@ if (( build )); then
     done
     if daemon_active; then
         # An experiment may have started while the build ran.
-        if worker_active; then
-            die "an experiment started on this machine during the build, so $unit keeps its old build; run $0 again after it ends"
+        if experiment_active; then
+            die "an experiment started during the build, so $unit keeps its old build; run $0 again after it ends"
         fi
         say "Restarting $unit with the new build."
         systemctl --user stop "$unit"
@@ -192,10 +204,10 @@ elif ! daemon_active; then
     bundle=$(cat "$data/bundle.latest" 2> /dev/null || true)
     [[ -n $bundle && -d $bundle ]] || die "no bundle recorded under $data; run without --no-build first"
     [[ -x target/release/playtimed ]] || die "no target/release/playtimed; run without --no-build first"
-    launcher=$(cat "$data/launcher.latest" 2> /dev/null || true)
-    if [[ -z $launcher || ! -d $launcher ]]; then
-        launcher=
-        say "No Strata launcher package is recorded under $data, so Strata targets stay unavailable until a build installs one."
+    if [[ -z ${PLAYTIME_OLLAMA:-} ]]; then
+        launcher=$(cat "$data/launcher.latest" 2> /dev/null || true)
+        [[ -n $launcher && -d $launcher ]] \
+            || die "no Strata launcher package recorded under $data; run without --no-build first"
     fi
 else
     say "Reusing $unit as configured. Target changes require a restart (run without --no-build)."
