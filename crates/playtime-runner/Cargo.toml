@@ -15,6 +15,7 @@ serde_json.workspace = true
 sha2.workspace = true
 playtime-docker.workspace = true
 playtime-ollama.workspace = true
+playtime-strata.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
@@ -28,3 +29,6 @@ workspace = true
 
 [features]
 test-harness = ["playtime-engine/test-harness"]
+# CPU fixtures only: also run the synthetic Strata lock that the fixture
+# server's metadata produces. Never enabled in the daemon or packaged workers.
+strata-fixture = []

@@ -1,7 +1,10 @@
 # Strata fixture provenance
 
 `support/mod.rs` generates synthetic Responses events and metadata; `http.rs`
-serves them on an ephemeral loopback TCP port. No live output, credentials,
+serves them on an ephemeral loopback TCP port. `support/server.rs` serves the same
+metadata and scripted streams from its own threads, for the experiment worker's
+synchronous driver tests, which include these files by path. Its metadata produces
+the runner's synthetic `fixture-strata-lock.json`. No live output, credentials,
 downloaded model or third-party implementation is embedded in these fixtures.
 
 Shapes and event order were checked against the installed

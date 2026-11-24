@@ -3,6 +3,7 @@ use playtime_core::{RequestId, RequestPurpose, Sha256Digest};
 use playtime_engine::ModelRequest;
 use playtime_strata::{HostIdentity, Identity, ModelLock, Settings};
 use serde_json::{Value, json};
+pub mod server;
 
 pub const MODEL: &str = "fixture-gyro-m";
 pub fn metadata() -> (Value, Value, Value) {
@@ -85,6 +86,10 @@ impl Stream {
         self.events.push(event);
     }
     pub fn item(&mut self, kind: &str, content: &str, status: &str) {
+        self.named(kind, "read_file", content, status);
+    }
+    /// The same item, but a function call is to `name`.
+    pub fn named(&mut self, kind: &str, name: &str, content: &str, status: &str) {
         let index = self.output.len();
         let id = format!("item_{index}");
         let (delta, done) = match kind {
@@ -101,7 +106,7 @@ impl Stream {
         let mut item = json!({"id":id,"type":kind,"status":"in_progress"});
         if kind == "function_call" {
             item["call_id"] = json!(format!("call_{index}"));
-            item["name"] = json!("read_file");
+            item["name"] = json!(name);
             item["arguments"] = json!("");
         } else {
             item["content"] = json!([]);
@@ -148,6 +153,10 @@ impl Stream {
         self.event(json!({"type":format!("response.{state}"),"response":response,"timings":{"predicted_n":40}}));
     }
     pub fn bytes(&self) -> Vec<u8> {
+        self.frames().concat()
+    }
+    /// Each event as its own SSE frame.
+    pub fn frames(&self) -> Vec<Vec<u8>> {
         self.events
             .iter()
             .map(|e| {
@@ -156,9 +165,9 @@ impl Stream {
                     e["type"].as_str().unwrap(),
                     e
                 )
+                .into_bytes()
             })
-            .collect::<String>()
-            .into_bytes()
+            .collect()
     }
 }
 pub fn answer() -> Stream {

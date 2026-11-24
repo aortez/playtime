@@ -102,7 +102,7 @@ impl Execution {
             .as_ref()
             .and_then(|profile| profile.model())
             .map(|model| {
-                playtime_worker_control::FileLock::acquire(&model.host.live_lock)
+                playtime_worker_control::FileLock::acquire(model.live_lock())
                     .map_err(|_| Error::Invalid("another live run holds the live-model lock"))
             })
             .transpose()?;

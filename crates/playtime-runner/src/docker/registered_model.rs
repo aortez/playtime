@@ -1,5 +1,5 @@
 //! Execution approval is compiled capability evidence, never a stored claim alone.
-use super::{LiveModel, MODEL_LOCK, reviewed_model_capabilities};
+use super::{MODEL_LOCK, OllamaModel, reviewed_model_capabilities};
 use crate::{Error, Result};
 use playtime_protocol::api::*;
 use serde_json::{Value, json};
@@ -197,7 +197,7 @@ pub(super) fn selected_lock(model: &RegisteredModel) -> Value {
     json!({"name":id.name,"digest":id.digest,"ollama_version":id.backend_version,
         "definition_sha256":id.definition_sha256,"definition":model.definition,"modelfile":""})
 }
-impl LiveModel {
+impl OllamaModel {
     /// Recheck compiled approval even when a worker reads an internally consistent
     /// but unsupported stored record. Retained JSON never approves a new profile.
     pub fn execution_model(&self) -> Result<playtime_ollama::ExecutionModel> {

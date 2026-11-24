@@ -194,6 +194,85 @@ fn keepalives_multiline_data_and_all_transport_bounds_are_enforced() {
 }
 
 #[test]
+fn a_memento_handoff_offers_only_end_session_and_its_call_round_trips() {
+    // The handoff turn offers only the contract's last tool, at the work level of thinking.
+    let tools: Vec<Value> =
+        serde_json::from_str(include_str!("../../playtime-engine/src/tools.json")).unwrap();
+    let mut req = request();
+    req.purpose = RequestPurpose::Handoff;
+    req.maximum_tokens = 2048;
+    req.context_reserve = 4096;
+    req.tools = vec![tools.last().unwrap().clone()];
+    req.messages = vec![
+        json!({"role":"system","content":"Work in the owned workshop."}),
+        json!({"role":"user","content":"Inspect the file."}),
+        json!({"role":"assistant","content":"","thinking":"Read it first.",
+            "tool_calls":[{"function":{"name":"read_file","arguments":{"path":"/work/a"}}}]}),
+        json!({"role":"tool","tool_name":"read_file","content":"contents"}),
+        json!({"role":"user","content":"The session is ending. Call end_session with your memento."}),
+    ];
+    let mut high = lock();
+    high.settings.thinking = Thinking::High;
+    let body: Value =
+        serde_json::from_slice(&encode_request(&req, &high, &Limits::default()).unwrap()).unwrap();
+    assert_eq!(body["reasoning"]["effort"], "high");
+    assert_eq!(body["max_output_tokens"], 2048);
+    assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        (&body["tools"][0]["type"], &body["tools"][0]["name"]),
+        (&json!("function"), &json!("end_session"))
+    );
+    let kinds: Vec<_> = body["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "message",
+            "message",
+            "reasoning",
+            "message",
+            "function_call",
+            "function_call_output",
+            "message"
+        ]
+    );
+    assert_eq!(body["input"][4]["call_id"], "playtime_2_0");
+    assert_eq!(body["input"][5]["call_id"], "playtime_2_0");
+    // The reply is one end_session call that carries the memento.
+    let mut stream = Stream::new();
+    stream.item("reasoning", "Summarize.", "completed");
+    stream.named(
+        "function_call",
+        "end_session",
+        r#"{"memento":"Read /work/a; next, fix it."}"#,
+        "completed",
+    );
+    stream.terminal("completed");
+    let done = decode(&stream).unwrap();
+    assert_eq!(done.finish_reason, "tool_calls");
+    let call = &done.response.message["tool_calls"][0]["function"];
+    assert_eq!(call["name"], "end_session");
+    assert_eq!(call["arguments"]["memento"], "Read /work/a; next, fix it.");
+    assert_eq!(done.response.generated_tokens, Some(40));
+    // A memento cut off at its token cap ends with "length" and no call.
+    let mut stream = Stream::new();
+    stream.named(
+        "function_call",
+        "end_session",
+        r#"{"memento":"Read"#,
+        "incomplete",
+    );
+    stream.terminal("incomplete");
+    let done = decode(&stream).unwrap();
+    assert_eq!(done.finish_reason, "length");
+    assert_eq!(done.response.message["tool_calls"], json!([]));
+}
+
+#[test]
 fn requests_freeze_thinking_and_reject_unbounded_or_broken_tool_history() {
     let mut req = request();
     req.purpose = RequestPurpose::Compaction;

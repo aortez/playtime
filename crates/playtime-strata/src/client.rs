@@ -256,6 +256,12 @@ impl Client {
             started: None,
         })
     }
+    /// Bind the client to the server process a caller already verified. Its
+    /// first check then refuses any other process, as every later check does.
+    pub fn with_server_start(mut self, started: u64) -> Self {
+        self.started = Some(started);
+        self
+    }
     pub fn lock(&self) -> &ModelLock {
         &self.lock
     }

@@ -18,6 +18,7 @@ mod model_settings;
 pub use model_settings::reviewed_model_capabilities;
 mod recipe;
 mod registered_model;
+mod strata;
 pub use definition::{CompactionDefinition, FrozenRecipe};
 pub use recipe::{BOUNDS, Bounds, RECIPE_PROFILE, Recipe, Sampling};
 pub use registered_model::{
@@ -26,6 +27,7 @@ pub use registered_model::{
     QWEN_38_27B_BF16_MODEL_LOCK, QWEN_CODER_NEXT_MODEL_LOCK, QWEN_MODEL_LOCK,
     align_reviewed_parameters, reviewed_identity_capabilities,
 };
+pub use strata::{StrataHost, StrataModel, StrataProvider, strata_lock, strata_lock_names};
 
 pub const PROFILE: &str = "docker_scripted_no_seed_self_v1";
 pub const LIVE_PROFILE: &str = "docker_live_no_seed_self_v1";
@@ -61,9 +63,20 @@ pub fn digest() -> Result<Sha256Digest> {
         addresses: vec![],
         live_lock: PathBuf::new(),
     };
+    let held = StrataHost {
+        profile: String::new(),
+        endpoint: String::new(),
+        started: 0,
+        verification: serde_json::Value::Null,
+        live_lock: PathBuf::new(),
+    };
+    let strata_lock = strata::first_reviewed();
     let templates = [
         Profile::freeze(selection.clone(), daemon.clone())?.template()?,
         Profile::freeze_live(selection.clone(), daemon.clone(), host.clone())?.template()?,
+        Profile::freeze_strata_live(selection.clone(), daemon.clone(), strata_lock, held)?
+            .template()?,
+        serde_json::to_value(strata::reviewed_locks()?)?,
         Profile::freeze_recipe(
             Recipe::reference()?,
             selection.clone(),
@@ -78,8 +91,8 @@ pub fn digest() -> Result<Sha256Digest> {
         // continuous profile without tool-call or summary recovery, the finish
         // choice, transcript summaries, tool-call summary retries or retained
         // tool and parse-failure observations. Nor may it decode a definition
-        // that records where its seed files came from.
-        serde_json::json!({"inference_targets": 1, "immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1, "continuous_tool_failure_history": 1, "continuous_failure_history": 3, "continuous_retry_attempt": 1, "terminal_parse_error_usage": 2, "recipe_seed_origin": 1}),
+        // that records where its seed files came from, or a Strata model.
+        serde_json::json!({"strata_model_port": 1, "inference_targets": 1, "immutable_recipe_definition": 1, "recipe_model_settings": 1, "registered_model_execution": 1, "harness_selection": 1, "continuous_recipe": 1, "continuous_tool_recovery": 1, "continuous_finish_choice": 1, "continuous_summary_recovery": 1, "continuous_transcript_summary": 1, "continuous_summary_tool_recovery": 1, "continuous_tool_failure_history": 1, "continuous_failure_history": 3, "continuous_retry_attempt": 1, "terminal_parse_error_usage": 2, "recipe_seed_origin": 1}),
         serde_json::from_slice(QWEN_MODEL_LOCK)?,
         serde_json::from_slice(QWEN_CODER_NEXT_MODEL_LOCK)?,
         serde_json::from_slice(QWEN_38_27B_BF16_MODEL_LOCK)?,
@@ -121,15 +134,58 @@ impl LiveHost {
     }
 }
 
-/// The exact model lock and request settings, plus the host they are sent to.
+/// The exact Ollama model lock and request settings, plus the host they are
+/// sent to.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LiveModel {
+pub struct OllamaModel {
     pub lock: serde_json::Value,
     pub settings: serde_json::Value,
     pub host: LiveHost,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<playtime_protocol::api::ModelRegistrationSummary>,
+}
+
+/// The model a live profile reaches. An archived Ollama model has no provider
+/// field, so its frozen bytes are unchanged.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LiveModel {
+    Ollama(OllamaModel),
+    Strata(StrataModel),
+}
+impl LiveModel {
+    pub fn ollama(&self) -> Option<&OllamaModel> {
+        match self {
+            Self::Ollama(model) => Some(model),
+            Self::Strata(_) => None,
+        }
+    }
+    pub fn ollama_mut(&mut self) -> Option<&mut OllamaModel> {
+        match self {
+            Self::Ollama(model) => Some(model),
+            Self::Strata(_) => None,
+        }
+    }
+    pub fn strata(&self) -> Option<&StrataModel> {
+        match self {
+            Self::Strata(model) => Some(model),
+            Self::Ollama(_) => None,
+        }
+    }
+    /// The machine-wide flock every checkout's live worker holds for its lifetime.
+    pub fn live_lock(&self) -> &std::path::Path {
+        match self {
+            Self::Ollama(model) => &model.host.live_lock,
+            Self::Strata(model) => &model.host.live_lock,
+        }
+    }
+    fn valid_host(&self) -> bool {
+        match self {
+            Self::Ollama(model) => model.host.valid(),
+            Self::Strata(model) => model.validate().is_ok(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -208,12 +264,31 @@ impl Profile {
             profile: LIVE_PROFILE.into(),
             mode: RunMode::LiveSmoke,
             scenario,
-            model: Some(LiveModel {
+            model: Some(LiveModel::Ollama(OllamaModel {
                 registration: None,
                 lock: serde_json::from_slice(MODEL_LOCK)?,
                 settings,
                 host,
-            }),
+            })),
+            ..Self::freeze(selection, daemon)?
+        })
+    }
+    /// The same live smoke on a reviewed Strata lock, with the lock's settings.
+    pub fn freeze_strata_live(
+        selection: Selection,
+        daemon: DaemonIdentity,
+        lock_name: &str,
+        host: StrataHost,
+    ) -> Result<Self> {
+        let scenario: Scenario = serde_json::from_slice(LIVE_SCENARIO)?;
+        let context = scenario.parameters.limits.context_tokens.get();
+        Ok(Self {
+            profile: LIVE_PROFILE.into(),
+            mode: RunMode::LiveSmoke,
+            model: Some(LiveModel::Strata(StrataModel::freeze(
+                lock_name, host, context,
+            )?)),
+            scenario,
             ..Self::freeze(selection, daemon)?
         })
     }
@@ -221,8 +296,18 @@ impl Profile {
         let (selection, daemon) = (self.selection.clone(), self.daemon.clone());
         let mut expected = match (&self.model, &self.recipe) {
             (None, None) => Self::freeze(selection, daemon)?,
-            (Some(model), None) => Self::freeze_live(selection, daemon, model.host.clone())?,
-            (Some(model), Some(recipe)) => {
+            (Some(LiveModel::Ollama(model)), None) => {
+                Self::freeze_live(selection, daemon, model.host.clone())?
+            }
+            (Some(LiveModel::Strata(model)), None) => {
+                Self::freeze_strata_live(selection, daemon, &model.lock_name, model.host.clone())?
+            }
+            (Some(LiveModel::Strata(_)), Some(_)) => {
+                return Err(Error::Invalid(
+                    "recipes don't run on Strata models yet".into(),
+                ));
+            }
+            (Some(LiveModel::Ollama(model)), Some(recipe)) => {
                 if let Some(definition) = &self.definition {
                     Self::freeze_definition(
                         definition.clone(),
@@ -258,7 +343,7 @@ impl Profile {
                 .executable_sha256
                 .bytes()
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-            || self.model.as_ref().is_some_and(|model| !model.host.valid())
+            || self.model.as_ref().is_some_and(|model| !model.valid_host())
         {
             return Err(Error::Invalid(
                 "unsupported frozen Docker recipe, configuration or limits".into(),
@@ -328,6 +413,17 @@ mod tests {
             live_lock: "/run/user/1000/playtime/live-model.lock".into(),
         }
     }
+    const FRAMEWORK: &str = "framework-strata-gyro-m-fast-v2";
+    fn held() -> StrataHost {
+        let lock = strata_lock(FRAMEWORK).unwrap();
+        StrataHost {
+            profile: "framework-gyro-m-fast".into(),
+            endpoint: "http://127.0.0.1:41234/v1".into(),
+            started: 1_763_900_000,
+            verification: serde_json::json!({"host": lock.host, "server_release": {"files": 6176}}),
+            live_lock: "/run/user/1000/playtime/live-model.lock".into(),
+        }
+    }
     fn rejects(profile: &Profile, changes: &[(&str, serde_json::Value)]) {
         for (pointer, replacement) in changes {
             let mut bytes = serde_json::to_value(profile).unwrap();
@@ -384,7 +480,11 @@ mod tests {
         assert_eq!(live.scenario.parameters.limits.tool_parse_retries, 2);
         // A named target is frozen with its exact transport endpoint.
         let mut named = live.clone();
-        let model = named.model.as_mut().unwrap();
+        let model = named
+            .model
+            .as_mut()
+            .and_then(LiveModel::ollama_mut)
+            .unwrap();
         model.host.target = Some(playtime_protocol::api::InferenceTarget {
             id: "framework".into(),
             name: "Framework".into(),
@@ -453,6 +553,68 @@ mod tests {
         assert_eq!(digest().unwrap(), digest().unwrap());
     }
     #[test]
+    fn strata_live_profile_freezes_the_reviewed_lock_and_the_hold_that_lent_it() {
+        let live = Profile::freeze_strata_live(selection(), daemon(), FRAMEWORK, held()).unwrap();
+        live.validate().unwrap();
+        assert_eq!(live.mode, RunMode::LiveSmoke);
+        let model = live.model.as_ref().unwrap().strata().unwrap();
+        assert_eq!(model.settings, model.lock.settings);
+        assert_eq!(model.client_lock(), model.lock);
+        // It reads back as Strata, while an Ollama model keeps its shape.
+        let read: Profile = serde_json::from_slice(&serde_json::to_vec(&live).unwrap()).unwrap();
+        read.validate().unwrap();
+        assert!(read.model.unwrap().strata().is_some());
+        let ollama =
+            serde_json::to_value(Profile::freeze_live(selection(), daemon(), host()).unwrap())
+                .unwrap();
+        assert!(ollama["model"].get("provider").is_none());
+        let ollama: Profile = serde_json::from_value(ollama).unwrap();
+        assert!(ollama.model.unwrap().ollama().is_some());
+        rejects(
+            &live,
+            &[
+                (
+                    "/model/lock_name",
+                    serde_json::json!("fixture-strata-gyro-m"),
+                ),
+                ("/model/lock/identity/model", serde_json::json!("other")),
+                ("/model/lock/settings/temperature", serde_json::json!(1.0)),
+                ("/model/settings/temperature", serde_json::json!(1.0)),
+                (
+                    "/model/host/endpoint",
+                    serde_json::json!("http://192.0.2.10:8080/v1"),
+                ),
+                ("/model/host/started", serde_json::json!(0)),
+                ("/model/host/profile", serde_json::json!("../framework")),
+                (
+                    "/model/host/verification/host/engine_sha256",
+                    serde_json::json!("2".repeat(64)),
+                ),
+                ("/model/host/live_lock", serde_json::json!("relative.lock")),
+            ],
+        );
+        // A later hold of the same lock advertises the same template.
+        let mut again = held();
+        again.endpoint = "http://127.0.0.1:41999/v1".into();
+        again.started += 1;
+        let again = Profile::freeze_strata_live(selection(), daemon(), FRAMEWORK, again).unwrap();
+        again.validate().unwrap();
+        assert_eq!(again.template().unwrap(), live.template().unwrap());
+        // Only compiled locks freeze, and recipes don't run on Strata yet.
+        assert!(
+            Profile::freeze_strata_live(
+                selection(),
+                daemon(),
+                "bird-strata-gyro-m-fast-v2",
+                held()
+            )
+            .is_err()
+        );
+        let mut recipe = live.clone();
+        recipe.recipe = Some(Recipe::reference().unwrap());
+        assert!(recipe.validate().is_err());
+    }
+    #[test]
     fn frozen_lock_copies_match_the_repository_locks() {
         // The worker build snapshot captures only crates/, so the locks are
         // copied here. Refreshing either lock needs a new profile version.
@@ -460,6 +622,10 @@ mod tests {
         for (copy, path) in [
             (IMAGE_LOCK, "environments/general.lock.json"),
             (MODEL_LOCK, "models/gpt-oss-20b.lock.json"),
+            (
+                include_bytes!("framework-strata-gyro-m-fast-v2-lock.json"),
+                "models/framework-strata-gyro-m-fast-v2.lock.json",
+            ),
         ] {
             assert!(
                 copy == std::fs::read(root.join(path)).unwrap(),

@@ -14,6 +14,10 @@ mod fake;
 mod ollama;
 #[path = "../../playtime-runner/tests/common/registered.rs"]
 mod registered;
+#[path = "../../playtime-strata/tests/support/mod.rs"]
+mod strata_fixture;
+use playtime_runner::docker::{StrataHost, StrataModel, strata_lock};
+use strata_fixture::server::{Reply, Server};
 
 #[derive(Clone, Copy, PartialEq)]
 enum FaultCase {
@@ -214,6 +218,50 @@ fn run_native_definition(
     definition: Option<playtime_runner::docker::FrozenRecipe>,
     continuous: bool,
 ) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
+    run_native(
+        case,
+        hooks,
+        live.map(LiveFake::Ollama),
+        definition,
+        continuous,
+    )
+}
+/// The fake model a live run reaches.
+enum LiveFake {
+    Ollama(ollama::Fake),
+    /// The Strata fixture server's endpoint and the process start it reports.
+    Strata(String, u64),
+}
+const STRATA_FIXTURE: &str = "fixture-strata-gyro-m";
+/// What a hold of the fixture server would have verified.
+fn held(endpoint: &str, started: u64, root: &std::path::Path) -> StrataHost {
+    StrataHost {
+        profile: "fixture-gyro-m".into(),
+        endpoint: endpoint.into(),
+        started,
+        verification: serde_json::json!({"host": strata_lock(STRATA_FIXTURE).unwrap().host}),
+        live_lock: root.join("live-model.lock"),
+    }
+}
+/// The live smoke against the Strata fixture server, frozen with the server
+/// process it reports now.
+fn run_strata(
+    server: &Server,
+    hooks: Option<Box<dyn playtime_runner::WriterHooks>>,
+) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
+    let started = server.state.lock().unwrap().status["started"]
+        .as_u64()
+        .unwrap();
+    let live = LiveFake::Strata(server.endpoint.clone(), started);
+    run_native(FaultCase::None, hooks, Some(live), None, false)
+}
+fn run_native(
+    case: FaultCase,
+    hooks: Option<Box<dyn playtime_runner::WriterHooks>>,
+    live: Option<LiveFake>,
+    definition: Option<playtime_runner::docker::FrozenRecipe>,
+    continuous: bool,
+) -> (Temp, Arc<Port>, playtime_runner::RunReport) {
     let is_live = live.is_some();
     let root = std::env::temp_dir().join(format!(
         "pt66-native-{}",
@@ -271,12 +319,17 @@ fn run_native_definition(
         ))
     } else {
         NativeProfile::Memento(Box::new(
-            match (live.is_some(), definition) {
-                (true, Some(definition)) => {
+            match (&live, definition) {
+                (Some(LiveFake::Strata(endpoint, started)), None) => {
+                    let held = held(endpoint, *started, &root);
+                    Profile::freeze_strata_live(selection, daemon, STRATA_FIXTURE, held)
+                }
+                (Some(LiveFake::Strata(..)), Some(_)) => panic!("recipes don't run on Strata yet"),
+                (Some(LiveFake::Ollama(_)), Some(definition)) => {
                     Profile::freeze_definition(definition, selection, daemon, host)
                 }
-                (true, None) => Profile::freeze_live(selection, daemon, host),
-                (false, _) => Profile::freeze(selection, daemon),
+                (Some(LiveFake::Ollama(_)), None) => Profile::freeze_live(selection, daemon, host),
+                (None, _) => Profile::freeze(selection, daemon),
             }
             .unwrap(),
         ))
@@ -310,7 +363,7 @@ fn run_native_definition(
         invocation_id: id(),
         boot_id: id(),
         unit: "synthetic-native.service".into(),
-        kind: if live.is_some() {
+        kind: if is_live {
             WorkerKind::DockerLive
         } else {
             WorkerKind::DockerScripted
@@ -331,9 +384,20 @@ fn run_native_definition(
         daemon: engine.identity().clone(),
     };
     let model = match live {
-        Some(transport) => Model::Live(Box::new(
-            Live::with_transport(Box::new(transport), profile.model.as_ref().unwrap()).unwrap(),
+        Some(LiveFake::Ollama(transport)) => Model::Live(Box::new(
+            Live::with_transport(
+                Box::new(transport),
+                profile.model.as_ref().and_then(LiveModel::ollama).unwrap(),
+            )
+            .unwrap(),
         )),
+        // As at worker startup, the frozen server process is checked first.
+        Some(LiveFake::Strata(..)) => {
+            let model = profile.model.as_ref().and_then(LiveModel::strata).unwrap();
+            runtime
+                .block_on(strata_model(model, fake::deadline()))
+                .unwrap()
+        }
         None if continuous => Model::ContinuousScripted {
             work: profile.work_responses.clone().into(),
             summaries: profile.summary_responses.clone().into(),
@@ -1280,4 +1344,408 @@ fn parser_error_usage_reaches_archive_without_dispatching_the_rejected_call() {
             160 + measured.unwrap_or(0)
         );
     }
+}
+
+/// The scripted smoke's replies as Strata streams: a little thinking, then the
+/// reply's tool call, with its scripted usage. Like the server's, each call's
+/// identity is unique in the conversation.
+fn strata_streams() -> Vec<strata_fixture::Stream> {
+    let scenario: playtime_engine::simulation::Scenario =
+        serde_json::from_slice(playtime_runner::docker::SCENARIO).unwrap();
+    scenario
+        .models
+        .into_iter()
+        .enumerate()
+        .map(|(reply, model)| {
+            let playtime_engine::simulation::ModelEnding::Response(response) =
+                model.completion.unwrap().outcome
+            else {
+                panic!("scripted smoke replies are responses")
+            };
+            let mut stream = strata_fixture::Stream::new();
+            stream.item("reasoning", "Working.", "completed");
+            for call in response.message["tool_calls"].as_array().unwrap() {
+                let function = &call["function"];
+                let name = function["name"].as_str().unwrap();
+                stream.named(
+                    "function_call",
+                    name,
+                    &function["arguments"].to_string(),
+                    "completed",
+                );
+            }
+            stream.terminal("completed");
+            let generated = response.generated_tokens.unwrap();
+            let usage = &mut stream.events.last_mut().unwrap()["response"]["usage"];
+            usage["output_tokens"] = generated.into();
+            usage["total_tokens"] = (200 + generated).into();
+            rename_calls(&mut stream, &format!("reply{reply}_"));
+            stream
+        })
+        .collect()
+}
+/// Prefixes every call identity in the stream, its output included.
+fn rename_calls(stream: &mut strata_fixture::Stream, prefix: &str) {
+    let rename = |item: &mut serde_json::Value| {
+        if let Some(id) = item.get_mut("call_id") {
+            *id = format!("{prefix}{}", id.as_str().unwrap()).into();
+        }
+    };
+    for event in &mut stream.events {
+        if let Some(item) = event.get_mut("item") {
+            rename(item);
+        }
+        let output = event.pointer_mut("/response/output");
+        output
+            .and_then(|o| o.as_array_mut())
+            .into_iter()
+            .flatten()
+            .for_each(rename);
+    }
+    stream.output.iter_mut().for_each(rename);
+}
+fn strata_replies() -> Vec<Reply> {
+    strata_streams()
+        .iter()
+        .map(|s| Reply::Events(s.bytes()))
+        .collect()
+}
+/// Each request's model chunks, in archive order.
+fn strata_calls(
+    records: &[playtime_protocol::observations::ControllerRecord],
+) -> Vec<Vec<serde_json::Value>> {
+    let mut calls = vec![];
+    let mut chunks = vec![];
+    for record in records {
+        match record.kind.as_str() {
+            "model_chunk" => chunks.push(record.data["chunk"].clone()),
+            "model_response" | "model_error" => calls.push(std::mem::take(&mut chunks)),
+            _ => {}
+        }
+    }
+    calls
+}
+/// The text the deltas streamed into one message field.
+fn streamed(deltas: &[serde_json::Value], field: &str) -> String {
+    deltas
+        .iter()
+        .filter_map(|c| c["message"][field].as_str())
+        .collect()
+}
+#[test]
+fn strata_port_checks_its_server_process_and_records_deltas_and_each_call() {
+    let server = Server::new(strata_replies());
+    let (temp, port, report) = run_strata(&server, None);
+    assert!(report.terminal_committed, "{:?}", report.diagnostics);
+    let result = report.result.unwrap();
+    assert_eq!(result.reason, playtime_core::StopReason::AgentFinished);
+    assert_eq!(result.usage.known_generated_tokens, 160);
+    assert_eq!(result.usage.unknown_reserved_tokens, 0);
+    assert_eq!(result.sessions_started, 2);
+    assert_eq!(port.bridges.load(Ordering::SeqCst), 5);
+    // Startup, each session start and each request check the server first.
+    let check = ["/props", "/v1/status", "/settings"].map(String::from);
+    let post = [&check[..], &["/v1/responses".into()]].concat();
+    let expected = [
+        &check[..],
+        &check,
+        &post,
+        &post,
+        &post,
+        &check,
+        &post,
+        &post,
+    ]
+    .concat();
+    assert_eq!(server.paths(), expected);
+    for post in server.posts() {
+        assert_eq!(post["model"], strata_fixture::MODEL);
+        assert_eq!(post["temperature"], 0.6);
+        assert_eq!(post["top_k"], 20);
+        assert_eq!(post["reasoning"]["effort"], "medium");
+    }
+    let records = records(&temp.0.join("archive"));
+    let calls = strata_calls(&records);
+    assert_eq!(calls.len(), 5);
+    for (chunks, stream) in calls.iter().zip(strata_streams()) {
+        // Deltas arrive as messages the transcript renders, then one record
+        // of the call itself.
+        let (call, deltas) = chunks.split_last().unwrap();
+        assert!(deltas.iter().all(|c| c["observation"] == "strata_deltas"));
+        assert_eq!(streamed(deltas, "thinking"), "Working.");
+        let function = &stream.output[1];
+        let arguments: String = deltas
+            .iter()
+            .filter_map(|c| c["arguments"].as_array())
+            .flatten()
+            .inspect(|a| {
+                assert_eq!(
+                    (&a["item_id"], &a["name"]),
+                    (&function["id"], &function["name"])
+                )
+            })
+            .filter_map(|a| a["delta"].as_str())
+            .collect();
+        assert_eq!(arguments, function["arguments"].as_str().unwrap());
+        assert_eq!(call["observation"], "strata_call");
+        assert_eq!(call["remote"], "terminal_observed");
+        assert_eq!(call["events"], stream.events.len());
+        assert_eq!(call["received_bytes"], stream.bytes().len());
+        assert!(call["observed_ms"].is_u64());
+        // The terminal event keeps usage, timings and each item's identity and
+        // size, but not the text the response records.
+        let terminal = &call["terminal"];
+        assert_eq!(terminal["type"], "response.completed");
+        assert_eq!(terminal["response"]["usage"]["output_tokens"], 32);
+        assert_eq!(terminal["timings"], serde_json::json!({"predicted_n": 40}));
+        assert_eq!(
+            terminal["response"]["output"],
+            serde_json::json!([
+                {"id": "item_0", "type": "reasoning", "status": "completed", "text_bytes": 8},
+                {"id": "item_1", "type": "function_call", "status": "completed",
+                 "call_id": function["call_id"], "name": function["name"],
+                 "text_bytes": arguments.len()}
+            ])
+        );
+    }
+    assert!(
+        records
+            .iter()
+            .filter(|r| r.kind == "model_response")
+            .all(|r| r.data["response"]["message"]["thinking"] == "Working.")
+    );
+    assert_fresh_second_session(&records);
+    // Strata reports none of Ollama's durations, so contention stays unknown.
+    let run = ArchiveQueries::offline(temp.0.join("archive"), Default::default())
+        .unwrap()
+        .run()
+        .unwrap();
+    assert!(run.contention.is_none());
+}
+#[test]
+fn strata_server_restart_stops_the_run_before_another_request() {
+    let server = Server::new(strata_replies());
+    {
+        let mut state = server.state.lock().unwrap();
+        let mut restarted = state.status.clone();
+        restarted["started"] = serde_json::json!(101);
+        state.statuses.insert(3, restarted);
+    }
+    let (temp, _port, report) = run_strata(&server, None);
+    let result = report.result.unwrap();
+    assert_eq!(
+        result.reason,
+        playtime_core::StopReason::InfrastructureFailure
+    );
+    assert_eq!(result.usage.known_generated_tokens, 96);
+    assert_eq!(server.posts().len(), 3, "no request after the restart");
+    let checkpoints = ArchiveQueries::offline(temp.0.join("archive"), Default::default())
+        .unwrap()
+        .checkpoints()
+        .unwrap();
+    assert_eq!(checkpoints[0].checkpoint.session_id.as_str(), "s1");
+    assert!(
+        !records(&temp.0.join("archive"))
+            .iter()
+            .any(|r| r.kind == "model_request" && r.data["call"] == 4)
+    );
+}
+#[test]
+fn strata_port_refuses_another_or_busy_server_process_before_it_begins() {
+    // The synthetic lock is the one the fixture's metadata inspects to.
+    let (lock, fixture) = (strata_lock(STRATA_FIXTURE).unwrap(), strata_fixture::lock());
+    assert_eq!((lock.identity, lock.host), (fixture.identity, fixture.host));
+    let server = Server::new([]);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let root = std::env::temp_dir();
+    for (started, in_flight, refusal) in [(99, 0, "Identity"), (100, 1, "Busy")] {
+        server.state.lock().unwrap().status["activity"]["in_flight"] = in_flight.into();
+        let held = held(&server.endpoint, started, &root);
+        let model = StrataModel::freeze(STRATA_FIXTURE, held, 32768).unwrap();
+        let error = runtime
+            .block_on(strata_model(&model, fake::deadline()))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            error.contains("Strata model identity") && error.contains(refusal),
+            "{error}"
+        );
+    }
+    assert!(server.posts().is_empty());
+}
+#[test]
+fn strata_partial_output_and_unknown_usage_stay_recorded() {
+    // A stream cut before its message is done, and a whole one without usage.
+    let mut cut = strata_fixture::Stream::new();
+    cut.item("reasoning", "Plan", "completed");
+    cut.item("message", "Half", "completed");
+    let mut frames = cut.frames();
+    frames.truncate(frames.len() - 3);
+    let mut unmeasured = strata_streams().remove(0);
+    unmeasured.events.last_mut().unwrap()["response"]["usage"] = serde_json::Value::Null;
+    use playtime_core::StopReason::{IncompleteModelResponse, MissingTokenUsage};
+    for (reply, reason, remote) in [
+        (frames.concat(), IncompleteModelResponse, "uncertain"),
+        (unmeasured.bytes(), MissingTokenUsage, "terminal_observed"),
+    ] {
+        let server = Server::new([Reply::Events(reply)]);
+        let (temp, port, report) = run_strata(&server, None);
+        let result = report.result.unwrap();
+        assert_eq!(result.reason, reason);
+        assert_eq!(result.usage.known_generated_tokens, 0);
+        assert_eq!(result.usage.unknown_reserved_tokens, 512);
+        assert_eq!(result.usage.unknown_requests, 1);
+        assert_eq!(port.bridges.load(Ordering::SeqCst), 0);
+        assert_eq!(server.posts().len(), 1);
+        let calls = strata_calls(&records(&temp.0.join("archive")));
+        let (call, deltas) = calls[0].split_last().unwrap();
+        assert_eq!(call["observation"], "strata_call");
+        assert_eq!(call["remote"], remote);
+        if reason == IncompleteModelResponse {
+            assert_eq!(streamed(deltas, "thinking"), "Plan");
+            assert_eq!(streamed(deltas, "content"), "Half");
+            assert!(call.get("terminal").is_none());
+        } else {
+            assert_eq!(streamed(deltas, "thinking"), "Working.");
+            assert!(call["terminal"]["response"]["usage"].is_null());
+        }
+    }
+}
+#[test]
+fn strata_partial_output_is_committed_before_a_slow_response_finishes() {
+    // The first reply's frames arrive in four groups, 400 ms apart.
+    let mut streams = strata_streams().into_iter();
+    let frames = streams.next().unwrap().frames();
+    let groups = frames
+        .chunks(frames.len().div_ceil(4))
+        .map(<[Vec<u8>]>::concat)
+        .collect();
+    let replies = [Reply::Paced(groups, Duration::from_millis(400))]
+        .into_iter()
+        .chain(streams.map(|s| Reply::Events(s.bytes())));
+    let server = Server::new(replies);
+    let commits = Arc::new(Mutex::new(vec![]));
+    let (temp, _port, report) = run_strata(&server, Some(Box::new(Commits(commits.clone()))));
+    assert_eq!(
+        report.result.unwrap().reason,
+        playtime_core::StopReason::AgentFinished
+    );
+    let records = sequenced_records(&temp.0.join("archive"));
+    let partial: Vec<u64> = records
+        .iter()
+        .filter(|(_, r)| {
+            r.kind == "model_chunk"
+                && r.data["call"] == 1
+                && r.data["chunk"]["observation"] == "strata_deltas"
+        })
+        .map(|(sequence, _)| *sequence)
+        .collect();
+    let response = records
+        .iter()
+        .find(|(_, r)| r.kind == "model_response" && r.data["call"] == 1)
+        .unwrap()
+        .0;
+    // Half-second coalescing split the deltas, and the first part was already
+    // committed, so readable, while the request was still running.
+    assert!(partial.len() >= 2, "{partial:?}");
+    let commits = commits.lock().unwrap();
+    let committed_through = commits
+        .iter()
+        .find(|(first, last)| (*first..=*last).contains(&partial[0]))
+        .unwrap()
+        .1;
+    assert!(committed_through < response, "{commits:?} {response}");
+}
+#[test]
+fn strata_port_sends_nothing_more_after_a_request_that_may_still_run() {
+    let mut stream = strata_fixture::Stream::new();
+    stream.item("reasoning", "Thinking", "completed");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let root = std::env::temp_dir();
+    // Cancelled by the user, or past its deadline, with the server still going.
+    for cancelled in [true, false] {
+        let server = Server::new([Reply::Stall(stream.bytes())]);
+        let held = held(&server.endpoint, 100, &root);
+        let model = StrataModel::freeze(STRATA_FIXTURE, held, 32768).unwrap();
+        let mut strata = crate::strata::Strata::prepare(&model).unwrap();
+        let (sender, received) = mpsc::channel();
+        let cancel = CancellationToken::new();
+        let wait = Duration::from_millis(300);
+        let deadline = Instant::now() + if cancelled { wait * 30 } else { wait };
+        let outcome = runtime.block_on(async {
+            let stop = cancel.clone();
+            let user = async move {
+                if cancelled {
+                    tokio::time::sleep(wait).await;
+                    stop.cancel();
+                }
+            };
+            let request = strata_fixture::request();
+            let complete = strata.complete(1, &request, deadline, &cancel, &sender);
+            tokio::join!(complete, user).0.unwrap()
+        });
+        match outcome {
+            Outcome::ModelError(ModelFailure::Incomplete(_)) if cancelled => {}
+            Outcome::ModelError(ModelFailure::Timeout(_)) if !cancelled => {}
+            other => panic!("{other:?}"),
+        }
+        let chunks: Vec<_> = received.try_iter().map(|(_, chunk)| chunk).collect();
+        assert_eq!(chunks[0]["message"]["thinking"], "Thinking");
+        assert_eq!(chunks.last().unwrap()["remote"], "uncertain");
+        let seen = server.paths().len();
+        runtime.block_on(async {
+            let later = Instant::now() + Duration::from_secs(5);
+            let (request, fresh) = (strata_fixture::request(), CancellationToken::new());
+            let again = strata.complete(2, &request, later, &fresh, &sender).await;
+            assert!(
+                again
+                    .unwrap_err()
+                    .to_string()
+                    .contains("may still be running")
+            );
+            assert!(strata.verify(later, &fresh).await.is_err());
+        });
+        assert_eq!(
+            server.paths().len(),
+            seen,
+            "nothing more reaches the server"
+        );
+    }
+}
+#[test]
+fn strata_tool_parse_failure_is_retried_and_its_measured_usage_kept() {
+    let mut broken = strata_fixture::Stream::new();
+    broken.named("function_call", "exec", "{\"command\":", "completed");
+    broken.terminal("completed");
+    let replies = [Reply::Events(broken.bytes())]
+        .into_iter()
+        .chain(strata_replies());
+    let server = Server::new(replies);
+    let (temp, port, report) = run_strata(&server, None);
+    assert!(report.terminal_committed, "{:?}", report.diagnostics);
+    let result = report.result.unwrap();
+    assert_eq!(result.reason, playtime_core::StopReason::AgentFinished);
+    assert_eq!(result.usage.known_generated_tokens, 160 + 40);
+    assert!(result.usage.usage_complete);
+    assert_eq!(port.bridges.load(Ordering::SeqCst), 5);
+    // The terminal event was seen, so the retry isn't fenced.
+    assert_eq!(server.posts().len(), 6);
+    let records = records(&temp.0.join("archive"));
+    let error = records.iter().find(|r| r.kind == "model_error").unwrap();
+    assert_eq!(error.data["error"]["kind"], "parse");
+    assert_eq!(
+        error.data["request_usage"],
+        serde_json::json!({"status": "known", "generated_tokens": 40})
+    );
+    assert_eq!(
+        strata_calls(&records)[0].last().unwrap()["remote"],
+        "terminal_observed"
+    );
 }
