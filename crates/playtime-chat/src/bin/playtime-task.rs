@@ -496,6 +496,16 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             None => config,
         }
     };
+    // A saved session resumes under the binding it was saved with.
+    let config = if resume {
+        playtime_chat::sessions::resume_config(
+            &config,
+            lock.earlier_fingerprint()?.as_ref(),
+            &session_path,
+        )
+    } else {
+        config
+    };
     // A new session's first turn would refuse this context only after the wrapper
     // has acquired the model. The same rule here refuses it before anything starts,
     // and says by how much. A resumed session keeps the context it began with.

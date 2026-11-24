@@ -30,9 +30,9 @@ class LauncherTests(unittest.TestCase):
                      "launch_protocol.py", "presets.json"):
             shutil.copyfile(SOURCE / name, self.package / name)
         self.lock = {"identity": {"model": "fixture", "context_tokens": 163840}, "host": {"digest": "reviewed"}}
-        (self.package / "framework-strata-gyro-m-fast-v1.lock.json").write_text(json.dumps(self.lock))
+        (self.package / "framework-strata-gyro-m-fast-v2.lock.json").write_text(json.dumps(self.lock))
         self.bird_lock = {"identity": {"model": "fixture", "context_tokens": 131072}, "host": {"digest": "bird-reviewed"}}
-        (self.package / "bird-strata-gyro-m-fast-v1.lock.json").write_text(json.dumps(self.bird_lock))
+        (self.package / "bird-strata-gyro-m-fast-v2.lock.json").write_text(json.dumps(self.bird_lock))
         (self.package / "general.lock.json").write_text("{}")
         self.bin = self.root / "bin"
         self.bin.mkdir()
@@ -611,7 +611,7 @@ else:
         self.assertEqual(json.loads(verify_args[verify_args.index('--expected-host') + 1]), self.bird_lock['host'])
         child = json.loads((self.root / 'client').read_text())
         self.assertEqual(child['argv'][child['argv'].index('--model-lock') + 1],
-                         str(self.package / 'bird-strata-gyro-m-fast-v1.lock.json'))
+                         str(self.package / 'bird-strata-gyro-m-fast-v2.lock.json'))
         self.assertTrue((self.root / 'restored').exists())
 
     def test_bird_status_uses_its_helper_without_starting_a_server(self):

@@ -53,11 +53,52 @@ fn preview(text: &str) -> String {
         .collect()
 }
 
-fn inspect(path: PathBuf, modified: u64, expected: &ConversationConfig) -> Result<Option<Entry>> {
+/// The configuration a session saved with `saved` model binding resumes under, or
+/// `None` for an unrelated model. A lock that pins its Strata server release still
+/// requires everything the same lock without it did, so sessions saved under that
+/// `earlier` fingerprint keep their binding.
+pub fn binding(
+    expected: &ConversationConfig,
+    earlier: Option<&Sha256Digest>,
+    saved: &Sha256Digest,
+) -> Option<ConversationConfig> {
+    if *saved == expected.model {
+        return Some(expected.clone());
+    }
+    (earlier == Some(saved)).then(|| ConversationConfig {
+        model: saved.clone(),
+        ..expected.clone()
+    })
+}
+
+/// The configuration to open an existing session directory with. Anything this
+/// can't read falls back to `expected`, and the harness then refuses it as usual.
+pub fn resume_config(
+    expected: &ConversationConfig,
+    earlier: Option<&Sha256Digest>,
+    session: &Path,
+) -> ConversationConfig {
+    PrivateDirectory::open(session, false)
+        .ok()
+        .and_then(|directory| directory.read("config.json", 1024 * 1024).ok())
+        .and_then(|bytes| serde_json::from_slice::<ConversationConfig>(&bytes).ok())
+        .and_then(|saved| binding(expected, earlier, &saved.model))
+        .unwrap_or_else(|| expected.clone())
+}
+
+fn inspect(
+    path: PathBuf,
+    modified: u64,
+    expected: &ConversationConfig,
+    earlier: Option<&Sha256Digest>,
+) -> Result<Option<Entry>> {
     let directory = PrivateDirectory::open(&path, false)?;
     let config: ConversationConfig =
         serde_json::from_slice(&directory.read("config.json", 1024 * 1024)?)?;
-    if config.model != expected.model || config.workspace != expected.workspace {
+    let Some(expected) = binding(expected, earlier, &config.model) else {
+        return Ok(None);
+    };
+    if config.workspace != expected.workspace {
         return Ok(None);
     }
     let head: Head = serde_json::from_slice(&directory.read("head.json", 4096)?)?;
@@ -92,11 +133,11 @@ fn inspect(path: PathBuf, modified: u64, expected: &ConversationConfig) -> Resul
                 .map(preview)
         })
         .unwrap_or_else(|| "(no saved message)".into());
-    let state = match Session::try_open(&path, expected) {
+    let state = match Session::try_open(&path, &expected) {
         Ok(_) => State::Ready,
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => State::InUse,
         Err(_) if head.active_turn.is_some() => State::Interrupted,
-        Err(_) if config != *expected => State::SettingsDiffer,
+        Err(_) if config != expected => State::SettingsDiffer,
         Err(_) => State::Unavailable,
     };
     Ok(Some(Entry {
@@ -109,7 +150,11 @@ fn inspect(path: PathBuf, modified: u64, expected: &ConversationConfig) -> Resul
 
 /// The latest 20 nonempty matching sessions among the 200 most recently touched session
 /// directories. Unsafe files and unrelated models/workspaces are not offered.
-pub fn catalog(root: &Path, expected: &ConversationConfig) -> Result<Vec<Entry>> {
+pub fn catalog(
+    root: &Path,
+    expected: &ConversationConfig,
+    earlier: Option<&Sha256Digest>,
+) -> Result<Vec<Entry>> {
     let directory = PrivateDirectory::open(root, false)?;
     let mut candidates = Vec::new();
     for name in directory.names()? {
@@ -130,7 +175,7 @@ pub fn catalog(root: &Path, expected: &ConversationConfig) -> Result<Vec<Entry>>
     Ok(candidates
         .into_iter()
         .take(200)
-        .filter_map(|(modified, path)| inspect(path, modified, expected).ok().flatten())
+        .filter_map(|(modified, path)| inspect(path, modified, expected, earlier).ok().flatten())
         .take(20)
         .collect())
 }
@@ -146,6 +191,7 @@ pub struct Choice {
 pub fn select(
     entries: &[Entry],
     config: &ConversationConfig,
+    earlier: Option<&Sha256Digest>,
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> Result<Choice> {
@@ -197,7 +243,10 @@ pub fn select(
             && let Some(entry) = index.checked_sub(1).and_then(|i| entries.get(i))
             && entry.state == State::Interrupted
         {
-            match Session::inspect_interrupted(&entry.path, config) {
+            match Session::inspect_interrupted(
+                &entry.path,
+                &resume_config(config, earlier, &entry.path),
+            ) {
                 Ok(report) => {
                     // Escape terminal controls in archived user/model/tool text.
                     let text = report.context()?;

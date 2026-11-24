@@ -140,6 +140,7 @@ async fn basalt_has_no_settings_endpoint_and_shares_only_its_locked_capacity() {
         "c1ba29dd88ac98f052b34e75de46106737a559871c75eb565fb852930e7bcf23",
     )
     .unwrap();
+    model.host.server_release_manifest_sha256 = None;
     let mut client =
         Client::new(server.endpoint.clone(), model.clone(), Limits::default()).unwrap();
     assert!(call(&mut client).await.completion.is_ok());

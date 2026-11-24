@@ -26,7 +26,25 @@ pub struct HostIdentity {
     pub artifacts_manifest_sha256: Sha256Digest,
     pub launch_configuration_sha256: Sha256Digest,
     pub responses_source_sha256: Sha256Digest,
+    /// Digest of the manifest of every file in the Strata server release the API
+    /// server runs from. Locks made before the verifier checked the release omit
+    /// it, so their bytes are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_release_manifest_sha256: Option<Sha256Digest>,
 }
+
+/// Each reviewed Strata server release, by the engine version its server reports,
+/// with the digest of its complete file manifest.
+const STRATA_RELEASES: [(&str, &str); 2] = [
+    (
+        "0.1.57",
+        "0e18282520906d8c01153ea0f6cf14fc2746847d06bf9ed5b96ae63f1a294797",
+    ),
+    (
+        "0.1.58",
+        "f49826e2c75d33790f0bce86651e740c0b40fe34c9e63e31b1134155e79466b6",
+    ),
+];
 
 /// Stable fields of /props and /v1/status, excluding activity and process age.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -152,9 +170,16 @@ impl ModelLock {
             Service::Strata => {
                 self.schema_version == 1
                     && self.identity.parallel == 1
-                    && matches!(self.identity.engine.as_str(), "0.1.57" | "0.1.58")
                     && self.host.responses_source_sha256.as_str()
                         == "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b"
+                    && self
+                        .host
+                        .server_release_manifest_sha256
+                        .as_ref()
+                        .is_some_and(|release| {
+                            STRATA_RELEASES
+                                .contains(&(self.identity.engine.as_str(), release.as_str()))
+                        })
             }
             Service::Basalt => {
                 self.schema_version == 2
@@ -166,6 +191,8 @@ impl ModelLock {
                         == "5a15f95f8bf41fbd61c8e7299910d08049243eb32b26699b0b7a6f7976ad92e8"
                     && self.host.responses_source_sha256.as_str()
                         == "c1ba29dd88ac98f052b34e75de46106737a559871c75eb565fb852930e7bcf23"
+                    // Basalt's serving code is already in its artifact manifest.
+                    && self.host.server_release_manifest_sha256.is_none()
             }
         };
         if !reviewed_runtime
@@ -190,5 +217,21 @@ impl ModelLock {
         Ok(digest(
             &serde_json::to_vec(self).map_err(|e| Failure::new(FailureKind::Identity, e))?,
         ))
+    }
+
+    /// The fingerprint of the same lock without its server release manifest,
+    /// which sessions saved before the verifier checked the release are bound to.
+    /// This lock requires everything that one did, so those sessions may resume
+    /// under their saved binding.
+    pub fn earlier_fingerprint(&self) -> Result<Option<Sha256Digest>> {
+        self.validate()?;
+        if self.host.server_release_manifest_sha256.is_none() {
+            return Ok(None);
+        }
+        let mut earlier = self.clone();
+        earlier.host.server_release_manifest_sha256 = None;
+        Ok(Some(digest(
+            &serde_json::to_vec(&earlier).map_err(|e| Failure::new(FailureKind::Identity, e))?,
+        )))
     }
 }

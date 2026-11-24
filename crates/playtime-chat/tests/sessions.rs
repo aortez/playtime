@@ -1,4 +1,4 @@
-use playtime_chat::sessions::{State, catalog, select};
+use playtime_chat::sessions::{State, catalog, resume_config, select};
 use playtime_core::{RunMode, Sha256Digest};
 use playtime_engine::{
     Input, ModelResponse, Outcome, ToolPolicy,
@@ -128,7 +128,7 @@ fn hides_empty_sessions_without_deleting_evidence_and_preserves_nonempty_states(
     other.workspace = Sha256Digest::new("4".repeat(64)).unwrap();
     drop(completed(&root.0.join("other-workspace"), other));
     symlink(root.0.join("ready"), root.0.join("linked")).unwrap();
-    let entries = catalog(&root.0, &expected).unwrap();
+    let entries = catalog(&root.0, &expected, None).unwrap();
     assert_eq!(entries.len(), 4);
     assert!(!entries.iter().any(|entry| entry.path == empty_path));
     assert_eq!(
@@ -169,7 +169,14 @@ fn hides_empty_sessions_without_deleting_evidence_and_preserves_nonempty_states(
         + 1;
     let input = format!("{busy}\n{ready}\n");
     let mut output = Vec::new();
-    let chosen = select(&entries, &expected, &mut input.as_bytes(), &mut output).unwrap();
+    let chosen = select(
+        &entries,
+        &expected,
+        None,
+        &mut input.as_bytes(),
+        &mut output,
+    )
+    .unwrap();
     assert_eq!(chosen.session.unwrap(), root.0.join("ready"));
     assert!(
         String::from_utf8(output)
@@ -180,9 +187,39 @@ fn hides_empty_sessions_without_deleting_evidence_and_preserves_nonempty_states(
 }
 
 #[test]
+fn a_session_saved_under_the_earlier_lock_binding_resumes_under_it() {
+    let root = Root::new();
+    let expected = config();
+    let earlier = Sha256Digest::new("5".repeat(64)).unwrap();
+    let path = root.0.join("earlier");
+    let mut saved = expected.clone();
+    saved.model = earlier.clone();
+    drop(completed(&path, saved.clone()));
+    // Without the earlier binding it belongs to an unrelated model.
+    assert!(catalog(&root.0, &expected, None).unwrap().is_empty());
+    let entries = catalog(&root.0, &expected, Some(&earlier)).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].state, State::Ready);
+    // It opens under its saved binding and is never rebound to the current one.
+    let bound = resume_config(&expected, Some(&earlier), &path);
+    assert_eq!(bound, saved);
+    drop(Session::open(&path, &bound).unwrap());
+    assert!(Session::open(&path, &expected).is_err());
+    // Any other difference still refuses it.
+    let mut changed = expected.clone();
+    changed.instructions.push_str(" Extra.");
+    assert!(Session::open(&path, &resume_config(&changed, Some(&earlier), &path)).is_err());
+    // A new session takes the current binding.
+    assert_eq!(
+        resume_config(&expected, Some(&earlier), &root.0.join("new")),
+        expected
+    );
+}
+
+#[test]
 fn new_cancel_and_eof_do_not_choose_an_existing_session() {
     for (input, cancelled) in [("\n", false), ("0\n", false), ("q\n", true), ("", true)] {
-        let choice = select(&[], &config(), &mut input.as_bytes(), &mut Vec::new()).unwrap();
+        let choice = select(&[], &config(), None, &mut input.as_bytes(), &mut Vec::new()).unwrap();
         assert_eq!(choice.cancelled, cancelled);
         assert!(choice.session.is_none());
     }
@@ -201,7 +238,7 @@ fn corrupt_checkpoint_is_not_resumable() {
     directory
         .replace("head.json", &serde_json::to_vec(&head).unwrap())
         .unwrap();
-    let entries = catalog(&root.0, &config).unwrap();
+    let entries = catalog(&root.0, &config, None).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].state, State::Unavailable);
 }
@@ -228,10 +265,17 @@ fn recovery_picker_inspects_and_requires_explicit_confirmation_without_modifying
     .unwrap();
     drop(turn);
     let before = fs::read(source.join("head.json")).unwrap();
-    let entries = catalog(&root.0, &config).unwrap();
+    let entries = catalog(&root.0, &config, None).unwrap();
     assert_eq!(entries[0].state, State::Interrupted);
     let mut output = Vec::new();
-    let choice = select(&entries, &config, &mut b"r1\n\nq\n".as_slice(), &mut output).unwrap();
+    let choice = select(
+        &entries,
+        &config,
+        None,
+        &mut b"r1\n\nq\n".as_slice(),
+        &mut output,
+    )
+    .unwrap();
     assert!(choice.cancelled);
     assert!(
         String::from_utf8(output)
@@ -241,6 +285,7 @@ fn recovery_picker_inspects_and_requires_explicit_confirmation_without_modifying
     let choice = select(
         &entries,
         &config,
+        None,
         &mut b"r1\nrecover\n".as_slice(),
         &mut Vec::new(),
     )
@@ -251,7 +296,7 @@ fn recovery_picker_inspects_and_requires_explicit_confirmation_without_modifying
     assert_eq!(fs::read(source.join("head.json")).unwrap(), before);
     let destination = root.0.join("recovered");
     drop(Session::recover_interrupted(&source, &destination, config.clone(), false).unwrap());
-    let entries = catalog(&root.0, &config).unwrap();
+    let entries = catalog(&root.0, &config, None).unwrap();
     let entry = entries.iter().find(|e| e.path == destination).unwrap();
     assert_eq!(
         entry.state,

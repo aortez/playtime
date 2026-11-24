@@ -9,7 +9,7 @@
       ],
       "helper": ".local/lib/codex-gyro/warm-session.py",
       "state_parent": ".local/state/codex-gyro",
-      "model_lock": "bird-strata-gyro-m-fast-v1.lock.json",
+      "model_lock": "bird-strata-gyro-m-fast-v2.lock.json",
       "startup_timeout": 630,
       "cleanup_timeout": 110
     },
@@ -18,7 +18,7 @@
       "ssh_options": [],
       "helper": ".local/lib/codex-framework-gyro/warm-session.py",
       "state_parent": ".local/state/codex-framework-gyro",
-      "model_lock": "framework-strata-gyro-m-fast-v1.lock.json",
+      "model_lock": "framework-strata-gyro-m-fast-v2.lock.json",
       "startup_timeout": 930,
       "cleanup_timeout": 160
     },
