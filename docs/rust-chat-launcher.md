@@ -189,8 +189,9 @@ configuration, hashes the engine executable, the Responses source and every file
 of the Strata server release on every launch, and requires an exact match with the
 committed model lock. The release is about 330 MB in some 6,200 files; hashing it
 took under two seconds on Framework and Bird. `host.json` reports its file,
-symlink and byte counts. The console separately verifies the endpoint/template/settings identity. The wrapper
-never rewrites a lock to accept a changed engine.
+symlink and byte counts. The console separately verifies the
+endpoint/template/settings identity. The wrapper never rewrites a lock to accept
+a changed engine.
 
 Model/drafter files can reuse hashes from the inference host's private
 `~/.cache/playtime-chat/strata-hashes-v1-<reviewed-host-digest>.json`. Each launch
@@ -204,8 +205,9 @@ otherwise matching report.
 
 The first launch reads all artifacts. A new lock has a new cache, so the first
 launch under the v2 Strata locks reads them all again. Later launches reuse
-checksums for unchanged files; this trusts local filesystem metadata and does not check for corruption
-that leaves that metadata unchanged. Force a fresh content check with:
+checksums for unchanged files; this trusts local filesystem metadata and does
+not check for corruption that leaves that metadata unchanged. Force a fresh
+content check with:
 
 ```sh
 codex-launcher playtime-framework-fast --full-verify --workspace /absolute/project

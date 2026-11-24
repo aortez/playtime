@@ -29,9 +29,10 @@ owner retains the exclusive host lock against other serving runtimes.
 
 The caller also supplies `HostIdentity`: backend, quantization, executable hash,
 artifact-manifest hash, launch-configuration hash, Responses-source hash and, for
-Strata, server-release manifest hash. This is an attestation by the owner, not a fact established by deserializing JSON or
-reading HTTP metadata. Verify weights, packs/tokenizer, executable and actual
-launch arguments/environment before lending the endpoint. Bind drafting, KV
+Strata, server-release manifest hash. This is an attestation by the owner, not a
+fact established by deserializing JSON or reading HTTP metadata. Verify weights,
+packs/tokenizer, executable and actual launch arguments/environment before
+lending the endpoint. Bind drafting, KV
 format, PLE placement, route approximations and other engine flags through that
 configuration identity. Refuse a changed identity instead of refreshing a lock
 while resuming a conversation. The complete lock fingerprint becomes the
@@ -58,8 +59,9 @@ writes them at runtime. Validation accepts only these reviewed pairs:
 The engine component's own libraries and kernels, the running API server process
 and stale bytecode caches remain unchecked; see #235.
 
-`framework-strata-gyro-m-fast-v2.lock.json` and `bird-strata-gyro-m-fast-v2.lock.json`
-are their v1 locks with this field added, and the presets use them. A Strata lock
+`framework-strata-gyro-m-fast-v2.lock.json` and
+`bird-strata-gyro-m-fast-v2.lock.json` are their v1 locks with this field added,
+and the presets use them. A Strata lock
 without the field no longer validates. A v2 lock requires everything its v1 lock
 did, so a conversation saved under the v1 fingerprint resumes under that saved
 binding (`ModelLock::earlier_fingerprint`); new conversations take the v2

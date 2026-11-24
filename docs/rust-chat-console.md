@@ -57,7 +57,8 @@ session, pass `--session /absolute/session` and
 the same model, workspace, agent prompt and allocation settings. A changed config
 is rejected. The one exception is a Strata lock that adds only its server release
 manifest: sessions saved under the same lock without it keep their saved binding
-and resume (see [the Strata guide](rust-strata.md#identity-and-settings)). Sessions created before the Codex default require
+and resume (see [the Strata guide](rust-strata.md#identity-and-settings)).
+Sessions created before the Codex default require
 `--agent-prompt minimal`; choose a new conversation to use the Codex prompt.
 The executable, image/model locks, session and private state must be outside the
 project. When editing Playtime itself, install the binary and copy its reviewed
