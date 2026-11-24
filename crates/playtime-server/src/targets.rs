@@ -17,9 +17,12 @@ pub fn validate(targets: &InferenceTargets) -> Result<(), &'static str> {
     if !targets.valid() {
         return Err("invalid or duplicate inference targets");
     }
+    // A Strata target's endpoint is lent by each run's hold.
     for target in &targets.targets {
-        playtime_ollama::Endpoint::parse(&target.endpoint)
-            .map_err(|_| "invalid target endpoint")?;
+        if target.provider == playtime_protocol::api::InferenceProvider::Ollama {
+            playtime_ollama::Endpoint::parse(&target.endpoint)
+                .map_err(|_| "invalid target endpoint")?;
+        }
     }
     Ok(())
 }

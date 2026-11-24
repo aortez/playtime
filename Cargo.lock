@@ -3538,6 +3538,7 @@ dependencies = [
  "playtime-protocol",
  "playtime-runner",
  "playtime-storage",
+ "playtime-strata",
  "playtime-test-support",
  "playtime-worker",
  "playtime-worker-control",

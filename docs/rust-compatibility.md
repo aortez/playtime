@@ -2082,3 +2082,23 @@ chunk per request. They carry no Ollama timing chunk, so contention stays
 unknown rather than clear. `playtime_strata::Client::with_server_start` is
 additive. No archived run, recipe or golden changes, and the daemon doesn't
 freeze Strata profiles yet.
+
+## Strata targets and daemon holds (#233, 2026-11-23)
+
+`InferenceProvider` gains `strata`. `InferenceTarget.endpoint` is omitted when
+empty, and an optional `profile` names a Strata target's launcher profile; an
+Ollama target keeps its bytes and still needs its endpoint. The reviewed OpenAPI
+golden changes for exactly this: the provider value, `endpoint` no longer
+required and the `profile` property. The daemon advertises `strata_targets_v1`
+only with a Strata target. `StrataHost` gains an optional `target`, absent from a
+host without one, whose bytes are unchanged. The Docker profile digest's
+`strata_model_port` marker is now 2, so a worker bundle built before this doesn't
+implement this daemon's Docker profile.
+
+`playtimed` gains `--strata-launcher`. Each hold's launcher messages go to
+`.playtime/strata-holds/RUN.log`, and while a hold is active a release of its run
+is refused with an `inference hold` resource. A Strata run doesn't survive a
+daemon restart. The workbench's preview and Details show a Strata target's
+launcher profile and the lock's model, engine, host and settings instead of
+Ollama's fields; Ollama displays and every screenshot baseline are unchanged. No
+archived run, recipe, conversation or other golden changes.

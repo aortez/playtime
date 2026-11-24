@@ -1265,7 +1265,8 @@
       },
       "InferenceProvider": {
         "enum": [
-          "ollama"
+          "ollama",
+          "strata"
         ],
         "type": "string"
       },
@@ -1273,6 +1274,7 @@
         "additionalProperties": false,
         "properties": {
           "endpoint": {
+            "description": "An Ollama target's HTTP endpoint. A Strata target has none: each run's\nhold lends a loopback endpoint.",
             "type": "string"
           },
           "id": {
@@ -1281,6 +1283,13 @@
           "name": {
             "type": "string"
           },
+          "profile": {
+            "description": "A Strata target's chat launcher profile, such as `framework-gyro-m-fast`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "provider": {
             "$ref": "#/components/schemas/InferenceProvider"
           }
@@ -1288,8 +1297,7 @@
         "required": [
           "id",
           "name",
-          "provider",
-          "endpoint"
+          "provider"
         ],
         "type": "object"
       },

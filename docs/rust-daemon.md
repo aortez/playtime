@@ -296,7 +296,10 @@ Under systemd, a worker that stopped while no daemon ran is lost like any other,
 and its run waits for a release; so does a run whose preparation was cut short,
 since it never started a worker. A worker that the daemon hasn't stopped ends at
 the run's wall limit plus three minutes, so a daemon back before then still
-confirms a finished run's end. No worker outlives a host reboot, so the daemon
+confirms a finished run's end. A run on a [Strata target](rust-inference-targets.md#strata-targets)
+doesn't continue: stopping the daemon ends the run's hold and stops its server,
+so the worker's next request fails, and the restarted daemon follows the worker
+to that end. No worker outlives a host reboot, so the daemon
 doesn't follow a run whose worker started on an earlier boot. That run stays
 reconciling until an operator releases it, and the reboot itself is the evidence
 that its worker stopped. Nothing is left to cancel, so a cancel returns the run

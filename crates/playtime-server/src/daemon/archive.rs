@@ -37,8 +37,13 @@ pub(super) struct Archive {
     pub authoring: Option<crate::catalog::Catalog>,
     pub docker_options: Option<(PathBuf, PathBuf)>,
     pub live_endpoint: Option<String>,
-    pub targets: std::collections::BTreeMap<String, (InferenceTarget, Option<Arc<Live>>)>,
+    pub targets: std::collections::BTreeMap<String, (InferenceTarget, TargetModel)>,
     selected_target: Option<InferenceTarget>,
+    /// The selected Strata target, which runs hold for their lifetime.
+    pub strata: Option<Arc<super::strata::StrataTarget>>,
+    /// The installed chat launcher package that Strata targets hold through.
+    pub strata_launcher: Option<PathBuf>,
+    pub holds: Arc<super::strata::Holds>,
     docker_transport: Arc<tokio::sync::Mutex<Option<playtime_docker::transport::Cli>>>,
     execution_gate: Arc<tokio::sync::Mutex<()>>,
     snapshots: Arc<Snapshots>,
@@ -198,6 +203,13 @@ fn at(snapshot: &Snapshot, receipt: &Receipt) -> bool {
     frontier.committed_sequence == receipt.sequence
         && frontier.committed_bytes == receipt.bytes
         && frontier.prefix_sha256 == receipt.sha256
+}
+/// A named target's model: an Ollama host, or a Strata host that each run
+/// holds. `None` when it was unavailable as the daemon started.
+#[derive(Clone)]
+pub(super) enum TargetModel {
+    Ollama(Option<Arc<Live>>),
+    Strata(Option<Arc<super::strata::StrataTarget>>),
 }
 /// The live model as the daemon reaches it: host bindings frozen at startup
 /// and an adapter for read-only identity checks at admission.
@@ -392,6 +404,17 @@ pub(super) async fn resolve(
     }
     Ok(addresses)
 }
+/// Every checkout's daemon and worker share this lock, so at most one live run
+/// uses a model at a time.
+fn live_lock() -> life::Result<PathBuf> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .ok_or(Error::Invalid("live runs need XDG_RUNTIME_DIR"))?;
+    let directory = runtime.join("playtime");
+    create_private_dir(&directory)?;
+    Ok(directory.join("live-model.lock"))
+}
 /// The Docker CLI's `--config` directory. `Cli::resolve` creates it new and it
 /// stays empty. The service lock makes this daemon the root's only user, so the
 /// previous start's directory is removed instead of accumulating. Anything but
@@ -441,6 +464,9 @@ impl Archive {
             live_endpoint: None,
             targets: Default::default(),
             selected_target: None,
+            strata: None,
+            strata_launcher: None,
+            holds: Default::default(),
             docker_transport: Arc::new(tokio::sync::Mutex::new(None)),
             execution_gate: Arc::new(tokio::sync::Mutex::new(())),
             snapshots: Default::default(),
@@ -515,14 +541,7 @@ impl Archive {
                 "bundle does not implement this daemon's live model profile",
             ));
         }
-        // Every checkout's daemon and worker share this lock, so at most one
-        // live run uses the model at a time.
-        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-            .ok_or(Error::Invalid("live runs need XDG_RUNTIME_DIR"))?;
-        let directory = runtime.join("playtime");
-        create_private_dir(&directory)?;
+        let live_lock = live_lock()?;
         let endpoint = playtime_ollama::Endpoint::parse(endpoint)
             .ok()
             .filter(|e| e.as_str().starts_with("http://"))
@@ -536,13 +555,43 @@ impl Archive {
                 target: self.selected_target.clone(),
                 endpoint: endpoint.as_str().into(),
                 addresses,
-                live_lock: directory.join("live-model.lock"),
+                live_lock,
             },
             endpoint,
             reads: tokio::sync::Mutex::new(()),
         };
         self.live = Some(Arc::new(live));
         Ok(())
+    }
+    /// A Strata target runs in the Docker workshop on a host that each run
+    /// holds through the chat launcher, so the bundle must implement the live
+    /// profile and the launcher package must hold a reviewed lock.
+    async fn enable_strata(
+        &self,
+        target: &InferenceTarget,
+    ) -> life::Result<Arc<super::strata::StrataTarget>> {
+        let profiles = playtime_runner::docker::digest()
+            .map_err(|_| Error::Invalid("invalid Docker profile"))?;
+        if !self
+            .bundle
+            .descriptor()
+            .capabilities
+            .implements_live(&profiles)
+        {
+            return Err(Error::Invalid(
+                "bundle does not implement this daemon's live model profile",
+            ));
+        }
+        if self.docker.is_none() {
+            return Err(Error::Invalid("live runs need the Docker workshop"));
+        }
+        let launcher = self
+            .strata_launcher
+            .as_ref()
+            .ok_or(Error::Invalid("Strata targets need --strata-launcher"))?;
+        super::strata::StrataTarget::describe(target.clone(), launcher, live_lock()?)
+            .await
+            .map(Arc::new)
     }
     /// Catalog definitions load independently of current execution readiness.
     pub fn enable_recipes(
@@ -565,14 +614,23 @@ impl Archive {
             if !matches!(mode, RunMode::LiveSmoke | RunMode::Experiment) {
                 return Err(Error::Invalid("target requires live execution"));
             }
-            let (config, live) = self
+            let (config, model) = self
                 .targets
                 .get(id)
                 .ok_or(Error::Invalid("unknown inference target"))?;
             let mut selected = self.clone();
-            selected.live = live.clone();
-            selected.live_endpoint = Some(config.endpoint.clone());
             selected.selected_target = Some(config.clone());
+            match model {
+                TargetModel::Ollama(live) => {
+                    selected.live = live.clone();
+                    selected.live_endpoint = Some(config.endpoint.clone());
+                }
+                TargetModel::Strata(strata) => {
+                    selected.live = None;
+                    selected.live_endpoint = None;
+                    selected.strata = strata.clone();
+                }
+            }
             return selected.execution(mode).await;
         }
         if matches!(mode, RunMode::LiveSmoke | RunMode::Experiment) && !self.targets.is_empty() {
@@ -589,6 +647,20 @@ impl Archive {
         let resolved = futures_util::future::try_join_all(targets.into_iter().map(|mut target| {
             let mut selected = self.clone();
             async move {
+                if target.provider == InferenceProvider::Strata {
+                    let enabled = selected.enable_strata(&target).await;
+                    let unavailable = super::tolerate_unavailable(
+                        enabled.as_ref().map(drop).map_err(|e| match e {
+                            Error::Invalid(reason) => Error::Invalid(reason),
+                            _ => Error::Uncertain,
+                        }),
+                    )?;
+                    return Ok::<_, Error>((
+                        target,
+                        TargetModel::Strata(enabled.ok()),
+                        unavailable,
+                    ));
+                }
                 target.endpoint = playtime_ollama::Endpoint::parse(&target.endpoint)
                     .map_err(|_| Error::Invalid("invalid target endpoint"))?
                     .as_str()
@@ -597,16 +669,16 @@ impl Archive {
                 selected.live = None;
                 let unavailable =
                     super::tolerate_unavailable(selected.enable_live(&target.endpoint).await)?;
-                Ok::<_, Error>((target, selected.live, unavailable))
+                Ok::<_, Error>((target, TargetModel::Ollama(selected.live), unavailable))
             }
         }))
         .await?;
         let mut unavailable = Vec::new();
-        for (target, live, reason) in resolved {
+        for (target, model, reason) in resolved {
             if let Some(reason) = reason {
                 unavailable.push((target.id.clone(), reason));
             }
-            self.targets.insert(target.id.clone(), (target, live));
+            self.targets.insert(target.id.clone(), (target, model));
         }
         Ok(unavailable)
     }
@@ -639,10 +711,19 @@ impl Archive {
         {
             ready.enable_live(endpoint).await?;
         }
+        // A Strata target unavailable at startup is described again.
+        if mode != RunMode::ScriptedSmoke
+            && ready.strata.is_none()
+            && let Some(target) = &self.selected_target
+            && target.provider == InferenceProvider::Strata
+        {
+            ready.strata = Some(ready.enable_strata(target).await?);
+        }
         if ready.docker.is_none() {
             return Err(Error::Invalid("execution unavailable"));
         }
-        if mode == RunMode::LiveSmoke {
+        // A Strata host is checked through its launcher at admission.
+        if mode == RunMode::LiveSmoke && ready.strata.is_none() {
             ready
                 .live
                 .as_ref()
@@ -656,6 +737,10 @@ impl Archive {
         &self,
         id: &str,
     ) -> life::Result<playtime_runner::docker::NativeProfile> {
+        // Recipes run only on Ollama models so far.
+        if self.strata.is_some() {
+            return Err(Error::Invalid("selected model unsupported"));
+        }
         if !id.starts_with("saved-") {
             return self
                 .recipe_profile(id)
@@ -785,7 +870,18 @@ impl Archive {
         )
         .ok()
     }
+    /// On a Strata target, the host is the template a hold fills in.
     fn live_profile(&self) -> Option<playtime_runner::docker::Profile> {
+        if let Some(strata) = &self.strata {
+            let docker = self.docker.as_ref()?;
+            return playtime_runner::docker::Profile::freeze_strata_live(
+                docker.selection.clone(),
+                docker.daemon.clone(),
+                &strata.lock_name,
+                strata.template(),
+            )
+            .ok();
+        }
         let (docker, live) = (self.docker.as_ref()?, self.live.as_ref()?);
         playtime_runner::docker::Profile::freeze_live(
             docker.selection.clone(),
@@ -826,8 +922,20 @@ impl Archive {
         preview.parameters = profile.scenario.parameters.clone();
         preview.prompt = profile.scenario.prompt.clone();
         preview.protocol = profile.scenario.protocol.clone();
-        // The daemon doesn't hold a Strata host yet, so it previews only Ollama.
-        let model = profile.model.as_ref().unwrap().ollama()?;
+        let model = match profile.model.as_ref()? {
+            playtime_runner::docker::LiveModel::Ollama(model) => model,
+            playtime_runner::docker::LiveModel::Strata(model) => {
+                let identity = &model.lock.identity;
+                preview.target = model.host.target.as_deref().cloned();
+                preview.model_identity = serde_json::json!({"adapter":"strata",
+                    "lock":model.lock_name,"model":identity.model,"engine":identity.engine,
+                    "context_tokens":identity.context_tokens,"settings":model.settings,
+                    "host":model.lock.host,"launcher_profile":model.host.profile});
+                preview.warnings = vec!["Live model: real inference on a reviewed Strata host, which the daemon holds through the chat launcher for this run only and then parks or stops. Tools execute in the locked Docker workshop. One live run at a time across checkouts.".into()];
+                preview.backend = projection::live_backend();
+                return Some(preview);
+            }
+        };
         preview.target = model.host.target.clone();
         preview.model_identity = serde_json::json!({"adapter":"ollama","name":model.lock["name"],
             "digest":model.lock["digest"],"ollama_version":model.lock["ollama_version"],
@@ -1051,7 +1159,24 @@ impl ArchivePort for Archive {
                 .await?;
             &resolved
         };
-        current.validate_current_preview(request).await
+        let selection = current.validate_current_preview(request).await?;
+        // A host the launcher would refuse isn't reserved for. Preparation
+        // doesn't ask again: its hold reads the same status first. Until this
+        // daemon's own last hold has parked or stopped its server, the host
+        // isn't free either.
+        if let Some(strata) = &current.strata {
+            if current.holds.busy() {
+                return Err(Error::Busy);
+            }
+            let status = strata.status().await;
+            if status.state == "busy" {
+                return Err(Error::Busy);
+            }
+            if !status.holdable() {
+                return Err(Error::Invalid("Strata host unavailable"));
+            }
+        }
+        Ok(selection)
     }
     async fn prepare(&self, admission: &Admission) -> life::Result<PreparedLaunch> {
         let resolved;
@@ -1118,6 +1243,13 @@ impl ArchivePort for Archive {
             RunMode::Simulation => Ok(ExternalResources::default()),
             // Every Docker mode's worker keeps the same ownership journal.
             RunMode::ScriptedSmoke | RunMode::LiveSmoke | RunMode::Experiment => {
+                // A hold ends once its run's worker stopped, so a release waits for it.
+                let held = self.holds.active(&admission.run_id).map(|profile| {
+                    Remaining::ResourcePresent(Resource {
+                        kind: "inference hold",
+                        name: profile,
+                    })
+                });
                 let engine = self
                     .docker_engine
                     .clone()
@@ -1127,6 +1259,7 @@ impl ArchivePort for Archive {
                     .await
                     .map_err(|_| Error::Uncertain)??;
                 let mut resources = ExternalResources::default();
+                resources.remaining.extend(held);
                 for proposal in proposals {
                     let resource = Resource {
                         kind: if proposal.role == playtime_docker::Role::Volume {
@@ -1215,8 +1348,11 @@ impl Archive {
         // Busy while another live run holds the lock; then the workshop and
         // the model must still be what was frozen.
         let live_ready = || async {
-            let live = self.live.as_ref().ok_or(Error::Uncertain)?;
-            let path = live.host.live_lock.clone();
+            let path = match (&self.strata, &self.live) {
+                (Some(strata), _) => strata.live_lock.clone(),
+                (None, Some(live)) => live.host.live_lock.clone(),
+                (None, None) => return Err(Error::Uncertain),
+            };
             tokio::task::spawn_blocking(move || probe_live_lock(&path))
                 .await
                 .map_err(|_| Error::Uncertain)??;
@@ -1256,6 +1392,42 @@ impl Archive {
             token_limit: preview.parameters.limits.generated_tokens.get(),
         })
     }
+    /// The live smoke on the host a hold lent, held before the worker's
+    /// startup window opens. The hold's own messages go to a private log.
+    async fn held_profile(
+        &self,
+        admission: &Admission,
+    ) -> life::Result<playtime_runner::docker::Profile> {
+        let (docker, strata) = (
+            self.docker
+                .as_ref()
+                .ok_or(Error::Invalid("execution unavailable"))?,
+            self.strata
+                .clone()
+                .ok_or(Error::Invalid("execution unavailable"))?,
+        );
+        let directory = self.root.join(".playtime/strata-holds");
+        let log = directory.join(format!("{}.log", admission.run_id.as_str()));
+        tokio::task::spawn_blocking(move || create_private_dir(&directory))
+            .await
+            .map_err(|_| Error::Uncertain)??;
+        let host = self
+            .holds
+            .acquire(&admission.run_id, strata.clone(), &log)
+            .await?;
+        // The daemon ends the hold if anything after this fails.
+        let profile = playtime_runner::docker::Profile::freeze_strata_live(
+            docker.selection.clone(),
+            docker.daemon.clone(),
+            &strata.lock_name,
+            host,
+        )
+        .map_err(|_| Error::Invalid("invalid Strata profile"))?;
+        profile
+            .validate()
+            .map_err(|_| Error::Invalid("invalid Strata profile"))?;
+        Ok(profile)
+    }
     async fn prepare_current(&self, admission: &Admission) -> life::Result<PreparedLaunch> {
         // A Docker mode never falls back to simulation.
         let docker = match launch(&admission.request)? {
@@ -1265,6 +1437,11 @@ impl Archive {
                     .clone()
                     .map(|p| playtime_runner::docker::NativeProfile::Memento(Box::new(p))),
             ),
+            Launch::LiveSmoke if self.strata.is_some() => {
+                Some(Some(playtime_runner::docker::NativeProfile::Memento(
+                    Box::new(self.held_profile(admission).await?),
+                )))
+            }
             Launch::LiveSmoke => Some(
                 self.live_profile()
                     .map(|p| playtime_runner::docker::NativeProfile::Memento(Box::new(p))),

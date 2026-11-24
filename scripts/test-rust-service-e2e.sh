@@ -11,15 +11,25 @@ elif [[ $# == 4 && $1 == --case && $2 == run-and-view && $3 == --backend && $4 =
     playtime_service_case=run-and-view
 elif [[ $# == 4 && $1 == --case && $2 == run-and-view && $3 == --backend && $4 == live ]]; then
     playtime_service_case=live
+elif [[ $# == 4 && $1 == --case && $2 == run-and-view && $3 == --backend && $4 == strata ]]; then
+    playtime_service_case=strata
 else
-    echo 'usage: ./scripts/test-rust-service-e2e.sh --case normal | --case lifecycle [--backend systemd] | --case run-and-view --backend docker-scripted|live' >&2
+    echo 'usage: ./scripts/test-rust-service-e2e.sh --case normal | --case lifecycle [--backend systemd] | --case run-and-view --backend docker-scripted|live|strata' >&2
     echo 'The live backend uses PLAYTIME_LIVE_ENDPOINT (default http://oldman-bird.local:11434).' >&2
+    echo 'The strata backend holds PLAYTIME_STRATA_PROFILE (default framework-gyro-m-fast) through the' >&2
+    echo 'chat launcher package PLAYTIME_STRATA_LAUNCHER (default ~/.local/lib/playtime-chat).' >&2
     echo "Worker-loss recovery isn't planned (#58); no case covers it." >&2
     exit 2
 fi
 playtime_live_endpoint=${PLAYTIME_LIVE_ENDPOINT:-http://oldman-bird.local:11434}
+playtime_strata_launcher=${PLAYTIME_STRATA_LAUNCHER:-$HOME/.local/lib/playtime-chat}
+playtime_strata_profile=${PLAYTIME_STRATA_PROFILE:-framework-gyro-m-fast}
+if [[ $playtime_service_case == strata && $playtime_strata_launcher != /* ]]; then
+    echo 'PLAYTIME_STRATA_LAUNCHER must be an absolute path.' >&2
+    exit 2
+fi
 # One live-model test at a time: refuse while any Playtime worker is active.
-if [[ $playtime_service_case == live ]] \
+if [[ $playtime_service_case == live || $playtime_service_case == strata ]] \
     && systemctl --user list-units 'playtime-*.service' --state=active --no-legend --plain \
     | grep -Eq '^playtime-[0-9a-f]{32}\.service'; then
     echo 'A Playtime worker unit is active; run one live-model test at a time.' >&2
@@ -39,7 +49,7 @@ if [[ $playtime_service_case != normal && $playtime_service_case != lifecycle* ]
     playtime_service_features=(--features playtime-ui/ui-snapshots)
 fi
 cargo build --locked -p playtime-server -p playtime-cli -p playtime-ui --bin playtimed --bin playtime --example service-e2e "${playtime_service_features[@]}" --message-format=json-render-diagnostics > "$playtime_service_root/build.jsonl"
-python3 - "$playtime_service_root" "$playtime_service_case" "$playtime_live_endpoint" <<'PLAYTIME_SERVICE_GATE'
+python3 - "$playtime_service_root" "$playtime_service_case" "$playtime_live_endpoint" "$playtime_strata_launcher" "$playtime_strata_profile" <<'PLAYTIME_SERVICE_GATE'
 import json
 import pathlib
 import subprocess
@@ -64,11 +74,15 @@ if case == 'lifecycle-systemd':
 if case == 'live':
     # Fixed endpoint text only; the daemon resolves and freezes its addresses.
     args += ['--live', sys.argv[3]]
+if case == 'strata':
+    args += ['--strata-launcher', sys.argv[4], '--strata-profile', sys.argv[5]]
 if case not in ('normal', 'lifecycle', 'lifecycle-systemd'):
     args += ['--screenshot', str(root / 'workbench.png'), '--evidence', str(root / 'evidence')]
 try:
-    # Live runs twice: once from the CLI and once from the workbench.
-    result = subprocess.run(args, timeout={'normal': 120, 'lifecycle': 120, 'lifecycle-systemd': 180, 'run-and-view': 540, 'live': 900}[case])
+    # Live runs twice: once from the CLI and once from the workbench. A Strata
+    # hold of a cold host may take half an hour; the gate's own deadlines
+    # come first, so that it stops its daemon and the daemon ends its holds.
+    result = subprocess.run(args, timeout={'normal': 120, 'lifecycle': 120, 'lifecycle-systemd': 180, 'run-and-view': 540, 'live': 900, 'strata': 5400}[case])
     sys.exit(result.returncode)
 except subprocess.TimeoutExpired:
     sys.exit(f'{case} service gate exceeded its total deadline; ownership evidence is retained')

@@ -549,6 +549,7 @@ async fn reviewed_workbench_screens() {
                 name: name.into(),
                 provider: InferenceProvider::Ollama,
                 endpoint: format!("http://{id}.example:11434/"),
+                profile: None,
             };
             app.model.targets = vec![
                 target("bird", "Bird · RTX 4090"),

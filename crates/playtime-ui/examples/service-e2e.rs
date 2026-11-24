@@ -47,6 +47,8 @@ async fn main() -> Result<()> {
     let mut screenshot: Option<PathBuf> = None;
     let mut docker = false;
     let mut live: Option<&'static str> = None;
+    let mut strata_launcher: Option<&'static str> = None;
+    let mut strata_profile: Option<&'static str> = None;
     let mut evidence: Option<PathBuf> = None;
     let mut lifecycle = false;
     let mut systemd = false;
@@ -70,6 +72,17 @@ async fn main() -> Result<()> {
             docker = true;
             continue;
         }
+        if flag == "--strata-launcher" || flag == "--strata-profile" {
+            let value: &'static str =
+                Box::leak(args.next().ok_or("flag needs a value")?.into_boxed_str());
+            if flag == "--strata-launcher" {
+                strata_launcher = Some(value);
+            } else {
+                strata_profile = Some(value);
+            }
+            docker = true;
+            continue;
+        }
         let path = args.next().ok_or("flag needs a path")?.into();
         match flag.as_str() {
             "--cli" => cli = Some(path),
@@ -89,7 +102,20 @@ async fn main() -> Result<()> {
     if lifecycle && docker || systemd && !lifecycle {
         return Err("--lifecycle runs the simulation only, and --systemd needs it".into());
     }
-    let mut service = if let Some(endpoint) = live {
+    let strata = match (strata_launcher, strata_profile) {
+        (Some(launcher), Some(profile)) if live.is_none() => Some((launcher, profile)),
+        (None, None) => None,
+        _ => {
+            return Err(
+                "--strata-launcher and --strata-profile go together, without --live".into(),
+            );
+        }
+    };
+    // A live model's outputs vary, so only its shape is checked.
+    let live_run = live.is_some() || strata.is_some();
+    let mut service = if let Some((launcher, profile)) = strata {
+        NormalService::start_strata(&cli, &daemon, &bundle, launcher, profile).await?
+    } else if let Some(endpoint) = live {
         NormalService::start_live(&cli, &daemon, &bundle, endpoint).await?
     } else if docker {
         NormalService::start_docker(&cli, &daemon, &bundle).await?
@@ -122,7 +148,7 @@ async fn main() -> Result<()> {
         if model.run.as_ref().unwrap().value.orchestration.state == OrchestrationState::Terminal {
             return Err("workbench did not attach before the live run completed".into());
         }
-        if live.is_some() {
+        if live_run {
             // Another checkout's live admission is refused while this worker
             // holds the machine-wide lock.
             service
@@ -165,7 +191,7 @@ async fn main() -> Result<()> {
     })
     .await?;
     let memory = model.memory.as_ref().ok_or("missing workbench memory")?;
-    if live.is_some() {
+    if live_run {
         if memory.incoming.trim().is_empty()
             || memory.outgoing.trim().is_empty()
             || !memory.notice.contains("Index v1 verified")
@@ -293,9 +319,14 @@ async fn main() -> Result<()> {
         harness.render()?.save(path)?;
     }
     let mut model = std::mem::take(&mut harness.state_mut().model);
-    if live.is_some() {
+    if live_run {
         // The same live recipe launches from the workbench. Any outcome is
-        // recorded and kept; the gate never retries.
+        // recorded and kept; the gate never retries. On a Strata target, the
+        // first run's hold must have parked the server before another holds it.
+        if strata.is_some() {
+            service.strata_idle().await?;
+            model.select_target(Some(playtime_test_support::service::STRATA_TARGET.into()));
+        }
         model.choose_recipe(
             RecipeId::new(service.backend.recipe())?,
             playtime_core::RunMode::LiveSmoke,
@@ -307,7 +338,8 @@ async fn main() -> Result<()> {
             .selected
             .clone()
             .ok_or("workbench launch selected no run")?;
-        until_within(Duration::from_secs(300), &mut model, &mut backend, |m| {
+        let limit = Duration::from_secs(if strata.is_some() { 1800 } else { 300 });
+        until_within(limit, &mut model, &mut backend, |m| {
             m.run.as_ref().is_some_and(|r| {
                 r.value.run_id == launched
                     && r.value.orchestration.state == OrchestrationState::Terminal
@@ -328,7 +360,7 @@ async fn main() -> Result<()> {
     service.stop().await?;
     if let Some(path) = evidence {
         service.retain_artifact_evidence(&path)?;
-        if docker && live.is_none() {
+        if docker && !live_run {
             playtime_test_support::service_loss::worker_loss(&cli, &daemon, &bundle, &path).await?;
         }
     }

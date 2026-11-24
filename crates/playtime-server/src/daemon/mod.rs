@@ -4,6 +4,7 @@ mod archive;
 pub mod catalog;
 mod paging;
 mod projection;
+mod strata;
 pub mod test_supervisor;
 
 use crate::{
@@ -88,9 +89,12 @@ impl Daemon {
                 schema_version: 1,
                 targets: vec![],
             },
+            None,
         )
         .await
     }
+    /// Strata targets hold their host through the chat launcher package in
+    /// `strata_launcher`.
     #[allow(clippy::too_many_arguments)]
     pub async fn open_with_targets(
         root: &Path,
@@ -101,11 +105,21 @@ impl Daemon {
         live: Option<&str>,
         recipes: Vec<playtime_runner::docker::Recipe>,
         targets: InferenceTargets,
+        strata_launcher: Option<&Path>,
     ) -> life::Result<Self> {
         crate::targets::validate(&targets).map_err(life::Error::Invalid)?;
         if !targets.targets.is_empty() && (live.is_some() || docker.is_none()) {
             return Err(life::Error::Invalid(
                 "named targets require Docker and replace --ollama-endpoint",
+            ));
+        }
+        let strata = targets
+            .targets
+            .iter()
+            .any(|t| t.provider == InferenceProvider::Strata);
+        if strata && strata_launcher.is_none_or(|path| !path.is_absolute()) {
+            return Err(life::Error::Invalid(
+                "Strata targets need an absolute --strata-launcher",
             ));
         }
         if test_supervision && (docker.is_some() || live.is_some() || !targets.targets.is_empty()) {
@@ -132,6 +146,7 @@ impl Daemon {
         archive.authoring = Some(catalog.clone());
         archive.docker_options = docker.map(|(e, s)| (e.to_path_buf(), s.to_path_buf()));
         archive.live_endpoint = live.map(str::to_owned);
+        archive.strata_launcher = strata_launcher.map(Path::to_path_buf);
         archive.enable_recipes(recipes)?;
         let mut limitations = Vec::new();
         if let Some((executable, socket)) = docker
@@ -156,9 +171,11 @@ impl Daemon {
             .transpose()
             .map_err(|_| life::Error::Invalid("invalid discovery endpoint"))?
             .map(Arc::new);
+        // A Strata target's model is its reviewed lock; there's nothing to discover.
         let target_browsers = archive
             .targets
             .iter()
+            .filter(|(_, (target, _))| target.provider == InferenceProvider::Ollama)
             .map(|(id, (target, _))| {
                 crate::models::ModelBrowser::new(&target.endpoint)
                     .map(|b| (id.clone(), Arc::new(b)))
@@ -235,14 +252,15 @@ impl Daemon {
     /// request without one; otherwise the untargeted routes answer (`None`).
     fn browser_on(&self, target: Option<&str>) -> Result<Option<Arc<crate::models::ModelBrowser>>> {
         match target {
-            Some(id) => self
-                .inner
-                .target_browsers
-                .get(id)
-                .cloned()
-                .map(Some)
-                .ok_or_else(|| ApiError::new("invalid_parameters")),
-            None if !self.inner.target_browsers.is_empty() => {
+            Some(id) => match self.inner.target_browsers.get(id) {
+                Some(browser) => Ok(Some(browser.clone())),
+                // A Strata target's model is its reviewed lock.
+                None if self.inner.archive.targets.contains_key(id) => {
+                    Err(ApiError::new("unsupported_capability"))
+                }
+                None => Err(ApiError::new("invalid_parameters")),
+            },
+            None if !self.inner.archive.targets.is_empty() => {
                 Err(ApiError::new("invalid_parameters"))
             }
             None => Ok(None),
@@ -375,13 +393,25 @@ impl Daemon {
     }
     async fn owned_run(self, run: RunId) {
         let coordinator = &self.inner.coordinator;
-        if coordinator.start(run.clone()).await.is_err() {
-            if let Ok(record) = coordinator.ledger().get(&run).await {
-                let _ = self.publish(record).await;
+        let holds = &self.inner.archive.holds;
+        match coordinator.start(run.clone()).await {
+            Ok(record) if record.start_attempted => {}
+            // No worker was submitted, so none can use a hold.
+            Ok(_) => holds.end(&run, false).await,
+            Err(_) => {
+                holds.end(&run, false).await;
+                if let Ok(record) = coordinator.ledger().get(&run).await {
+                    let _ = self.publish(record).await;
+                }
+                return;
             }
-            return;
         }
         self.follow(run).await;
+    }
+    /// Ends every hold, so each helper stops its server, as the daemon stops.
+    /// Their runs' workers can't continue without the daemon's hold.
+    pub async fn close(&self) {
+        self.inner.archive.holds.end_all().await;
     }
     /// Follows a run that an earlier daemon on this boot started, without
     /// preparing or starting a worker again (#59). Each refresh authenticates
@@ -433,11 +463,15 @@ impl Daemon {
                 // for a reported failure until finish_failed records that.
                 let lost = record.phase == Phase::Reconciling
                     && record.supervisor.as_ref().is_some_and(|s| s.stopped);
+                let completed = terminal && record.reason.is_none();
                 self.publish(record).await?;
-                Ok::<_, ApiError>(terminal || lost)
+                Ok::<_, ApiError>((terminal || lost).then_some(completed))
             }
             .await;
-            if matches!(result, Ok(true)) {
+            if let Ok(Some(completed)) = result {
+                // The worker has stopped, so its hold can end. Only a normal
+                // completion may park the model.
+                self.inner.archive.holds.end(&run, completed).await;
                 return;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -695,6 +729,12 @@ impl Application for Daemon {
             features: [
                 (self.inner.models.is_some() || !self.inner.target_browsers.is_empty())
                     .then(|| MODEL_DISCOVERY.to_owned()),
+                self.inner
+                    .archive
+                    .targets
+                    .values()
+                    .any(|(target, _)| target.provider == InferenceProvider::Strata)
+                    .then(|| STRATA_TARGETS.to_owned()),
             ]
             .into_iter()
             .flatten()
@@ -848,9 +888,34 @@ impl Application for Daemon {
             RunMode::ScriptedSmoke => archive
                 .docker_preview()
                 .ok_or_else(|| execution_unavailable(life::Error::Uncertain)),
-            RunMode::LiveSmoke => archive
-                .live_preview()
-                .ok_or_else(|| execution_unavailable(life::Error::Uncertain)),
+            RunMode::LiveSmoke => {
+                let mut preview = archive
+                    .live_preview()
+                    .ok_or_else(|| execution_unavailable(life::Error::Uncertain))?;
+                // The launcher's read-only status: a hold would refuse this host.
+                if let Some(strata) = &archive.strata {
+                    let reason = if archive.holds.busy() {
+                        Some("Strata host still held for an earlier run".to_owned())
+                    } else {
+                        let status = strata.status().await;
+                        let message = status.message.as_ref().map(|m| format!(": {m}"));
+                        (!status.holdable()).then(|| {
+                            format!(
+                                "Strata host {}{}",
+                                status.state,
+                                message.unwrap_or_default()
+                            )
+                        })
+                    };
+                    if let Some(reason) = reason {
+                        preview.readiness = Readiness {
+                            ready: false,
+                            reasons: vec![reason],
+                        };
+                    }
+                }
+                Ok(preview)
+            }
             _ => Err(ApiError::new("unsupported_capability")),
         }
     }
@@ -934,6 +999,9 @@ impl Application for Daemon {
             .cancel(run.clone())
             .await
             .map_err(lifecycle)?;
+        // After the durable intent, so a preparation that fails for it can't
+        // record a preparation failure instead.
+        self.inner.archive.holds.cancel(&run);
         self.publish_control(record).await;
         let run = self.run(run).await?;
         Ok(CancelResponse {
@@ -1140,7 +1208,10 @@ fn tolerate_unavailable(result: life::Result<()>) -> life::Result<Option<&'stati
             | "live model unavailable"
             | "live runs need the Docker workshop"
             | "bundle does not implement this daemon's frozen Docker profile"
-            | "bundle does not implement this daemon's live model profile"),
+            | "bundle does not implement this daemon's live model profile"
+            | "Strata launcher unavailable"
+            | "the Strata target's lock isn't a reviewed one"
+            | "the Strata launcher's lock differs from the reviewed one"),
         )) => Ok(Some(reason)),
         Err(other) => Err(other),
     }
@@ -1182,7 +1253,13 @@ fn execution_unavailable(error: life::Error) -> ApiError {
         life::Error::Invalid("inference target required") => "target_required",
         life::Error::Invalid("unknown inference target") => "target_unknown",
         life::Error::Invalid("target requires live execution") => "target_requires_live_execution",
-        life::Error::Invalid("live model unavailable") => "model_unavailable",
+        life::Error::Invalid(
+            "live model unavailable"
+            | "Strata host unavailable"
+            | "Strata launcher unavailable"
+            | "the Strata target's lock isn't a reviewed one"
+            | "the Strata launcher's lock differs from the reviewed one",
+        ) => "model_unavailable",
         life::Error::Invalid("selected model unsupported") => "selected_model_unsupported",
         life::Error::Invalid("selected model identity changed") => {
             "selected_model_missing_or_changed"
