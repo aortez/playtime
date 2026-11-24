@@ -28,8 +28,8 @@ external owner lease, with at most two clients sharing one Basalt model. The
 owner retains the exclusive host lock against other serving runtimes.
 
 The caller also supplies `HostIdentity`: backend, quantization, executable hash,
-artifact-manifest hash, launch-configuration hash and Responses-source hash. This
-is an attestation by the owner, not a fact established by deserializing JSON or
+artifact-manifest hash, launch-configuration hash, Responses-source hash and, for
+Strata, server-release manifest hash. This is an attestation by the owner, not a fact established by deserializing JSON or
 reading HTTP metadata. Verify weights, packs/tokenizer, executable and actual
 launch arguments/environment before lending the endpoint. Bind drafting, KV
 format, PLE placement, route approximations and other engine flags through that
@@ -43,6 +43,28 @@ The reviewed source profile is Strata engine 0.1.57 / 0.1.58 with
 Both installed copies had these bytes. Framework HIP and Bird CUDA have now
 passed the live tool/follow-up and cancellation smoke with DFlash2 enabled.
 A newer source/version needs review and new evidence.
+
+Each Strata lock also pins the complete server release for its engine version.
+`server_release_manifest_sha256` is the digest of every file in the release
+directory the API server runs from, by path inside the release. Symlinks are
+recorded as links, and `__pycache__` directories are left out because Python
+writes them at runtime. Validation accepts only these reviewed pairs:
+
+| Engine | Files | Symlinks | Manifest SHA-256 |
+| --- | --- | --- | --- |
+| 0.1.57 | 6,169 | 1,047 | `0e18282520906d8c01153ea0f6cf14fc2746847d06bf9ed5b96ae63f1a294797` |
+| 0.1.58 | 6,176 | 1,047 | `f49826e2c75d33790f0bce86651e740c0b40fe34c9e63e31b1134155e79466b6` |
+
+The engine component's own libraries and kernels, the running API server process
+and stale bytecode caches remain unchecked; see #235.
+
+`framework-strata-gyro-m-fast-v2.lock.json` and `bird-strata-gyro-m-fast-v2.lock.json`
+are their v1 locks with this field added, and the presets use them. A Strata lock
+without the field no longer validates. A v2 lock requires everything its v1 lock
+did, so a conversation saved under the v1 fingerprint resumes under that saved
+binding (`ModelLock::earlier_fingerprint`); new conversations take the v2
+fingerprint. The drafting-off `framework-strata-gyro-m-v1.lock.json` stays as the
+record of the 2026-11-13 result and has no successor.
 
 Basalt schema-2 locks additionally bind `service: basalt` and slot count. The
 reviewed runtime is CUDA Basalt 0.4.1, engine SHA-256
@@ -116,6 +138,8 @@ Run only one live model test at a time.
 
 Hash and record the owner's actual artifacts/configuration separately. Supply a
 JSON evidence file containing a `host` object with the `HostIdentity` fields.
+On a held host, `verify-strata-host.py SESSION --discover` writes one without
+publishing a hash cache, and lists the server release's full manifest for review.
 Then inspect the owned endpoint and write a **new** lock:
 
 ```sh

@@ -347,7 +347,7 @@ fn local_input_check_needs_no_endpoint_and_rejects_writable_ancestors() {
             .arg("--state-dir")
             .arg(root.0.join("state"))
             .arg("--model-lock")
-            .arg(repository.join("models/framework-strata-gyro-m-fast-v1.lock.json"))
+            .arg(repository.join("models/framework-strata-gyro-m-fast-v2.lock.json"))
             .arg("--image-lock")
             .arg(repository.join("environments/general.lock.json"))
             .arg("--workspace")
@@ -372,6 +372,89 @@ fn local_input_check_needs_no_endpoint_and_rejects_writable_ancestors() {
     assert!(!run.join("worker-invoked.json").exists());
     std::fs::set_permissions(&root.0, std::fs::Permissions::from_mode(0o770)).unwrap();
     assert!(!check().status.success());
+}
+
+#[test]
+fn a_worker_session_saved_under_the_earlier_lock_binding_resumes_under_it() {
+    use playtime_docker::project::{ProjectDirectory, ProjectLimits};
+    use std::process::Command;
+    let root = Root::new();
+    let workspace = root.0.join("workspace");
+    let run = root.0.join("run");
+    let state = root.0.join("state");
+    PrivateDirectory::open(&workspace, true).unwrap();
+    PrivateDirectory::open(&state, true).unwrap();
+    let records = PrivateDirectory::open(&run, true).unwrap();
+    records.write_new("prompt.txt", b"Continue").unwrap();
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let lock_path = repository.join("models/framework-strata-gyro-m-fast-v2.lock.json");
+    let image_path = repository.join("environments/general.lock.json");
+    let lock: playtime_strata::ModelLock =
+        serde_json::from_slice(&std::fs::read(&lock_path).unwrap()).unwrap();
+    let image: Value = serde_json::from_slice(&std::fs::read(&image_path).unwrap()).unwrap();
+    // The configuration playtime-task builds for a Docker worker with these inputs.
+    let directory =
+        ProjectDirectory::open(&workspace.canonicalize().unwrap(), &state, &[]).unwrap();
+    let limits = ProjectLimits {
+        nano_cpus: 2_000_000_000,
+        memory_bytes: 4 * 1024 * 1024 * 1024,
+        tmp_bytes: 256 * 1024 * 1024,
+        tmp_inodes: 32768,
+        pids: 256,
+        seed: 1042,
+    };
+    let current = worker::config(&lock, &image, &directory, &limits, 900).unwrap();
+    drop(directory);
+    let mut sessions = Vec::new();
+    for (id, model) in [
+        ("a", lock.earlier_fingerprint().unwrap().unwrap()),
+        ("b", current.model.clone()),
+        (
+            "c",
+            playtime_core::Sha256Digest::new("3".repeat(64)).unwrap(),
+        ),
+    ] {
+        let id = format!("ptw-{}", id.repeat(64));
+        let mut saved = current.clone();
+        saved.model = model;
+        drop(Session::create(&state.join(&id), saved).unwrap());
+        sessions.push(id);
+    }
+    let check = |session: &str| {
+        Command::new(env!("CARGO_BIN_EXE_playtime-task"))
+            .arg("--check-inputs")
+            .arg("--state-dir")
+            .arg(&state)
+            .arg("--model-lock")
+            .arg(&lock_path)
+            .arg("--image-lock")
+            .arg(&image_path)
+            .arg("--workspace")
+            .arg(&workspace)
+            .arg("--run-dir")
+            .arg(&run)
+            .arg("--request")
+            .arg(run.join("prompt.txt"))
+            .arg("--worker-session")
+            .arg(session)
+            .output()
+            .unwrap()
+    };
+    // Sessions saved under the earlier binding and under the current one resume.
+    for session in &sessions[..2] {
+        let result = check(session);
+        assert!(
+            result.status.success(),
+            "{session}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    // A session bound to any other model is still refused.
+    assert!(!check(&sessions[2]).status.success());
 }
 
 async fn capture(effects: &mut worker::EvidenceEffects<Fixture>, id: u64, command: &str) -> String {

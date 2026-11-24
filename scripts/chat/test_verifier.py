@@ -190,6 +190,35 @@ class HashTests(unittest.TestCase):
 
 
 class HostVerificationTests(unittest.TestCase):
+    def release(self, root):
+        """A small server release: sources, a symlink and a runtime bytecode cache."""
+        release = root / 'terminal/0.1.58'
+        (release / 'serve/__pycache__').mkdir(parents=True)
+        (release / 'serve/responses.py').write_text('# fixture source\n')
+        (release / 'serve/structured.py').write_text('# fixture structured output\n')
+        (release / 'serve/__pycache__/structured.cpython-312.pyc').write_bytes(b'runtime cache')
+        (release / 'python/bin').mkdir(parents=True)
+        (release / 'python/bin/python3.12').write_bytes(b'interpreter')
+        (release / 'python/bin/python3').symlink_to('python3.12')
+        return release
+
+    def test_release_manifest_is_relative_records_links_and_refuses_special_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            release = self.release(root)
+            copy = root / 'elsewhere/0.1.58'
+            shutil.copytree(release, copy, symlinks=True)
+            hashes = verifier.ArtifactHashes(root / 'cache', {}, True)
+            manifest = verifier.release_manifest(release, hashes)
+            self.assertEqual(verifier.release_manifest(copy, hashes), manifest)
+            # Directories and the bytecode cache aren't entries; the symlink is.
+            self.assertEqual([entry['path'] for entry in manifest],
+                             ['python/bin/python3', 'python/bin/python3.12', 'serve/responses.py', 'serve/structured.py'])
+            self.assertEqual(manifest[0], {'path': 'python/bin/python3', 'link': 'python3.12'})
+            os.mkfifo(release / 'serve/control')
+            with self.assertRaisesRegex(RuntimeError, 'unexpected file type'):
+                verifier.release_manifest(release, hashes)
+
     def test_warm_report_keeps_lock_identity_and_rechecks_engine_source_and_config(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -200,40 +229,68 @@ class HostVerificationTests(unittest.TestCase):
             native = root / 'native'
             native.mkdir()
             (native / 'dense.bin').write_bytes(b'model data')
-            responses = root / 'serve/responses.py'
-            responses.parent.mkdir()
-            responses.write_text('# fixture source\n')
+            release = self.release(root)
+            responses = release / 'serve/responses.py'
             argv = [str(engine), '-c', 'import time; time.sleep(60)', '--serve',
                     '--native', str(native), '--draft', 'dflash2', '--draft-fallback', 'none']
-            config = {'args': argv, 'backend': 'hip', 'drafting': 'dflash2', 'cwd': str(root)}
+            config = {'args': argv, 'backend': 'hip', 'drafting': 'dflash2', 'cwd': str(release)}
             (root / 'engine-config.json').write_text(json.dumps(config))
             artifact = {'path': str(native / 'dense.bin'), 'size': 10,
                         'sha256': hashlib.sha256(b'model data').hexdigest()}
             environment = {k: v for k, v in os.environ.items()
                            if k.startswith(('STRATA_', 'CUDA_', 'HIP_', 'HSA_', 'ROCR_'))}
+            manifest = verifier.release_manifest(release, verifier.ArtifactHashes(root / 'scratch', {}, True))
             expected = {'backend': 'hip', 'quantization': 'TQ2_0',
                         'engine_sha256': hashlib.sha256(engine.read_bytes()).hexdigest(),
                         'artifacts_manifest_sha256': verifier.digest_json([artifact]),
                         'responses_source_sha256': hashlib.sha256(responses.read_bytes()).hexdigest(),
-                        'launch_configuration_sha256': verifier.digest_json({'config': config, 'argv': argv, 'environment': environment})}
+                        'launch_configuration_sha256': verifier.digest_json({'config': config, 'argv': argv, 'environment': environment}),
+                        'server_release_manifest_sha256': verifier.digest_json(manifest)}
             with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
                 try:
                     with patch.object(verifier.Path, 'home', return_value=root):
+                        # Discovery reads the same identity without publishing a cache.
+                        discovered = verifier.verify(root, None)
+                        self.assertEqual(discovered['host'], expected)
+                        self.assertEqual(discovered['server_release']['manifest'], manifest)
+                        self.assertFalse(list((root / '.cache/playtime-chat').glob('strata-hashes-*')))
                         cold = verifier.verify(root, expected)
                         warm = verifier.verify(root, expected)
                         full = verifier.verify(root, expected, full=True)
                         self.assertEqual(cold['host'], warm['host'])
                         self.assertEqual(full['host'], warm['host'])
                         self.assertEqual(warm['host'], expected)
+                        self.assertNotIn('manifest', warm['server_release'])
+                        self.assertEqual(warm['server_release'], {'path': str(release), 'files': 3,
+                                                                  'links': 1, 'bytes': 56})
+                        # The model artifact is reused; the engine, Responses source
+                        # and the release's three files are always read.
                         self.assertEqual(warm['verification']['reused_files'], 1)
-                        self.assertEqual(warm['verification']['hashed_files'], 2)
+                        self.assertEqual(warm['verification']['hashed_files'], 5)
                         self.assertEqual(full['verification']['reused_files'], 0)
-                        self.assertEqual(full['verification']['hashed_files'], 3)
-                        # Warm artifacts cannot hide a changed Responses source.
-                        responses.write_text('# changed source\n')
-                        with self.assertRaisesRegex(RuntimeError, 'differ from the reviewed'):
-                            verifier.verify(root, expected)
-                        responses.write_text('# fixture source\n')
+                        self.assertEqual(full['verification']['hashed_files'], 6)
+                        # The runtime bytecode cache may change freely.
+                        (release / 'serve/__pycache__/structured.cpython-312.pyc').write_bytes(b'rebuilt')
+                        self.assertEqual(verifier.verify(root, expected)['host'], expected)
+                        # Warm artifacts cannot hide a changed Responses source or any
+                        # other server file, an added file or a retargeted link.
+                        for change, undo in [
+                            (lambda: responses.write_text('# changed source\n'),
+                             lambda: responses.write_text('# fixture source\n')),
+                            (lambda: (release / 'serve/structured.py').write_text('# changed\n'),
+                             lambda: (release / 'serve/structured.py').write_text('# fixture structured output\n')),
+                            (lambda: (release / 'serve/added.py').write_text(''),
+                             lambda: (release / 'serve/added.py').unlink()),
+                            (lambda: ((release / 'python/bin/python3').unlink(),
+                                      (release / 'python/bin/python3').symlink_to('/usr/bin/python3')),
+                             lambda: ((release / 'python/bin/python3').unlink(),
+                                      (release / 'python/bin/python3').symlink_to('python3.12'))),
+                        ]:
+                            change()
+                            with self.assertRaisesRegex(RuntimeError, 'differ from the reviewed'):
+                                verifier.verify(root, expected)
+                            undo()
+                        self.assertEqual(verifier.verify(root, expected)['host'], expected)
                         # Re-enumerate directories: the cached list must not hide
                         # a removed artifact or a newly added file.
                         (native / 'dense.bin').rename(root / 'moved.bin')

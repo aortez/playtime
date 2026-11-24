@@ -837,7 +837,7 @@ mod tests {
         let root = Root::new();
         let mut workspace = root.workspace();
         let lock: playtime_strata::ModelLock = serde_json::from_str(include_str!(
-            "../../../models/framework-strata-gyro-m-fast-v1.lock.json"
+            "../../../models/framework-strata-gyro-m-fast-v2.lock.json"
         ))
         .unwrap();
         let mut config = worker::native_config(&lock, &workspace, 60).unwrap();
@@ -1109,7 +1109,7 @@ mod tests {
         let root = Root::new();
         let workspace = root.workspace();
         let lock = serde_json::from_str(include_str!(
-            "../../../models/framework-strata-gyro-m-fast-v1.lock.json"
+            "../../../models/framework-strata-gyro-m-fast-v2.lock.json"
         ))
         .unwrap();
         let config = worker::native_config(&lock, &workspace, 60).unwrap();
@@ -1223,7 +1223,7 @@ mod tests {
         let root = Root::new();
         fs::write(root.0.join("workspace/source.txt"), "original source").unwrap();
         let lock = serde_json::from_str(include_str!(
-            "../../../models/framework-strata-gyro-m-fast-v1.lock.json"
+            "../../../models/framework-strata-gyro-m-fast-v2.lock.json"
         ))
         .unwrap();
         let bytes = br#"{"type":"object","properties":{"decision":{"type":"string","enum":["ready","blocked"]}},"required":["decision"],"additionalProperties":false}"#.to_vec();

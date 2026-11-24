@@ -2050,3 +2050,20 @@ reworded refusals. The wrapper passes them only with `--read-only` and only to a
 installed task that advertises them. No conversation, archive or experiment golden
 changes. Fixtures use a scripted model; they don't show the live model completing
 a rejected object.
+
+## Strata server release manifest (2026-11-23)
+
+`HostIdentity` gains an optional `server_release_manifest_sha256`, the digest of
+every file of the Strata server release the API server runs from. The host
+verifier now hashes the release on every launch and reports the field; Strata
+lock validation requires one of the two reviewed release digests for the lock's
+engine version, and Basalt locks refuse the field. Locks without the field keep
+their bytes and fingerprints, but no Strata lock validates without it. The new
+`framework-strata-gyro-m-fast-v2` and `bird-strata-gyro-m-fast-v2` locks are the
+v1 locks plus the field, with new fingerprints. A conversation saved under a v1
+fingerprint resumes under the v2 lock with its saved binding, through
+`ModelLock::earlier_fingerprint`, in the console, the session picker and worker
+resume; no other difference is accepted. The verifier's `--discover` mode now
+reads Strata hosts too. The first v2 launch rehashes the model files, because the
+hash cache is keyed by the reviewed host identity. Basalt fingerprints, the engine
+protocol and all goldens are unchanged.

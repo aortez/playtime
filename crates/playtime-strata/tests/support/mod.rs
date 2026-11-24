@@ -33,6 +33,12 @@ pub fn lock() -> ModelLock {
                 "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b",
             )
             .unwrap(),
+            server_release_manifest_sha256: Some(
+                Sha256Digest::new(
+                    "f49826e2c75d33790f0bce86651e740c0b40fe34c9e63e31b1134155e79466b6",
+                )
+                .unwrap(),
+            ),
         },
         settings: Settings::default(),
     }

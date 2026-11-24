@@ -414,13 +414,32 @@ async fn main_run(mut args: Args) -> Result<i32> {
         )
     };
     let config = config(&args, &lock, &binding, inventory, limits.as_ref())?;
+    let earlier = lock.earlier_fingerprint()?;
+    // A saved session is resumed, inspected or forked under the binding it was saved with.
+    let saved = [
+        &args.inspect_interrupted,
+        &args.recover_compaction,
+        &args.recover_interrupted,
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+    .cloned()
+    .or_else(|| {
+        (!local_selection && session_path.join("config.json").exists())
+            .then(|| session_path.clone())
+    });
+    let config = match &saved {
+        Some(path) => playtime_chat::sessions::resume_config(&config, earlier.as_ref(), path),
+        None => config,
+    };
     if let Some(source) = &args.inspect_interrupted {
         let report = Session::inspect_interrupted(source, &config)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(0);
     }
     if local_selection {
-        let entries = playtime_chat::sessions::catalog(&private, &config)?;
+        let entries = playtime_chat::sessions::catalog(&private, &config, earlier.as_ref())?;
         if args.list_sessions {
             println!("{}", serde_json::to_string(&entries)?);
         } else {
@@ -438,6 +457,7 @@ async fn main_run(mut args: Args) -> Result<i32> {
             let choice = playtime_chat::sessions::select(
                 &entries,
                 &config,
+                earlier.as_ref(),
                 &mut io::stdin().lock(),
                 &mut io::stderr().lock(),
             )?;

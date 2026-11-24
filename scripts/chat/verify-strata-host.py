@@ -2,8 +2,9 @@
 """Read a held Strata helper session and hash its actual process and artifacts.
 
 Sent over SSH on stdin. Unchanged model artifacts may reuse private cached hashes;
-the engine and Responses source are always hashed. Both ends check the reviewed
-host identity before handoff. This script never starts or changes the model.
+the engine, the Responses source and the Strata server release are always hashed.
+Both ends check the reviewed host identity before handoff. This script never
+starts or changes the model.
 """
 
 import argparse
@@ -183,12 +184,38 @@ def verify_basalt(root, expected_host, full=False):
             "verification": hashes.stats}
 
 
+def release_manifest(release, hashes):
+    """Every file of the Strata server release, by its path inside the release.
+
+    Symlinks are recorded as links, not followed. Python writes its bytecode
+    caches at runtime, so `__pycache__` directories are left out, and a stale or
+    altered cache there isn't detected.
+    """
+    entries = []
+    for directory, subdirectories, files in os.walk(release):
+        base = Path(directory)
+        subdirectories[:] = [name for name in subdirectories if name != "__pycache__"]
+        for name in [*subdirectories, *files]:
+            path = base / name
+            info = path.lstat()
+            relative = str(path.relative_to(release))
+            if stat.S_ISLNK(info.st_mode):
+                entries.append({"path": relative, "link": os.readlink(path)})
+            elif stat.S_ISREG(info.st_mode):
+                record = hashes.hash_file(path)
+                # hash_file follows links; the bytes read must be this regular file's.
+                if hashes.observed[path] != identity(info):
+                    raise RuntimeError(f"server release changed while verifying: {relative}")
+                entries.append({"path": relative, "size": record["size"], "sha256": record["sha256"]})
+            elif not stat.S_ISDIR(info.st_mode):
+                raise RuntimeError(f"unexpected file type in the server release: {relative}")
+    return sorted(entries, key=lambda entry: entry["path"])
+
+
 def verify(root, expected_host, full=False):
     if (root / "session.json").exists():
         return verify_basalt(root, expected_host, full)
-    if expected_host is None:
-        raise RuntimeError("discovery mode is only supported for Basalt")
-    hashes = ArtifactHashes(Path.home() / ".cache/playtime-chat", expected_host, full)
+    hashes = ArtifactHashes(Path.home() / ".cache/playtime-chat", expected_host or {}, full or expected_host is None)
     config = json.loads((root / "engine-config.json").read_text())
     native = config["args"][config["args"].index("--native") + 1]
     processes = []
@@ -224,21 +251,37 @@ def verify(root, expected_host, full=False):
     environment = dict(value.split("=", 1) for value in environment
                        if "=" in value and value.startswith(("STRATA_", "CUDA_", "HIP_", "HSA_", "ROCR_")))
     launch = {"config": config, "argv": argv, "environment": environment}
+    release = Path(config["cwd"])
+    release_files = release_manifest(release, hashes)
     host = {
         "backend": backend,
         "quantization": "TQ2_0",
         "engine_sha256": hashes.hash_file(proc / "exe")["sha256"],
         "artifacts_manifest_sha256": digest_json(artifacts),
         "launch_configuration_sha256": digest_json(launch),
-        "responses_source_sha256": hashes.hash_file(Path(config["cwd"]) / "serve/responses.py")["sha256"],
+        "responses_source_sha256": hashes.hash_file(release / "serve/responses.py")["sha256"],
+        "server_release_manifest_sha256": digest_json(release_files),
     }
     # Reject replacement or exit during hashing rather than handing off stale evidence.
     current = [v.decode() for v in proc.joinpath("cmdline").read_bytes().split(b"\0") if v]
     if current != argv:
         raise RuntimeError("engine changed while verifying")
-    hashes.finish(host)
-    return {"host": host, "artifacts": artifacts, "launch": launch, "process": process,
-            "verification": hashes.stats}
+    if expected_host is not None:
+        hashes.finish(host)
+    else:
+        for path, before in hashes.observed.items():
+            if identity(path.stat()) != before:
+                raise RuntimeError("artifact changed during discovery")
+    report = {"host": host, "artifacts": artifacts, "launch": launch, "process": process,
+              "server_release": {"path": str(release),
+                                 "files": sum("sha256" in entry for entry in release_files),
+                                 "links": sum("link" in entry for entry in release_files),
+                                 "bytes": sum(entry.get("size", 0) for entry in release_files)},
+              "verification": hashes.stats}
+    # A new lock's reviewer reads the whole manifest; launches report its digest.
+    if expected_host is None:
+        report["server_release"]["manifest"] = release_files
+    return report
 
 
 if __name__ == "__main__":
@@ -247,7 +290,7 @@ if __name__ == "__main__":
     parser.add_argument("session", type=Path)
     identity_mode = parser.add_mutually_exclusive_group(required=True)
     identity_mode.add_argument("--expected-host", type=json.loads)
-    identity_mode.add_argument("--discover", action="store_true", help="read a new Basalt identity without publishing a hash cache")
+    identity_mode.add_argument("--discover", action="store_true", help="read a new identity without publishing a hash cache")
     parser.add_argument("--full-verify", action="store_true")
     args = parser.parse_args()
     print(json.dumps(verify(args.session, args.expected_host, args.full_verify), indent=2))

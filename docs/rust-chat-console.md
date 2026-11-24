@@ -41,7 +41,7 @@ busy checks do not replace that ownership.
 cargo build -p playtime-chat --locked
 target/debug/playtime-chat \
   --endpoint http://127.0.0.1:18080/v1 \
-  --model-lock models/framework-strata-gyro-m-fast-v1.lock.json \
+  --model-lock models/framework-strata-gyro-m-fast-v2.lock.json \
   --workspace /absolute/project
 ```
 
@@ -55,7 +55,9 @@ model/image locks, workspace and limits, but no endpoint. They emit a JSON choic
 or catalog and exit without connecting to Docker or a model. To reopen a completed
 session, pass `--session /absolute/session` and
 the same model, workspace, agent prompt and allocation settings. A changed config
-is rejected. Sessions created before the Codex default require
+is rejected. The one exception is a Strata lock that adds only its server release
+manifest: sessions saved under the same lock without it keep their saved binding
+and resume (see [the Strata guide](rust-strata.md#identity-and-settings)). Sessions created before the Codex default require
 `--agent-prompt minimal`; choose a new conversation to use the Codex prompt.
 The executable, image/model locks, session and private state must be outside the
 project. When editing Playtime itself, install the binary and copy its reviewed
