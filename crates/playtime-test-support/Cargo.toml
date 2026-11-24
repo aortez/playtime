@@ -14,6 +14,9 @@ playtime-worker-control.workspace = true
 playtime-core.workspace = true
 playtime-runner.workspace = true
 playtime-storage.workspace = true
+# The Strata hold gate lends the Strata crate's fixture server.
+playtime-engine.workspace = true
+playtime-strata.workspace = true
 playtime-server = { path = "../playtime-server" }
 async-trait.workspace = true
 serde.workspace = true

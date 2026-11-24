@@ -3,6 +3,7 @@
 pub mod fixture;
 pub mod service;
 pub mod service_loss;
+pub mod strata_holds;
 pub mod suite;
 use playtime_client::Client;
 use playtime_local::{Token, read_connection};
@@ -21,6 +22,9 @@ use tokio::{
 };
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+/// A chat launcher package's `run-strata.py` that plays the hold protocol from
+/// its `fixture.json`, beside it, and never reaches a host.
+pub const STRATA_LAUNCHER: &str = include_str!("strata_launcher.py");
 pub struct TestRoot(pub PathBuf);
 impl TestRoot {
     pub fn new() -> Result<Self> {

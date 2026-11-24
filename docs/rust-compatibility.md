@@ -2102,3 +2102,20 @@ daemon restart. The workbench's preview and Details show a Strata target's
 launcher profile and the lock's model, engine, host and settings instead of
 Ollama's fields; Ollama displays and every screenshot baseline are unchanged. No
 archived run, recipe, conversation or other golden changes.
+
+## Recipes on Strata targets (#233, 2026-11-24)
+
+A memento recipe, from the catalog or saved, now runs on a Strata target. Its
+archived `model` is a `LiveModel::Strata` record in the existing shape, whose
+`settings` are the recipe's reasoning effort, temperature, top-p, top-k and
+repetition penalty over the lock's other settings. The live smoke still sends the
+lock's own. The Docker profile digest gains the Strata recipe template, so a
+worker bundle built before this doesn't implement this daemon's Docker profile.
+A saved recipe that selected a registered Ollama model or the continuous harness
+is refused on a Strata target as `selected_model_unsupported`.
+
+A recipe's preview on a Strata target now reads the launcher's status, as the
+live smoke's does. A launch on a Strata target that isn't ready now gets the
+same refusal as its preview instead of `ownership_unresolved`: an unreachable
+host, for example, gets `execution_unavailable` with `model_unavailable`. No
+archived run, recipe, conversation or golden changes.

@@ -1,13 +1,15 @@
 #[path = "common/registered.rs"]
 mod registered;
-use playtime_protocol::api::{HarnessId, HarnessView, MEMENTO_TURNS_V1, RecipeReasoning};
+use playtime_protocol::api::{
+    CONTINUOUS_COMPACTION_V1, HarnessId, HarnessView, MEMENTO_TURNS_V1, RecipeReasoning,
+};
 use playtime_runner::docker::*;
 use serde_json::json;
 
-fn definition() -> FrozenRecipe {
+fn smoke_recipe() -> Recipe {
     let scenario: playtime_engine::simulation::Scenario =
         serde_json::from_slice(LIVE_SCENARIO).unwrap();
-    let mut definition = FrozenRecipe::current(Recipe {
+    Recipe {
         id: "selected-smoke".into(),
         name: "Selected smoke".into(),
         prompt: scenario.prompt,
@@ -23,8 +25,10 @@ fn definition() -> FrozenRecipe {
             repeat_penalty: 1.0,
         },
         seeds: Default::default(),
-    })
-    .unwrap();
+    }
+}
+fn definition() -> FrozenRecipe {
+    let mut definition = FrozenRecipe::current(smoke_recipe()).unwrap();
     definition
         .select_registered_model(registered::qwen())
         .unwrap();
@@ -344,4 +348,44 @@ fn archive_identity_is_explicit_and_independent_of_current_support() {
     assert_eq!(view.id, "future_v2");
     assert!(!view.supported);
     assert!(view.settings.is_none());
+}
+#[test]
+fn saved_memento_recipes_run_on_strata_unless_they_selected_a_registered_model() {
+    const FRAMEWORK: &str = "framework-strata-gyro-m-fast-v2";
+    let base = profile(definition());
+    let host = StrataHost {
+        target: None,
+        profile: "framework-gyro-m-fast".into(),
+        endpoint: "http://127.0.0.1:41234/v1".into(),
+        started: 1_763_900_000,
+        verification: json!({"host": strata_lock(FRAMEWORK).unwrap().host}),
+        live_lock: "/synthetic/live-model.lock".into(),
+    };
+    let freeze = |definition: FrozenRecipe| {
+        Profile::freeze_strata_definition(
+            definition,
+            base.selection.clone(),
+            base.daemon.clone(),
+            FRAMEWORK,
+            host.clone(),
+        )
+    };
+    // A saved recipe that chose no registered model sends its own sampling.
+    let saved = FrozenRecipe::current(smoke_recipe()).unwrap();
+    let profile = freeze(saved.clone()).unwrap();
+    profile.validate().unwrap();
+    assert_eq!(profile.definition.as_ref(), Some(&saved));
+    let settings = &profile.model.as_ref().unwrap().strata().unwrap().settings;
+    assert_eq!(
+        (settings.thinking, settings.top_k),
+        (playtime_strata::Thinking::High, 40)
+    );
+    // One that selected a registered Ollama model names another model, and
+    // continuous recipes don't run on Strata yet.
+    assert!(freeze(definition()).is_err());
+    let mut continuous = saved;
+    continuous
+        .select_harness(&HarnessId::new(CONTINUOUS_COMPACTION_V1).unwrap())
+        .unwrap();
+    assert!(freeze(continuous).is_err());
 }

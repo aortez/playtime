@@ -171,6 +171,7 @@ locked image are available. `--ollama-endpoint` adds the live model, called
 directly; see `docs/rust-live-model.md`. Run `--backend live` for live-path changes,
 and `--backend strata` for Strata-target changes (`docs/rust-inference-targets.md`),
 one live-model test at a time, after checking that no Playtime worker is active.
+Strata admission or hold changes also run `--case strata-holds`, which needs no model.
 Long live runs come from the reviewed `recipes/*.toml` catalog (`--recipes`). The
 runner's bounds check them, and each archive freezes its recipe and seeds; see
 `docs/rust-recipes.md`. Recipe limits change only with the owner's review.

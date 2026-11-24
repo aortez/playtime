@@ -325,7 +325,16 @@ fn run_native(
                     let held = held(endpoint, *started, &root);
                     Profile::freeze_strata_live(selection, daemon, STRATA_FIXTURE, held)
                 }
-                (Some(LiveFake::Strata(..)), Some(_)) => panic!("recipes don't run on Strata yet"),
+                (Some(LiveFake::Strata(endpoint, started)), Some(definition)) => {
+                    let held = held(endpoint, *started, &root);
+                    Profile::freeze_strata_definition(
+                        definition,
+                        selection,
+                        daemon,
+                        STRATA_FIXTURE,
+                        held,
+                    )
+                }
                 (Some(LiveFake::Ollama(_)), Some(definition)) => {
                     Profile::freeze_definition(definition, selection, daemon, host)
                 }
@@ -1522,6 +1531,75 @@ fn strata_port_checks_its_server_process_and_records_deltas_and_each_call() {
         .run()
         .unwrap();
     assert!(run.contention.is_none());
+}
+#[test]
+fn a_saved_recipe_on_strata_writes_its_seeds_and_sends_its_sampling_and_caps() {
+    let server = Server::new(strata_replies());
+    let started = server.state.lock().unwrap().status["started"]
+        .as_u64()
+        .unwrap();
+    // With two work turns a session, session 1's third reply, the agent's
+    // end_session, answers the controller's handoff request instead.
+    let mut recipe = seeded_recipe();
+    recipe.parameters.limits.work_turns_per_session = std::num::NonZeroU32::new(2).unwrap();
+    let definition = playtime_runner::docker::FrozenRecipe::current(recipe.clone()).unwrap();
+    let live = LiveFake::Strata(server.endpoint.clone(), started);
+    let (temp, port, report) =
+        run_native(FaultCase::None, None, Some(live), Some(definition), false);
+    assert!(report.terminal_committed, "{:?}", report.diagnostics);
+    let result = report.result.unwrap();
+    assert_eq!(result.reason, playtime_core::StopReason::AgentFinished);
+    assert_eq!(result.usage.known_generated_tokens, 160);
+    // Two bridge calls write the seeds before the model's five tool calls.
+    assert_eq!(port.bridges.load(Ordering::SeqCst), 5 + 2);
+    let records = records(&temp.0.join("archive"));
+    let requests: Vec<_> = records
+        .iter()
+        .filter(|r| r.kind == "model_request")
+        .collect();
+    let handoffs: Vec<_> = requests.iter().map(|r| r.data["handoff"] == true).collect();
+    assert_eq!(handoffs, [false, false, true, false, false]);
+    // Each request, the handoff too, sends the recipe's sampling over the
+    // lock's other settings, and the controller's response or handoff cap.
+    let lock = strata_lock(STRATA_FIXTURE).unwrap().settings;
+    let limits = &recipe.parameters.limits;
+    let posts = server.posts();
+    assert_eq!(posts.len(), requests.len());
+    for (post, request) in posts.iter().zip(&requests) {
+        assert_eq!(post["reasoning"]["effort"], "high");
+        assert_eq!(
+            (&post["temperature"], &post["top_p"], &post["top_k"]),
+            (
+                &serde_json::json!(0.8),
+                &serde_json::json!(0.95),
+                &serde_json::json!(40)
+            )
+        );
+        assert_eq!(post["repetition_penalty"], 1.0);
+        assert_eq!(post["min_p"], lock.min_p);
+        assert_eq!(post["penalty_last_n"], lock.penalty_last_n);
+        let cap = if request.data["handoff"] == true {
+            limits.handoff_tokens.get()
+        } else {
+            limits.tokens_per_call.get()
+        };
+        assert_eq!(request.data["maximum_tokens"], cap);
+        assert_eq!(post["max_output_tokens"], cap);
+    }
+    // The archive freezes the saved recipe on the Strata lock.
+    let archive = temp.0.join("archive");
+    let reader =
+        playtime_storage::ArchiveReader::open(&archive, playtime_storage::StorageLimits::default())
+            .unwrap();
+    let configuration = &reader.manifest().configuration;
+    let frozen: Profile =
+        serde_json::from_slice(&std::fs::read(archive.join(configuration.path.as_str())).unwrap())
+            .unwrap();
+    assert_eq!(frozen.recipe, Some(recipe));
+    assert_eq!(
+        frozen.model.unwrap().strata().unwrap().lock_name,
+        STRATA_FIXTURE
+    );
 }
 #[test]
 fn strata_server_restart_stops_the_run_before_another_request() {

@@ -48,6 +48,25 @@ its seed summary gives each file's size and digest. The preview revision covers
 the whole profile. The archive freezes the profile, with the recipe, in
 `inputs/scenario.json`. The worker kind is `docker_live`.
 
+## On a Strata target
+
+A memento recipe, from the catalog or saved, also runs on a
+[Strata target](rust-inference-targets.md#strata-targets) with `--target ID` and
+`--mode experiment`. The run uses the target's reviewed Strata lock instead of
+`gpt-oss:20b`, and sends the recipe's `[model]` settings over the lock's own:
+
+- `thinking` picks the reasoning effort, and `default` keeps the lock's;
+- `temperature`, `top_p` and `top_k` carry over;
+- `repeat_penalty` becomes the repetition penalty.
+
+The lock supplies min-p, the presence and frequency penalties, `penalty_last_n`
+and the compaction summary's reasoning. The lock's context must hold the
+recipe's `context_tokens`. Strata takes a repetition penalty from 0.1 to 2 only,
+so a recipe below that is refused as `selected_model_unsupported`. So is a saved
+recipe that selected a registered Ollama model or the continuous harness, which
+doesn't run on Strata models yet. The preview shows the settings that every
+request will send.
+
 ## Bounds
 
 `playtime_runner::docker::BOUNDS` sets reviewed upper limits on top of the

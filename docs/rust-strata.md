@@ -132,20 +132,24 @@ frozen Python checks as well.
 
 ## Archived experiment worker (#233)
 
-The packaged experiment worker also reaches Strata, for the archived live smoke.
-`Profile::freeze_strata_live` freezes a `LiveModel::Strata` record: the reviewed
-lock by name, the request settings (the lock's own) and what the daemon's hold
-verified, namely the launcher profile, the loopback endpoint the hold lent, the
-server process's `started` value and the verifier report, whose host identity
-must be the lock's. The worker build compiles the reviewed locks it runs, now
-`framework-strata-gyro-m-fast-v2`, a copy of the `models/` lock that a test keeps
-equal. Validation refreezes the record, so another lock, other settings or a host
-that doesn't match the lock is refused, and a run whose context budget exceeds the
-lock's context doesn't freeze. Archived Ollama models have no `provider` field and
-keep their bytes. The daemon freezes this profile for the live smoke on a
+The packaged experiment worker also reaches Strata, for the archived live smoke
+and memento recipes. `Profile::freeze_strata_live` freezes a `LiveModel::Strata`
+record: the reviewed lock by name, the request settings (the lock's own) and what
+the daemon's hold verified, namely the launcher profile, the loopback endpoint the
+hold lent, the server process's `started` value and the verifier report, whose
+host identity must be the lock's. `Profile::freeze_strata_recipe` and
+`Profile::freeze_strata_definition` freeze the same record for a catalog or saved
+recipe, whose request settings are the recipe's sampling over the lock's; see
+[recipes on a Strata target](rust-recipes.md#on-a-strata-target). The worker
+build compiles the reviewed locks it runs, now `framework-strata-gyro-m-fast-v2`,
+a copy of the `models/` lock that a test keeps equal. Validation refreezes the
+record, so another lock, other settings or a host that doesn't match the lock is
+refused, and a run whose context budget exceeds the lock's context doesn't
+freeze. Archived Ollama models have no `provider` field and keep their bytes. The
+daemon freezes these profiles on a
 [Strata target](rust-inference-targets.md#strata-targets), from the hold it takes
 for the run, and the host record keeps that target, whose profile must be the
-host's. Recipes and continuous profiles refuse Strata for now.
+host's. Continuous profiles refuse Strata for now.
 
 The worker binds its client to the frozen `started` value with
 `Client::with_server_start`, so even its first check refuses another server

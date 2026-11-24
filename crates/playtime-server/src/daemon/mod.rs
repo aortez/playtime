@@ -552,6 +552,13 @@ fn lifecycle(error: life::Error) -> ApiError {
             | "unknown inference target"
             | "target requires live execution"
             | "live model unavailable"
+            | "Strata host unavailable"
+            | "Strata launcher unavailable"
+            | "Strata targets need --strata-launcher"
+            | "a Strata target needs a launcher profile"
+            | "the Strata launcher must be an absolute path"
+            | "the Strata target's lock isn't a reviewed one"
+            | "the Strata launcher's lock differs from the reviewed one"
             | "selected model unsupported"
             | "selected model identity changed"
             | "execution unavailable"
@@ -880,44 +887,44 @@ impl Application for Daemon {
             .execution_on(request.mode, request.target.as_deref())
             .await
             .map_err(execution_unavailable)?;
-        match request.mode {
+        let mut preview = match request.mode {
             RunMode::Experiment => archive
                 .authored_preview(recipe.as_str())
                 .await
-                .map_err(execution_unavailable),
-            RunMode::ScriptedSmoke => archive
-                .docker_preview()
-                .ok_or_else(|| execution_unavailable(life::Error::Uncertain)),
-            RunMode::LiveSmoke => {
-                let mut preview = archive
-                    .live_preview()
-                    .ok_or_else(|| execution_unavailable(life::Error::Uncertain))?;
-                // The launcher's read-only status: a hold would refuse this host.
-                if let Some(strata) = &archive.strata {
-                    let reason = if archive.holds.busy() {
-                        Some("Strata host still held for an earlier run".to_owned())
-                    } else {
-                        let status = strata.status().await;
-                        let message = status.message.as_ref().map(|m| format!(": {m}"));
-                        (!status.holdable()).then(|| {
-                            format!(
-                                "Strata host {}{}",
-                                status.state,
-                                message.unwrap_or_default()
-                            )
-                        })
-                    };
-                    if let Some(reason) = reason {
-                        preview.readiness = Readiness {
-                            ready: false,
-                            reasons: vec![reason],
-                        };
-                    }
-                }
-                Ok(preview)
+                .map_err(execution_unavailable)?,
+            RunMode::ScriptedSmoke => {
+                return archive
+                    .docker_preview()
+                    .ok_or_else(|| execution_unavailable(life::Error::Uncertain));
             }
-            _ => Err(ApiError::new("unsupported_capability")),
+            RunMode::LiveSmoke => archive
+                .live_preview()
+                .ok_or_else(|| execution_unavailable(life::Error::Uncertain))?,
+            _ => return Err(ApiError::new("unsupported_capability")),
+        };
+        // The launcher's read-only status: a hold would refuse this host.
+        if let Some(strata) = &archive.strata {
+            let reason = if archive.holds.busy() {
+                Some("Strata host still held for an earlier run".to_owned())
+            } else {
+                let status = strata.status().await;
+                let message = status.message.as_ref().map(|m| format!(": {m}"));
+                (!status.holdable()).then(|| {
+                    format!(
+                        "Strata host {}{}",
+                        status.state,
+                        message.unwrap_or_default()
+                    )
+                })
+            };
+            if let Some(reason) = reason {
+                preview.readiness = Readiness {
+                    ready: false,
+                    reasons: vec![reason],
+                };
+            }
         }
+        Ok(preview)
     }
     async fn admit(&self, key: IdempotencyKey, request: LaunchRequest) -> Result<LaunchResponse> {
         let this = self.clone();

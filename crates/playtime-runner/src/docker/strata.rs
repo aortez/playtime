@@ -2,7 +2,7 @@
 //! acquires the host through the chat launcher's hold and freezes what the hold
 //! verified; the worker only connects to that loopback forward.
 use crate::{Error, Result};
-use playtime_strata::{ModelLock, Settings};
+use playtime_strata::{ModelLock, Settings, Thinking};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -133,6 +133,37 @@ impl StrataModel {
             lock,
             host,
         })
+    }
+    /// The named lock with a recipe's sampling: its reasoning level,
+    /// temperature, top-p, top-k and repeat penalty. Model default reasoning,
+    /// and every setting a recipe doesn't choose, come from the lock.
+    pub fn freeze_recipe(
+        lock_name: &str,
+        host: StrataHost,
+        context_tokens: u64,
+        sampling: &super::Sampling,
+    ) -> Result<Self> {
+        let mut model = Self::freeze(lock_name, host, context_tokens)?;
+        let settings = &mut model.settings;
+        settings.thinking = match sampling.thinking.as_str() {
+            "default" => settings.thinking,
+            "low" => Thinking::Low,
+            "medium" => Thinking::Medium,
+            "high" => Thinking::High,
+            other => {
+                return Err(Error::Invalid(format!(
+                    "{lock_name} has no reasoning level {other}"
+                )));
+            }
+        };
+        settings.temperature = sampling.temperature;
+        settings.top_p = sampling.top_p;
+        settings.top_k = sampling.top_k;
+        settings.repetition_penalty = sampling.repeat_penalty;
+        settings.validate().map_err(|_| {
+            Error::Invalid(format!("{lock_name} doesn't take the recipe's sampling"))
+        })?;
+        Ok(model)
     }
     pub fn validate(&self) -> Result<()> {
         let invalid = || Error::Invalid("unsupported frozen Strata model or host".into());
