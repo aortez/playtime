@@ -1,11 +1,13 @@
 """CPU lifecycle fixtures for the standalone owner wrapper, without SSH or GPUs."""
 
+import hashlib
 import importlib.util
 import json
 import marshal
 import os
 from pathlib import Path
 import pty
+import select
 import shutil
 import signal
 import subprocess
@@ -46,7 +48,12 @@ if '--stop' in args:
 elif '--status' in args:
     (root / 'status').touch()
     (root / 'status-args').write_text(json.dumps(sys.argv[1:]))
-    print(json.dumps({'state': 'starts_on_launch'}))
+    if mode == 'status-down':
+        sys.exit(255)
+    if mode == 'slow-status':
+        time.sleep(1)
+    print(json.dumps({'state': 'busy', 'message': 'host is in use: chat'} if mode == 'status-busy'
+                     else {'state': 'starts_on_launch'}))
 elif args[1] == '-':
     sys.stdin.read()
     (root / 'verify-args').write_text(json.dumps(args))
@@ -66,6 +73,8 @@ else:
     if mode == 'busy':
         print('Another session owns Framework', file=sys.stderr)
         sys.exit(1)
+    if mode == 'slow-ready':
+        time.sleep(1)
     profile = args[-1]
     bird = profile == 'bird-gyro-m-fast'
     state = '.local/state/codex-gyro' if bird else '.local/state/codex-framework-gyro'
@@ -164,6 +173,196 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         finally:
             os.close(terminal)
             os.close(master)
+
+    def start_hold(self, mode="", *args):
+        # Unbuffered, so select() sees every event line the hold writes.
+        process = subprocess.Popen(self.command("framework-gyro-m-fast", "--hold", *args),
+                                   env=dict(self.env, FIXTURE_MODE=mode), cwd=self.root, bufsize=0,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.addCleanup(self.stop_hold, process)
+        return process
+
+    def stop_hold(self, process):
+        # Close the pipes directly: a test may already have closed stdin, which
+        # communicate() refuses before Python 3.13.
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=10)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            stream.close()
+
+    def hold_event(self, process, timeout=10):
+        self.assertTrue(select.select([process.stdout], [], [], timeout)[0], "no hold event in time")
+        event = json.loads(process.stdout.readline())
+        self.assertEqual((event["schema_version"], event["protocol"], event["profile"]),
+                         (1, "hold_v1", "framework-gyro-m-fast"))
+        return event
+
+    def owner_input(self):
+        path = self.root / "owner-input"
+        return path.read_text() if path.exists() else ""
+
+    def test_hold_lends_the_verified_endpoint_until_the_caller_releases_it(self):
+        process = self.start_hold()
+        held = self.hold_event(process)
+        self.assertEqual(held["event"], "held")
+        self.assertRegex(held["endpoint"], r"^http://127\.0\.0\.1:\d+/v1$")
+        port = held["endpoint"].split(":")[2].split("/")[0]
+        self.assertIn(f"127.0.0.1:{port}:127.0.0.1:8080", json.loads((self.root / "owner-args").read_text()))
+        self.assertEqual(held["report"]["host"], self.lock["host"])
+        self.assertEqual(held["model_lock"], "framework-strata-gyro-m-fast-v2.lock.json")
+        self.assertEqual(held["model_lock_sha256"],
+                         hashlib.sha256((self.package / held["model_lock"]).read_bytes()).hexdigest())
+        self.assertEqual(held["ready"]["context"], 163840)
+        self.assertTrue(Path(held["evidence"]).is_dir())
+        # The caller runs its own client; the host stays owned until it answers.
+        time.sleep(.3)
+        self.assertFalse((self.root / "client").exists())
+        self.assertFalse((self.root / "restored").exists())
+        self.assertEqual(process.poll(), None)
+        process.stdin.write(b"release\n")
+        process.stdin.close()
+        ended = self.hold_event(process)
+        self.assertEqual({key: ended[key] for key in ("event", "ending", "released", "inference_owner", "owner_exit")},
+                         {"event": "ended", "ending": "released", "released": True, "inference_owner": "confirmed",
+                          "owner_exit": 0})
+        self.assertNotIn("message", ended)
+        self.assertEqual(process.wait(timeout=10), 0)
+        self.assertIn("GYRO_RELEASE", self.owner_input())
+        self.assertTrue((self.root / "restored").exists())
+
+    def test_hold_closed_or_misused_by_its_caller_stops_the_server(self):
+        for mode, caller_input, ending, owner, code in (
+                ("", b"", "closed", "confirmed", 0), ("", b"stop\n", "protocol_error", "confirmed", 1),
+                ("", b"release now\n", "protocol_error", "confirmed", 1),
+                ("restore-failure", b"", "closed", "unresolved", 1)):
+            with self.subTest(mode=mode, ending=ending, caller_input=caller_input):
+                for name in ("owner-input", "restored", "verify-args"):
+                    (self.root / name).unlink(missing_ok=True)
+                process = self.start_hold(mode, "--full-verify")
+                self.assertEqual(self.hold_event(process)["event"], "held")
+                self.assertIn("--full-verify", json.loads((self.root / "verify-args").read_text()))
+                process.stdin.write(caller_input)
+                process.stdin.close()
+                ended = self.hold_event(process)
+                self.assertEqual((ended["ending"], ended["released"], ended["inference_owner"]), (ending, False, owner))
+                self.assertEqual(process.wait(timeout=10), code)
+                self.assertNotIn("GYRO_RELEASE", self.owner_input())
+                self.assertTrue((self.root / "restored").exists())
+
+    def test_hold_refuses_a_busy_or_unreachable_host_without_owning_it(self):
+        for mode, reason, message in (("status-busy", "busy", "host is in use: chat"),
+                                      ("status-down", "host_unavailable", "remote helper status failed")):
+            with self.subTest(mode=mode):
+                process = self.start_hold(mode)
+                refused = self.hold_event(process)
+                self.assertEqual((refused["event"], refused["reason"], refused["message"], refused["inference_owner"]),
+                                 ("refused", reason, message, "not_acquired"))
+                self.assertEqual(process.wait(timeout=10), 1)
+                self.assertTrue((self.root / "status").exists())
+                self.assertFalse((self.root / "started").exists())
+
+    def test_hold_refuses_a_host_it_cannot_verify_and_stops_it(self):
+        # A helper that exits early can't prove it left nothing running.
+        for mode, reason, owner in (("mismatch", "mismatch", "confirmed"),
+                                    ("verify-failure", "verification_failed", "confirmed"),
+                                    ("busy", "host_unavailable", "unresolved")):
+            with self.subTest(mode=mode):
+                for name in ("owner-input", "restored"):
+                    (self.root / name).unlink(missing_ok=True)
+                process = self.start_hold(mode)
+                refused = self.hold_event(process)
+                self.assertEqual((refused["event"], refused["reason"], refused["inference_owner"]),
+                                 ("refused", reason, owner))
+                self.assertNotIn("endpoint", refused)
+                self.assertEqual(process.wait(timeout=10), 1)
+                self.assertNotIn("GYRO_RELEASE", self.owner_input())
+                self.assertFalse((self.root / "client").exists())
+                self.assertEqual((self.root / "restored").exists(), mode != "busy")
+
+    def test_hold_reports_a_failure_before_the_helper_starts(self):
+        # A UnicodeDecodeError has a `reason` attribute that is not a hold reason.
+        (self.package / "framework-strata-gyro-m-fast-v2.lock.json").write_bytes(b"\xff")
+        process = self.start_hold()
+        refused = self.hold_event(process)
+        self.assertEqual((refused["event"], refused["reason"], refused["inference_owner"]),
+                         ("refused", "failed", "not_acquired"))
+        self.assertIn("invalid start byte", refused["message"])
+        self.assertEqual(process.wait(timeout=10), 1)
+        self.assertFalse((self.root / "started").exists())
+
+    def wait_for(self, name):
+        deadline = time.monotonic() + 10
+        while not (self.root / name).exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+
+    def test_hold_abandoned_or_signalled_before_it_is_held_stops_the_server(self):
+        for ending, reason, code in (("close", "abandoned", 1), ("signal", "signal", 128 + signal.SIGTERM)):
+            with self.subTest(ending=ending):
+                for name in ("owner-input", "restored", "started"):
+                    (self.root / name).unlink(missing_ok=True)
+                process = self.start_hold("slow-ready")
+                if ending == "close":
+                    process.stdin.close()
+                else:
+                    # Signal once the owner exists, before the slow helper is ready.
+                    self.wait_for("started")
+                    process.send_signal(signal.SIGTERM)
+                refused = self.hold_event(process)
+                self.assertEqual((refused["event"], refused["reason"], refused["inference_owner"]),
+                                 ("refused", reason, "confirmed"))
+                self.assertEqual(process.wait(timeout=10), code)
+                self.assertNotIn("GYRO_RELEASE", self.owner_input())
+                self.assertTrue((self.root / "restored").exists())
+
+    def test_hold_signalled_during_its_status_check_never_acquires(self):
+        process = self.start_hold("slow-status")
+        self.wait_for("status")
+        process.send_signal(signal.SIGTERM)
+        refused = self.hold_event(process)
+        self.assertEqual((refused["event"], refused["reason"], refused["message"], refused["inference_owner"]),
+                         ("refused", "signal", "received signal 15", "not_acquired"))
+        self.assertEqual(process.wait(timeout=10), 128 + signal.SIGTERM)
+        self.assertFalse((self.root / "started").exists())
+
+    def test_hold_reports_a_lost_owner_or_a_signal_as_its_end(self):
+        # An owner that exits before the wrapper's EOF is lost, whatever its code.
+        for mode, owner_exit in (("owner-loss", 1), ("owner-exit-zero", 0)):
+            with self.subTest(mode=mode):
+                (self.root / "client").unlink(missing_ok=True)
+                process = self.start_hold(mode)
+                self.assertEqual(self.hold_event(process)["event"], "held")
+                (self.root / "client").touch()
+                ended = self.hold_event(process)
+                self.assertEqual((ended["ending"], ended["released"], ended["inference_owner"], ended["owner_exit"],
+                                  ended["message"]),
+                                 ("lost", False, "unresolved", owner_exit, "lost the inference host owner"))
+                self.assertEqual(process.wait(timeout=10), 1)
+        (self.root / "client").unlink()
+        (self.root / "owner-input").unlink(missing_ok=True)
+        process = self.start_hold()
+        self.assertEqual(self.hold_event(process)["event"], "held")
+        process.send_signal(signal.SIGTERM)
+        ended = self.hold_event(process)
+        self.assertEqual((ended["ending"], ended["released"], ended["inference_owner"], ended["message"]),
+                         ("signal", False, "confirmed", "received signal 15"))
+        self.assertEqual(process.wait(timeout=10), 128 + signal.SIGTERM)
+        self.assertNotIn("GYRO_RELEASE", self.owner_input())
+
+    def test_hold_is_described_without_contacting_the_host(self):
+        result = self.run_fixture("", "--describe-hold")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout),
+                         {"schema_version": 1, "protocol": "hold_v1", "profile": "framework-gyro-m-fast",
+                          "model_lock": "framework-strata-gyro-m-fast-v2.lock.json", "startup_timeout": 930,
+                          "verify_timeout": 600, "cleanup_timeout": 160})
+        for args in (("--describe-hold", "extra"), ("--hold", "--prompt", "hi")):
+            with self.subTest(args=args):
+                result = self.run_fixture("", *args)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+        self.assertFalse((self.root / "status").exists())
+        self.assertFalse((self.root / "started").exists())
 
     def test_interactive_launch_starts_new_without_resumable_sessions(self):
         for state in ('empty', 'interrupted', 'in_use', 'settings_differ', 'unavailable'):

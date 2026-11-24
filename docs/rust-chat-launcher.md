@@ -381,3 +381,59 @@ requests on Framework with `framework-gyro-m-fast`:
   that nothing started on the host.
 
 These are integration checks, not coding-quality measurements.
+
+## Hold mode
+
+A calling process that runs its own client, such as the experiment daemon in
+#233, can hold a host instead of starting chat:
+
+```sh
+run-strata.py framework-gyro-m-fast --describe-hold
+run-strata.py framework-gyro-m-fast --hold [--full-verify]
+```
+
+`--describe-hold` reads only the local package. It prints the `hold_v1` protocol,
+the profile's model lock and the startup, verification and cleanup timeouts a
+caller should budget for.
+
+`--hold` first reads the helper's read-only status and refuses a busy or
+unreachable host before owning it. It then acquires the host through the same
+helper, readiness check, verifier and loopback forward as chat, and keeps the
+heartbeat while it holds the host. Its stdout carries only JSON events, one per
+line, each with `schema_version: 1`, `protocol: "hold_v1"`, `event` and `profile`.
+Helper messages and the wrapper's own status lines go to stderr, and the
+evidence directory keeps the helper's log and `host.json`.
+
+| Event | When | Other fields |
+| --- | --- | --- |
+| `held` | The host passed the readiness and file checks against the lock. | `endpoint`, `model_lock`, `model_lock_sha256`, `ready`, the verifier's whole `report`, `helper_logs`, `evidence`, `timings` |
+| `refused` | The hold ended before `held`, so no client could have used the endpoint. | `reason`, `message`, `inference_owner` |
+| `ended` | The hold ended after `held`. | `ending`, `released`, `inference_owner`, `owner_exit`, and `message` after a failure |
+
+Each hold writes either `refused` or `held` followed by `ended`. Only a usage
+error writes nothing to stdout; it exits 1 before anything is read or acquired.
+A caller that reaches EOF without a terminal event, as after SIGKILL, must treat
+the host as `unresolved`. A refusal's `reason` is `busy`, `host_unavailable`,
+`mismatch`, `verification_failed`, `startup_timeout`, `verification_timeout`,
+`abandoned`, `signal` or `failed`.
+
+The caller's only command is `release` followed by a newline on stdin. It parks
+the warm model, as a clean chat exit does, so the next hold reuses it. Every
+other ending stops the server: EOF on stdin, any other input, a lost helper or a
+signal. `ending` names it: `released`, `closed`, `protocol_error`, `lost`,
+`signal` or `failed`. Any input or EOF before `held` abandons the hold. So a
+caller must send `release` only after its own client has finished with confirmed
+cleanup, and otherwise just close stdin.
+
+`released` reports whether the wrapper asked the helper to park the model.
+`inference_owner` takes the one-shot receipt's values: `not_acquired` when the
+helper never started, `confirmed` when it exited normally after the wrapper's EOF
+within the cleanup timeout and without a lost transport, and `unresolved`
+otherwise. A helper that exits before that EOF, whatever its code, leaves the
+host `unresolved`. The wrapper exits 0 only for `released` or `closed` with the
+owner `confirmed`, with 128 plus the signal number after a signal, and with 1
+otherwise.
+
+Socket closure and terminal events on the endpoint are observations, not proof
+that remote inference stopped. A caller whose client may have left inference
+running must close the hold without `release`, so the helper stops the server.

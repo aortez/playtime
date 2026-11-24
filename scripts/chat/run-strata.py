@@ -34,6 +34,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import select
 import shlex
 import signal
 import socket
@@ -46,10 +47,102 @@ import time
 PACKAGE = Path(__file__).resolve().parent
 STATUS_TIMEOUT = 8
 VERIFY_TIMEOUT = 600
+HOLD_PROTOCOL = "hold_v1"
+# A hold caller's only command. EOF or any other input ends the hold without it.
+HOLD_RELEASE = b"release\n"
 
 
 def log(message):
     print(f"Playtime: {message}", file=sys.stderr, flush=True)
+
+
+class HostError(RuntimeError):
+    """A host failure with a reason that a hold caller records."""
+
+    def __init__(self, reason, message):
+        super().__init__(message)
+        self.reason = reason
+
+
+class Hold:
+    """The calling process's side of hold mode.
+
+    Events go to stdout as one JSON object per line. The caller's only command is
+    `release` on stdin, which parks the warm model. EOF, any other input or a
+    signal ends the hold without it, so the helper stops the server.
+    """
+
+    def __init__(self, profile):
+        self.profile = profile
+        self.source = sys.stdin.fileno()
+        self.received = b""
+        self.reported = False
+        self.ending = None
+        self.failure = None
+        # The session records these as the helper starts and ends.
+        self.acquired = self.released = self.confirmed = False
+        self.owner_exit = None
+
+    def emit(self, event, **fields):
+        try:
+            print(json.dumps({"schema_version": 1, "protocol": HOLD_PROTOCOL, "event": event,
+                              "profile": self.profile, **fields}), flush=True)
+        except OSError:
+            # A caller that stopped reading can't release the hold either.
+            pass
+
+    def poll(self, timeout=0):
+        """The caller's ending, if it sent one: released, closed or protocol_error."""
+        if not select.select([self.source], [], [], timeout)[0]:
+            return None
+        chunk = os.read(self.source, len(HOLD_RELEASE) - len(self.received))
+        if not chunk:
+            return "closed"
+        self.received += chunk
+        if self.received == HOLD_RELEASE:
+            return "released"
+        return None if HOLD_RELEASE.startswith(self.received) else "protocol_error"
+
+    def check(self):
+        """Health hook before the host is held: any caller input abandons the hold."""
+        if not self.reported and self.poll() is not None:
+            raise HostError("abandoned", "the caller ended the hold before the host was held")
+
+    def held(self, **fields):
+        self.emit("held", **fields)
+        self.reported = True
+
+    def serve(self, drain, healthy):
+        """Keep the host, with its heartbeat, until the caller ends the hold."""
+        while self.ending is None:
+            drain()
+            healthy()
+            self.ending = self.poll(.1)
+
+    def settle(self, released, owner_exit, transport_failed):
+        """Record the helper's end. As for a launch receipt, only its normal exit
+        after the wrapper's EOF, with no lost transport, confirms the host."""
+        self.released, self.owner_exit = released, owner_exit
+        self.confirmed = owner_exit == 0 and not transport_failed
+
+    def finish(self, result, signals):
+        """Report the one terminal event and return the hold's exit code."""
+        owner = "not_acquired" if not self.acquired else "confirmed" if self.confirmed else "unresolved"
+        failure = self.failure
+        # Other exceptions can have a `reason` of their own, so only a HostError names one.
+        reason = (failure.reason if isinstance(failure, HostError)
+                  else "signal" if isinstance(failure, InterruptedError) else "failed")
+        failed = result or 1
+        if not self.reported:
+            self.emit("refused", reason=reason, message=str(failure or "the host was not held"),
+                      inference_owner=owner)
+            return failed
+        if self.ending is None:
+            self.ending = {"signal": "signal", "host_unavailable": "lost"}.get(reason, "failed")
+        message = {} if failure is None else {"message": str(failure)}
+        self.emit("ended", ending=self.ending, released=self.released, inference_owner=owner,
+                  owner_exit=self.owner_exit, **message)
+        return 0 if result == 0 and self.ending in ("released", "closed") and owner == "confirmed" else failed
 
 
 def ssh(preset):
@@ -62,7 +155,8 @@ def remote(preset, *args):
     return [preset["host"], shlex.join(args)]
 
 
-def status(preset, profile):
+def status_report(preset, profile):
+    """The helper's read-only status, or down/unknown when it can't be read."""
     try:
         result = subprocess.run(ssh(preset) + remote(preset, "python3", preset["helper"], "--status", profile),
                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=STATUS_TIMEOUT)
@@ -75,7 +169,11 @@ def status(preset, profile):
                 raise ValueError("invalid helper status")
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
         report = {"state": "unknown", "message": str(error)}
-    print(json.dumps(report))
+    return report
+
+
+def status(preset, profile):
+    print(json.dumps(status_report(preset, profile)))
     return 0
 
 
@@ -106,12 +204,12 @@ def check_ready(ready, lock):
             or ready.get("context") != lock["identity"]["context_tokens"]
             or ready.get("drafting") != drafting
             or (drafting == "mtp8" and ready.get("parallel") != lock["identity"]["parallel"])):
-        raise RuntimeError("helper returned a different model, context or drafting preset")
+        raise HostError("mismatch", "helper returned a different model, context or drafting preset")
 
 
 def check_host(report, lock):
     if report.get("host") != lock["host"]:
-        raise RuntimeError("running host artifacts/settings differ from the reviewed model lock; client not started")
+        raise HostError("mismatch", "running host artifacts/settings differ from the reviewed model lock; client not started")
 
 
 def worker_arguments(args, read_only=False):
@@ -200,7 +298,7 @@ def worker_option(args, key, default=None):
     return default
 
 
-def session(preset, profile, args, launch=None, signals=None):
+def session(preset, profile, args, launch=None, signals=None, hold=None):
     # Wrapper flags precede chat arguments, so a prompt whose text is literally
     # "--full-verify" remains an ordinary prompt value.
     import launch_protocol
@@ -263,14 +361,17 @@ def session(preset, profile, args, launch=None, signals=None):
     lock_path = PACKAGE / preset["model_lock"]
     image_path = PACKAGE / "general.lock.json"
     # Read local resources before touching the remote host.
-    lock = json.loads(lock_path.read_text())
+    lock_bytes = lock_path.read_bytes()
+    lock = json.loads(lock_bytes)
     basalt = lock["identity"].get("service") == "basalt"
     protocol_args = ["--model-lock", str(lock_path)] if basalt else []
     transport = "basalt-responses-v1" if basalt else "strata-responses-v1"
-    if not native and not host_tools:
-        json.loads(image_path.read_text())
-    if not executable.is_file() or not os.access(executable, os.X_OK):
-        raise RuntimeError("playtime-chat is not installed beside this wrapper")
+    # A hold lends the host to its caller and starts no client.
+    if hold is None:
+        if not native and not host_tools:
+            json.loads(image_path.read_text())
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise RuntimeError("playtime-chat is not installed beside this wrapper")
     if args in (["--help"], ["-h"], ["--version"], ["-V"]) or (headless and "--describe-protocol" in args):
         if args in (["--help"], ["-h"]):
             print("Launcher options (before chat arguments): --full-verify rehashes model files; "
@@ -323,9 +424,10 @@ def session(preset, profile, args, launch=None, signals=None):
             raise RuntimeError("installed worker lacks project-native-v1")
     # Refuse unknown chat options before touching the remote host. Workshop chat
     # also gets this from the environment scan, which host and native tools skip.
-    project_environment.workspace_arguments(selection_args)
+    if hold is None:
+        project_environment.workspace_arguments(selection_args)
     client_args = [str(executable), "--model-lock", str(lock_path)]
-    if not native and not host_tools:
+    if hold is None and not native and not host_tools:
         image_path = project_environment.resolve(selection_args, PACKAGE, environment)
         json.loads(image_path.read_text())
         client_args += ["--image-lock", str(image_path)]
@@ -337,7 +439,7 @@ def session(preset, profile, args, launch=None, signals=None):
     options = {arg.split("=", 1)[0] for arg in args}
     if options & {"--select-session", "--list-sessions", "--inspect-interrupted"} and not options & {"--prompt", "--prompt-file", "--session", "--recover-compaction", "--recover-interrupted"}:
         return subprocess.call([*client_args, *args])
-    explicit = headless or launch is not None or bool(
+    explicit = headless or launch is not None or hold is not None or bool(
         options & {"--session", "--recover-compaction", "--recover-interrupted", "--prompt", "--prompt-file"})
     if force_picker and explicit:
         raise RuntimeError("--sessions cannot be combined with a session, recovery or one-shot prompt")
@@ -380,7 +482,7 @@ def session(preset, profile, args, launch=None, signals=None):
     if launch is not None:
         launch.freeze(evidence)
     restart_file = evidence / "restart.json"
-    interactive = not headless and launch is None and not options & {"--prompt", "--prompt-file"}
+    interactive = not headless and launch is None and hold is None and not options & {"--prompt", "--prompt-file"}
     if interactive:
         client_environment["PLAYTIME_CHAT_RESTART_FILE"] = str(restart_file)
     with socket.socket() as reservation:
@@ -425,8 +527,10 @@ def session(preset, profile, args, launch=None, signals=None):
             raise InterruptedError(f"received signal {signals[0]}")
         if launch is not None:
             launch.check()
+        if hold is not None:
+            hold.check()
         if failed.is_set() or owner.poll() is not None:
-            raise RuntimeError("lost the inference host owner")
+            raise HostError("host_unavailable", "lost the inference host owner")
 
     def drain():
         nonlocal ready, state_dir
@@ -468,6 +572,8 @@ def session(preset, profile, args, launch=None, signals=None):
                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
         if launch is not None:
             launch.note("inference")
+        if hold is not None:
+            hold.acquired = True
         for channel in ("stdout", "stderr"):
             threading.Thread(target=receive, args=(getattr(owner, channel), channel), daemon=True).start()
         heartbeats = threading.Thread(target=heartbeat, daemon=True)
@@ -477,7 +583,7 @@ def session(preset, profile, args, launch=None, signals=None):
             drain()
             healthy()
             if time.monotonic() >= deadline:
-                raise TimeoutError("owned model startup deadline exceeded")
+                raise HostError("startup_timeout", "owned model startup deadline exceeded")
             time.sleep(.1)
         check_ready(ready, lock)
         model_ready_seconds = time.monotonic() - started_at
@@ -496,10 +602,10 @@ def session(preset, profile, args, launch=None, signals=None):
                 drain()
                 healthy()
                 if time.monotonic() - start > VERIFY_TIMEOUT:
-                    raise TimeoutError("host verification deadline exceeded")
+                    raise HostError("verification_timeout", "host verification deadline exceeded")
                 time.sleep(.1)
             if verification.returncode:
-                raise RuntimeError(f"host verification failed; see {evidence / 'verify.log'}")
+                raise HostError("verification_failed", f"host verification failed; see {evidence / 'verify.log'}")
         report = json.loads((evidence / "host.json").read_text())
         check_host(report, lock)
         healthy()
@@ -510,34 +616,47 @@ def session(preset, profile, args, launch=None, signals=None):
                    "launcher_ready_seconds": time.monotonic() - started_at,
                    "verification": stats}
         (evidence / "timings.json").write_text(json.dumps(timings, indent=2) + "\n")
-        log(f"verified in {verification_seconds:.1f}s; {stats['reused_files']} cached, "
-            f"{stats['hashed_files']} hashed ({stats['hashed_bytes'] / 1e9:.2f} GB read); "
-            f"starting {profile} {'read-only invocation' if read_only else 'worker' if worker else 'chat'} in {project_environment.workspace_arguments(selection_args)[0]}")
-        streams = {}
-        if launch is not None:
-            args = launch.attach(args)
-            # The client's raw output stays with this run's evidence, for the same reason.
-            streams = {name: (evidence / f"client.{name}").open("xb") for name in ("stdout", "stderr")}
-        try:
-            child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
-                                      *client_args[1:], *args],
-                                     stdin=subprocess.DEVNULL if headless or launch is not None else None,
-                                     env=client_environment, **streams)
-        finally:
-            for stream in streams.values():
-                stream.close()
-        if launch is not None:
-            launch.note("tools")
-        while child.poll() is None:
-            drain()
-            healthy()
-            time.sleep(.1)
-        result = child.returncode if child.returncode >= 0 else 128 - child.returncode
-    except InterruptedError:
+        verified = (f"verified in {verification_seconds:.1f}s; {stats['reused_files']} cached, "
+                    f"{stats['hashed_files']} hashed ({stats['hashed_bytes'] / 1e9:.2f} GB read)")
+        if hold is not None:
+            endpoint = f"http://127.0.0.1:{port}/v1"
+            log(f"{verified}; holding {profile} at {endpoint} for the caller")
+            hold.held(endpoint=endpoint, model_lock=preset["model_lock"],
+                      model_lock_sha256=hashlib.sha256(lock_bytes).hexdigest(), ready=ready,
+                      report=report, helper_logs=state_dir, evidence=str(evidence), timings=timings)
+            hold.serve(drain, healthy)
+            result = 0
+        else:
+            log(f"{verified}; starting {profile} {'read-only invocation' if read_only else 'worker' if worker else 'chat'} in {project_environment.workspace_arguments(selection_args)[0]}")
+            streams = {}
+            if launch is not None:
+                args = launch.attach(args)
+                # The client's raw output stays with this run's evidence, for the same reason.
+                streams = {name: (evidence / f"client.{name}").open("xb") for name in ("stdout", "stderr")}
+            try:
+                child = subprocess.Popen([str(executable), "--endpoint", f"http://127.0.0.1:{port}/v1",
+                                          *client_args[1:], *args],
+                                         stdin=subprocess.DEVNULL if headless or launch is not None else None,
+                                         env=client_environment, **streams)
+            finally:
+                for stream in streams.values():
+                    stream.close()
+            if launch is not None:
+                launch.note("tools")
+            while child.poll() is None:
+                drain()
+                healthy()
+                time.sleep(.1)
+            result = child.returncode if child.returncode >= 0 else 128 - child.returncode
+    except InterruptedError as error:
         result = 128 + signals[0]
-        log("stopping chat and restoring the inference host…")
+        log(f"stopping {'chat' if hold is None else 'the hold'} and restoring the inference host…")
+        if hold is not None:
+            hold.failure = error
     except Exception as error:
         log(str(error))
+        if hold is not None:
+            hold.failure = error
     finally:
         # Keep the owner heartbeats alive until local tool cleanup has had its
         # full grace period. Only successful, confirmed cleanup permits parking;
@@ -562,6 +681,9 @@ def session(preset, profile, args, launch=None, signals=None):
             if owner.poll() is not None:
                 failed.set()
             park = result == 0 and child is not None and child.returncode == 0 and not failed.is_set() and not signals
+            if hold is not None:
+                # Only the caller's release parks the model; every other ending stops it.
+                park = result == 0 and hold.ending == "released" and not failed.is_set() and not signals
             if launch is not None:
                 completion, _ = launch.read_completion()
                 park = park and launch.local_tools(child, completion) == "confirmed" and launch.outcome(child, completion, signals) == "completed"
@@ -590,6 +712,8 @@ def session(preset, profile, args, launch=None, signals=None):
             owner_code = owner.returncode
             if owner_code != 0:
                 result = 1
+            if hold is not None:
+                hold.settle(park, owner_code, failed.is_set())
             try:
                 drain()
             except Exception:
@@ -631,6 +755,45 @@ def resume_arguments(args, destination):
         elif option not in ("--sessions", "--acknowledge-uncertain-tools"):
             result.append(arg)
     return [*result, "--session", str(destination)]
+
+
+def describe_hold(preset, profile):
+    """Advertise hold mode and the deadlines a caller should budget for."""
+    print(json.dumps({"schema_version": 1, "protocol": HOLD_PROTOCOL, "profile": profile,
+                      "model_lock": preset["model_lock"], "startup_timeout": preset["startup_timeout"],
+                      "verify_timeout": VERIFY_TIMEOUT, "cleanup_timeout": preset["cleanup_timeout"]}))
+    return 0
+
+
+def hold(preset, profile, args):
+    """Lend the verified host to a calling process until it releases or closes the hold."""
+    if args not in ([], ["--full-verify"]):
+        raise RuntimeError("usage: run-strata.py PROFILE --hold [--full-verify]")
+    state = Hold(profile)
+    # Record signals from the start, so that every hold ends with one terminal event.
+    signals = []
+    previous = {sig: signal.signal(sig, lambda signum, _frame: signals.append(signum))
+                for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+    try:
+        current = status_report(preset, profile)
+        if signals:
+            state.failure = InterruptedError(f"received signal {signals[0]}")
+            return state.finish(128 + signals[0], signals)
+        # Status is read-only, so a busy host is refused before any ownership.
+        if current["state"] not in ("ready", "starts_on_launch"):
+            state.failure = HostError("busy" if current["state"] == "busy" else "host_unavailable",
+                                      current.get("message") or f"host status is {current['state']}")
+            return state.finish(1, signals)
+        try:
+            result = session(preset, profile, args, signals=signals, hold=state)
+        except Exception as error:
+            # A failure that escapes the session still gets its terminal event.
+            log(str(error))
+            state.failure, result = error, 1
+        return state.finish(result, signals)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def one_shot(preset, profile, request_path):
@@ -675,6 +838,12 @@ def main(args):
     preset = config["profiles"][profile]
     if report:
         return status(preset, profile)
+    if extra[:1] == ["--describe-hold"]:
+        if len(extra) != 1:
+            raise RuntimeError("--describe-hold accepts only a profile")
+        return describe_hold(preset, profile)
+    if extra[:1] == ["--hold"]:
+        return hold(preset, profile, extra[1:])
     if extra[:1] == [launch_protocol.DESCRIBE_FLAG]:
         if len(extra) != 1:
             raise RuntimeError(f"{launch_protocol.DESCRIBE_FLAG} accepts only a profile")
