@@ -183,9 +183,13 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
         return process
 
     def stop_hold(self, process):
+        # Close the pipes directly: a test may already have closed stdin, which
+        # communicate() refuses before Python 3.13.
         if process.poll() is None:
             process.kill()
-        process.communicate(timeout=10)
+        process.wait(timeout=10)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            stream.close()
 
     def hold_event(self, process, timeout=10):
         self.assertTrue(select.select([process.stdout], [], [], timeout)[0], "no hold event in time")
