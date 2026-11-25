@@ -26,12 +26,17 @@ pub enum Reply {
     Paced(Vec<Vec<u8>>, Duration),
 }
 
+/// Makes the reply for a `/v1/responses` request from its JSON body.
+pub type Fallback = Box<dyn FnMut(&Value) -> Reply + Send>;
+
 pub struct State {
     pub props: Value,
     pub status: Value,
     pub settings: Value,
-    /// Replies in request order. A request with none left gets HTTP 500.
+    /// Replies in request order. A request with none left gets the fallback's
+    /// reply, or HTTP 500 without one.
     pub replies: VecDeque<Reply>,
+    pub fallback: Option<Fallback>,
     /// Status documents the server reports from the time that many
     /// `/v1/responses` requests have arrived, as after a restart.
     pub statuses: BTreeMap<usize, Value>,
@@ -57,6 +62,7 @@ impl Server {
             status,
             settings,
             replies: replies.into_iter().collect(),
+            fallback: None,
             statuses: BTreeMap::new(),
             seen: vec![],
         }));
@@ -155,10 +161,15 @@ fn serve(mut socket: TcpStream, state: &Mutex<State>, stop: &AtomicBool) {
                 if let Some(status) = state.statuses.remove(&posts) {
                     state.status = status;
                 }
-                state
-                    .replies
-                    .pop_front()
-                    .map_or(Answer::Status(500), Answer::Stream)
+                if let Some(reply) = state.replies.pop_front() {
+                    Answer::Stream(reply)
+                } else {
+                    let body = state.seen.last().map(|(_, body)| body.clone());
+                    match state.fallback.as_mut() {
+                        Some(make) => Answer::Stream(make(&body.unwrap_or_default())),
+                        None => Answer::Status(500),
+                    }
+                }
             }
             _ => Answer::Status(404),
         }
