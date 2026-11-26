@@ -312,6 +312,16 @@ def worker_option(args, key, default=None):
     return default
 
 
+def chat_defaults(preset, profile):
+    """A profile's defaults for its workshop console, from its reviewed preset."""
+    defaults = preset.get("chat_defaults", {})
+    if (not isinstance(defaults, dict) or not set(defaults) <= {"agent_prompt", "tokens_per_call"}
+            or not isinstance(defaults.get("agent_prompt", "codex"), str)
+            or type(defaults.get("tokens_per_call", 1)) is not int or defaults.get("tokens_per_call", 1) < 1):
+        raise RuntimeError(f"{profile} has invalid chat defaults")
+    return defaults
+
+
 def session(preset, profile, args, launch=None, signals=None, hold=None):
     # Wrapper flags precede chat arguments, so a prompt whose text is literally
     # "--full-verify" remains an ordinary prompt value.
@@ -400,6 +410,14 @@ def session(preset, profile, args, launch=None, signals=None, hold=None):
             raise RuntimeError("read-only invocation requires role and input arguments")
         return subprocess.call(helper(preset, "--stop"), stdin=subprocess.DEVNULL)
     args = [*args, *preset_args]
+    # A profile whose context can't hold the Codex prompt and the usual reply
+    # allowance names smaller defaults for its workshop console, and options
+    # given here win. Saved conversations are matched by their prompt, so its
+    # default applies to every invocation.
+    workshop_chat = not headless and not host_tools and hold is None and launch is None
+    defaults = chat_defaults(preset, profile) if workshop_chat else {}
+    if "agent_prompt" in defaults and "--agent-prompt" not in project_environment.chat_options(args):
+        args = [*args, "--agent-prompt", defaults["agent_prompt"]]
     selection_args = args
     if headless:
         selection_args, request_sha256 = worker_arguments(args, read_only)
@@ -489,6 +507,10 @@ def session(preset, profile, args, launch=None, signals=None, hold=None):
             args = [*args, "--recover-interrupted", choice["recover_interrupted"]]
             if choice.get("acknowledge_uncertain_tools"):
                 args.append("--acknowledge-uncertain-tools")
+    # A saved conversation keeps its own per-call limit.
+    if "tokens_per_call" in defaults and not project_environment.chat_options(args).keys() & {
+            "--tokens-per-call", "--session", "--recover-compaction", "--recover-interrupted"}:
+        args = [*args, "--tokens-per-call", str(defaults["tokens_per_call"])]
     # Startup timings exclude time spent choosing a conversation.
     started_at = time.monotonic()
     verifier = (PACKAGE / "verify-strata-host.py").read_bytes()

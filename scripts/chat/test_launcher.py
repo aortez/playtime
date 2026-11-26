@@ -164,10 +164,10 @@ if os.environ.get('FIXTURE_MODE') in ('interrupt', 'owner-loss'):
     def run_fixture(self, mode="", *args):
         return subprocess.run(self.command("framework-gyro-m-fast", *args), env=dict(self.env, FIXTURE_MODE=mode), cwd=self.root, capture_output=True, text=True, timeout=15)
 
-    def run_interactive(self, mode="", *args):
+    def run_interactive(self, mode="", *args, profile="framework-gyro-m-fast"):
         master, terminal = pty.openpty()
         try:
-            return subprocess.run(self.command("framework-gyro-m-fast", *args),
+            return subprocess.run(self.command(profile, *args),
                                   env=dict(self.env, FIXTURE_MODE=mode), cwd=self.root,
                                   stdin=terminal, capture_output=True, text=True, timeout=15)
         finally:
@@ -892,6 +892,60 @@ print(json.dumps({'host': host, 'verification': {'reused_files': 1, 'hashed_file
         self.assertEqual(self.llama_helper_calls(), [['--status', 'local-llama-qwen3-1.7b'], ['--stop']])
         for name in ('started', 'status', 'stop-warm', 'client'):
             self.assertFalse((self.root / name).exists(), name)
+
+    def test_a_profile_supplies_its_chat_defaults_to_the_workshop_console(self):
+        self.llama_fixture()
+
+        def client(*args):
+            (self.root / 'client').unlink(missing_ok=True)
+            result = subprocess.run(self.command('local-llama-qwen3-1.7b', *args), env=self.env, cwd=self.root,
+                                    capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads((self.root / 'client').read_text())['argv']
+
+        # A new conversation gets both, even when its prompt looks like an option.
+        for prompt in ('hello', '--agent-prompt'):
+            self.assertEqual(client('--prompt', prompt)[-6:],
+                             ['--prompt', prompt, '--agent-prompt', 'minimal', '--tokens-per-call', '4096'])
+        given = ['--prompt', 'hello', '--agent-prompt=codex', '--tokens-per-call', '8192']
+        argv = client(*given)
+        self.assertEqual(argv[-5:], given)
+        self.assertNotIn('minimal', argv)
+        # Saved conversations are matched by their prompt and keep their own limit.
+        self.assertEqual(client('--session', '/saved')[-4:], ['--session', '/saved', '--agent-prompt', 'minimal'])
+        # Host tools take the Codex prompt.
+        argv = client('--preset', 'coding-host', '--prompt', 'hello')
+        self.assertFalse({'--agent-prompt', '--tokens-per-call'} & set(argv))
+
+    def test_the_session_picker_lists_and_resumes_with_the_profile_prompt(self):
+        self.llama_fixture()
+        for mode, resumed in (('picker-resume', True), ('', False)):
+            with self.subTest(mode=mode):
+                result = self.run_interactive(mode, profile='local-llama-qwen3-1.7b')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for name in ('listed', 'picked'):
+                    argv = json.loads((self.root / name).read_text())
+                    self.assertEqual(argv[argv.index('--agent-prompt') + 1], 'minimal')
+                    self.assertNotIn('--tokens-per-call', argv)
+                argv = json.loads((self.root / 'client').read_text())['argv']
+                self.assertEqual(('--session' in argv, '--tokens-per-call' in argv), (resumed, not resumed))
+
+    def test_invalid_chat_defaults_are_refused_before_the_host_starts(self):
+        self.llama_fixture()
+        presets = json.loads((SOURCE / 'presets.json').read_text())
+        for name, preset in presets['profiles'].items():
+            launcher.chat_defaults(preset, name)
+        for defaults in ({'agent_prompt': 'minimal', 'context_tokens': 4096}, {'tokens_per_call': 0},
+                         {'tokens_per_call': '4096'}, {'tokens_per_call': True}, {'agent_prompt': None},
+                         ['--agent-prompt', 'minimal']):
+            with self.subTest(defaults=defaults):
+                presets['profiles']['local-llama-qwen3-1.7b']['chat_defaults'] = defaults
+                (self.package / 'presets.json').write_text(json.dumps(presets))
+                result = subprocess.run(self.command('local-llama-qwen3-1.7b', '--prompt', 'hello'), env=self.env,
+                                        cwd=self.root, capture_output=True, text=True, timeout=15)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('local-llama-qwen3-1.7b has invalid chat defaults', result.stderr)
+                self.assertEqual(self.llama_helper_calls(), [])
 
     def test_full_verification_is_forwarded_only_to_verifier(self):
         result = self.run_fixture('', '--full-verify', '--prompt', 'hello')

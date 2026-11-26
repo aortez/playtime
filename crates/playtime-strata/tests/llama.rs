@@ -254,6 +254,27 @@ fn requests_name_llama_samplers_and_switch_thinking_by_purpose() {
 }
 
 #[test]
+fn tools_are_written_in_their_usual_order() {
+    // llama-server renders a schema's keys in the order they arrive. Property
+    // names and the body's other fields keep their sorted order.
+    let mut chat = request();
+    chat.tools = vec![json!({"type":"function","function":{"name":"write_file",
+        "description":"Write a file","parameters":{"type":"object","additionalProperties":false,
+        "required":["path"],"properties":{"path":{"type":"string","description":"Where"},
+        "type":{"type":"string","enum":["text","binary"]}}}}})];
+    let sent = encode_request(&chat, &lock(), &Limits::default()).unwrap();
+    let sent = String::from_utf8(sent).unwrap();
+    let expected = concat!(
+        r#""tool_choice":"auto","tools":[{"type":"function","function":{"name":"write_file","#,
+        r#""description":"Write a file","parameters":{"type":"object","properties":{"#,
+        r#""path":{"type":"string","description":"Where"},"#,
+        r#""type":{"type":"string","enum":["text","binary"]}},"required":["path"],"#,
+        r#""additionalProperties":false}}}],"top_k":"#,
+    );
+    assert!(sent.contains(expected), "{sent}");
+}
+
+#[test]
 fn requests_llama_server_would_misread_are_refused() {
     let refused = |request: &ModelRequest, lock: &ModelLock| {
         matches!(

@@ -164,6 +164,14 @@ which it would continue as a prefill; the maximum seed, which asks it for a
 random one; a developer message; and tools that the locked template can't
 render, which it would drop.
 
+The encoder writes tools in their usual key order, because llama-server renders
+a schema's keys in the order they arrive, and small models such as LFM2.5-350M
+misread sorted ones, which put `additionalProperties` first and `type` last. A
+tool lists `type` and then `function`; a function, `name`, `description` and
+`parameters`; and a schema, `type`, `description`, `properties` and `required`,
+then its other keywords. Other keys, property names and the rest of the body
+stay sorted, as in Responses requests.
+
 The decoder accepts v1.0.0's stream strictly: an optional role chunk, one-field
 deltas, a finish chunk, a usage chunk with timings, then `[DONE]`. Calls execute
 only after `[DONE]`, when the finish reason is `tool_calls` and every call's
@@ -183,15 +191,16 @@ cargo test -p playtime-strata --locked
 ```
 
 The fixtures cover byte-fragmented UTF-8/SSE, reasoning and multiple calls,
-stateless follow-up encoding, malformed/incomplete calls, unknown/contradictory
-usage, identity changes, byte/event limits, partial evidence, HTTP failure,
-disconnect, cancellation, deadlines and consumer backpressure. `tests/llama.rs`
-covers Chat Completions: a byte-fragmented round trip and its follow-up encoding,
-sampler names, thinking by purpose, refused requests and locks, length-limited
-and unparsed calls, streamed errors, stream violations, and over HTTP the marker
-binding and refusals of a changed, busy or pinned server. Their provenance
-is in [the fixture README](../crates/playtime-strata/tests/README.md). They launch
-no inference server, GPU workload or workshop. Run the repository-wide Rust and
+stateless follow-up encoding, sorted tool keys, malformed/incomplete calls,
+unknown/contradictory usage, identity changes, byte/event limits, partial
+evidence, HTTP failure, disconnect, cancellation, deadlines and consumer
+backpressure. `tests/llama.rs` covers Chat Completions: a byte-fragmented round
+trip and its follow-up encoding, sampler names, the tools' key order, thinking
+by purpose, refused requests and locks, length-limited and unparsed calls,
+streamed errors, stream violations, and over HTTP the marker binding and
+refusals of a changed, busy or pinned server. Their provenance is in
+[the fixture README](../crates/playtime-strata/tests/README.md). They launch no
+inference server, GPU workload or workshop. Run the repository-wide Rust and
 frozen Python checks as well.
 
 ## Archived experiment worker (#233)
@@ -433,7 +442,8 @@ default sampling and 0 times with the card's. With each schema's `type`,
 drew 5 and 8. Through a proxy that reordered the schemas that way, the
 conversations of all 10 smokes passed, in about 2 seconds, with either
 sampling. The proxy delivered each response whole, so their cancellation steps
-don't count. Decoding ran at 120–160 tokens/second.
+don't count. Decoding ran at 120–160 tokens/second. The encoder now writes tools
+in that order; see [the tool order results](#tool-order-results-2026-11-26).
 
 Both models keep recurrent state, so llama-server can resume a prompt only from
 its live state or a saved checkpoint, and it saves one a few tokens before each
@@ -442,3 +452,28 @@ llama-server's default batch size, LFM2.5's follow-up calls reused 391 of about
 455 prompt tokens, and Qwen3.5's continued from the live state. These are
 smokes on short prompts, not accuracy or performance benchmarks, and a CPU smoke
 qualifies no GPU backend.
+
+## Tool order results (2026-11-26)
+
+With tools in their usual key order, the committed locks' workshop smokes passed
+10 of 10 for LFM2.5-350M, which had passed none of 12 with sorted keys. Its
+conversations took 2.0–2.1 seconds, decoding at 137–152 tokens/second. A relay
+in front of llama-server captured one smoke's first request, and
+`/apply-template` rendered its schemas with `type` first. Qwen3-1.7B passed 10
+of 10, and Qwen3.5-0.8B 8 of 10. Each Qwen3.5 failure called `read_file`
+correctly, then garbled the nonce in its answer: one dropped a letter and
+changed its case, and the other called the file empty. Its lock's presence
+penalty of 2.0 also counts the tool result, so it penalizes copying the nonce.
+Under one hold, 20 Qwen3.5 smokes with the usual order then passed 20, and 20
+with the old sorted order passed 19, failing the same way, so these batches show
+no difference between the orders. Other work on the workstation raised the load
+average from about 3 to 21 during them, which slowed some calls.
+
+In the console, through the launcher with no options, Qwen3-1.7B answered the
+read task correctly in 3.8 seconds. LFM2.5 completed the write task in a
+reopened conversation. Asked "What is the launch code in notes.txt?", with or
+without `/work/`, it answered without a tool, saying its tools can't read files.
+Asked "Read /work/notes.txt and tell me the launch code.", it read the file and
+answered in 1.6 seconds. The
+[report](../experiments/strata-adapter/2026-11-26-local-llama-tool-order.json)
+has every attempt.

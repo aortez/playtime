@@ -2167,3 +2167,20 @@ the model. The two locks take their sampling from their model cards rather than
 from `inspect-lock`, which is unchanged. The Qwen3-1.7B profile's launch
 command, and so its lock, keep their bytes. No archived run, recipe,
 conversation or golden changes.
+
+## llama-server tool order and console defaults (2026-11-26)
+
+Chat Completions requests now write their tools in the usual key order, with
+each schema's `type`, `description`, `properties` and `required` first; see
+[the transport guide](rust-strata.md#llama-server-chat-completions). Their
+fields, values and byte length are unchanged, and the transport is still
+`llama-chat-completions-v1`. Requests without tools, and every Strata and Basalt
+request, keep their bytes. No lock records request bytes, so every lock keeps
+its bytes too.
+
+A preset may name `chat_defaults`, an `agent_prompt` and a `tokens_per_call`
+for its workshop console. The Qwen3-1.7B and LFM2.5-350M profiles use the
+minimal prompt and 4,096 tokens, which their sessions previously had to give as
+options. Options given still win. A saved conversation on those profiles that
+used the Codex prompt now reopens only with `--agent-prompt codex`. No archived
+run, recipe or golden changes.

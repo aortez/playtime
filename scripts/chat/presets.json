@@ -59,7 +59,8 @@
       "state_parent": ".local/state/playtime-llama/local-llama-qwen3-1.7b",
       "model_lock": "local-llama-qwen3-1.7b-v1.lock.json",
       "startup_timeout": 120,
-      "cleanup_timeout": 30
+      "cleanup_timeout": 30,
+      "chat_defaults": {"agent_prompt": "minimal", "tokens_per_call": 4096}
     },
     "local-llama-qwen3.5-0.8b": {
       "llama": {
@@ -86,7 +87,8 @@
       "state_parent": ".local/state/playtime-llama/local-llama-lfm2.5-350m",
       "model_lock": "local-llama-lfm2.5-350m-v1.lock.json",
       "startup_timeout": 120,
-      "cleanup_timeout": 30
+      "cleanup_timeout": 30,
+      "chat_defaults": {"agent_prompt": "minimal", "tokens_per_call": 4096}
     }
   }
 }
