@@ -29,15 +29,25 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if seen.in_flight != 0 {
         return Err("endpoint is busy".into());
     }
+    let started = seen.started();
+    let (schema_version, settings) = match seen.identity.service {
+        Service::Strata => (1, Settings::default()),
+        Service::Basalt => (2, Settings::default()),
+        // llama-server's templates only switch thinking on or off. A small model
+        // left on wrote answers inside unclosed think blocks, so locks start off.
+        Service::LlamaServer => (
+            3,
+            Settings {
+                thinking: Thinking::None,
+                ..Settings::default()
+            },
+        ),
+    };
     let lock = ModelLock {
-        schema_version: if seen.identity.service == Service::Basalt {
-            2
-        } else {
-            1
-        },
+        schema_version,
         identity: seen.identity,
         host: serde_json::from_value(host["host"].clone())?,
-        settings: Settings::default(),
+        settings,
     };
     let fingerprint = lock.fingerprint()?;
     let mut file = OpenOptions::new()
@@ -46,10 +56,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .mode(0o600)
         .open(&args[3])?;
     file.write_all(&serde_json::to_vec_pretty(&lock)?)?;
+    file.write_all(b"\n")?;
     file.sync_all()?;
     println!(
         "{}",
-        json!({"model":lock.identity.model,"context":lock.identity.context_tokens,"fingerprint":fingerprint,"started":seen.started})
+        json!({"model":lock.identity.model,"context":lock.identity.context_tokens,"fingerprint":fingerprint,"started":started})
     );
     Ok(())
 }

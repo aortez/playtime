@@ -136,10 +136,12 @@ async fn basalt_has_no_settings_endpoint_and_shares_only_its_locked_capacity() {
         "5a15f95f8bf41fbd61c8e7299910d08049243eb32b26699b0b7a6f7976ad92e8",
     )
     .unwrap();
-    model.host.responses_source_sha256 = playtime_core::Sha256Digest::new(
-        "c1ba29dd88ac98f052b34e75de46106737a559871c75eb565fb852930e7bcf23",
-    )
-    .unwrap();
+    model.host.responses_source_sha256 = Some(
+        playtime_core::Sha256Digest::new(
+            "c1ba29dd88ac98f052b34e75de46106737a559871c75eb565fb852930e7bcf23",
+        )
+        .unwrap(),
+    );
     model.host.server_release_manifest_sha256 = None;
     let mut client =
         Client::new(server.endpoint.clone(), model.clone(), Limits::default()).unwrap();
@@ -167,7 +169,8 @@ async fn basalt_has_no_settings_endpoint_and_shares_only_its_locked_capacity() {
         FailureKind::Identity
     );
     assert_eq!(server.posts(), 1);
-    model.host.responses_source_sha256 = playtime_core::Sha256Digest::new("1".repeat(64)).unwrap();
+    model.host.responses_source_sha256 =
+        Some(playtime_core::Sha256Digest::new("1".repeat(64)).unwrap());
     assert!(Client::new(server.endpoint.clone(), model, Limits::default()).is_err());
     let old = serde_json::to_value(lock()).unwrap();
     assert!(old["identity"].get("service").is_none());

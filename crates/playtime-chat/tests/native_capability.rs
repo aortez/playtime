@@ -27,6 +27,46 @@ fn native_capability_is_explicit_and_needs_no_image_lock() {
 }
 
 #[test]
+fn every_invocation_names_its_reviewed_locks_transport() {
+    let models = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
+    for (lock, transport) in [
+        (
+            "framework-strata-gyro-m-fast-v2.lock.json",
+            "strata-responses-v1",
+        ),
+        ("bird-basalt-iq4-v1.lock.json", "basalt-responses-v1"),
+        (
+            "local-llama-qwen3-1.7b-v1.lock.json",
+            "llama-chat-completions-v1",
+        ),
+    ] {
+        let describe = |role: &[&str]| -> Value {
+            let output = Command::new(env!("CARGO_BIN_EXE_playtime-task"))
+                .args(role)
+                .arg("--describe-protocol")
+                .arg("--model-lock")
+                .arg(models.join(lock))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            serde_json::from_slice(&output.stdout).unwrap()
+        };
+        // Callers check the invocations' transports; worker v1 keeps its bytes.
+        let worker = describe(&[]);
+        assert_eq!(
+            worker["readonly_invocation"]["transport"], transport,
+            "{lock}"
+        );
+        assert_eq!(worker["contract_invocation"]["transport"], transport);
+        assert_eq!(describe(&["--role", "reviewer"])["transport"], transport);
+    }
+}
+
+#[test]
 fn readonly_capability_is_separate_from_worker_reports_and_never_resumes() {
     for role in ["setup", "supervisor", "reviewer"] {
         let output = Command::new(env!("CARGO_BIN_EXE_playtime-task"))

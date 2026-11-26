@@ -1,4 +1,4 @@
-# Strata and Basalt Responses transport
+# Strata, Basalt and llama-server transports
 
 `playtime-strata` implements the model-transport part of
 [#207](https://github.com/aortez/playtime/issues/207). It accepts the shared
@@ -13,7 +13,8 @@ stateless `/v1/responses` dialect with complete history, `store:false`, streamin
 and a strictly positive output limit. No Responses state is stored remotely;
 `previous_response_id`, hosted tools, images and background responses are not
 supported. No ambient proxy, redirect, HTTP retry or implicit authentication is
-used. Other serving dialects remain future adapters.
+used. A local [llama-server](#llama-server-chat-completions) uses Chat Completions
+instead. Other serving dialects remain future adapters.
 
 ## Identity and settings
 
@@ -116,6 +117,61 @@ terminal usage map to `ModelParseError` with the measured count; shared controll
 policy decides whether another bounded attempt is allowed. A length-limited
 response preserves usage and partial text but supplies no executable calls.
 
+## llama-server Chat Completions
+
+llama.cpp's `llama-server`, built on the workstation, serves small GGUF models
+for tool-calling experiments without Strata or Basalt. The reviewed release is
+v1.0.0, commit `b1b770d90d94cad9e9ea5b993bdbc383a522fb28`, built for CPU only.
+The launcher's local owner starts one single-slot loopback server per session;
+see [local llama-server profiles](rust-chat-launcher.md#local-llama-server-profiles).
+
+`inspect_endpoint` treats a server whose `/props` `build_info` names neither
+Strata nor Basalt as llama-server, and reads its `/slots` and `/v1/models` too.
+Only a loaded, awake, single-slot, text-only server qualifies, with read-only
+properties, its slots endpoint on and one listed model whose context matches.
+Schema-3 locks bind `service: llama_server`, the model alias, `build_info` as
+the engine, the context, the template's hash and capabilities and the default
+generation settings. A `server` object freezes the other stable `/props` fields
+and the model's `/v1/models` metadata, and `shared_settings` is null.
+
+llama-server reports no start time. Its `/props` `media_marker` is random for
+each process, and `Inspection.instance` carries it as `Instance::Marker`. The
+client binds to the first marker it sees, and before each request refuses
+another marker, a changed identity or an active slot. The `LLAMA_MEDIA_MARKER`
+environment variable would pin the marker, so the owner starts the server with
+an empty environment, which the launch configuration digest covers.
+
+Each host builds its own binary, so a lock holds that binary's digest rather
+than a reviewed one. The host identity binds the build instead: backend `cpu`,
+`source_commit`, which must be a reviewed release whose short hash ends
+`build_info`, and `build_manifest_sha256`, the digest of the runtime's
+`BUILD.json` record of the commit, CMake options, toolchain, linked libraries
+and binary digest. The verifier refuses GPU `GGML_*` options and reads the
+quantization from the GGUF header. There is no Responses source or server
+release to hash.
+
+Requests go to `/v1/chat/completions` with the complete history, streaming with
+usage, the output limit, every sampler setting under llama-server's names and
+the controller's seed. `reasoning_format: deepseek` separates reasoning from the
+answer, and reasoning goes back as `reasoning_content`. Thinking is `on` or
+`none`, sent as the template's `enable_thinking`. Before dispatch, the encoder
+refuses what llama-server would quietly change: a trailing assistant message,
+which it would continue as a prefill; the maximum seed, which asks it for a
+random one; a developer message; and tools that the locked template can't
+render, which it would drop.
+
+The decoder accepts v1.0.0's stream strictly: an optional role chunk, one-field
+deltas, a finish chunk, a usage chunk with timings, then `[DONE]`. Calls execute
+only after `[DONE]`, when the finish reason is `tool_calls` and every call's
+arguments parse as a JSON object: llama-server's lenient parser also reports
+`tool_calls` for arguments that the length limit cut off. A streamed error ends
+the call. The one for model output that doesn't match the template's format
+becomes a tool-parse failure, which the controller may retry; the text itself is
+only in the server's log. A rejected request keeps llama-server's explanation,
+as in `Chat Completions HTTP 400 Bad Request (…); not replayed`. Usage, cached
+input tokens and timings come only from the usage chunk, and reasoning tokens
+stay unknown.
+
 ## CPU checks
 
 ```sh
@@ -125,7 +181,11 @@ cargo test -p playtime-strata --locked
 The fixtures cover byte-fragmented UTF-8/SSE, reasoning and multiple calls,
 stateless follow-up encoding, malformed/incomplete calls, unknown/contradictory
 usage, identity changes, byte/event limits, partial evidence, HTTP failure,
-disconnect, cancellation, deadlines and consumer backpressure. Their provenance
+disconnect, cancellation, deadlines and consumer backpressure. `tests/llama.rs`
+covers Chat Completions: a byte-fragmented round trip and its follow-up encoding,
+sampler names, thinking by purpose, refused requests and locks, length-limited
+and unparsed calls, streamed errors, stream violations, and over HTTP the marker
+binding and refusals of a changed, busy or pinned server. Their provenance
 is in [the fixture README](../crates/playtime-strata/tests/README.md). They launch
 no inference server, GPU workload or workshop. Run the repository-wide Rust and
 frozen Python checks as well.
@@ -204,6 +264,16 @@ cargo run -p playtime-strata --example workshop-smoke --locked -- \
   http://127.0.0.1:18080/v1 /absolute/new-lock.json \
   environments/general.lock.json /absolute/new-evidence-directory
 ```
+
+A local llama-server profile has no remote helper. Build the reviewed release
+into the profile's runtime directory, with its `BUILD.json` beside
+`bin/llama-server`, add the profile's `llama` preset entry, and start the owner
+with `python3 -I scripts/chat/llama-session.py PROFILE --port PORT`. Write a
+line to its stdin at least every 10 seconds; EOF stops the server. After its
+`GYRO_READY` line, run the verifier with `--discover` on the session directory
+the owner names on stderr, then `inspect-lock`, which writes llama-server locks
+with thinking off. Check a new lock through the launcher's `--hold` before
+committing it, and run the smoke on the endpoint that the hold lends.
 
 The smoke requires the existing locked image and local rootful Linux Docker
 socket. It creates a private evidence directory, commits resource ownership,
@@ -286,3 +356,32 @@ Basalt 0.4.1 reports `activity.in_flight` as a busy flag plus queued requests.
 Admission therefore also reads `/slots`, validates IDs/context/count and boolean
 processing states, and counts active slots. Missing or malformed slot metadata
 rejects dispatch; a two-busy-slot regression keeps the status busy flag at one.
+
+## Local llama-server result (2026-11-25)
+
+[The saved report](../experiments/strata-adapter/2026-11-25-local-llama-qwen3-1.7b-smoke.json)
+and [lock](../models/local-llama-qwen3-1.7b-v1.lock.json) identify Qwen3-1.7B
+Q4_K_M on llama-server v1.0.0, on CPU with 8 threads, one 40,960-token slot and
+thinking off. Through the launcher's hold, the smoke's two model calls and one
+real `read_file` call finished in 5.412 seconds with 74 generated tokens and
+complete usage accounting. Reported decode rates were 35.4 and 28.8
+tokens/second. Cancellation passed, the slot was observed idle, owned workshop
+resources were removed, and after the release the owner stopped its server and
+exited 0. The first verification hashed the 1.36 GB model; later ones reused
+that hash.
+
+With thinking on, 3 of 5 smokes under one hold passed, in 12–16 seconds, and an
+earlier smoke failed. In each failure the model wrote its answer inside a
+`<think>` block that it never closed. llama-server reported all of it as
+reasoning, and the controller stopped the turn as `invalid_completion` because
+the final reply had no answer content. A replay without reasoning extraction
+showed the raw text. With thinking off, 5 of 5 passed in about 4 seconds, so
+llama-server locks start with thinking off, and thinking would need its own
+lock.
+
+The launcher's console also finished a file-reading turn and a file-writing turn
+on this profile, in 3.5 and 2.5 seconds. Its default Codex prompt doesn't fit
+this context under the console's byte-counted first-turn check, so both ran with
+`--agent-prompt minimal --tokens-per-call 4096`. This is a transport smoke on
+short prompts, not an accuracy or performance benchmark, and a CPU smoke
+qualifies no GPU backend.

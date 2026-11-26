@@ -5,8 +5,8 @@ use serde_json::Value;
 use tokio::{sync::mpsc, time::Instant};
 
 use crate::{
-    CallResult, CancellationToken, Decoder, Failure, FailureKind, Identity, Limits, ModelLock,
-    RemoteState, Result, Service, StreamEvent, encode_request,
+    CallResult, CancellationToken, ChatDecoder, Completion, Decoder, Failure, FailureKind,
+    Identity, Limits, ModelLock, RemoteState, Result, Service, StreamEvent, encode_request,
 };
 
 /// The initial profile reaches an owned local server or SSH forward. It does
@@ -50,14 +50,41 @@ impl Endpoint {
     }
 }
 
+/// What tells one server process from its restart. Matching values show only
+/// that no restart was observed, never that the process is still running.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Instance {
+    /// The start time that Strata and Basalt report.
+    Started(u64),
+    /// llama-server reports no start time. Its media marker is random for each
+    /// process, unless its environment pins one, which a lock's launch
+    /// configuration excludes.
+    Marker(String),
+}
+
 #[derive(Clone, Debug)]
 pub struct Inspection {
     pub identity: Identity,
-    pub started: u64,
+    pub instance: Instance,
     pub in_flight: u64,
     pub props: Value,
+    /// Strata's and Basalt's /v1/status.
     pub status: Value,
+    /// Strata's /settings.
     pub settings: Value,
+    /// Basalt's and llama-server's /slots.
+    pub slots: Value,
+    /// llama-server's /v1/models.
+    pub models: Value,
+}
+impl Inspection {
+    /// The start time Strata and Basalt report, which llama-server doesn't.
+    pub fn started(&self) -> Option<u64> {
+        match self.instance {
+            Instance::Started(started) => Some(started),
+            Instance::Marker(_) => None,
+        }
+    }
 }
 
 pub struct Client {
@@ -65,7 +92,7 @@ pub struct Client {
     endpoint: Endpoint,
     lock: ModelLock,
     limits: Limits,
-    started: Option<u64>,
+    instance: Option<Instance>,
 }
 fn http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
@@ -162,6 +189,14 @@ async fn inspect(
         cancel,
     )
     .await?;
+    // Strata and Basalt name themselves here. Whatever else answers must pass
+    // llama-server's checks, and a lock's identity names its service.
+    if !props["build_info"]
+        .as_str()
+        .is_some_and(|b| b.starts_with("Strata ") || b.starts_with("basalt "))
+    {
+        return inspect_llama(http, endpoint, limits, deadline, cancel, props).await;
+    }
     let status = metadata(
         http,
         endpoint,
@@ -206,29 +241,107 @@ async fn inspect(
             cancel,
         )
         .await?;
-        let invalid = || Failure::new(FailureKind::Identity, "invalid Basalt slot activity");
-        let slots = slots.as_array().ok_or_else(invalid)?;
-        if slots.len() as u64 != identity.parallel {
-            return Err(invalid());
-        }
-        let mut active = 0;
-        for (id, slot) in slots.iter().enumerate() {
-            if slot["id"].as_u64() != Some(id as u64)
-                || slot["n_ctx"].as_u64() != Some(identity.context_tokens)
-            {
-                return Err(invalid());
-            }
-            active += u64::from(slot["is_processing"].as_bool().ok_or_else(invalid)?);
-        }
-        in_flight = in_flight.max(active);
+        in_flight = in_flight.max(active_slots(
+            &slots,
+            &identity,
+            "invalid Basalt slot activity",
+        )?);
+        return Ok(Inspection {
+            identity,
+            instance: Instance::Started(started),
+            in_flight,
+            props,
+            status,
+            settings,
+            slots,
+            models: Value::Null,
+        });
     }
     Ok(Inspection {
         identity,
-        started,
+        instance: Instance::Started(started),
         in_flight,
         props,
         status,
         settings,
+        slots: Value::Null,
+        models: Value::Null,
+    })
+}
+
+/// The number of processing slots in a table of exactly the identity's slots.
+fn active_slots(slots: &Value, identity: &Identity, detail: &str) -> Result<u64> {
+    let invalid = || Failure::new(FailureKind::Identity, detail);
+    let slots = slots.as_array().ok_or_else(invalid)?;
+    if slots.len() as u64 != identity.parallel {
+        return Err(invalid());
+    }
+    let mut active = 0;
+    for (id, slot) in slots.iter().enumerate() {
+        if slot["id"].as_u64() != Some(id as u64)
+            || slot["n_ctx"].as_u64() != Some(identity.context_tokens)
+        {
+            return Err(invalid());
+        }
+        active += u64::from(slot["is_processing"].as_bool().ok_or_else(invalid)?);
+    }
+    Ok(active)
+}
+
+/// `<__media_`, 32 random letters and digits, then `__>`.
+fn random_marker(marker: &str) -> bool {
+    marker
+        .strip_prefix("<__media_")
+        .and_then(|m| m.strip_suffix("__>"))
+        .is_some_and(|m| m.len() == 32 && m.bytes().all(|b| b.is_ascii_alphanumeric()))
+}
+
+async fn inspect_llama(
+    http: &reqwest::Client,
+    endpoint: &Endpoint,
+    limits: &Limits,
+    deadline: Instant,
+    cancel: &CancellationToken,
+    props: Value,
+) -> Result<Inspection> {
+    let slots = metadata(
+        http,
+        endpoint,
+        "/slots",
+        limits.metadata_bytes,
+        deadline,
+        cancel,
+    )
+    .await?;
+    let models = metadata(
+        http,
+        endpoint,
+        "/v1/models",
+        limits.metadata_bytes,
+        deadline,
+        cancel,
+    )
+    .await?;
+    let identity = Identity::inspect_llama(&props, &slots, &models)?;
+    let marker = props["media_marker"]
+        .as_str()
+        .filter(|m| random_marker(m))
+        .ok_or_else(|| {
+            Failure::new(
+                FailureKind::Identity,
+                "llama-server's process marker is missing or pinned",
+            )
+        })?;
+    let in_flight = active_slots(&slots, &identity, "invalid llama-server slot activity")?;
+    Ok(Inspection {
+        identity,
+        instance: Instance::Marker(marker.into()),
+        in_flight,
+        props,
+        status: Value::Null,
+        settings: Value::Null,
+        slots,
+        models,
     })
 }
 
@@ -253,13 +366,13 @@ impl Client {
             endpoint,
             lock,
             limits,
-            started: None,
+            instance: None,
         })
     }
     /// Bind the client to the server process a caller already verified. Its
     /// first check then refuses any other process, as every later check does.
     pub fn with_server_start(mut self, started: u64) -> Self {
-        self.started = Some(started);
+        self.instance = Some(Instance::Started(started));
         self
     }
     pub fn lock(&self) -> &ModelLock {
@@ -271,23 +384,34 @@ impl Client {
         cancel: &CancellationToken,
     ) -> Result<Inspection> {
         let seen = inspect(&self.http, &self.endpoint, &self.limits, deadline, cancel).await?;
-        if seen.identity != self.lock.identity || self.started.is_some_and(|s| s != seen.started) {
+        let llama = self.lock.identity.service == Service::LlamaServer;
+        if seen.identity != self.lock.identity
+            || self.instance.as_ref().is_some_and(|i| *i != seen.instance)
+        {
             return Err(Failure::new(
                 FailureKind::Identity,
-                "Strata model, template, settings or server process changed",
+                if llama {
+                    "llama-server model, template, settings or process changed"
+                } else {
+                    "Strata model, template, settings or server process changed"
+                },
             ));
         }
         // The external Basalt owner lends at most one client per serving slot.
         // Another admitted client may be generating while this one verifies.
-        if (seen.identity.service == Service::Strata && seen.in_flight != 0)
+        if (seen.identity.service != Service::Basalt && seen.in_flight != 0)
             || seen.in_flight >= seen.identity.parallel
         {
             return Err(Failure::new(
                 FailureKind::Busy,
-                "Strata has active or queued requests",
+                if llama {
+                    "llama-server has an active request"
+                } else {
+                    "Strata has active or queued requests"
+                },
             ));
         }
-        self.started = Some(seen.started);
+        self.instance = Some(seen.instance.clone());
         Ok(seen)
     }
 
@@ -299,8 +423,17 @@ impl Client {
         events: mpsc::Sender<StreamEvent>,
     ) -> CallResult {
         let mut remote = RemoteState::NotDispatched;
-        let mut decoder =
-            Decoder::new(&self.lock.identity.model, self.limits.clone()).expect("validated limits");
+        let identity = &self.lock.identity;
+        let mut decoder = if identity.service == Service::LlamaServer {
+            Stream::Chat(
+                ChatDecoder::new(&identity.model, &identity.engine, self.limits.clone())
+                    .expect("validated limits"),
+            )
+        } else {
+            Stream::Responses(
+                Decoder::new(&identity.model, self.limits.clone()).expect("validated limits"),
+            )
+        };
         let result = self
             .run(request, deadline, cancel, events, &mut decoder, &mut remote)
             .await;
@@ -323,18 +456,22 @@ impl Client {
         deadline: Instant,
         cancel: &CancellationToken,
         events: mpsc::Sender<StreamEvent>,
-        decoder: &mut Decoder,
+        decoder: &mut Stream,
         remote: &mut RemoteState,
     ) -> Result<()> {
         let bytes = encode_request(request, &self.lock, &self.limits)?;
         self.verify(deadline, cancel).await?;
+        let (path, dialect) = match decoder {
+            Stream::Chat(_) => ("/v1/chat/completions", "Chat Completions"),
+            Stream::Responses(_) => ("/v1/responses", "Responses"),
+        };
         bounded(deadline, cancel, async {
             // From this point a request may reach the server, even if HTTP
             // headers or the first SSE frame never arrive. Never retry it here.
             *remote = RemoteState::Uncertain;
             let response = self
                 .http
-                .post(self.endpoint.url("/v1/responses"))
+                .post(self.endpoint.url(path))
                 .header("Content-Type", "application/json")
                 .header("Accept", "text/event-stream")
                 .header("Accept-Encoding", "identity")
@@ -343,9 +480,18 @@ impl Client {
                 .await
                 .map_err(|e| Failure::new(FailureKind::Connection, e))?;
             if !response.status().is_success() {
+                let status = response.status();
+                // llama-server explains a rejected request in its body.
+                let reason = match decoder {
+                    Stream::Chat(_) => error_message(response, self.limits.metadata_bytes).await,
+                    Stream::Responses(_) => None,
+                };
                 return Err(Failure::new(
                     FailureKind::Http,
-                    format!("Responses HTTP {}; not replayed", response.status()),
+                    match reason {
+                        Some(reason) => format!("{dialect} HTTP {status} ({reason}); not replayed"),
+                        None => format!("{dialect} HTTP {status}; not replayed"),
+                    },
                 ));
             }
             encoding(&response)?;
@@ -357,7 +503,7 @@ impl Client {
             {
                 return Err(Failure::new(
                     FailureKind::Protocol,
-                    "expected Responses event stream",
+                    format!("expected {dialect} event stream"),
                 ));
             }
             let mut body = response.bytes_stream();
@@ -376,9 +522,73 @@ impl Client {
             }
             Err(Failure::new(
                 FailureKind::Incomplete,
-                "connection ended before a terminal Responses event",
+                format!("connection ended before a terminal {dialect} event"),
             ))
         })
         .await
+    }
+}
+
+/// The `error.message` of a bounded JSON error body, if there is one.
+async fn error_message(response: reqwest::Response, limit: usize) -> Option<String> {
+    let mut body = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(part) = body.next().await {
+        bytes.extend_from_slice(&part.ok()?);
+        if bytes.len() > limit {
+            return None;
+        }
+    }
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    value["error"]["message"].as_str().map(str::to_owned)
+}
+
+/// The decoder for the lock's dialect.
+pub(crate) enum Stream {
+    Responses(Decoder),
+    Chat(ChatDecoder),
+}
+impl Stream {
+    fn push(&mut self, bytes: &[u8]) -> Result<()> {
+        match self {
+            Self::Responses(d) => d.push(bytes),
+            Self::Chat(d) => d.push(bytes),
+        }
+    }
+    fn take_events(&mut self) -> Vec<StreamEvent> {
+        match self {
+            Self::Responses(d) => d.take_events(),
+            Self::Chat(d) => d.take_events(),
+        }
+    }
+    fn is_finished(&self) -> bool {
+        match self {
+            Self::Responses(d) => d.is_finished(),
+            Self::Chat(d) => d.is_finished(),
+        }
+    }
+    fn terminal_observed(&self) -> bool {
+        match self {
+            Self::Responses(d) => d.terminal_observed(),
+            Self::Chat(d) => d.terminal_observed(),
+        }
+    }
+    fn partial(&self) -> Value {
+        match self {
+            Self::Responses(d) => d.partial(),
+            Self::Chat(d) => d.partial(),
+        }
+    }
+    fn received_bytes(&self) -> usize {
+        match self {
+            Self::Responses(d) => d.received_bytes(),
+            Self::Chat(d) => d.received_bytes(),
+        }
+    }
+    fn finish(self) -> Result<Completion> {
+        match self {
+            Self::Responses(d) => d.finish(),
+            Self::Chat(d) => d.finish(),
+        }
     }
 }

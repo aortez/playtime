@@ -47,6 +47,19 @@
       "model_lock": "bird-basalt-nvfp4-v1.lock.json",
       "startup_timeout": 450,
       "cleanup_timeout": 65
+    },
+    "local-llama-qwen3-1.7b": {
+      "llama": {
+        "runtime": "/home/data2/playtime-llama-dev/runtime/v1.0.0",
+        "model": "/home/data2/playtime-llama-dev/models/qwen3-1.7b-q4_k_m.gguf",
+        "alias": "qwen3-1.7b-q4_k_m",
+        "context": 40960,
+        "threads": 8
+      },
+      "state_parent": ".local/state/playtime-llama/local-llama-qwen3-1.7b",
+      "model_lock": "local-llama-qwen3-1.7b-v1.lock.json",
+      "startup_timeout": 120,
+      "cleanup_timeout": 30
     }
   }
 }

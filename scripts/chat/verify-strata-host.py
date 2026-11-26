@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Read a held Strata helper session and hash its actual process and artifacts.
+"""Read a held inference session and hash its actual process and artifacts.
 
-Sent over SSH on stdin. Unchanged model artifacts may reuse private cached hashes;
-the engine, the Responses source and the Strata server release are always hashed.
+Sent on stdin over SSH to a Strata or Basalt helper's host, or run beside a local
+llama-server owner. Unchanged model artifacts may reuse private cached hashes;
+engines, serving sources, server releases and build records are always read.
 Both ends check the reviewed host identity before handoff. This script never
 starts or changes the model.
 """
@@ -212,7 +213,126 @@ def release_manifest(release, hashes):
     return sorted(entries, key=lambda entry: entry["path"])
 
 
+# Reviewed `general.file_type` values from llama.cpp's llama.h.
+GGUF_FILE_TYPES = {0: "F32", 1: "F16", 2: "Q4_0", 7: "Q8_0", 14: "Q4_K_S", 15: "Q4_K_M",
+                   17: "Q5_K_M", 18: "Q6_K", 32: "BF16"}
+# Byte widths of GGUF's fixed-size value types; 8 is a string and 9 an array.
+GGUF_WIDTHS = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}
+GGUF_HEADER_LIMIT = 256 << 20
+
+
+def gguf_quantization(path):
+    """The quantization that a GGUF v3 file's `general.file_type` header names."""
+    with path.open("rb") as source:
+        def number(size):
+            data = source.read(size)
+            if len(data) != size or source.tell() > GGUF_HEADER_LIMIT:
+                raise RuntimeError(f"unreadable GGUF header: {path}")
+            return int.from_bytes(data, "little")
+
+        def skip(kind):
+            if kind == 8:
+                source.seek(number(8), os.SEEK_CUR)
+            elif kind == 9:
+                inner, count = number(4), number(8)
+                if inner in GGUF_WIDTHS:
+                    source.seek(GGUF_WIDTHS[inner] * count, os.SEEK_CUR)
+                else:
+                    for _ in range(count):
+                        skip(inner)
+            elif kind in GGUF_WIDTHS:
+                source.seek(GGUF_WIDTHS[kind], os.SEEK_CUR)
+            else:
+                raise RuntimeError(f"unreadable GGUF header: {path}")
+
+        if source.read(4) != b"GGUF" or number(4) != 3:
+            raise RuntimeError(f"not a GGUF v3 file: {path}")
+        number(8)
+        for _ in range(number(8)):
+            length = number(8)
+            if length > 1024:
+                raise RuntimeError(f"unreadable GGUF header: {path}")
+            key, kind = source.read(length), number(4)
+            if key == b"general.file_type":
+                file_type = number(4) if kind == 4 else None
+                if file_type not in GGUF_FILE_TYPES:
+                    raise RuntimeError(f"unreviewed GGUF file type {file_type}: {path}")
+                return GGUF_FILE_TYPES[file_type]
+            skip(kind)
+    raise RuntimeError(f"GGUF header names no file type: {path}")
+
+
+def serves(pid, port):
+    """Whether the process holds the socket that listens on 127.0.0.1:port."""
+    rows = (line.split() for line in Path("/proc/net/tcp").read_text().splitlines()[1:])
+    sockets = {f"socket:[{row[9]}]" for row in rows if row[1] == f"0100007F:{port:04X}" and row[3] == "0A"}
+    for descriptor in (Path("/proc") / str(pid) / "fd").iterdir():
+        try:
+            if os.readlink(descriptor) in sockets:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def verify_llama(root, expected_host, full=False):
+    """Attest the owner's llama-server process, its build record and its model file."""
+    record = json.loads((root / "llama-session.json").read_text())
+    runtime = Path(record["runtime"])
+    proc = Path("/proc") / str(record["pid"])
+
+    def observe():
+        argv = [s.decode() for s in (proc / "cmdline").read_bytes().split(b"\0") if s]
+        return argv, (proc / "stat").read_text().rsplit(")", 1)[1].split()[19]
+
+    argv, started = observe()
+    environment = dict(value.split("=", 1) for value in (proc / "environ").read_bytes().decode().split("\0") if value)
+    if (argv != record["argv"] or started != record["start_ticks"] or environment != record["environment"]
+            or (proc / "cwd").resolve() != runtime or argv[0] != str(runtime / "bin/llama-server")):
+        raise RuntimeError("owned llama-server process differs from its session record")
+    port, model = argv[argv.index("--port") + 1], Path(argv[argv.index("-m") + 1])
+    if port != str(record["port"]) or model != Path(record["model"]) or not serves(record["pid"], int(port)):
+        raise RuntimeError("owned llama-server does not serve its recorded port and model")
+    build_bytes = (runtime / "BUILD.json").read_bytes()
+    build = json.loads(build_bytes)
+    # A GPU or RPC backend would need its own review, and a different label.
+    if (build.get("schema_version") != 1 or build.get("target") != "llama-server"
+            or build.get("binary", {}).get("path") != "bin/llama-server"
+            or any(option.startswith("-DGGML_") and option.endswith("=ON") and option != "-DGGML_NATIVE=ON"
+                   for option in build.get("cmake_options", []))):
+        raise RuntimeError("unreviewed llama-server build record")
+    hashes = ArtifactHashes(Path.home() / ".cache/playtime-chat", expected_host or {}, full or expected_host is None)
+    engine = hashes.hash_file(proc / "exe")["sha256"]
+    if engine != build["binary"]["sha256"]:
+        raise RuntimeError("running llama-server differs from its build record")
+    artifacts = [hashes.hash_file(model, reusable=True)]
+    # Each launch draws its own port; the rest of the command is reviewed.
+    launch = {"argv": ["PORT" if previous == "--port" else value for previous, value in zip(["", *argv], argv)],
+              "environment": environment, "cwd": str(runtime)}
+    host = {"backend": "cpu", "quantization": gguf_quantization(model), "engine_sha256": engine,
+            "artifacts_manifest_sha256": digest_json(artifacts),
+            "launch_configuration_sha256": digest_json(launch), "source_commit": build["commit"],
+            "build_manifest_sha256": hashlib.sha256(build_bytes).hexdigest()}
+    if observe() != (argv, started) or (runtime / "BUILD.json").read_bytes() != build_bytes:
+        raise RuntimeError("llama-server process or build record changed during verification")
+    if expected_host is not None:
+        hashes.finish(host)
+    else:
+        for path, before in hashes.observed.items():
+            if identity(path.stat()) != before:
+                raise RuntimeError("artifact changed during discovery")
+    report = {"host": host, "artifacts": artifacts, "launch": launch,
+              "process": {"pid": record["pid"], "start_ticks": started, "port": record["port"]},
+              "verification": hashes.stats}
+    # A new lock's reviewer reads the whole build record; launches pin its digest.
+    if expected_host is None:
+        report["build"] = build
+    return report
+
+
 def verify(root, expected_host, full=False):
+    if (root / "llama-session.json").exists():
+        return verify_llama(root, expected_host, full)
     if (root / "session.json").exists():
         return verify_basalt(root, expected_host, full)
     hashes = ArtifactHashes(Path.home() / ".cache/playtime-chat", expected_host or {}, full or expected_host is None)

@@ -103,13 +103,17 @@ Keep it beside worker/report v1 without changing v1 bytes or events, resolve evi
 only from the same invocation, and keep its repair turn opt-in and bounded to one.
 Also run `cargo test -p playtime-chat --test contract_docker --locked -- --ignored`
 for its Docker path; its scripted model qualifies no live role.
-`playtime-strata` adapts the installed stateless Responses API to shared model
-requests; it never owns a model server or executes tools. Freeze the endpoint's
+`playtime-strata` adapts the installed stateless Responses API, and a local CPU
+llama-server's Chat Completions, to shared model requests; it never owns a model
+server or executes tools. Freeze the endpoint's
 model/template/settings plus independently verified host artifacts, keep missing
-usage unknown, and never replay an ambiguous request. Run its CPU fixtures and
+usage unknown, and never replay an ambiguous request. Bind llama-server to its
+per-process `/props` marker; its owner, `scripts/chat/llama-session.py`, starts
+it with an empty environment and never parks it. Run its CPU fixtures and
 the explicitly owned live workshop smoke sequentially for transport changes;
 see `docs/rust-strata.md`. Socket closure and terminal SSE events are observations,
-not remote termination authority. A fixture or HIP smoke does not qualify CUDA.
+not remote termination authority. A fixture or HIP smoke does not qualify CUDA,
+and a CPU llama-server smoke qualifies no GPU backend.
 `playtime-storage` owns synchronous portable archive I/O. Preserve its distinction
 between writer-confirmed live frontiers and offline recovered markers. Never
 retry a stopped writer or promote uncommitted bytes. See `docs/rust-storage.md`

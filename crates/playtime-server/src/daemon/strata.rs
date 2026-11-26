@@ -546,9 +546,12 @@ impl Hold {
         if seen.in_flight != 0 {
             return Err(("its server already has work", Error::Busy));
         }
+        let started = seen
+            .started()
+            .ok_or_else(|| unavailable("its server reports no start time"))?;
         Ok(StrataHost {
             endpoint: endpoint.into(),
-            started: seen.started,
+            started,
             verification: held["report"].clone(),
             ..self.target.template()
         })
@@ -597,7 +600,7 @@ impl Hold {
         self.target
             .inspect(&endpoint, &CancellationToken::new())
             .await
-            .is_some_and(|seen| seen.started == self.host.started && seen.in_flight == 0)
+            .is_some_and(|seen| seen.started() == Some(self.host.started) && seen.in_flight == 0)
     }
     /// Abandons a hold that hasn't lent its host: EOF before `held` stops it.
     async fn abandon(mut self, why: &str) {

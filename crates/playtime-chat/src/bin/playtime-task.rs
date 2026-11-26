@@ -304,11 +304,16 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
         if let Some(path) = &args.model_lock {
             let lock: ModelLock = serde_json::from_slice(&std::fs::read(path)?)?;
             lock.validate()?;
-            if lock.identity.service == playtime_strata::Service::Basalt {
-                description["transport"] = "basalt-responses-v1".into();
+            let transport = match lock.identity.service {
+                playtime_strata::Service::Strata => None,
+                playtime_strata::Service::Basalt => Some("basalt-responses-v1"),
+                playtime_strata::Service::LlamaServer => Some("llama-chat-completions-v1"),
+            };
+            if let Some(transport) = transport {
+                description["transport"] = transport.into();
                 if !read_only {
-                    description["readonly_invocation"]["transport"] = "basalt-responses-v1".into();
-                    description["contract_invocation"]["transport"] = "basalt-responses-v1".into();
+                    description["readonly_invocation"]["transport"] = transport.into();
+                    description["contract_invocation"]["transport"] = transport.into();
                 }
             }
         }

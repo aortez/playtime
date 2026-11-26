@@ -5,12 +5,15 @@ use playtime_engine::ModelRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{Failure, FailureKind, Limits, ModelLock, Result};
+use crate::{Failure, FailureKind, Limits, ModelLock, Result, Service};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Thinking {
     None,
+    /// Thinking without an effort level, for llama-server templates, which
+    /// only switch it on or off.
+    On,
     Low,
     Medium,
     High,
@@ -74,35 +77,51 @@ impl Settings {
         }
         Ok(())
     }
+    /// Strata and Basalt take an effort level or none.
+    pub(crate) fn responses_thinking(&self) -> bool {
+        self.thinking != Thinking::On && self.summary_thinking != Thinking::On
+    }
+    /// llama-server's templates only switch thinking on or off.
+    pub(crate) fn llama_thinking(&self) -> bool {
+        [self.thinking, self.summary_thinking]
+            .iter()
+            .all(|t| matches!(t, Thinking::None | Thinking::On))
+    }
 }
 
-pub fn encode_request(
-    request: &ModelRequest,
-    lock: &ModelLock,
-    limits: &Limits,
-) -> Result<Vec<u8>> {
-    lock.validate()?;
-    limits.validate()?;
-    let invalid = || {
-        Failure::new(
-            FailureKind::Request,
-            "invalid or incomplete normalized conversation",
-        )
-    };
-    if request.maximum_tokens == 0
-        || request.maximum_tokens > i32::MAX as u64
-        || request
-            .context_input_bound
-            .saturating_add(request.maximum_tokens)
-            .saturating_add(request.context_reserve)
-            > lock.identity.context_tokens
-    {
-        return Err(Failure::new(
-            FailureKind::Request,
-            "request exceeds the locked context/output allowance",
-        ));
-    }
-    let mut input = Vec::new();
+/// One validated message of a normalized conversation.
+enum Turn<'a> {
+    Text {
+        role: &'a str,
+        content: &'a str,
+    },
+    Assistant {
+        thinking: &'a str,
+        content: &'a str,
+        calls: Vec<Call<'a>>,
+    },
+    Result {
+        call_id: String,
+        output: &'a str,
+    },
+}
+struct Call<'a> {
+    id: String,
+    name: &'a str,
+    arguments: String,
+}
+
+fn invalid() -> Failure {
+    Failure::new(
+        FailureKind::Request,
+        "invalid or incomplete normalized conversation",
+    )
+}
+
+/// Each tool result must answer the earliest unanswered call, by name, before
+/// any other message.
+fn conversation(request: &ModelRequest) -> Result<Vec<Turn<'_>>> {
+    let mut turns = Vec::new();
     let mut pending = VecDeque::new();
     let mut used_ids = BTreeSet::new();
     for (index, message) in request.messages.iter().enumerate() {
@@ -113,23 +132,21 @@ pub fn encode_request(
         match role {
             "system" | "user" | "developer" => {
                 let content = message["content"].as_str().ok_or_else(invalid)?;
-                input.push(json!({"type":"message", "role":role, "content":content}));
+                turns.push(Turn::Text { role, content });
             }
             "assistant" => {
-                if let Some(text) = message.get("thinking") {
-                    let text = text.as_str().ok_or_else(invalid)?;
-                    if !text.is_empty() {
-                        input.push(json!({"type":"reasoning", "content":[{"type":"reasoning_text", "text":text}]}));
-                    }
-                }
+                let thinking = match message.get("thinking") {
+                    Some(text) => text.as_str().ok_or_else(invalid)?,
+                    None => "",
+                };
                 let content = message
                     .get("content")
                     .map(Value::as_str)
                     .unwrap_or(Some(""))
                     .ok_or_else(invalid)?;
-                input.push(json!({"type":"message", "role":"assistant", "content":content}));
-                if let Some(calls) = message.get("tool_calls") {
-                    for (ordinal, call) in calls.as_array().ok_or_else(invalid)?.iter().enumerate()
+                let mut calls = Vec::new();
+                if let Some(listed) = message.get("tool_calls") {
+                    for (ordinal, call) in listed.as_array().ok_or_else(invalid)?.iter().enumerate()
                     {
                         let name = call["function"]["name"]
                             .as_str()
@@ -149,27 +166,40 @@ pub fn encode_request(
                         if !used_ids.insert(id.clone()) {
                             return Err(invalid());
                         }
-                        input.push(json!({"type":"function_call", "call_id":id, "name":name,
-                            "arguments":serde_json::to_string(args).map_err(|_| invalid())?}));
-                        pending.push_back((id, name.to_owned()));
+                        pending.push_back((id.clone(), name));
+                        calls.push(Call {
+                            id,
+                            name,
+                            arguments: serde_json::to_string(args).map_err(|_| invalid())?,
+                        });
                     }
                 }
+                turns.push(Turn::Assistant {
+                    thinking,
+                    content,
+                    calls,
+                });
             }
             "tool" => {
-                let (id, name) = pending.pop_front().ok_or_else(invalid)?;
+                let (call_id, name) = pending.pop_front().ok_or_else(invalid)?;
                 if message["tool_name"] != name {
                     return Err(invalid());
                 }
                 let output = message["content"].as_str().ok_or_else(invalid)?;
-                input.push(json!({"type":"function_call_output", "call_id":id, "output":output}));
+                turns.push(Turn::Result { call_id, output });
             }
             _ => return Err(invalid()),
         }
     }
-    if !pending.is_empty() || input.is_empty() {
+    if !pending.is_empty() || turns.is_empty() {
         return Err(invalid());
     }
-    let mut tools = Vec::new();
+    Ok(turns)
+}
+
+/// Uniquely named function tools with object parameters.
+fn functions(request: &ModelRequest) -> Result<Vec<&serde_json::Map<String, Value>>> {
+    let mut functions = Vec::new();
     let mut names = BTreeSet::new();
     for tool in &request.tools {
         if tool["type"] != "function" {
@@ -187,26 +217,44 @@ pub fn encode_request(
         if !names.insert(name) || !function.get("parameters").is_some_and(Value::is_object) {
             return Err(invalid());
         }
-        let mut flat = function.clone();
-        flat.insert("type".into(), json!("function"));
-        tools.push(Value::Object(flat));
+        functions.push(function);
     }
+    Ok(functions)
+}
+
+pub fn encode_request(
+    request: &ModelRequest,
+    lock: &ModelLock,
+    limits: &Limits,
+) -> Result<Vec<u8>> {
+    lock.validate()?;
+    limits.validate()?;
+    if request.maximum_tokens == 0
+        || request.maximum_tokens > i32::MAX as u64
+        || request
+            .context_input_bound
+            .saturating_add(request.maximum_tokens)
+            .saturating_add(request.context_reserve)
+            > lock.identity.context_tokens
+    {
+        return Err(Failure::new(
+            FailureKind::Request,
+            "request exceeds the locked context/output allowance",
+        ));
+    }
+    let turns = conversation(request)?;
+    let functions = functions(request)?;
     let settings = &lock.settings;
     let thinking = if request.purpose == RequestPurpose::Compaction {
         settings.summary_thinking
     } else {
         settings.thinking
     };
-    let mut body = json!({"model":lock.identity.model, "input":input, "tools":tools,
-        "stream":true, "store":false, "truncation":"disabled", "tool_choice":"auto",
-        "max_output_tokens":request.maximum_tokens, "reasoning":{"effort":thinking},
-        "temperature":settings.temperature, "top_p":settings.top_p, "top_k":settings.top_k,
-        "min_p":settings.min_p, "repetition_penalty":settings.repetition_penalty,
-        "presence_penalty":settings.presence_penalty, "frequency_penalty":settings.frequency_penalty,
-        "penalty_last_n":settings.penalty_last_n, "seed":request.sampling_seed});
-    if lock.identity.service == crate::Service::Basalt {
-        body["relaxed_drafting"] = json!(false);
-    }
+    let body = if lock.identity.service == Service::LlamaServer {
+        chat_body(request, lock, &turns, &functions, thinking)?
+    } else {
+        responses_body(request, lock, &turns, &functions, thinking)
+    };
     let bytes = serde_json::to_vec(&body).map_err(|e| Failure::new(FailureKind::Request, e))?;
     if bytes.len() > limits.request_bytes {
         return Err(Failure::new(
@@ -215,4 +263,135 @@ pub fn encode_request(
         ));
     }
     Ok(bytes)
+}
+
+fn responses_body(
+    request: &ModelRequest,
+    lock: &ModelLock,
+    turns: &[Turn<'_>],
+    functions: &[&serde_json::Map<String, Value>],
+    thinking: Thinking,
+) -> Value {
+    let mut input = Vec::new();
+    for turn in turns {
+        match turn {
+            Turn::Text { role, content } => {
+                input.push(json!({"type":"message", "role":role, "content":content}));
+            }
+            Turn::Assistant {
+                thinking,
+                content,
+                calls,
+            } => {
+                if !thinking.is_empty() {
+                    input.push(json!({"type":"reasoning", "content":[{"type":"reasoning_text", "text":thinking}]}));
+                }
+                input.push(json!({"type":"message", "role":"assistant", "content":content}));
+                for call in calls {
+                    input.push(
+                        json!({"type":"function_call", "call_id":call.id, "name":call.name,
+                        "arguments":call.arguments}),
+                    );
+                }
+            }
+            Turn::Result { call_id, output } => {
+                input.push(
+                    json!({"type":"function_call_output", "call_id":call_id, "output":output}),
+                );
+            }
+        }
+    }
+    let tools: Vec<Value> = functions
+        .iter()
+        .map(|function| {
+            let mut flat = (*function).clone();
+            flat.insert("type".into(), json!("function"));
+            Value::Object(flat)
+        })
+        .collect();
+    let settings = &lock.settings;
+    let mut body = json!({"model":lock.identity.model, "input":input, "tools":tools,
+        "stream":true, "store":false, "truncation":"disabled", "tool_choice":"auto",
+        "max_output_tokens":request.maximum_tokens, "reasoning":{"effort":thinking},
+        "temperature":settings.temperature, "top_p":settings.top_p, "top_k":settings.top_k,
+        "min_p":settings.min_p, "repetition_penalty":settings.repetition_penalty,
+        "presence_penalty":settings.presence_penalty, "frequency_penalty":settings.frequency_penalty,
+        "penalty_last_n":settings.penalty_last_n, "seed":request.sampling_seed});
+    if lock.identity.service == Service::Basalt {
+        body["relaxed_drafting"] = json!(false);
+    }
+    body
+}
+
+/// llama-server's Chat Completions, with its own sampler names. Thinking
+/// arrives as `reasoning_content`, and usage in the stream's last chunk.
+fn chat_body(
+    request: &ModelRequest,
+    lock: &ModelLock,
+    turns: &[Turn<'_>],
+    functions: &[&serde_json::Map<String, Value>],
+    thinking: Thinking,
+) -> Result<Value> {
+    // A trailing assistant message would be continued as a prefill, and the
+    // maximum seed asks llama-server for a random one.
+    if matches!(turns.last(), Some(Turn::Assistant { .. })) || request.sampling_seed == u32::MAX {
+        return Err(invalid());
+    }
+    // llama-server silently drops tools that its chat template can't render.
+    if !functions.is_empty() && lock.identity.template_capabilities["supports_tool_calls"] != true {
+        return Err(Failure::new(
+            FailureKind::Request,
+            "the locked chat template does not support tool calls",
+        ));
+    }
+    let mut messages = Vec::new();
+    for turn in turns {
+        messages.push(match turn {
+            Turn::Text { role, content } => {
+                if *role == "developer" {
+                    return Err(invalid());
+                }
+                json!({"role":role, "content":content})
+            }
+            Turn::Assistant {
+                thinking,
+                content,
+                calls,
+            } => {
+                let mut message = json!({"role":"assistant", "content":content});
+                if !thinking.is_empty() {
+                    message["reasoning_content"] = json!(thinking);
+                }
+                if !calls.is_empty() {
+                    message["tool_calls"] = calls
+                        .iter()
+                        .map(|call| {
+                            json!({"id":call.id, "type":"function",
+                            "function":{"name":call.name, "arguments":call.arguments}})
+                        })
+                        .collect();
+                }
+                message
+            }
+            Turn::Result { call_id, output } => {
+                json!({"role":"tool", "tool_call_id":call_id, "content":output})
+            }
+        });
+    }
+    let tools: Vec<Value> = functions
+        .iter()
+        .map(|function| json!({"type":"function", "function":function}))
+        .collect();
+    let settings = &lock.settings;
+    Ok(
+        json!({"model":lock.identity.model, "messages":messages, "tools":tools,
+        "tool_choice":"auto", "parallel_tool_calls":true, "stream":true,
+        "stream_options":{"include_usage":true}, "max_tokens":request.maximum_tokens,
+        "reasoning_format":"deepseek",
+        "chat_template_kwargs":{"enable_thinking":thinking == Thinking::On},
+        "temperature":settings.temperature, "top_p":settings.top_p, "top_k":settings.top_k,
+        "min_p":settings.min_p, "repeat_penalty":settings.repetition_penalty,
+        "repeat_last_n":settings.penalty_last_n, "presence_penalty":settings.presence_penalty,
+        "frequency_penalty":settings.frequency_penalty, "seed":request.sampling_seed}),
+    )
 }

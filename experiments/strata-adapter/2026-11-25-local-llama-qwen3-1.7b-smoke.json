@@ -1,0 +1,770 @@
+{
+ "schema_version": 1,
+ "date": "2026-11-25",
+ "source_commit": "538013f",
+ "source_note": "Tested from the working tree that adds the llama-server transport, owner and verifier; the examples and the private launcher install were built from it.",
+ "scope": "local CPU llama-server transport/tool/cancellation smoke and two short console tasks; short prompts, not a long-context, accuracy or performance benchmark",
+ "raw_evidence_root": "/home/data2/playtime-llama-dev/evidence",
+ "model_lock": "../../models/local-llama-qwen3-1.7b-v1.lock.json",
+ "target": {
+  "profile": "local-llama-qwen3-1.7b",
+  "service": "llama_server",
+  "backend": "cpu",
+  "release": "llama.cpp v1.0.0",
+  "source_commit": "b1b770d90d94cad9e9ea5b993bdbc383a522fb28",
+  "engine": "b1-b1b770d",
+  "model": "qwen3-1.7b-q4_k_m",
+  "quantization": "Q4_K_M",
+  "context_tokens": 40960,
+  "slots": 1,
+  "threads": 8,
+  "thinking": "none",
+  "summary_thinking": "none"
+ },
+ "artifacts": [
+  {
+   "path": "/home/data2/playtime-llama-dev/models/qwen3-1.7b-q4_k_m.gguf",
+   "size": 1359279776,
+   "sha256": "3d0b790534fe4b79525fc3692950408dca41171676ed7e21db57af5c65ef6ab6"
+  }
+ ],
+ "build": {
+  "tag": "v1.0.0",
+  "commit": "b1b770d90d94cad9e9ea5b993bdbc383a522fb28",
+  "cmake_options": [
+   "-G",
+   "Ninja",
+   "-DCMAKE_BUILD_TYPE=Release",
+   "-DBUILD_SHARED_LIBS=OFF",
+   "-DLLAMA_BUILD_IS_DEV=OFF",
+   "-DLLAMA_OPENSSL=OFF",
+   "-DLLAMA_SUBPROCESS=OFF",
+   "-DLLAMA_BUILD_UI=OFF",
+   "-DLLAMA_USE_PREBUILT_UI=OFF",
+   "-DLLAMA_CONNECT=OFF",
+   "-DLLAMA_BUILD_TESTS=OFF",
+   "-DLLAMA_BUILD_EXAMPLES=OFF",
+   "-DLLAMA_BUILD_APP=OFF",
+   "-DGGML_NATIVE=ON"
+  ],
+  "toolchain": {
+   "cxx": "g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+   "cmake": "cmake version 4.2.3",
+   "ninja": "1.13.2",
+   "ccache": true
+  },
+  "binary": {
+   "path": "bin/llama-server",
+   "size": 18442928,
+   "sha256": "91ca62b77f8d30494d939b02587211675cbc08821ea9dda4b5f6d4829ac7fb79"
+  },
+  "built": "2026-11-26T01:28:06+00:00"
+ },
+ "engine_argv": [
+  "/home/data2/playtime-llama-dev/runtime/v1.0.0/bin/llama-server",
+  "-m",
+  "/home/data2/playtime-llama-dev/models/qwen3-1.7b-q4_k_m.gguf",
+  "--alias",
+  "qwen3-1.7b-q4_k_m",
+  "--host",
+  "127.0.0.1",
+  "--port",
+  "PORT",
+  "-np",
+  "1",
+  "-c",
+  "40960",
+  "-t",
+  "8",
+  "-fa",
+  "on",
+  "--jinja",
+  "--no-context-shift",
+  "--reasoning-format",
+  "deepseek",
+  "--offline",
+  "--load-mode",
+  "none",
+  "--no-ui"
+ ],
+ "launch_environment": {},
+ "lock_verification": {
+  "cold": {
+   "mode": "reuse_unchanged",
+   "reused_files": 0,
+   "reused_bytes": 0,
+   "hashed_files": 2,
+   "hashed_bytes": 1377722704,
+   "cache_saved": true
+  },
+  "warm": {
+   "mode": "reuse_unchanged",
+   "reused_files": 1,
+   "reused_bytes": 1359279776,
+   "hashed_files": 1,
+   "hashed_bytes": 18442928,
+   "cache_saved": true
+  }
+ },
+ "conversation": {
+  "model_calls": 2,
+  "tool_calls": 1,
+  "result": {
+   "cleanup": {
+    "status": "complete"
+   },
+   "diagnostics": [],
+   "elapsed_ms": 5412,
+   "last_checkpoint": null,
+   "mode": "live_smoke",
+   "model_calls": 2,
+   "reason": "agent_finished",
+   "run_id": "turn-71bbff26365536a8c9d5fa1ef9d6988d040c782db595dc48aeb74f24aec18cb1",
+   "sessions_started": 0,
+   "tool_parse_errors": 0,
+   "usage": {
+    "budget_charged_tokens": 74,
+    "known_generated_tokens": 74,
+    "unknown_requests": 0,
+    "unknown_reserved_tokens": 0,
+    "usage_complete": true
+   }
+  }
+ },
+ "requests": [
+  {
+   "finish_reason": "tool_calls",
+   "usage": {
+    "generated_tokens": 30,
+    "prompt_tokens": 452
+   },
+   "cached_input_tokens": 0,
+   "reasoning_tokens": null,
+   "tool_calls": [
+    "read_file"
+   ],
+   "content_bytes": 0,
+   "thinking_bytes": 0,
+   "timings": {
+    "prompt_n": 452,
+    "prompt_per_second": 517.8752905887623,
+    "predicted_n": 30,
+    "predicted_per_second": 35.354686751379745,
+    "cache_n": 0
+   }
+  },
+  {
+   "finish_reason": "stop",
+   "usage": {
+    "generated_tokens": 44,
+    "prompt_tokens": 536
+   },
+   "cached_input_tokens": 448,
+   "reasoning_tokens": null,
+   "tool_calls": [],
+   "content_bytes": 84,
+   "thinking_bytes": 0,
+   "timings": {
+    "prompt_n": 88,
+    "prompt_per_second": 383.8805084671826,
+    "predicted_n": 44,
+    "predicted_per_second": 28.83347794775374,
+    "cache_n": 448
+   }
+  }
+ ],
+ "cancellation": {
+  "completion": {
+   "Err": {
+    "detail": "request cancelled locally; remote termination is unconfirmed",
+    "generated_tokens": null,
+    "kind": "cancelled"
+   }
+  },
+  "remote": "uncertain",
+  "partial": {
+   "content": "Here",
+   "finish_reason": null,
+   "thinking": "",
+   "tool_calls": []
+  },
+  "slots_after": [
+   {
+    "id": 0,
+    "n_ctx": 40960,
+    "speculative": false,
+    "is_processing": false,
+    "id_task": 80,
+    "n_prompt_tokens": 38,
+    "n_prompt_tokens_processed": 0,
+    "n_prompt_tokens_cache": 0,
+    "params": {
+     "seed": 1042,
+     "temperature": 0.6000000238418579,
+     "dynatemp_range": 0.0,
+     "dynatemp_exponent": 1.0,
+     "top_k": 20,
+     "top_p": 0.949999988079071,
+     "min_p": 0.0,
+     "top_n_sigma": -1.0,
+     "xtc_probability": 0.0,
+     "xtc_threshold": 0.10000000149011612,
+     "typical_p": 1.0,
+     "repeat_last_n": 64,
+     "repeat_penalty": 1.0,
+     "presence_penalty": 0.0,
+     "frequency_penalty": 0.0,
+     "dry_multiplier": 0.0,
+     "dry_base": 1.75,
+     "dry_allowed_length": 2,
+     "dry_penalty_last_n": 64,
+     "mirostat": 0,
+     "mirostat_tau": 5.0,
+     "mirostat_eta": 0.10000000149011612,
+     "adaptive_target": -1.0,
+     "adaptive_decay": 0.8999999761581421,
+     "max_tokens": 2048,
+     "n_predict": 2048,
+     "n_keep": 0,
+     "n_discard": 0,
+     "ignore_eos": false,
+     "stream": true,
+     "n_probs": 0,
+     "min_keep": 0,
+     "chat_format": "peg-native",
+     "reasoning_format": "deepseek",
+     "reasoning_in_content": false,
+     "generation_prompt": "<|im_start|>assistant\n<think>\n\n</think>\n\n",
+     "samplers": [
+      "penalties",
+      "dry",
+      "top_n_sigma",
+      "top_k",
+      "typ_p",
+      "top_p",
+      "min_p",
+      "xtc",
+      "temperature"
+     ],
+     "speculative.types": "none",
+     "timings_per_token": false,
+     "post_sampling_probs": false,
+     "backend_sampling": false,
+     "lora": []
+    },
+    "next_token": [
+     {
+      "has_next_token": true,
+      "has_new_line": false,
+      "n_remain": -1,
+      "n_decoded": 0
+     }
+    ]
+   }
+  ],
+  "termination_authority": "the owner's server stop after the hold's release, not HTTP disconnect"
+ },
+ "workshop_cleanup": {
+  "resources": [
+   {
+    "name": "playtime-ae5dc9c17201900a034e91273318e274-agent-0",
+    "role": "agent",
+    "state": "confirmed_absent"
+   },
+   {
+    "name": "playtime-ae5dc9c17201900a034e91273318e274-holder-0",
+    "role": "holder",
+    "state": "confirmed_absent"
+   },
+   {
+    "name": "playtime-ae5dc9c17201900a034e91273318e274-volume-0",
+    "role": "volume",
+    "state": "confirmed_absent"
+   }
+  ]
+ },
+ "hold_end": {
+  "event": "ended",
+  "released": true,
+  "inference_owner": "confirmed",
+  "owner_exit": 0
+ },
+ "thinking_comparison": {
+  "note": "One hold, five smoke attempts per setting, each with a fresh random probe file. The first thinking-on smoke, before the batch, failed the same way.",
+  "first_smoke_thinking_on": {
+   "reason": "invalid_completion",
+   "elapsed_ms": 9347,
+   "diagnostics": [
+    "chat final reply has no answer content"
+   ],
+   "usage": {
+    "budget_charged_tokens": 251,
+    "known_generated_tokens": 251,
+    "unknown_requests": 0,
+    "unknown_reserved_tokens": 0,
+    "usage_complete": true
+   },
+   "requests": [
+    {
+     "finish_reason": "tool_calls",
+     "usage": {
+      "generated_tokens": 206,
+      "prompt_tokens": 448
+     },
+     "tool_calls": [
+      "read_file"
+     ],
+     "content_bytes": 0,
+     "thinking_bytes": 799
+    },
+    {
+     "finish_reason": "stop",
+     "usage": {
+      "generated_tokens": 45,
+      "prompt_tokens": 711
+     },
+     "tool_calls": [],
+     "content_bytes": 0,
+     "thinking_bytes": 75
+    }
+   ],
+   "cancellation": "not reached"
+  },
+  "thinking_on": [
+   {
+    "reason": "agent_finished",
+    "elapsed_ms": 12249,
+    "diagnostics": [],
+    "usage": {
+     "budget_charged_tokens": 368,
+     "known_generated_tokens": 368,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 206,
+       "prompt_tokens": 448
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 799
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 162,
+       "prompt_tokens": 711
+      },
+      "tool_calls": [],
+      "content_bytes": 79,
+      "thinking_bytes": 423
+     }
+    ],
+    "cancellation": "passed"
+   },
+   {
+    "reason": "invalid_completion",
+    "elapsed_ms": 11698,
+    "diagnostics": [
+     "chat final reply has no answer content"
+    ],
+    "usage": {
+     "budget_charged_tokens": 225,
+     "known_generated_tokens": 225,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 180,
+       "prompt_tokens": 448
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 706
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 45,
+       "prompt_tokens": 685
+      },
+      "tool_calls": [],
+      "content_bytes": 0,
+      "thinking_bytes": 76
+     }
+    ],
+    "cancellation": "not reached"
+   },
+   {
+    "reason": "agent_finished",
+    "elapsed_ms": 12470,
+    "diagnostics": [],
+    "usage": {
+     "budget_charged_tokens": 356,
+     "known_generated_tokens": 356,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 180,
+       "prompt_tokens": 448
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 706
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 176,
+       "prompt_tokens": 682
+      },
+      "tool_calls": [],
+      "content_bytes": 79,
+      "thinking_bytes": 522
+     }
+    ],
+    "cancellation": "passed"
+   },
+   {
+    "reason": "agent_finished",
+    "elapsed_ms": 16180,
+    "diagnostics": [],
+    "usage": {
+     "budget_charged_tokens": 366,
+     "known_generated_tokens": 366,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 180,
+       "prompt_tokens": 448
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 706
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 186,
+       "prompt_tokens": 683
+      },
+      "tool_calls": [],
+      "content_bytes": 79,
+      "thinking_bytes": 561
+     }
+    ],
+    "cancellation": "passed"
+   },
+   {
+    "reason": "invalid_completion",
+    "elapsed_ms": 11541,
+    "diagnostics": [
+     "chat final reply has no answer content"
+    ],
+    "usage": {
+     "budget_charged_tokens": 223,
+     "known_generated_tokens": 223,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 180,
+       "prompt_tokens": 448
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 706
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 43,
+       "prompt_tokens": 683
+      },
+      "tool_calls": [],
+      "content_bytes": 0,
+      "thinking_bytes": 76
+     }
+    ],
+    "cancellation": "not reached"
+   }
+  ],
+  "thinking_off": [
+   {
+    "reason": "agent_finished",
+    "elapsed_ms": 3937,
+    "diagnostics": [],
+    "usage": {
+     "budget_charged_tokens": 72,
+     "known_generated_tokens": 72,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 30,
+       "prompt_tokens": 452
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 0
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 42,
+       "prompt_tokens": 534
+      },
+      "tool_calls": [],
+      "content_bytes": 84,
+      "thinking_bytes": 0
+     }
+    ],
+    "cancellation": "passed"
+   },
+   {
+    "reason": "agent_finished",
+    "elapsed_ms": 3976,
+    "diagnostics": [],
+    "usage": {
+     "budget_charged_tokens": 75,
+     "known_generated_tokens": 75,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 30,
+       "prompt_tokens": 452
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 0
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 45,
+       "prompt_tokens": 537
+      },
+      "tool_calls": [],
+      "content_bytes": 84,
+      "thinking_bytes": 0
+     }
+    ],
+    "cancellation": "passed"
+   },
+   {
+    "reason": "agent_finished",
+    "elapsed_ms": 4101,
+    "diagnostics": [],
+    "usage": {
+     "budget_charged_tokens": 75,
+     "known_generated_tokens": 75,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 30,
+       "prompt_tokens": 452
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 0
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 45,
+       "prompt_tokens": 537
+      },
+      "tool_calls": [],
+      "content_bytes": 84,
+      "thinking_bytes": 0
+     }
+    ],
+    "cancellation": "passed"
+   },
+   {
+    "reason": "agent_finished",
+    "elapsed_ms": 4182,
+    "diagnostics": [],
+    "usage": {
+     "budget_charged_tokens": 73,
+     "known_generated_tokens": 73,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 30,
+       "prompt_tokens": 452
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 0
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 43,
+       "prompt_tokens": 535
+      },
+      "tool_calls": [],
+      "content_bytes": 84,
+      "thinking_bytes": 0
+     }
+    ],
+    "cancellation": "passed"
+   },
+   {
+    "reason": "agent_finished",
+    "elapsed_ms": 4119,
+    "diagnostics": [],
+    "usage": {
+     "budget_charged_tokens": 73,
+     "known_generated_tokens": 73,
+     "unknown_requests": 0,
+     "unknown_reserved_tokens": 0,
+     "usage_complete": true
+    },
+    "requests": [
+     {
+      "finish_reason": "tool_calls",
+      "usage": {
+       "generated_tokens": 30,
+       "prompt_tokens": 452
+      },
+      "tool_calls": [
+       "read_file"
+      ],
+      "content_bytes": 0,
+      "thinking_bytes": 0
+     },
+     {
+      "finish_reason": "stop",
+      "usage": {
+       "generated_tokens": 43,
+       "prompt_tokens": 535
+      },
+      "tool_calls": [],
+      "content_bytes": 84,
+      "thinking_bytes": 0
+     }
+    ],
+    "cancellation": "passed"
+   }
+  ],
+  "replay": {
+   "what": "the first smoke's two requests replayed on a fresh owned server; the second with reasoning_format none, which leaves the model's tags in content",
+   "finish_reason": "stop",
+   "raw_content": "<think>\nThe exact contents of /work/probe.txt are:\n227d55d4c6357659d1a92c9014b616db"
+  }
+ },
+ "console": {
+  "launcher_arguments": [
+   "--workspace",
+   "PROJECT",
+   "--tokens-per-call",
+   "4096",
+   "--agent-prompt",
+   "minimal"
+  ],
+  "refused_first": "With the default Codex prompt, or with only --tokens-per-call 4096, the first turn stopped before any model call: initial compaction context cannot fit below the trigger with its required reserves.",
+  "timings": {
+   "model_ready_seconds": 2.0028709239995806,
+   "verification_seconds": 0.20053592900148942,
+   "launcher_ready_seconds": 2.203426309999486,
+   "verification": {
+    "mode": "reuse_unchanged",
+    "reused_files": 1,
+    "reused_bytes": 1359279776,
+    "hashed_files": 1,
+    "hashed_bytes": 18442928,
+    "cache_saved": true
+   }
+  },
+  "tasks": [
+   {
+    "prompt": "What is the launch code in notes.txt?",
+    "tools": [
+     "read_file /work/notes.txt"
+    ],
+    "answer": "The launch code in notes.txt is 4187.",
+    "elapsed_s": 3.5,
+    "model_calls": 2,
+    "known_generated_tokens": 58
+   },
+   {
+    "prompt": "Create a file named greeting.txt that contains the single word hello.",
+    "tools": [
+     "write_file /work/greeting.txt"
+    ],
+    "file_bytes": "hello",
+    "answer": "The file greeting.txt has been created successfully and contains the single word \"hello\".",
+    "elapsed_s": 2.5,
+    "model_calls": 2,
+    "known_generated_tokens": 51
+   }
+  ],
+  "exit": {
+   "client_exit": 0,
+   "owner_exit": 0,
+   "exit": 0
+  },
+  "session_turns": 2
+ }
+}

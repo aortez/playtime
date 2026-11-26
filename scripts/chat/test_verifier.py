@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -308,6 +309,143 @@ class HostVerificationTests(unittest.TestCase):
                 finally:
                     process.terminate()
                     process.communicate(timeout=5)
+
+
+def gguf(path, file_type=15):
+    """A tensorless GGUF v3 file whose header ends with `general.file_type`."""
+    def number(value, size):
+        return value.to_bytes(size, 'little')
+
+    def string(text):
+        return number(len(text), 8) + text.encode()
+    entries = [string('general.architecture') + number(8, 4) + string('qwen3'),
+               string('tokenizer.ggml.tokens') + number(9, 4) + number(8, 4) + number(2, 8) + string('a') + string('b'),
+               string('tokenizer.ggml.scores') + number(9, 4) + number(6, 4) + number(2, 8) + bytes(8),
+               string('general.file_type') + number(4, 4) + number(file_type, 4)]
+    path.write_bytes(b'GGUF' + number(3, 4) + number(0, 8) + number(len(entries), 8) + b''.join(entries))
+
+
+class LlamaVerificationTests(unittest.TestCase):
+    """A fake llama-server: the interpreter, copied into a runtime, holding its port."""
+
+    SERVE = ('import socket, sys, time; server = socket.socket(); '
+             'server.bind(("127.0.0.1", int(sys.argv[sys.argv.index("--port") + 1]))); '
+             'server.listen(); print("ready", flush=True); time.sleep(60)')
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        self.runtime = self.root / 'runtime'
+        (self.runtime / 'bin').mkdir(parents=True)
+        self.engine = self.runtime / 'bin/llama-server'
+        shutil.copyfile(sys.executable, self.engine)
+        self.engine.chmod(0o700)
+        self.model = self.root / 'model.gguf'
+        gguf(self.model)
+        self.build = {'schema_version': 1, 'target': 'llama-server', 'commit': 'b1b770d90d94cad9e9ea5b993bdbc383a522fb28',
+                      'cmake_options': ['-G', 'Ninja', '-DBUILD_SHARED_LIBS=OFF', '-DGGML_NATIVE=ON'],
+                      'binary': {'path': 'bin/llama-server', 'sha256': hashlib.sha256(self.engine.read_bytes()).hexdigest()}}
+        (self.runtime / 'BUILD.json').write_text(json.dumps(self.build))
+        home = patch.object(verifier.Path, 'home', return_value=self.root)
+        home.start()
+        self.addCleanup(home.stop)
+
+    def serve(self, code=SERVE):
+        """Start a fake server and write the owner's session record for it."""
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1', 0))
+            port = reservation.getsockname()[1]
+        argv = [str(self.engine), '-c', code, '-m', str(self.model), '--port', str(port)]
+        process = subprocess.Popen(argv, env={}, cwd=self.runtime, stdout=subprocess.PIPE)
+        self.addCleanup(lambda: (process.kill(), process.wait(timeout=5), process.stdout.close()))
+        if code == self.SERVE:
+            self.assertEqual(process.stdout.readline(), b'ready\n')
+        session = self.root / f'session-{process.pid}'
+        session.mkdir()
+        started = Path(f'/proc/{process.pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
+        self.record = {'schema_version': 1, 'profile': 'fixture', 'owner_pid': os.getpid(), 'pid': process.pid,
+                       'start_ticks': started, 'port': port, 'argv': argv, 'environment': {},
+                       'runtime': str(self.runtime), 'model': str(self.model)}
+        (session / 'llama-session.json').write_text(json.dumps(self.record))
+        return session, port
+
+    def test_launches_differing_only_in_port_share_a_reviewed_identity(self):
+        session, port = self.serve()
+        discovered = verifier.verify(session, None)
+        argv = [str(self.engine), '-c', self.SERVE, '-m', str(self.model), '--port', 'PORT']
+        expected = {'backend': 'cpu', 'quantization': 'Q4_K_M',
+                    'engine_sha256': self.build['binary']['sha256'],
+                    'artifacts_manifest_sha256': verifier.digest_json([{
+                        'path': str(self.model), 'size': self.model.stat().st_size,
+                        'sha256': hashlib.sha256(self.model.read_bytes()).hexdigest()}]),
+                    'launch_configuration_sha256': verifier.digest_json(
+                        {'argv': argv, 'environment': {}, 'cwd': str(self.runtime)}),
+                    'source_commit': self.build['commit'],
+                    'build_manifest_sha256': hashlib.sha256((self.runtime / 'BUILD.json').read_bytes()).hexdigest()}
+        self.assertEqual(discovered['host'], expected)
+        self.assertEqual((discovered['build'], discovered['process']['port']), (self.build, port))
+        self.assertFalse(list((self.root / '.cache/playtime-chat').glob('strata-hashes-*')))
+        cold = verifier.verify(session, expected)
+        warm = verifier.verify(session, expected)
+        self.assertEqual((cold['host'], warm['host']), (expected, expected))
+        self.assertNotIn('build', warm)
+        # The model's hash is reused; the running engine is always read.
+        self.assertEqual((warm['verification']['reused_files'], warm['verification']['hashed_files']), (1, 1))
+        # A second launch on another port matches the same lock.
+        other, _ = self.serve()
+        self.assertEqual(verifier.verify(other, expected)['host'], expected)
+
+    def test_changed_files_build_records_and_unreviewed_builds_are_refused(self):
+        session, _ = self.serve()
+        expected = verifier.verify(session, None)['host']
+        model = self.model.read_bytes()
+        self.model.write_bytes(model + b'changed')
+        with self.assertRaisesRegex(RuntimeError, 'differ from the reviewed'):
+            verifier.verify(session, expected)
+        self.model.write_bytes(model)
+        for change, message in [
+                ({'built': 'later'}, 'differ from the reviewed'),
+                ({'commit': '0' * 40}, 'differ from the reviewed'),
+                ({'binary': {'path': 'bin/llama-server', 'sha256': '0' * 64}}, 'differs from its build record'),
+                ({'cmake_options': ['-DGGML_NATIVE=ON', '-DGGML_CUDA=ON']}, 'unreviewed llama-server build'),
+                ({'cmake_options': ['-DGGML_RPC=ON']}, 'unreviewed llama-server build'),
+                ({'target': 'llama-cli'}, 'unreviewed llama-server build')]:
+            with self.subTest(change=change):
+                (self.runtime / 'BUILD.json').write_text(json.dumps(dict(self.build, **change)))
+                with self.assertRaisesRegex(RuntimeError, message):
+                    verifier.verify(session, expected)
+        (self.runtime / 'BUILD.json').write_text(json.dumps(self.build))
+        self.assertEqual(verifier.verify(session, expected)['host'], expected)
+
+    def test_a_process_unlike_its_record_or_not_serving_its_port_is_refused(self):
+        session, port = self.serve()
+        record = (session / 'llama-session.json')
+        for change in ({'environment': {'LLAMA_MEDIA_MARKER': 'pinned'}}, {'start_ticks': '1'},
+                       {'runtime': str(self.root)}, {'argv': self.record['argv'][:-1] + ['1']}):
+            with self.subTest(change=change):
+                record.write_text(json.dumps(dict(self.record, **change)))
+                with self.assertRaisesRegex(RuntimeError, 'differs from its session record'):
+                    verifier.verify(session, None)
+        record.write_text(json.dumps(dict(self.record, model=str(self.root / 'other.gguf'))))
+        with self.assertRaisesRegex(RuntimeError, 'does not serve its recorded port and model'):
+            verifier.verify(session, None)
+        idle, _ = self.serve('import time; time.sleep(60)')
+        with self.assertRaisesRegex(RuntimeError, 'does not serve its recorded port and model'):
+            verifier.verify(idle, None)
+
+    def test_quantization_comes_from_a_reviewed_gguf_file_type(self):
+        for file_type, name in ((15, 'Q4_K_M'), (7, 'Q8_0'), (32, 'BF16')):
+            gguf(self.model, file_type)
+            self.assertEqual(verifier.gguf_quantization(self.model), name)
+        gguf(self.model, 99)
+        with self.assertRaisesRegex(RuntimeError, 'unreviewed GGUF file type 99'):
+            verifier.gguf_quantization(self.model)
+        for data, message in ((b'GGUF' + (2).to_bytes(4, 'little'), 'not a GGUF v3'),
+                              (self.model.read_bytes()[:40], 'unreadable GGUF header')):
+            self.model.write_bytes(data)
+            with self.assertRaisesRegex(RuntimeError, message):
+                verifier.gguf_quantization(self.model)
 
 
 if __name__ == '__main__':
