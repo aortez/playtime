@@ -51,13 +51,15 @@ so their project leases contend. A new private session directory is printed on
 startup. Launcher-managed interactive starts offer a local session picker before
 inference starts; see [the launcher guide](rust-chat-launcher.md). Direct
 `playtime-chat --select-session` and `--list-sessions` modes require the same
-model/image locks, workspace and limits, but no endpoint. They emit a JSON choice
-or catalog and exit without connecting to Docker or a model. To reopen a completed
-session, pass `--session /absolute/session` and
-the same model, workspace, agent prompt and allocation settings. A changed config
-is rejected. The one exception is a Strata lock that adds only its server release
-manifest: sessions saved under the same lock without it keep their saved binding
-and resume (see [the Strata guide](rust-strata.md#identity-and-settings)).
+model/image locks and workspace, but no endpoint. They emit a JSON choice or
+catalog and exit without connecting to Docker or a model. To reopen a completed
+session, pass `--session /absolute/session` and the same model, workspace, agent
+prompt and `--output-bytes`. A saved session keeps the context, time, token and
+summary limits it was created with, so they need not be passed again; a limit
+given explicitly must be the saved one. Any other changed config is rejected. The
+one exception is a Strata lock that adds only its server release manifest:
+sessions saved under the same lock without it keep their saved binding and resume
+(see [the Strata guide](rust-strata.md#identity-and-settings)).
 Sessions created before the Codex default require
 `--agent-prompt minimal`; choose a new conversation to use the Codex prompt.
 The executable, image/model locks, session and private state must be outside the
@@ -100,12 +102,15 @@ Those events are observations, not durable archive receipts. The private session
 files are the persistent conversation. A disconnected or overloaded event consumer
 cancels work; the driver does not continue editing invisibly.
 
-Defaults are the locked server context, 900 seconds per turn, 300 seconds per
-model call, 90 seconds per command, 8,192 output tokens per call, 32,768 generated
-tokens per turn, 4,096 summary tokens and 16 KiB per tool result. Supported
-overrides are listed by `--help`. `--context-tokens` can select a smaller harness
-allocation; it cannot exceed the locked server context. It does not reconfigure
-the server or claim a benchmark at its full context size.
+A new session's defaults are the locked server context, 1,800 seconds per turn,
+600 seconds per model call, 90 seconds per command, 16,384 output tokens per call,
+65,536 generated tokens per turn, 4,096 summary tokens and 16 KiB per tool result.
+At Framework's measured 44 tokens a second, a full call takes about six minutes.
+Sessions saved under the earlier defaults (900 seconds and 32,768 tokens per turn,
+300 seconds and 8,192 tokens per call) reopen with them. Supported overrides are
+listed by `--help`. `--context-tokens` can select a smaller harness allocation; it
+cannot exceed the locked server context. It does not reconfigure the server or
+claim a benchmark at its full context size.
 
 ## Project tools
 
@@ -214,18 +219,19 @@ One narrow failure has explicit recovery: a turn's first model request was a
 tool-free compaction, it completed with `length` at its summary cap, all usage is
 known, and owned cleanup completed. `--recover-compaction /absolute/old-session`
 validates its contiguous saved events and creates a **new** session from the last
-completed checkpoint. Only an increased `--summary-tokens` value may differ from
-the original configuration. The source stays fenced and unchanged; its rejected
-summary is never accepted as conversation memory. The console prints the pending
+completed checkpoint. The fork keeps the source's other limits; only its summary
+cap differs, set by `--summary-tokens` (default 4,096), and it must be larger. The
+source stays fenced and unchanged; its rejected summary is never accepted as
+conversation memory. The console prints the pending
 user message so it can be submitted again, or `--prompt` supplies an explicit
 message to run. Other failures, work/tool requests, missing records, unknown usage
 and cleanup failures remain refused. Recovery does not reconcile a live server;
 the launcher must still acquire its normal exclusive host ownership.
 
-The old default was 2,048 summary tokens. Existing completed sessions created with
-that cap still require `--summary-tokens 2048` when reopening. New sessions use
-4,096; the higher cap gives a detailed summary room to finish, but is not a
-guarantee against truncation. `finish_reason=length` always remains a failed summary.
+The old default was 2,048 summary tokens, and sessions created with that cap
+reopen with it. New sessions use 4,096; the higher cap gives a detailed summary
+room to finish, but is not a guarantee against truncation. `finish_reason=length`
+always remains a failed summary.
 
 The [November 13 recovery evidence](../experiments/chat-console/2026-11-13-compaction-recovery.json)
 captures the motivating live failure: the first summary stopped at 2,048 tokens.

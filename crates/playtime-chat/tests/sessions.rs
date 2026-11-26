@@ -1,4 +1,4 @@
-use playtime_chat::sessions::{State, catalog, resume_config, select};
+use playtime_chat::sessions::{Overrides, State, catalog, resume_config, select};
 use playtime_core::{RunMode, Sha256Digest};
 use playtime_engine::{
     Input, ModelResponse, Outcome, ToolPolicy,
@@ -128,7 +128,7 @@ fn hides_empty_sessions_without_deleting_evidence_and_preserves_nonempty_states(
     other.workspace = Sha256Digest::new("4".repeat(64)).unwrap();
     drop(completed(&root.0.join("other-workspace"), other));
     symlink(root.0.join("ready"), root.0.join("linked")).unwrap();
-    let entries = catalog(&root.0, &expected, None).unwrap();
+    let entries = catalog(&root.0, &expected, None, &Overrides::default()).unwrap();
     assert_eq!(entries.len(), 4);
     assert!(!entries.iter().any(|entry| entry.path == empty_path));
     assert_eq!(
@@ -173,6 +173,7 @@ fn hides_empty_sessions_without_deleting_evidence_and_preserves_nonempty_states(
         &entries,
         &expected,
         None,
+        &Overrides::default(),
         &mut input.as_bytes(),
         &mut output,
     )
@@ -196,30 +197,108 @@ fn a_session_saved_under_the_earlier_lock_binding_resumes_under_it() {
     saved.model = earlier.clone();
     drop(completed(&path, saved.clone()));
     // Without the earlier binding it belongs to an unrelated model.
-    assert!(catalog(&root.0, &expected, None).unwrap().is_empty());
-    let entries = catalog(&root.0, &expected, Some(&earlier)).unwrap();
+    assert!(
+        catalog(&root.0, &expected, None, &Overrides::default())
+            .unwrap()
+            .is_empty()
+    );
+    let entries = catalog(&root.0, &expected, Some(&earlier), &Overrides::default()).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].state, State::Ready);
     // It opens under its saved binding and is never rebound to the current one.
-    let bound = resume_config(&expected, Some(&earlier), &path);
+    let bound = resume_config(&expected, Some(&earlier), &Overrides::default(), &path);
     assert_eq!(bound, saved);
     drop(Session::open(&path, &bound).unwrap());
     assert!(Session::open(&path, &expected).is_err());
     // Any other difference still refuses it.
     let mut changed = expected.clone();
     changed.instructions.push_str(" Extra.");
-    assert!(Session::open(&path, &resume_config(&changed, Some(&earlier), &path)).is_err());
+    assert!(
+        Session::open(
+            &path,
+            &resume_config(&changed, Some(&earlier), &Overrides::default(), &path)
+        )
+        .is_err()
+    );
     // A new session takes the current binding.
     assert_eq!(
-        resume_config(&expected, Some(&earlier), &root.0.join("new")),
+        resume_config(
+            &expected,
+            Some(&earlier),
+            &Overrides::default(),
+            &root.0.join("new")
+        ),
         expected
     );
 }
 
 #[test]
+fn a_saved_session_keeps_its_own_limits_unless_others_are_given() {
+    let root = Root::new();
+    let expected = config();
+    let path = root.0.join("older");
+    let mut saved = expected.clone();
+    let limits = &mut saved.execution.limits;
+    limits.wall_seconds = 600.try_into().unwrap();
+    limits.generated_tokens = 5000.try_into().unwrap();
+    limits.tokens_per_call = 384.try_into().unwrap();
+    limits.context_tokens = 12288.try_into().unwrap();
+    limits.model_seconds = 120.try_into().unwrap();
+    saved.compaction.summary_tokens = 128.try_into().unwrap();
+    drop(completed(&path, saved.clone()));
+    let state = |overrides: &Overrides| {
+        catalog(&root.0, &expected, None, overrides).unwrap()[0].state == State::Ready
+    };
+
+    // Without explicit limits it reopens with its own.
+    let none = Overrides::default();
+    assert!(state(&none));
+    let bound = resume_config(&expected, None, &none, &path);
+    assert_eq!(bound, saved);
+    drop(Session::open(&path, &bound).unwrap());
+
+    // A limit given explicitly must be the one it was saved with.
+    let kept = saved.execution.limits.tokens_per_call;
+    assert!(state(&Overrides {
+        tokens_per_call: Some(kept),
+        ..none
+    }));
+    let other = Overrides {
+        tokens_per_call: Some(expected.execution.limits.tokens_per_call),
+        ..none
+    };
+    assert!(!state(&other));
+    assert!(Session::open(&path, &resume_config(&expected, None, &other, &path)).is_err());
+    // The headless worker gives them all.
+    assert!(!state(&Overrides::all(&expected)));
+    assert!(state(&Overrides::all(&saved)));
+
+    // Compaction recovery changes only the summary cap.
+    let raised = Overrides {
+        summary_tokens: Some(256.try_into().unwrap()),
+        ..none
+    };
+    let mut wanted = saved.clone();
+    wanted.compaction.summary_tokens = 256.try_into().unwrap();
+    assert_eq!(resume_config(&expected, None, &raised, &path), wanted);
+
+    // A new session takes the configuration as given.
+    let new = root.0.join("new");
+    assert_eq!(resume_config(&expected, None, &none, &new), expected);
+}
+
+#[test]
 fn new_cancel_and_eof_do_not_choose_an_existing_session() {
     for (input, cancelled) in [("\n", false), ("0\n", false), ("q\n", true), ("", true)] {
-        let choice = select(&[], &config(), None, &mut input.as_bytes(), &mut Vec::new()).unwrap();
+        let choice = select(
+            &[],
+            &config(),
+            None,
+            &Overrides::default(),
+            &mut input.as_bytes(),
+            &mut Vec::new(),
+        )
+        .unwrap();
         assert_eq!(choice.cancelled, cancelled);
         assert!(choice.session.is_none());
     }
@@ -238,7 +317,7 @@ fn corrupt_checkpoint_is_not_resumable() {
     directory
         .replace("head.json", &serde_json::to_vec(&head).unwrap())
         .unwrap();
-    let entries = catalog(&root.0, &config, None).unwrap();
+    let entries = catalog(&root.0, &config, None, &Overrides::default()).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].state, State::Unavailable);
 }
@@ -265,13 +344,14 @@ fn recovery_picker_inspects_and_requires_explicit_confirmation_without_modifying
     .unwrap();
     drop(turn);
     let before = fs::read(source.join("head.json")).unwrap();
-    let entries = catalog(&root.0, &config, None).unwrap();
+    let entries = catalog(&root.0, &config, None, &Overrides::default()).unwrap();
     assert_eq!(entries[0].state, State::Interrupted);
     let mut output = Vec::new();
     let choice = select(
         &entries,
         &config,
         None,
+        &Overrides::default(),
         &mut b"r1\n\nq\n".as_slice(),
         &mut output,
     )
@@ -286,6 +366,7 @@ fn recovery_picker_inspects_and_requires_explicit_confirmation_without_modifying
         &entries,
         &config,
         None,
+        &Overrides::default(),
         &mut b"r1\nrecover\n".as_slice(),
         &mut Vec::new(),
     )
@@ -296,7 +377,7 @@ fn recovery_picker_inspects_and_requires_explicit_confirmation_without_modifying
     assert_eq!(fs::read(source.join("head.json")).unwrap(), before);
     let destination = root.0.join("recovered");
     drop(Session::recover_interrupted(&source, &destination, config.clone(), false).unwrap());
-    let entries = catalog(&root.0, &config, None).unwrap();
+    let entries = catalog(&root.0, &config, None, &Overrides::default()).unwrap();
     let entry = entries.iter().find(|e| e.path == destination).unwrap();
     assert_eq!(
         entry.state,
