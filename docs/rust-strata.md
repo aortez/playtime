@@ -424,13 +424,16 @@ It passed no smoke. In all 12, with either sampling, and in the console, the
 model answered without calling a tool, saying that `read_file` takes no
 parameters or that the request gave no path. Playtime serializes JSON with
 sorted keys, so each tool schema lists `additionalProperties` first and `type`
-last. Replayed over eight seeds, the smoke's first request drew a `read_file`
-call 2 times with the default sampling and 0 times with the card's. With each
-schema's `type`, `properties` and `required` first, as tool definitions are
-usually written, it drew 5 and 8. Through a proxy that reordered the schemas
-that way, the conversations of all 10 smokes passed, in about 2 seconds, with
-either sampling. The proxy delivered each response whole, so their cancellation
-steps don't count. Decoding ran at 120–160 tokens/second.
+last. llama-server rebuilds each tool's wrapper in a fixed order, `type`,
+`name`, `description` and then `parameters`, but it keeps each schema's keys in
+the order they were sent, so the model reads them in that order. Replayed over
+eight seeds, the smoke's first request drew a `read_file` call 2 times with the
+default sampling and 0 times with the card's. With each schema's `type`,
+`properties` and `required` first, as tool definitions are usually written, it
+drew 5 and 8. Through a proxy that reordered the schemas that way, the
+conversations of all 10 smokes passed, in about 2 seconds, with either
+sampling. The proxy delivered each response whole, so their cancellation steps
+don't count. Decoding ran at 120–160 tokens/second.
 
 Both models keep recurrent state, so llama-server can resume a prompt only from
 its live state or a saved checkpoint, and it saves one a few tokens before each
