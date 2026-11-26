@@ -67,6 +67,13 @@ class OwnerTests(unittest.TestCase):
                            "state_parent": f".local/state/playtime-llama/{name}", "model_lock": "unused.lock.json",
                            "startup_timeout": 1 if alias == "never-ready" else 15, "cleanup_timeout": 30}
                     for name, alias in (("fixture", "fixture-model"), ("loading", "never-ready"))}
+        self.template = self.root / "template.jinja"
+        self.template.write_text("{{ messages }}")
+        for name, change in (("templated", {"template": str(self.template)}),
+                             ("relative-template", {"template": "template.jinja"}),
+                             ("extra-flags", {"flags": ["--verbose"]})):
+            profiles[name] = json.loads(json.dumps(profiles["fixture"]))
+            profiles[name]["llama"].update(change)
         profiles["remote"] = {"host": "elsewhere", "helper": "helper.py"}
         (self.package / "presets.json").write_text(json.dumps({"schema_version": 1, "profiles": profiles}))
         self.env = dict(os.environ, HOME=str(self.root))
@@ -98,10 +105,10 @@ class OwnerTests(unittest.TestCase):
         for stream in (owner.stdin, owner.stdout, owner.stderr):
             stream.close()
 
-    def ready(self, owner):
+    def ready(self, owner, profile="fixture"):
         """The owner's state directory, session record and readiness report."""
         line = owner.stderr.readline()
-        prefix = "llama-server: starting fixture; logs: "
+        prefix = f"llama-server: starting {profile}; logs: "
         self.assertTrue(line.startswith(prefix), line)
         directory = Path(line[len(prefix):].strip())
         ready = owner.stdout.readline()
@@ -138,6 +145,16 @@ class OwnerTests(unittest.TestCase):
         self.assertTrue(self.gone(record["pid"]))
         self.assertEqual(self.status(), {"state": "starts_on_launch"})
         self.assertIn("GET /props", (directory / "server.log").read_text())
+
+    def test_a_profile_can_replace_the_model_template_with_a_file(self):
+        owner, port = self.start_owner("templated")
+        _, record, _ = self.ready(owner, "templated")
+        argv = record["argv"]
+        self.assertEqual(argv[argv.index("--jinja"):argv.index("--no-context-shift")],
+                         ["--jinja", "--chat-template-file", str(self.template)])
+        owner.stdin.write("GYRO_RELEASE\n")
+        owner.stdin.flush()
+        self.assertEqual(owner.wait(timeout=20), 0)
 
     def test_eof_stops_the_server_and_unexpected_input_fails_the_session(self):
         for ending, code, reason in (("", 0, "the launcher closed the session"),
@@ -206,6 +223,8 @@ class OwnerTests(unittest.TestCase):
     def test_unknown_remote_or_malformed_requests_start_nothing(self):
         for args, code, message in ((["--status", "missing"], 1, "missing is not a local llama-server profile"),
                                     (["remote", "--port", "1"], 1, "remote is not a local llama-server profile"),
+                                    *((["--status", name], 1, f"{name} is not a local llama-server profile")
+                                      for name in ("relative-template", "extra-flags")),
                                     (["fixture", "--port", "0"], 2, "usage"),
                                     (["fixture"], 2, "usage")):
             with self.subTest(args=args):

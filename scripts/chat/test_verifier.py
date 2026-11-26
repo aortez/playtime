@@ -351,12 +351,12 @@ class LlamaVerificationTests(unittest.TestCase):
         home.start()
         self.addCleanup(home.stop)
 
-    def serve(self, code=SERVE):
+    def serve(self, code=SERVE, options=()):
         """Start a fake server and write the owner's session record for it."""
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]
-        argv = [str(self.engine), '-c', code, '-m', str(self.model), '--port', str(port)]
+        argv = [str(self.engine), '-c', code, '-m', str(self.model), *options, '--port', str(port)]
         process = subprocess.Popen(argv, env={}, cwd=self.runtime, stdout=subprocess.PIPE)
         self.addCleanup(lambda: (process.kill(), process.wait(timeout=5), process.stdout.close()))
         if code == self.SERVE:
@@ -433,6 +433,24 @@ class LlamaVerificationTests(unittest.TestCase):
         idle, _ = self.serve('import time; time.sleep(60)')
         with self.assertRaisesRegex(RuntimeError, 'does not serve its recorded port and model'):
             verifier.verify(idle, None)
+
+    def test_a_template_file_is_a_reviewed_artifact_hashed_on_every_check(self):
+        template = self.root / 'template.jinja'
+        template.write_text('{{ messages }}')
+        session, _ = self.serve(options=('--chat-template-file', str(template)))
+        expected = verifier.verify(session, None)['host']
+        self.assertEqual(expected['artifacts_manifest_sha256'], verifier.digest_json([
+            {'path': str(path), 'size': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+            for path in (self.model, template)]))
+        verifier.verify(session, expected)
+        warm = verifier.verify(session, expected)['verification']
+        self.assertEqual((warm['reused_files'], warm['hashed_files']), (1, 2))
+        template.write_text('{{ tools }}')
+        with self.assertRaisesRegex(RuntimeError, 'differ from the reviewed'):
+            verifier.verify(session, expected)
+        relative, _ = self.serve(options=('--chat-template-file', 'template.jinja'))
+        with self.assertRaisesRegex(RuntimeError, 'must be an absolute path'):
+            verifier.verify(relative, None)
 
     def test_quantization_comes_from_a_reviewed_gguf_file_type(self):
         for file_type, name in ((15, 'Q4_K_M'), (7, 'Q8_0'), (32, 'BF16')):

@@ -306,6 +306,13 @@ def verify_llama(root, expected_host, full=False):
     if engine != build["binary"]["sha256"]:
         raise RuntimeError("running llama-server differs from its build record")
     artifacts = [hashes.hash_file(model, reusable=True)]
+    # A template file that replaces the model's own is served too. It is small,
+    # so it's always hashed again.
+    if "--chat-template-file" in argv:
+        template = Path(argv[argv.index("--chat-template-file") + 1])
+        if not template.is_absolute():
+            raise RuntimeError("llama-server's chat template file must be an absolute path")
+        artifacts.append(hashes.hash_file(template))
     # Each launch draws its own port; the rest of the command is reviewed.
     launch = {"argv": ["PORT" if previous == "--port" else value for previous, value in zip(["", *argv], argv)],
               "environment": environment, "cwd": str(runtime)}
