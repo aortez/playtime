@@ -60,6 +60,33 @@
       "model_lock": "local-llama-qwen3-1.7b-v1.lock.json",
       "startup_timeout": 120,
       "cleanup_timeout": 30
+    },
+    "local-llama-qwen3.5-0.8b": {
+      "llama": {
+        "runtime": "/home/data2/playtime-llama-dev/runtime/v1.0.0",
+        "model": "/home/data2/playtime-llama-dev/models/qwen3.5-0.8b-q8_0.gguf",
+        "alias": "qwen3.5-0.8b-q8_0",
+        "context": 262144,
+        "threads": 8
+      },
+      "state_parent": ".local/state/playtime-llama/local-llama-qwen3.5-0.8b",
+      "model_lock": "local-llama-qwen3.5-0.8b-v1.lock.json",
+      "startup_timeout": 120,
+      "cleanup_timeout": 30
+    },
+    "local-llama-lfm2.5-350m": {
+      "llama": {
+        "runtime": "/home/data2/playtime-llama-dev/runtime/v1.0.0",
+        "model": "/home/data2/playtime-llama-dev/models/lfm2.5-350m-q8_0.gguf",
+        "template": "/home/data2/playtime-llama-dev/templates/lfm2.5-350m-9921cd4.jinja",
+        "alias": "lfm2.5-350m-q8_0",
+        "context": 32768,
+        "threads": 8
+      },
+      "state_parent": ".local/state/playtime-llama/local-llama-lfm2.5-350m",
+      "model_lock": "local-llama-lfm2.5-350m-v1.lock.json",
+      "startup_timeout": 120,
+      "cleanup_timeout": 30
     }
   }
 }

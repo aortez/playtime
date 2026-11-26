@@ -44,8 +44,10 @@ def log(message):
 def preset_for(profile):
     preset = json.loads((PACKAGE / "presets.json").read_text())["profiles"].get(profile)
     config = preset.get("llama") if isinstance(preset, dict) else None
-    if (not isinstance(config, dict) or set(config) != {"runtime", "model", "alias", "context", "threads"}
-            or not all(isinstance(config[key], str) and os.path.isabs(config[key]) for key in ("runtime", "model"))
+    required = {"runtime", "model", "alias", "context", "threads"}
+    if (not isinstance(config, dict) or not required <= set(config) <= required | {"template"}
+            or not all(isinstance(config[key], str) and os.path.isabs(config[key])
+                       for key in ("runtime", "model", "template") if key in config)
             or not isinstance(config["alias"], str) or not config["alias"]
             or not all(type(config[key]) is int and config[key] > 0 for key in ("context", "threads"))):
         raise RuntimeError(f"{profile} is not a local llama-server profile")
@@ -58,10 +60,13 @@ def launch(config, port):
     llama-server reads LLAMA_ARG_* defaults, a pinned media marker and even its
     health route from the environment, so none of that is inherited.
     """
+    # A reviewed template file replaces the one in the model's file, which may
+    # predate its vendor's fixes.
+    template = ["--chat-template-file", config["template"]] if "template" in config else []
     return [str(Path(config["runtime"]) / "bin/llama-server"), "-m", config["model"],
             "--alias", config["alias"], "--host", "127.0.0.1", "--port", str(port),
             "-np", "1", "-c", str(config["context"]), "-t", str(config["threads"]),
-            "-fa", "on", "--jinja", "--no-context-shift", "--reasoning-format", "deepseek",
+            "-fa", "on", "--jinja", *template, "--no-context-shift", "--reasoning-format", "deepseek",
             "--offline", "--load-mode", "none", "--no-ui"]
 
 

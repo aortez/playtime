@@ -273,10 +273,16 @@ are recorded in [warm-session evidence](../experiments/chat-console/2026-11-13-w
 
 ## Local llama-server profiles
 
-`local-llama-qwen3-1.7b` runs the console against llama.cpp's `llama-server` on
-the workstation itself, with no SSH, for small-model experiments; see the
-[transport guide](rust-strata.md#llama-server-chat-completions). It has no
+Three profiles run the console against llama.cpp's `llama-server` on the
+workstation itself, with no SSH, for small-model experiments; see the
+[transport guide](rust-strata.md#llama-server-chat-completions). They have no
 codex-launcher entry:
+
+| Profile | Model | Context (tokens) |
+| --- | --- | --- |
+| `local-llama-lfm2.5-350m` | LFM2.5-350M Q8_0 | 32,768 |
+| `local-llama-qwen3-1.7b` | Qwen3-1.7B Q4_K_M | 40,960 |
+| `local-llama-qwen3.5-0.8b` | Qwen3.5-0.8B Q8_0 | 262,144 |
 
 ```sh
 ~/.local/lib/playtime-chat/run-strata.py local-llama-qwen3-1.7b \
@@ -285,11 +291,26 @@ codex-launcher entry:
 
 The preset's `llama` entry names the runtime directory, which holds
 `bin/llama-server` and its `BUILD.json` record, the GGUF model, the alias to
-serve it as, the context and the thread count. Those paths are this
-workstation's, and the installer installs neither the runtime nor the model. The
-default Codex prompt doesn't fit a 40,960-token context under the console's
-first-turn check, which counts bytes until a server measurement calibrates it.
-Hence the two options.
+serve it as, the context and the thread count. An optional `template` names a
+chat template file that replaces the one in the GGUF. Those paths are this
+workstation's, and the installer installs none of these files. The default Codex
+prompt fits only the 262,144-token context under the console's first-turn check,
+which counts bytes until a server measurement calibrates it. Hence the two
+options for the other profiles.
+
+LFM2.5-350M's GGUF, at its repository's latest revision, embeds a template that
+drops the tool calls from earlier assistant messages, so llama-server reports
+that it can't render tool calls and the transport refuses tools. LiquidAI fixed
+the template in the model's own repository, `LiquidAI/LFM2.5-350M`, at revision
+`9921cd4d82c0e3986887aa4b376f9446729ef8a3`. The profile serves that revision's
+`chat_template.jinja`, whose SHA-256 is
+`ba551d58630afa3190b1be3602e28301f3d2e9bbac978dfc49d6d825171648b6`, and the
+lock's artifacts include it. llama-server strips the file's trailing newline, so
+the lock's `template_sha256` is the served text's digest, not the file's. The model's configuration allows
+128,000 positions, but its model card gives a 32,768-token context, which the
+profile uses so that the console compacts within it. Even so, the model doesn't
+call Playtime's tools as they're sent, with sorted schema keys; see
+[the results](rust-strata.md#small-model-results-2026-11-25).
 
 `scripts/chat/llama-session.py` owns the server, and the wrapper runs it from the
 package with `python3 -I`. It refuses to start while any server it recorded
@@ -304,21 +325,23 @@ lock. The wrapper then sends a heartbeat every 10 seconds. `GYRO_RELEASE`, EOF,
 any other input, 35 seconds without a heartbeat, a signal or the server's own
 exit ends the session, and the owner stops the server with SIGTERM, then SIGKILL
 after 10 seconds. A model is never parked: each session starts a new server,
-which loaded this 1.7B model in 2–4 seconds.
+which loaded these models in 0.4–4 seconds.
 
 The wrapper runs the verifier locally, feeding the package's copy to
 `python3 -I` on stdin. It checks the recorded process's argv, start time,
 environment and working directory against `/proc`, that the process holds the
 loopback listening socket, the binary against `BUILD.json` and the lock, and the
-GGUF's hash and quantization. Model hashes are cached as on remote hosts.
+GGUF's hash and quantization, and any template file's hash. Model hashes are
+cached as on remote hosts; a template file is small and hashed on every check.
 
 `--status` reports busy while any recorded server runs. `--stop-server` stops
 only orphans, recorded servers whose owner has died, and leaves an owned server
 to its owner. The launcher suite covers the owner with a fake server: release,
 EOF and unexpected input, a busy refusal, a killed owner taking its server
-down, a server that exits or never becomes ready, orphan-only stops and refused
-profiles. The [transport guide](rust-strata.md#local-llama-server-result-2026-11-25)
-records the live result.
+down, a server that exits or never becomes ready, orphan-only stops, a template
+file and refused profiles. The transport guide records the live results for
+[Qwen3-1.7B](rust-strata.md#local-llama-server-result-2026-11-25) and
+[the smaller models](rust-strata.md#small-model-results-2026-11-25).
 
 ## Session picker check (November 13, 2026)
 
