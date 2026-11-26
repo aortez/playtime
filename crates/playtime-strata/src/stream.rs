@@ -13,6 +13,9 @@ impl StreamEvent {
     /// Compact controller observations; raw SSE metadata and repeated terminal
     /// snapshots stay available separately without consuming its chunk budget.
     pub fn controller_chunk(&self) -> Option<Value> {
+        if self.data["object"] == "chat.completion.chunk" {
+            return crate::chat_stream::controller_chunk(&self.data);
+        }
         let field = match self.data["type"].as_str()? {
             "response.output_text.delta" => "content",
             "response.reasoning_text.delta" => "thinking",
@@ -20,6 +23,89 @@ impl StreamEvent {
             _ => return None,
         };
         Some(json!({"item_id":self.data["item_id"], field:self.data["delta"]}))
+    }
+}
+
+/// One complete SSE event: its optional `event` name and joined `data` lines.
+pub(crate) struct Frame {
+    pub(crate) event: Option<String>,
+    pub(crate) data: String,
+}
+
+/// SSE framing for both dialects. Comments and `id`/`retry` fields are
+/// ignored, and every frame stays within the event byte limit.
+#[derive(Default)]
+pub(crate) struct Frames {
+    line: Vec<u8>,
+    data: String,
+    event: Option<String>,
+    frame_bytes: usize,
+    received_bytes: usize,
+}
+impl Frames {
+    pub(crate) fn received_bytes(&self) -> usize {
+        self.received_bytes
+    }
+    /// Whether the stream stopped partway through a frame.
+    pub(crate) fn inside_frame(&self) -> bool {
+        !self.line.is_empty() || !self.data.is_empty()
+    }
+    /// The frames these bytes complete, and any framing failure after them.
+    pub(crate) fn push(&mut self, bytes: &[u8], limits: &Limits) -> (Vec<Frame>, Result<()>) {
+        let mut frames = Vec::new();
+        let result = self.split(bytes, limits, &mut frames);
+        (frames, result)
+    }
+    fn split(&mut self, bytes: &[u8], limits: &Limits, frames: &mut Vec<Frame>) -> Result<()> {
+        self.received_bytes = self.received_bytes.saturating_add(bytes.len());
+        if self.received_bytes > limits.response_bytes {
+            return Err(Failure::new(
+                FailureKind::ByteLimit,
+                "SSE response exceeds byte limit",
+            ));
+        }
+        for byte in bytes {
+            self.frame_bytes += 1;
+            if self.frame_bytes > limits.event_bytes {
+                return Err(Failure::new(
+                    FailureKind::ByteLimit,
+                    "SSE frame exceeds byte limit",
+                ));
+            }
+            if *byte != b'\n' {
+                self.line.push(*byte);
+                continue;
+            }
+            let line = std::mem::take(&mut self.line);
+            let line = std::str::from_utf8(&line)
+                .map_err(protocol)?
+                .trim_end_matches('\r');
+            if line.is_empty() {
+                self.frame_bytes = 0;
+                if !self.data.is_empty() {
+                    frames.push(Frame {
+                        event: self.event.take(),
+                        data: std::mem::take(&mut self.data),
+                    });
+                }
+                self.event = None;
+            } else if !line.starts_with(':') {
+                let (field, value) = line.split_once(':').unwrap_or((line, ""));
+                let value = value.strip_prefix(' ').unwrap_or(value);
+                match field {
+                    "data" => {
+                        if !self.data.is_empty() {
+                            self.data.push('\n');
+                        }
+                        self.data.push_str(value);
+                    }
+                    "event" => self.event = Some(value.into()),
+                    "id" | "retry" => {}
+                    _ => return Err(protocol("unsupported SSE field")),
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -34,7 +120,7 @@ struct Item {
     done: bool,
 }
 
-fn protocol(detail: impl ToString) -> Failure {
+pub(crate) fn protocol(detail: impl ToString) -> Failure {
     Failure::new(FailureKind::Protocol, detail)
 }
 fn text(value: &Value) -> Result<&str> {
@@ -113,11 +199,7 @@ impl Item {
 pub struct Decoder {
     model: String,
     limits: Limits,
-    line: Vec<u8>,
-    data: String,
-    event: Option<String>,
-    frame_bytes: usize,
-    received_bytes: usize,
+    frames: Frames,
     sequence: u64,
     response_id: Option<String>,
     items: Vec<Item>,
@@ -135,11 +217,7 @@ impl Decoder {
         Ok(Self {
             model: model.into(),
             limits,
-            line: Vec::new(),
-            data: String::new(),
-            event: None,
-            frame_bytes: 0,
-            received_bytes: 0,
+            frames: Frames::default(),
             sequence: 0,
             response_id: None,
             items: Vec::new(),
@@ -153,7 +231,7 @@ impl Decoder {
         })
     }
     pub fn received_bytes(&self) -> usize {
-        self.received_bytes
+        self.frames.received_bytes()
     }
     pub fn terminal_observed(&self) -> bool {
         self.terminal
@@ -180,59 +258,16 @@ impl Decoder {
     }
 
     fn feed(&mut self, bytes: &[u8]) -> Result<()> {
-        self.received_bytes = self.received_bytes.saturating_add(bytes.len());
-        if self.received_bytes > self.limits.response_bytes {
-            return Err(Failure::new(
-                FailureKind::ByteLimit,
-                "SSE response exceeds byte limit",
-            ));
+        let (frames, framed) = self.frames.push(bytes, &self.limits);
+        for frame in frames {
+            let value: Value = serde_json::from_str(&frame.data).map_err(protocol)?;
+            if frame.event.as_deref().is_some_and(|e| value["type"] != e) {
+                return Err(protocol("SSE event and JSON type disagree"));
+            }
+            self.accept(&value)?;
+            self.events.push(StreamEvent { data: value });
         }
-        for byte in bytes {
-            self.frame_bytes += 1;
-            if self.frame_bytes > self.limits.event_bytes {
-                return Err(Failure::new(
-                    FailureKind::ByteLimit,
-                    "SSE frame exceeds byte limit",
-                ));
-            }
-            if *byte != b'\n' {
-                self.line.push(*byte);
-                continue;
-            }
-            let line = std::mem::take(&mut self.line);
-            let line = std::str::from_utf8(&line)
-                .map_err(protocol)?
-                .trim_end_matches('\r');
-            if line.is_empty() {
-                self.frame_bytes = 0;
-                if !self.data.is_empty() {
-                    let data = std::mem::take(&mut self.data);
-                    let event = self.event.take();
-                    let value: Value = serde_json::from_str(&data).map_err(protocol)?;
-                    if event.as_deref().is_some_and(|e| value["type"] != e) {
-                        return Err(protocol("SSE event and JSON type disagree"));
-                    }
-                    self.accept(&value)?;
-                    self.events.push(StreamEvent { data: value });
-                }
-                self.event = None;
-            } else if !line.starts_with(':') {
-                let (field, value) = line.split_once(':').unwrap_or((line, ""));
-                let value = value.strip_prefix(' ').unwrap_or(value);
-                match field {
-                    "data" => {
-                        if !self.data.is_empty() {
-                            self.data.push('\n');
-                        }
-                        self.data.push_str(value);
-                    }
-                    "event" => self.event = Some(value.into()),
-                    "id" | "retry" => {}
-                    _ => return Err(protocol("unsupported SSE field")),
-                }
-            }
-        }
-        Ok(())
+        framed
     }
 
     fn response(&self, value: &Value) -> Result<()> {
@@ -512,7 +547,7 @@ impl Decoder {
         if let Some(error) = self.failure {
             return Err(error);
         }
-        if !self.line.is_empty() || !self.data.is_empty() {
+        if self.frames.inside_frame() {
             return Err(protocol("stream ended inside an SSE frame"));
         }
         self.completion.take().unwrap_or_else(|| {

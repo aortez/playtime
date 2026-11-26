@@ -20,3 +20,11 @@ handlers. Fixtures intentionally change identities, sequences, usage, arguments
 and transport behavior to check rejection/uncertainty paths. They do not establish
 live CUDA/HIP behavior, engine accuracy, remote cancellation or ownership.
 See [the transport guide](../../../docs/rust-strata.md) for the separate live gate.
+
+`llama.rs` builds its own synthetic Chat Completions chunks and llama-server
+metadata, and serves them the same way. Their shapes and order were checked on
+2026-11-25 against streams, errors, `/props`, `/slots` and `/v1/models` from
+llama-server v1.0.0 (commit `b1b770d90d94cad9e9ea5b993bdbc383a522fb28`), built
+for CPU and serving Qwen3-1.7B. The fixture's model, process marker and text are
+made up. They don't establish another release's stream, model behavior or a
+working owner.

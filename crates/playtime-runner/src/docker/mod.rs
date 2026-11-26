@@ -163,6 +163,10 @@ pub struct OllamaModel {
 /// field, so its frozen bytes are unchanged.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Frozen once per run; both variants are large, so boxing one only moves the gap"
+)]
 pub enum LiveModel {
     Ollama(OllamaModel),
     Strata(StrataModel),

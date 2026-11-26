@@ -25,12 +25,22 @@ pub struct HostIdentity {
     pub engine_sha256: Sha256Digest,
     pub artifacts_manifest_sha256: Sha256Digest,
     pub launch_configuration_sha256: Sha256Digest,
-    pub responses_source_sha256: Sha256Digest,
+    /// Digest of the Python Responses module that Strata and Basalt serve from.
+    /// llama-server has none; its API is part of the engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responses_source_sha256: Option<Sha256Digest>,
     /// Digest of the manifest of every file in the Strata server release the API
     /// server runs from. Locks made before the verifier checked the release omit
     /// it, so their bytes are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_release_manifest_sha256: Option<Sha256Digest>,
+    /// The llama.cpp commit that a llama-server engine was built from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_commit: Option<String>,
+    /// Digest of a llama-server engine's build record: its source commit, build
+    /// options, toolchain, linked system libraries and binary digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_manifest_sha256: Option<Sha256Digest>,
 }
 
 /// Each reviewed Strata server release, by the engine version its server reports,
@@ -46,7 +56,11 @@ const STRATA_RELEASES: [(&str, &str); 2] = [
     ),
 ];
 
-/// Stable fields of /props and /v1/status, excluding activity and process age.
+/// Each reviewed llama.cpp release, by its tag and the commit it names.
+const LLAMA_SERVER_RELEASES: [(&str, &str); 1] =
+    [("v1.0.0", "b1b770d90d94cad9e9ea5b993bdbc383a522fb28")];
+
+/// Stable fields of the server's metadata, excluding activity and process age.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
@@ -63,6 +77,10 @@ pub struct Identity {
     pub defaults: Value,
     pub template_capabilities: Value,
     pub shared_settings: Value,
+    /// llama-server's other stable /props fields and its model's /v1/models
+    /// metadata. Strata and Basalt locks omit it, so their bytes are unchanged.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub server: Value,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -71,6 +89,8 @@ pub enum Service {
     #[default]
     Strata,
     Basalt,
+    /// llama.cpp's llama-server, which serves Chat Completions.
+    LlamaServer,
 }
 impl Service {
     fn is_strata(&self) -> bool {
@@ -151,6 +171,75 @@ impl Identity {
             } else {
                 json!({"shared":settings["shared"],"defaults":settings["defaults"]})
             },
+            server: Value::Null,
+        })
+    }
+
+    /// llama-server's identity from its /props, /slots and /v1/models. Only a
+    /// loaded, awake, single-model, text-only server with read-only properties
+    /// qualifies.
+    pub fn inspect_llama(props: &Value, slots: &Value, models: &Value) -> Result<Self> {
+        let error = || {
+            Failure::new(
+                FailureKind::Identity,
+                "unsupported or unloaded llama-server metadata",
+            )
+        };
+        let text = |v: &Value| {
+            v.as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(error)
+        };
+        let model = text(&props["model_alias"])?;
+        let engine = text(&props["build_info"])?;
+        let parallel = props["total_slots"].as_u64().ok_or_else(error)?;
+        let context_tokens = props["default_generation_settings"]["n_ctx"]
+            .as_u64()
+            .filter(|n| *n > 0)
+            .ok_or_else(error)?;
+        let defaults = props["default_generation_settings"]["params"].clone();
+        let listed = models["data"].as_array().ok_or_else(error)?;
+        if props["is_sleeping"] != false
+            || parallel != 1
+            || !defaults.is_object()
+            || !props["chat_template_caps"].is_object()
+            || props["modalities"] != json!({"vision":false, "video":false, "audio":false})
+            || props["endpoint_props"] != false
+            || props["endpoint_slots"] != true
+            || slots.as_array().is_none_or(|s| s.len() as u64 != parallel)
+            || listed.len() != 1
+            || listed[0]["id"] != model
+            || !listed[0]["meta"].is_object()
+            || listed[0]["meta"]["n_ctx"] != context_tokens
+        {
+            return Err(error());
+        }
+        let mut server = serde_json::Map::new();
+        for key in [
+            "model_ftype",
+            "bos_token",
+            "eos_token",
+            "endpoint_metrics",
+            "ui",
+            "ui_settings",
+            "cors_proxy_enabled",
+        ] {
+            server.insert(key.into(), props.get(key).ok_or_else(error)?.clone());
+        }
+        server.insert("model_meta".into(), listed[0]["meta"].clone());
+        Ok(Self {
+            service: Service::LlamaServer,
+            parallel,
+            model,
+            engine,
+            context_tokens,
+            model_path: text(&props["model_path"])?,
+            template_sha256: digest(text(&props["chat_template"])?.as_bytes()),
+            defaults,
+            template_capabilities: props["chat_template_caps"].clone(),
+            shared_settings: Value::Null,
+            server: Value::Object(server),
         })
     }
 }
@@ -166,12 +255,20 @@ pub struct ModelLock {
 impl ModelLock {
     pub fn validate(&self) -> Result<()> {
         self.settings.validate()?;
+        let responses_source = |expected: &str| {
+            self.host
+                .responses_source_sha256
+                .as_ref()
+                .is_some_and(|digest| digest.as_str() == expected)
+        };
+        let llama = self.identity.service == Service::LlamaServer;
         let reviewed_runtime = match self.identity.service {
             Service::Strata => {
                 self.schema_version == 1
                     && self.identity.parallel == 1
-                    && self.host.responses_source_sha256.as_str()
-                        == "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b"
+                    && responses_source(
+                        "aba98b4aba933fe55cf699985add2e1014a66dacb55ed768ca9aa404c3fcb29b",
+                    )
                     && self
                         .host
                         .server_release_manifest_sha256
@@ -189,14 +286,47 @@ impl ModelLock {
                     && self.host.backend == "cuda"
                     && self.host.engine_sha256.as_str()
                         == "5a15f95f8bf41fbd61c8e7299910d08049243eb32b26699b0b7a6f7976ad92e8"
-                    && self.host.responses_source_sha256.as_str()
-                        == "c1ba29dd88ac98f052b34e75de46106737a559871c75eb565fb852930e7bcf23"
+                    && responses_source(
+                        "c1ba29dd88ac98f052b34e75de46106737a559871c75eb565fb852930e7bcf23",
+                    )
                     // Basalt's serving code is already in its artifact manifest.
                     && self.host.server_release_manifest_sha256.is_none()
             }
+            // Each host builds its own engine, so its binary digest is the
+            // lock's own. The release is pinned by its source commit, which
+            // the server's build_info abbreviates.
+            Service::LlamaServer => {
+                self.schema_version == 3
+                    && self.identity.parallel == 1
+                    && self.identity.shared_settings.is_null()
+                    && self.identity.server.is_object()
+                    && self.host.backend == "cpu"
+                    && self.host.responses_source_sha256.is_none()
+                    && self.host.server_release_manifest_sha256.is_none()
+                    && self.host.build_manifest_sha256.is_some()
+                    && self.host.source_commit.as_deref().is_some_and(|commit| {
+                        LLAMA_SERVER_RELEASES.iter().any(|(_, c)| *c == commit)
+                            && self
+                                .identity
+                                .engine
+                                .strip_prefix('b')
+                                .and_then(|e| e.split_once('-'))
+                                .is_some_and(|(build, short)| {
+                                    !build.is_empty()
+                                        && build.bytes().all(|b| b.is_ascii_digit())
+                                        && short == &commit[..7]
+                                })
+                    })
+                    && self.settings.llama_thinking()
+            }
         };
+        let strata_backend = matches!(self.host.backend.as_str(), "cuda" | "hip")
+            && self.host.source_commit.is_none()
+            && self.host.build_manifest_sha256.is_none()
+            && self.identity.server.is_null()
+            && self.settings.responses_thinking();
         if !reviewed_runtime
-            || !matches!(self.host.backend.as_str(), "cuda" | "hip")
+            || (!llama && !strata_backend)
             || self.host.quantization.is_empty()
             || self.host.quantization.len() > 128
             || self.identity.model.is_empty()

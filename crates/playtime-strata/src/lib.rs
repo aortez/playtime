@@ -1,11 +1,14 @@
-//! Strata's stateless Responses transport. Server ownership, process execution
-//! and canonical usage settlement remain with the caller and shared controller.
+//! Stateless transports for Strata's and Basalt's Responses and llama-server's
+//! Chat Completions. Server ownership, process execution and canonical usage
+//! settlement remain with the caller and shared controller.
+mod chat_stream;
 mod client;
 mod identity;
 mod request;
 mod stream;
 
-pub use client::{Client, Endpoint, Inspection, inspect_endpoint};
+pub use chat_stream::ChatDecoder;
+pub use client::{Client, Endpoint, Inspection, Instance, inspect_endpoint};
 pub use identity::{HostIdentity, Identity, ModelLock, Service};
 pub use request::{Settings, Thinking, encode_request};
 pub use stream::{Decoder, StreamEvent};
