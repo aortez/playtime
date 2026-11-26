@@ -162,6 +162,23 @@ The [UI guide](rust-ui.md#reviewed-screenshots) owns the exact pinned renderer,
 screenshot commands and review procedure. Its [performance section](rust-ui.md#performance-measurement)
 explains the bounded headless measurement and links the recorded result.
 
+## Chat console development
+
+To use the real chat console as a user would, in a private tmux session against
+a scripted model:
+
+```sh
+python3 scripts/chat-sandbox.py start
+python3 scripts/chat-sandbox.py say 'Please fix the failing test.'
+python3 scripts/chat-sandbox.py screen
+python3 scripts/chat-sandbox.py stop
+```
+
+`scripted-strata`, a `playtime-test-support` binary, serves the Strata fixture's
+model and answers with the replies that `reply` queues. The controller, tools,
+records and terminal output are real, and no GPU host is used. The
+[chat console playbook](../.claude/skills/run-chat/SKILL.md) explains driving it.
+
 ## CI
 
 [Foundation checks](../.github/workflows/foundation.yml) defines four jobs:

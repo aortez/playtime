@@ -245,6 +245,11 @@ cargo test -p playtime-docker --locked
 ./scripts/test-rust-docker-e2e.sh --case sandbox
 ```
 
+To use the real console as a user would, without a model host, run
+`scripts/chat-sandbox.py`. It runs the console in a private tmux session against
+a scripted Strata endpoint that answers with queued replies, and its tools and
+records are real. The [playbook](../.claude/skills/run-chat/SKILL.md) explains it.
+
 The CPU driver fixtures use the real controller and private persistence with
 explicitly synthetic effects. They cover tool/follow-up turns, reopen, cancellation
 with unknown usage, a disconnected frontend, failed record publication and
