@@ -14,7 +14,9 @@ A worker or read-only launch reads only these package files: `run-strata.py`, it
 modules `launch_protocol.py` and `project_environment.py`, `presets.json`, the
 selected preset's model lock and, for Docker tools, `general.lock.json`. It also
 sends `verify-strata-host.py` to the inference host and runs `playtime-task`,
-which reads no other package file. Only explicit environment preparation reads
+which reads no other package file. A [local llama-server](rust-chat-launcher.md#local-llama-server-profiles)
+profile instead runs that verifier locally, and also runs `llama-session.py`
+with `python3 -I`. Only explicit environment preparation reads
 `tool.py`. A caller that verifies the package before launching should pin these
 files. Nothing else in the package adds code: the launcher never imports from its
 own directory and runs its two modules from source, never from `__pycache__`. If

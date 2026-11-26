@@ -823,6 +823,76 @@ else:
         self.assertFalse((self.root / 'started').exists())
         self.assertFalse((self.root / 'verified').exists())
 
+    def llama_fixture(self):
+        """A local llama-server profile's owner, verifier and lock, in the package."""
+        self.write_program(self.package / "llama-session.py", r'''
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['FIXTURE_ROOT'])
+with (root / 'llama-helper-args').open('a') as calls:
+    calls.write(json.dumps(sys.argv[1:]) + '\n')
+if sys.argv[1] == '--status':
+    print(json.dumps({'state': 'starts_on_launch'}))
+    sys.exit(0)
+if sys.argv[1] == '--stop':
+    sys.exit(0)
+profile = sys.argv[1]
+state = root / '.local/state/playtime-llama' / profile / '20261125T123456Z-123'
+print('llama-server: starting ' + profile + '; logs: ' + str(state), file=sys.stderr, flush=True)
+print('GYRO_READY ' + json.dumps({'model': 'fixture', 'context': 40960, 'parallel': 1}), flush=True)
+while line := sys.stdin.readline():
+    with (root / 'owner-input').open('a') as received:
+        received.write(line)
+(root / 'restored').touch()
+''')
+        (self.package / "verify-strata-host.py").write_text(r'''
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ['FIXTURE_ROOT'])
+(root / 'local-verify').write_text(json.dumps({'argv': sys.argv, 'isolated': sys.flags.isolated}))
+host = json.loads(sys.argv[sys.argv.index('--expected-host') + 1])
+print(json.dumps({'host': host, 'verification': {'reused_files': 1, 'hashed_files': 1, 'hashed_bytes': 10}}))
+''')
+        lock = {"identity": {"service": "llama_server", "model": "fixture", "context_tokens": 40960},
+                "host": {"digest": "llama-reviewed"}}
+        (self.package / "local-llama-qwen3-1.7b-v1.lock.json").write_text(json.dumps(lock))
+        return lock
+
+    def llama_helper_calls(self):
+        path = self.root / 'llama-helper-args'
+        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def test_local_llama_handoff_owns_and_verifies_beside_the_wrapper_without_ssh(self):
+        lock = self.llama_fixture()
+        result = subprocess.run(self.command('local-llama-qwen3-1.7b', '--prompt', 'hello'),
+                                env=self.env, cwd=self.root, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [owner] = self.llama_helper_calls()
+        child = json.loads((self.root / 'client').read_text())
+        endpoint = child['argv'][child['argv'].index('--endpoint') + 1]
+        # The server listens on the wrapper's reserved port itself, with no forward.
+        self.assertEqual(owner, ['local-llama-qwen3-1.7b', '--port', endpoint.split(':')[-1].removesuffix('/v1')])
+        self.assertEqual(child['argv'][child['argv'].index('--model-lock') + 1],
+                         str(self.package / 'local-llama-qwen3-1.7b-v1.lock.json'))
+        verified = json.loads((self.root / 'local-verify').read_text())
+        self.assertEqual(verified['isolated'], 1)
+        self.assertEqual(verified['argv'][1], str(self.root / '.local/state/playtime-llama/local-llama-qwen3-1.7b/20261125T123456Z-123'))
+        self.assertEqual(json.loads(verified['argv'][verified['argv'].index('--expected-host') + 1]), lock['host'])
+        self.assertIn('GYRO_RELEASE\n', self.owner_input())
+        self.assertTrue((self.root / 'restored').exists())
+        for name in ('started', 'status', 'verified', 'stop-warm'):
+            self.assertFalse((self.root / name).exists(), f'ssh was used: {name}')
+
+    def test_local_llama_status_and_stop_use_the_local_helper(self):
+        self.llama_fixture()
+        status = subprocess.run(self.command('--status', 'local-llama-qwen3-1.7b'), env=self.env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual((status.returncode, json.loads(status.stdout)), (0, {'state': 'starts_on_launch'}), status.stderr)
+        stop = subprocess.run(self.command('local-llama-qwen3-1.7b', '--stop-server'), env=self.env,
+                              capture_output=True, text=True, timeout=5)
+        self.assertEqual(stop.returncode, 0, stop.stderr)
+        self.assertEqual(self.llama_helper_calls(), [['--status', 'local-llama-qwen3-1.7b'], ['--stop']])
+        for name in ('started', 'status', 'stop-warm', 'client'):
+            self.assertFalse((self.root / name).exists(), name)
+
     def test_full_verification_is_forwarded_only_to_verifier(self):
         result = self.run_fixture('', '--full-verify', '--prompt', 'hello')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -922,6 +992,13 @@ else:
         ready = {'model': 'fixture', 'context': 163840, 'drafting': 'mtp8', 'parallel': 2}
         launcher.check_ready(ready, lock)
         for changed in ({'parallel': 1}, {'drafting': 'dflash2'}, {'model': 'other'}):
+            with self.assertRaises(RuntimeError):
+                launcher.check_ready(dict(ready, **changed), lock)
+        # A llama-server lock omits its one slot, and the server reports no drafting.
+        lock = {'identity': {'model': 'fixture', 'context_tokens': 40960, 'service': 'llama_server'}}
+        ready = {'model': 'fixture', 'context': 40960, 'parallel': 1}
+        launcher.check_ready(ready, lock)
+        for changed in ({'parallel': 2}, {'context': 4096}, {'model': 'other'}, {'parallel': None}):
             with self.assertRaises(RuntimeError):
                 launcher.check_ready(dict(ready, **changed), lock)
 

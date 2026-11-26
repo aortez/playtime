@@ -2133,3 +2133,26 @@ live smoke's does. A launch on a Strata target that isn't ready now gets the
 same refusal as its preview instead of `ownership_unresolved`: an unreachable
 host, for example, gets `execution_unavailable` with `model_unavailable`. No
 archived run, recipe, conversation or golden changes.
+
+## llama-server transport (2026-11-25)
+
+`playtime-strata` gains a Chat Completions transport for a local CPU
+llama-server, with schema-3 locks that bind `service: llama_server`. `Thinking`
+gains `on`, which only llama-server locks accept. `HostIdentity`'s
+`responses_source_sha256` becomes optional, and it gains optional
+`source_commit` and `build_manifest_sha256`; `Identity` gains an optional
+`server` object. Each is omitted when absent, and Strata and Basalt locks still
+require their Responses source, so every committed lock and its fingerprint keep
+their bytes. `Inspection.started` becomes `Inspection.instance`, with a
+`started()` accessor, because llama-server has a process marker instead of a
+start time. A daemon hold refuses a server without a start time, so a local
+profile can't serve as a daemon's Strata target. `LiveModel`'s bytes are
+unchanged.
+
+`playtime-task --describe` names `llama-chat-completions-v1` as the transport
+for a llama-server lock, as it names `basalt-responses-v1` for Basalt; a Strata
+description keeps its bytes. The new `local-llama-qwen3-1.7b` launcher profile
+also runs `llama-session.py` from the package, which the installer adds, and
+runs the verifier locally. Other profiles read the same files as before.
+`inspect-lock` now ends a lock with a newline and writes llama-server locks with
+thinking off. No archived run, recipe, conversation or golden changes.

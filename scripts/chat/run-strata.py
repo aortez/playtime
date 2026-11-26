@@ -155,10 +155,17 @@ def remote(preset, *args):
     return [preset["host"], shlex.join(args)]
 
 
+def helper(preset, *args):
+    """The owner helper's command: over SSH, or beside this wrapper for a local llama-server."""
+    if "llama" in preset:
+        return [sys.executable, "-I", str(PACKAGE / "llama-session.py"), *args]
+    return ssh(preset) + remote(preset, "python3", preset["helper"], *args)
+
+
 def status_report(preset, profile):
     """The helper's read-only status, or down/unknown when it can't be read."""
     try:
-        result = subprocess.run(ssh(preset) + remote(preset, "python3", preset["helper"], "--status", profile),
+        result = subprocess.run(helper(preset, "--status", profile),
                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=STATUS_TIMEOUT)
         if result.returncode:
             report = {"state": "down" if result.returncode == 255 else "unknown",
@@ -199,7 +206,14 @@ def stop_process(process, grace):
 
 
 def check_ready(ready, lock):
-    drafting = "mtp8" if lock["identity"].get("service") == "basalt" else "dflash2"
+    identity = lock["identity"]
+    if identity.get("service") == "llama_server":
+        expected = {"model": identity["model"], "context": identity["context_tokens"],
+                    "parallel": identity.get("parallel", 1)}
+        if {key: ready.get(key) for key in expected} != expected:
+            raise HostError("mismatch", "llama-server returned a different model, context or slot count")
+        return
+    drafting = "mtp8" if identity.get("service") == "basalt" else "dflash2"
     if (ready.get("model") != lock["identity"]["model"]
             or ready.get("context") != lock["identity"]["context_tokens"]
             or ready.get("drafting") != drafting
@@ -363,9 +377,10 @@ def session(preset, profile, args, launch=None, signals=None, hold=None):
     # Read local resources before touching the remote host.
     lock_bytes = lock_path.read_bytes()
     lock = json.loads(lock_bytes)
-    basalt = lock["identity"].get("service") == "basalt"
-    protocol_args = ["--model-lock", str(lock_path)] if basalt else []
-    transport = "basalt-responses-v1" if basalt else "strata-responses-v1"
+    service = lock["identity"].get("service", "strata")
+    protocol_args = [] if service == "strata" else ["--model-lock", str(lock_path)]
+    transport = {"basalt": "basalt-responses-v1",
+                 "llama_server": "llama-chat-completions-v1"}.get(service, "strata-responses-v1")
     # A hold lends the host to its caller and starts no client.
     if hold is None:
         if not native and not host_tools:
@@ -383,7 +398,7 @@ def session(preset, profile, args, launch=None, signals=None, hold=None):
     if args == ["--stop-server"]:
         if read_only:
             raise RuntimeError("read-only invocation requires role and input arguments")
-        return subprocess.call(ssh(preset) + remote(preset, "python3", preset["helper"], "--stop"), stdin=subprocess.DEVNULL)
+        return subprocess.call(helper(preset, "--stop"), stdin=subprocess.DEVNULL)
     args = [*args, *preset_args]
     selection_args = args
     if headless:
@@ -488,9 +503,13 @@ def session(preset, profile, args, launch=None, signals=None, hold=None):
     with socket.socket() as reservation:
         reservation.bind(("127.0.0.1", 0))
         port = reservation.getsockname()[1]
-    remote_port = preset.get("port", 8080)
-    command = ssh(preset) + ["-o", "ExitOnForwardFailure=yes", "-L", f"127.0.0.1:{port}:127.0.0.1:{remote_port}"]
-    command += remote(preset, "python3", preset["helper"], profile)
+    if "llama" in preset:
+        # A local llama-server listens on the reserved port itself.
+        command = helper(preset, profile, "--port", str(port))
+    else:
+        remote_port = preset.get("port", 8080)
+        command = ssh(preset) + ["-o", "ExitOnForwardFailure=yes", "-L", f"127.0.0.1:{port}:127.0.0.1:{remote_port}"]
+        command += remote(preset, "python3", preset["helper"], profile)
     owner = child = verification = heartbeats = None
     events = queue.Queue(maxsize=256)
     stopped = threading.Event()
@@ -546,7 +565,7 @@ def session(preset, profile, args, launch=None, signals=None, hold=None):
                 # can never stall this loop's deadline or cleanup.
                 if launch is None:
                     print(line, end="", file=sys.stderr, flush=True)
-                owner_label = "Basalt" if basalt else "Gyro-M"
+                owner_label = {"basalt": "Basalt", "llama_server": "llama-server"}.get(service, "Gyro-M")
                 prefixes = [f"{owner_label}: {verb} {profile}; logs: " for verb in ("starting", "reusing")]
                 prefix = next((p for p in prefixes if line.startswith(p)), None)
                 if prefix:
@@ -593,10 +612,11 @@ def session(preset, profile, args, launch=None, signals=None, hold=None):
         with (evidence / "verify-input.py").open("xb") as source:
             source.write(verifier)
         with (evidence / "verify-input.py").open("rb") as source, (evidence / "host.json").open("xb") as report, (evidence / "verify.log").open("xb") as errors:
-            verify_args = ["python3", "-", state_dir, "--expected-host", json.dumps(lock["host"])]
+            verify_args = ["-", state_dir, "--expected-host", json.dumps(lock["host"])]
             if full_verify:
                 verify_args.append("--full-verify")
-            verification = subprocess.Popen(ssh(preset) + remote(preset, *verify_args),
+            local = [sys.executable, "-I", *verify_args] if "llama" in preset else None
+            verification = subprocess.Popen(local or ssh(preset) + remote(preset, "python3", *verify_args),
                                             stdin=source, stdout=report, stderr=errors, start_new_session=True)
             while verification.poll() is None:
                 drain()

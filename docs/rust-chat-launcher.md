@@ -254,7 +254,8 @@ contains `{"idle_seconds":1800}`. Zero means retain until explicit stop or profi
 switch. The policy is read on each clean release. An unavailable idle-status probe
 defers expiry and retries; it never authorizes interrupting an unknown request.
 
-The installer includes the historical Strata locks and both reviewed Basalt locks.
+The installer includes the historical Strata locks, both reviewed Basalt locks and
+the [local llama-server](#local-llama-server-profiles) lock.
 Ollama was retired on both hosts on November 13, 2026, including the helpers'
 stop/restart hooks. It is not restarted when a console exits. No other active
 inference session is evicted to make a test run.
@@ -269,6 +270,54 @@ The warm supervisor's subprocess/socket ownership tests live in Notes at
 `agents/test_strata_warm_session.py`; the Codex wrapper uses the same supervisor
 and clean-release protocol. Framework's live cold/warm launches and explicit stop
 are recorded in [warm-session evidence](../experiments/chat-console/2026-11-13-warm-session.json).
+
+## Local llama-server profiles
+
+`local-llama-qwen3-1.7b` runs the console against llama.cpp's `llama-server` on
+the workstation itself, with no SSH, for small-model experiments; see the
+[transport guide](rust-strata.md#llama-server-chat-completions). It has no
+codex-launcher entry:
+
+```sh
+~/.local/lib/playtime-chat/run-strata.py local-llama-qwen3-1.7b \
+  --agent-prompt minimal --tokens-per-call 4096
+```
+
+The preset's `llama` entry names the runtime directory, which holds
+`bin/llama-server` and its `BUILD.json` record, the GGUF model, the alias to
+serve it as, the context and the thread count. Those paths are this
+workstation's, and the installer installs neither the runtime nor the model. The
+default Codex prompt doesn't fit a 40,960-token context under the console's
+first-turn check, which counts bytes until a server measurement calibrates it.
+Hence the two options.
+
+`scripts/chat/llama-session.py` owns the server, and the wrapper runs it from the
+package with `python3 -I`. It refuses to start while any server it recorded
+still runs, for any local profile, since they share the CPU; it doesn't see
+llama-server processes that it didn't start. It starts llama-server on the
+wrapper's loopback port with an empty environment, in a new session, set to die
+with its owner. The process is recorded in `llama-session.json`, in a new
+private directory under `~/.local/state/playtime-llama/PROFILE` beside the
+server's log. Once `/health` and `/props` answer, the owner prints `GYRO_READY`
+with the model, slot count and context, which the wrapper checks against the
+lock. The wrapper then sends a heartbeat every 10 seconds. `GYRO_RELEASE`, EOF,
+any other input, 35 seconds without a heartbeat, a signal or the server's own
+exit ends the session, and the owner stops the server with SIGTERM, then SIGKILL
+after 10 seconds. A model is never parked: each session starts a new server,
+which loaded this 1.7B model in 2–4 seconds.
+
+The wrapper runs the verifier locally, feeding the package's copy to
+`python3 -I` on stdin. It checks the recorded process's argv, start time,
+environment and working directory against `/proc`, that the process holds the
+loopback listening socket, the binary against `BUILD.json` and the lock, and the
+GGUF's hash and quantization. Model hashes are cached as on remote hosts.
+
+`--status` reports busy while any recorded server runs. `--stop-server` stops
+only orphans, recorded servers whose owner has died, and leaves an owned server
+to its owner. The launcher suite covers the owner with a fake server: release,
+EOF and unexpected input, a busy refusal, a killed owner taking its server
+down, a server that exits or never becomes ready, orphan-only stops and refused
+profiles.
 
 ## Session picker check (November 13, 2026)
 
