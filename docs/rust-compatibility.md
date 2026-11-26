@@ -1,5 +1,19 @@
 # Rust compatibility and goldens
 
+## Chat console limits (2026-11-25)
+
+New `playtime-chat` sessions allow 16,384 output tokens and 600 seconds per model
+call, and 65,536 generated tokens and 1,800 seconds per turn, up from 8,192, 300,
+32,768 and 900, so long replies less often stop at the output cap. A saved session
+keeps the context, time, token and summary limits it was created with when it is
+reopened, listed in the picker, inspected or forked; a limit given explicitly must
+match the saved one. Compaction recovery still changes only the summary cap, and
+must raise it. The harness still opens a session only under its exact saved
+configuration, so saved bytes, fingerprints and records are unchanged, and no
+golden is regenerated. Sessions saved with the old 2,048-token summary cap now
+reopen without `--summary-tokens`. `playtime-task` keeps its limits and still
+requires each one to match when it resumes a worker session.
+
 ## Inspectable chat tool results (2026-11-16)
 
 The interactive CLI now summarizes each observed tool result and retains a

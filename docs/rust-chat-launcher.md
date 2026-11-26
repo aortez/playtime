@@ -148,9 +148,10 @@ the supported definition, offline image contract and saved-session behavior.
 
 The current directory becomes `/work` in the tool container. Explicitly select
 another project with `--workspace /absolute/path`. The console prints its private
-session directory; pass `--session /that/directory` and the same project/settings
-to reopen a completed conversation. Bracketed paste inserts one editable multiline
-message; Enter submits it. `/paste` then `/end` is also supported; `/quit` exits.
+session directory; pass `--session /that/directory` and the same project to
+reopen a completed conversation, which keeps the limits it was created with.
+Bracketed paste inserts one editable multiline message; Enter submits it. `/paste`
+then `/end` is also supported; `/quit` exits.
 Escape, Ctrl-C or `/stop` cancels a turn and waits for cleanup. Safe live stops
 return to input through a recovery fork; the interrupted source stays fenced and
 no input or commands are replayed. Unknown tool outcomes require explicit recovery.
@@ -164,10 +165,9 @@ codex-launcher playtime-framework-fast --recover-compaction /absolute/old-sessio
 
 This preserves the original evidence and displays the pending message for you to
 resubmit. It does not accept the cut-off summary. See the console guide for the
-exact recovery conditions and tool limits. Completed sessions created with the
-previous 2,048-token summary cap need `--summary-tokens 2048` when reopening.
-Saved conversations remain bound to their model lock and settings: resume a Bird
-session with the Bird entry, and a Framework session with the Framework entry.
+exact recovery conditions and tool limits. Saved conversations remain bound to
+their model lock and settings: resume a Bird session with the Bird entry, and a
+Framework session with the Framework entry.
 Start a new conversation when switching hosts.
 
 The launcher's effort picker does not translate settings for this independent

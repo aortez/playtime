@@ -6,6 +6,7 @@ use playtime_chat::{
     output::{Output, clean},
     prompt::AgentPrompt,
     runtime::{self, Effects},
+    sessions::Overrides,
     terminal::{Console, Key},
 };
 use playtime_core::{CommonLimits, RunMode, Sha256Digest, WorkshopLimits};
@@ -27,6 +28,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
     io::{self, IsTerminal},
+    num::NonZeroU64,
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -45,6 +47,14 @@ macro_rules! note {
         let _ = writeln!(std::io::stderr(), $($arg)*);
     }};
 }
+
+// A new session's limits. A reopened session keeps the limits it was saved with,
+// apart from those given explicitly.
+const WALL_SECONDS: u64 = 1800;
+const MODEL_SECONDS: u64 = 600;
+const TOKENS_PER_CALL: u64 = 16384;
+const GENERATED_TOKENS: u64 = 65536;
+const SUMMARY_TOKENS: u64 = 4096;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, ValueEnum)]
 enum Preset {
@@ -86,7 +96,8 @@ struct Args {
     #[arg(long, conflicts_with_all = ["session", "recover_compaction", "recover_interrupted", "inspect_interrupted", "prompt", "endpoint"])]
     list_sessions: bool,
     /// Fork the last completed history after a truncated first compaction.
-    /// Raises the summary cap; keeps the failed session and all evidence intact.
+    /// Raises the summary cap to --summary-tokens (default: 4096); keeps the
+    /// failed session and all evidence intact.
     #[arg(long, conflicts_with = "session")]
     recover_compaction: Option<PathBuf>,
     /// Inspect a stopped turn locally; does not start inference or execute tools.
@@ -117,16 +128,21 @@ struct Args {
     /// Print model text as it arrives instead of showing a compact activity row.
     #[arg(long)]
     stream: bool,
+    /// Context tokens (default: the locked server context, or a saved session's own).
     #[arg(long)]
     context_tokens: Option<u64>,
-    #[arg(long, default_value_t = 900)]
-    wall_seconds: u64,
-    #[arg(long, default_value_t = 8192)]
-    tokens_per_call: u64,
-    #[arg(long, default_value_t = 32768)]
-    generated_tokens: u64,
-    #[arg(long, default_value_t = 4096)]
-    summary_tokens: u64,
+    /// Seconds per turn (default: 1800, or a saved session's own).
+    #[arg(long)]
+    wall_seconds: Option<u64>,
+    /// Output tokens per model call (default: 16384, or a saved session's own).
+    #[arg(long)]
+    tokens_per_call: Option<u64>,
+    /// Generated tokens per turn (default: 65536, or a saved session's own).
+    #[arg(long)]
+    generated_tokens: Option<u64>,
+    /// Output tokens per compaction summary (default: 4096, or a saved session's own).
+    #[arg(long)]
+    summary_tokens: Option<u64>,
     #[arg(long, default_value_t = 16384)]
     output_bytes: u32,
 }
@@ -173,11 +189,14 @@ fn config(
             },
             sampling_seed: limits.map_or(1042, |limits| limits.seed),
             limits: CommonLimits {
-                wall_seconds: args.wall_seconds.try_into()?,
-                generated_tokens: args.generated_tokens.try_into()?,
-                tokens_per_call: args.tokens_per_call.try_into()?,
+                wall_seconds: args.wall_seconds.unwrap_or(WALL_SECONDS).try_into()?,
+                generated_tokens: args
+                    .generated_tokens
+                    .unwrap_or(GENERATED_TOKENS)
+                    .try_into()?,
+                tokens_per_call: args.tokens_per_call.unwrap_or(TOKENS_PER_CALL).try_into()?,
                 context_tokens: context.try_into()?,
-                model_seconds: 300.try_into()?,
+                model_seconds: MODEL_SECONDS.try_into()?,
                 command_seconds: (if args.preset == Preset::CodingHost {
                     300
                 } else {
@@ -201,12 +220,30 @@ fn config(
         },
         compaction: CompactionSettings {
             allow_finish_run: false,
-            summary_tokens: args.summary_tokens.try_into()?,
+            summary_tokens: args.summary_tokens.unwrap_or(SUMMARY_TOKENS).try_into()?,
             ..Default::default()
         },
     };
-    config.validate()?;
     Ok(config)
+}
+/// The limits given explicitly, which a reopened session takes instead of its own.
+fn explicit_limits(args: &Args) -> Result<Overrides> {
+    let explicit = |value: Option<u64>| value.map(NonZeroU64::try_from).transpose();
+    Ok(Overrides {
+        wall_seconds: explicit(args.wall_seconds)?,
+        generated_tokens: explicit(args.generated_tokens)?,
+        tokens_per_call: explicit(args.tokens_per_call)?,
+        context_tokens: explicit(args.context_tokens)?,
+        // No flag sets it, so a saved session keeps its own.
+        model_seconds: None,
+        // Compaction recovery exists to raise the summary cap, so the new cap
+        // never comes from the source session.
+        summary_tokens: if args.recover_compaction.is_some() {
+            Some(args.summary_tokens.unwrap_or(SUMMARY_TOKENS).try_into()?)
+        } else {
+            explicit(args.summary_tokens)?
+        },
+    })
 }
 async fn read_prompt<W: io::Write, D: io::Write>(
     input: &mut Console,
@@ -415,7 +452,9 @@ async fn main_run(mut args: Args) -> Result<i32> {
     };
     let config = config(&args, &lock, &binding, inventory, limits.as_ref())?;
     let earlier = lock.earlier_fingerprint()?;
-    // A saved session is resumed, inspected or forked under the binding it was saved with.
+    let overrides = explicit_limits(&args)?;
+    // A saved session is resumed, inspected or forked under the binding and limits
+    // it was saved with.
     let saved = [
         &args.inspect_interrupted,
         &args.recover_compaction,
@@ -430,16 +469,20 @@ async fn main_run(mut args: Args) -> Result<i32> {
             .then(|| session_path.clone())
     });
     let config = match &saved {
-        Some(path) => playtime_chat::sessions::resume_config(&config, earlier.as_ref(), path),
+        Some(path) => {
+            playtime_chat::sessions::resume_config(&config, earlier.as_ref(), &overrides, path)
+        }
         None => config,
     };
+    config.validate()?;
     if let Some(source) = &args.inspect_interrupted {
         let report = Session::inspect_interrupted(source, &config)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(0);
     }
     if local_selection {
-        let entries = playtime_chat::sessions::catalog(&private, &config, earlier.as_ref())?;
+        let entries =
+            playtime_chat::sessions::catalog(&private, &config, earlier.as_ref(), &overrides)?;
         if args.list_sessions {
             println!("{}", serde_json::to_string(&entries)?);
         } else {
@@ -458,6 +501,7 @@ async fn main_run(mut args: Args) -> Result<i32> {
                 &entries,
                 &config,
                 earlier.as_ref(),
+                &overrides,
                 &mut io::stdin().lock(),
                 &mut io::stderr().lock(),
             )?;
@@ -611,7 +655,7 @@ async fn main_run(mut args: Args) -> Result<i32> {
                 limits.as_ref().unwrap().clone(),
                 private.clone(),
             );
-            let wall = args.wall_seconds;
+            let wall = config.execution.limits.wall_seconds.get();
             let workspace = tokio::task::spawn_blocking(move || {
                 ProjectWorkspace::new(
                     ready,
@@ -861,5 +905,41 @@ mod one_shot_arguments {
             ]))
             .is_ok()
         );
+    }
+}
+
+#[cfg(test)]
+mod limit_arguments {
+    use super::*;
+    #[test]
+    fn only_limits_given_explicitly_override_a_saved_session() {
+        let base = [
+            "playtime-chat",
+            "--endpoint",
+            "http://127.0.0.1:1/v1",
+            "--model-lock",
+            "model.json",
+        ];
+        let parse = |extra: &[&str]| {
+            let args = Args::try_parse_from(base.iter().chain(extra)).unwrap();
+            explicit_limits(&args).unwrap()
+        };
+        let tokens = |n: u64| Some(NonZeroU64::new(n).unwrap());
+        assert_eq!(parse(&[]), Overrides::default());
+        assert_eq!(
+            parse(&["--tokens-per-call", "8192", "--wall-seconds", "900"]),
+            Overrides {
+                tokens_per_call: tokens(8192),
+                wall_seconds: tokens(900),
+                ..Default::default()
+            }
+        );
+        // Compaction recovery always sets the new summary cap.
+        let recover = ["--recover-compaction", "old"];
+        assert_eq!(parse(&recover).summary_tokens, tokens(SUMMARY_TOKENS));
+        let given = [&recover[..], &["--summary-tokens", "8192"]].concat();
+        assert_eq!(parse(&given).summary_tokens, tokens(8192));
+        let zero = Args::try_parse_from(base.iter().chain(&["--wall-seconds", "0"])).unwrap();
+        assert!(explicit_limits(&zero).is_err());
     }
 }

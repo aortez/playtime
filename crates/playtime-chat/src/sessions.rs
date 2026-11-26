@@ -9,9 +9,38 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     io::{self, BufRead, Write},
+    num::NonZeroU64,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+/// The limits a reopened session must have. It keeps the ones it was saved with
+/// for the rest.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Overrides {
+    pub wall_seconds: Option<NonZeroU64>,
+    pub generated_tokens: Option<NonZeroU64>,
+    pub tokens_per_call: Option<NonZeroU64>,
+    pub context_tokens: Option<NonZeroU64>,
+    pub model_seconds: Option<NonZeroU64>,
+    pub summary_tokens: Option<NonZeroU64>,
+}
+
+impl Overrides {
+    /// Every limit as `config` sets it, so a saved session reopens only with all
+    /// of them.
+    pub fn all(config: &ConversationConfig) -> Self {
+        let limits = &config.execution.limits;
+        Self {
+            wall_seconds: Some(limits.wall_seconds),
+            generated_tokens: Some(limits.generated_tokens),
+            tokens_per_call: Some(limits.tokens_per_call),
+            context_tokens: Some(limits.context_tokens),
+            model_seconds: Some(limits.model_seconds),
+            summary_tokens: Some(config.compaction.summary_tokens),
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -53,22 +82,36 @@ fn preview(text: &str) -> String {
         .collect()
 }
 
-/// The configuration a session saved with `saved` model binding resumes under, or
-/// `None` for an unrelated model. A lock that pins its Strata server release still
-/// requires everything the same lock without it did, so sessions saved under that
-/// `earlier` fingerprint keep their binding.
-pub fn binding(
+/// The configuration a `saved` session resumes under, or `None` for an unrelated
+/// model. It keeps the time, token and context limits it was saved with, apart
+/// from `overrides`. Everything else comes from `expected`, so the harness still
+/// refuses any other difference, including an override it wasn't saved with.
+/// A lock that pins its Strata server release still requires everything the same
+/// lock without it did, so sessions saved under that `earlier` fingerprint keep
+/// their binding.
+pub fn reopened(
     expected: &ConversationConfig,
     earlier: Option<&Sha256Digest>,
-    saved: &Sha256Digest,
+    overrides: &Overrides,
+    saved: &ConversationConfig,
 ) -> Option<ConversationConfig> {
-    if *saved == expected.model {
-        return Some(expected.clone());
+    if saved.model != expected.model && earlier != Some(&saved.model) {
+        return None;
     }
-    (earlier == Some(saved)).then(|| ConversationConfig {
-        model: saved.clone(),
+    let mut config = ConversationConfig {
+        model: saved.model.clone(),
         ..expected.clone()
-    })
+    };
+    let (limits, kept) = (&mut config.execution.limits, &saved.execution.limits);
+    limits.wall_seconds = overrides.wall_seconds.unwrap_or(kept.wall_seconds);
+    limits.generated_tokens = overrides.generated_tokens.unwrap_or(kept.generated_tokens);
+    limits.tokens_per_call = overrides.tokens_per_call.unwrap_or(kept.tokens_per_call);
+    limits.context_tokens = overrides.context_tokens.unwrap_or(kept.context_tokens);
+    limits.model_seconds = overrides.model_seconds.unwrap_or(kept.model_seconds);
+    config.compaction.summary_tokens = overrides
+        .summary_tokens
+        .unwrap_or(saved.compaction.summary_tokens);
+    Some(config)
 }
 
 /// The configuration to open an existing session directory with. Anything this
@@ -76,13 +119,14 @@ pub fn binding(
 pub fn resume_config(
     expected: &ConversationConfig,
     earlier: Option<&Sha256Digest>,
+    overrides: &Overrides,
     session: &Path,
 ) -> ConversationConfig {
     PrivateDirectory::open(session, false)
         .ok()
         .and_then(|directory| directory.read("config.json", 1024 * 1024).ok())
         .and_then(|bytes| serde_json::from_slice::<ConversationConfig>(&bytes).ok())
-        .and_then(|saved| binding(expected, earlier, &saved.model))
+        .and_then(|saved| reopened(expected, earlier, overrides, &saved))
         .unwrap_or_else(|| expected.clone())
 }
 
@@ -91,11 +135,12 @@ fn inspect(
     modified: u64,
     expected: &ConversationConfig,
     earlier: Option<&Sha256Digest>,
+    overrides: &Overrides,
 ) -> Result<Option<Entry>> {
     let directory = PrivateDirectory::open(&path, false)?;
     let config: ConversationConfig =
         serde_json::from_slice(&directory.read("config.json", 1024 * 1024)?)?;
-    let Some(expected) = binding(expected, earlier, &config.model) else {
+    let Some(expected) = reopened(expected, earlier, overrides, &config) else {
         return Ok(None);
     };
     if config.workspace != expected.workspace {
@@ -154,6 +199,7 @@ pub fn catalog(
     root: &Path,
     expected: &ConversationConfig,
     earlier: Option<&Sha256Digest>,
+    overrides: &Overrides,
 ) -> Result<Vec<Entry>> {
     let directory = PrivateDirectory::open(root, false)?;
     let mut candidates = Vec::new();
@@ -175,7 +221,11 @@ pub fn catalog(
     Ok(candidates
         .into_iter()
         .take(200)
-        .filter_map(|(modified, path)| inspect(path, modified, expected, earlier).ok().flatten())
+        .filter_map(|(modified, path)| {
+            inspect(path, modified, expected, earlier, overrides)
+                .ok()
+                .flatten()
+        })
         .take(20)
         .collect())
 }
@@ -192,6 +242,7 @@ pub fn select(
     entries: &[Entry],
     config: &ConversationConfig,
     earlier: Option<&Sha256Digest>,
+    overrides: &Overrides,
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> Result<Choice> {
@@ -245,7 +296,7 @@ pub fn select(
         {
             match Session::inspect_interrupted(
                 &entry.path,
-                &resume_config(config, earlier, &entry.path),
+                &resume_config(config, earlier, overrides, &entry.path),
             ) {
                 Ok(report) => {
                     // Escape terminal controls in archived user/model/tool text.

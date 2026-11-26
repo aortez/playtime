@@ -496,11 +496,13 @@ async fn run(args: Args, cancel: CancellationToken) -> Result<()> {
             None => config,
         }
     };
-    // A saved session resumes under the binding it was saved with.
+    // A saved session resumes under the binding it was saved with, and only with
+    // the limits this invocation sets.
     let config = if resume {
         playtime_chat::sessions::resume_config(
             &config,
             lock.earlier_fingerprint()?.as_ref(),
+            &playtime_chat::sessions::Overrides::all(&config),
             &session_path,
         )
     } else {
