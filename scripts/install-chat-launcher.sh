@@ -29,7 +29,8 @@ install -m 755 scripts/chat/run-strata.py scripts/chat/verify-strata-host.py scr
 install -m 644 scripts/chat/launch_protocol.py "$destination/"
 install -m 600 scripts/chat/presets.json models/framework-strata-gyro-m-fast-v2.lock.json \
     models/bird-strata-gyro-m-fast-v2.lock.json models/bird-basalt-iq4-v1.lock.json \
-    models/bird-basalt-nvfp4-v1.lock.json models/local-llama-qwen3-1.7b-v1.lock.json \
+    models/bird-basalt-nvfp4-v1.lock.json models/local-llama-lfm2.5-350m-v1.lock.json \
+    models/local-llama-qwen3-1.7b-v1.lock.json models/local-llama-qwen3.5-0.8b-v1.lock.json \
     environments/general.lock.json "$destination/"
 install -m 600 workshop/tool.py "$destination/tool.py"
 if (( hold_only )); then

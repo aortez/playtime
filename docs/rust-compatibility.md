@@ -2156,3 +2156,14 @@ also runs `llama-session.py` from the package, which the installer adds, and
 runs the verifier locally. Other profiles read the same files as before.
 `inspect-lock` now ends a lock with a newline and writes llama-server locks with
 thinking off. No archived run, recipe, conversation or golden changes.
+
+## Small llama-server profiles (2026-11-25)
+
+The launcher gains the `local-llama-qwen3.5-0.8b` and `local-llama-lfm2.5-350m`
+profiles, whose new locks the installer adds. A preset's `llama` entry may name
+a `template` file. The owner passes it to llama-server as `--chat-template-file`,
+and the verifier hashes it on every check as one of the lock's artifacts, after
+the model. The two locks take their sampling from their model cards rather than
+from `inspect-lock`, which is unchanged. The Qwen3-1.7B profile's launch
+command, and so its lock, keep their bytes. No archived run, recipe,
+conversation or golden changes.

@@ -1,0 +1,2140 @@
+{
+ "schema_version": 1,
+ "date": "2026-11-25",
+ "source_commit": "65c1f81",
+ "source_note": "Tested from the working tree that adds the two profiles, the template key and their locks. The examples were built at 65c1f81, and this change leaves the transport and the examples unchanged.",
+ "scope": "local CPU llama-server workshop smokes, first-request replays and short console tasks for two small models; short prompts, not a long-context, accuracy or performance benchmark",
+ "raw_evidence_root": "/home/data2/playtime-llama-dev/evidence",
+ "server": {
+  "service": "llama_server",
+  "backend": "cpu",
+  "release": "llama.cpp v1.0.0",
+  "source_commit": "b1b770d90d94cad9e9ea5b993bdbc383a522fb28",
+  "binary_sha256": "91ca62b77f8d30494d939b02587211675cbc08821ea9dda4b5f6d4829ac7fb79",
+  "slots": 1,
+  "threads": 8,
+  "thinking": "none"
+ },
+ "smoke_note": "Each smoke asks the model to read a random 32-character nonce from /work/probe.txt and reply with it. It passes when the conversation finishes after at least two model calls and a tool call with the nonce in the final answer, then a cancelled request and cleanup pass. Its first prompt and seed are the same every time, so the first call repeats across smokes; only the probe varies. Each batch ran under one launcher hold, one model at a time; load_average is the 1-minute load as each attempt started, mostly from other work on the machine.",
+ "models": {
+  "qwen3.5-0.8b": {
+   "profile": "local-llama-qwen3.5-0.8b",
+   "model_lock": "../../models/local-llama-qwen3.5-0.8b-v1.lock.json",
+   "model": {
+    "alias": "qwen3.5-0.8b-q8_0",
+    "quantization": "Q8_0",
+    "context_tokens": 262144,
+    "source": {
+     "repository": "unsloth/Qwen3.5-0.8B-GGUF",
+     "revision": "6ab461498e2023f6e3c1baea90a8f0fe38ab64d0",
+     "file": "Qwen3.5-0.8B-Q8_0.gguf",
+     "sha256": "0ad885ffd4bb022fc4f0d33a3308fa108ef8613159d3b3a67e23abca056b7a6c"
+    }
+   },
+   "artifacts": [
+    {
+     "path": "/home/data2/playtime-llama-dev/models/qwen3.5-0.8b-q8_0.gguf",
+     "size": 811843840,
+     "sha256": "0ad885ffd4bb022fc4f0d33a3308fa108ef8613159d3b3a67e23abca056b7a6c"
+    }
+   ],
+   "engine_argv": [
+    "/home/data2/playtime-llama-dev/runtime/v1.0.0/bin/llama-server",
+    "-m",
+    "/home/data2/playtime-llama-dev/models/qwen3.5-0.8b-q8_0.gguf",
+    "--alias",
+    "qwen3.5-0.8b-q8_0",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "PORT",
+    "-np",
+    "1",
+    "-c",
+    "262144",
+    "-t",
+    "8",
+    "-fa",
+    "on",
+    "--jinja",
+    "--no-context-shift",
+    "--reasoning-format",
+    "deepseek",
+    "--offline",
+    "--load-mode",
+    "none",
+    "--no-ui"
+   ],
+   "lock_verification": {
+    "cold": {
+     "mode": "reuse_unchanged",
+     "reused_files": 0,
+     "reused_bytes": 0,
+     "hashed_files": 2,
+     "hashed_bytes": 830286768,
+     "cache_saved": true
+    },
+    "warm": {
+     "mode": "reuse_unchanged",
+     "reused_files": 1,
+     "reused_bytes": 811843840,
+     "hashed_files": 1,
+     "hashed_bytes": 18442928,
+     "cache_saved": true
+    }
+   },
+   "settings": {
+    "thinking": "none",
+    "summary_thinking": "none",
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "top_k": 20,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 2.0,
+    "frequency_penalty": 0.0,
+    "penalty_last_n": 64
+   },
+   "settings_source": {
+    "repository": "Qwen/Qwen3.5-0.8B",
+    "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+    "file": "README.md",
+    "recommendation": "Non-thinking mode for text tasks: temperature=1.0, top_p=1.00, top_k=20, min_p=0.0, presence_penalty=2.0, repetition_penalty=1.0"
+   },
+   "smokes": {
+    "default_settings": {
+     "settings": {
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "repetition_penalty": 1.0,
+      "presence_penalty": 0.0
+     },
+     "note": "inspect-lock's defaults; two batches under separate holds",
+     "attempts": [
+      {
+       "smoke_exit": 0,
+       "load_average": 16.61,
+       "reason": "agent_finished",
+       "elapsed_ms": 7449,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 85,
+        "known_generated_tokens": 85,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The contents of /work/probe.txt are:\n```\n{\"content\":\"df36ea4b8e698e9ae974a3c60fbbb222\",\"offset_bytes\":0,\"truncated\":false}\n```",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 0,
+         "evaluated_tokens": 576,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 340.8,
+         "decode_tokens_per_second": 27.5,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 662,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 59,
+         "generated_tokens": 57,
+         "prompt_tokens_per_second": 222.1,
+         "decode_tokens_per_second": 29.2,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 17.31,
+       "reason": "incomplete_model_response",
+       "elapsed_ms": 112317,
+       "model_calls": 72,
+       "tool_calls": 71,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 2048,
+        "known_generated_tokens": 2048,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "",
+       "call_sequence": [
+        "read_file /work/probe.txt",
+        "write_file /work/probe.txt",
+        "read_file /work/probe.txt x69",
+        "length"
+       ],
+       "first_requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 18.6,
+         "decode_tokens_per_second": 27.0,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 84,
+         "prompt_tokens_per_second": 235.0,
+         "decode_tokens_per_second": 34.8,
+         "tool_calls": [
+          "write_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 780,
+         "cached_input_tokens": 748,
+         "evaluated_tokens": 32,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 73.7,
+         "decode_tokens_per_second": 29.8,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 21.13,
+       "reason": "agent_finished",
+       "elapsed_ms": 5054,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 76,
+        "known_generated_tokens": 76,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "```json\n{\"content\":\"b2df2543857459d30af6cc0d4b5db79a\",\"offset_bytes\":0,\"truncated\":false}\n```",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 60,
+         "evaluated_tokens": 516,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 505.2,
+         "decode_tokens_per_second": 41.0,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 663,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 60,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 226.3,
+         "decode_tokens_per_second": 45.2,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 20.23,
+       "reason": "agent_finished",
+       "elapsed_ms": 3871,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 57,
+        "known_generated_tokens": 57,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "53bffc72ce9dc002b8d9d4e8b330348d",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 42.0,
+         "decode_tokens_per_second": 41.8,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 663,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 60,
+         "generated_tokens": 29,
+         "prompt_tokens_per_second": 359.8,
+         "decode_tokens_per_second": 39.3,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 20.06,
+       "reason": "incomplete_model_response",
+       "elapsed_ms": 95588,
+       "model_calls": 72,
+       "tool_calls": 71,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 2048,
+        "known_generated_tokens": 2048,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "",
+       "call_sequence": [
+        "read_file /work/probe.txt",
+        "write_file /work/probe.txt",
+        "read_file /work/probe.txt x69",
+        "length"
+       ],
+       "first_requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 84.3,
+         "decode_tokens_per_second": 42.3,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 661,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 58,
+         "generated_tokens": 80,
+         "prompt_tokens_per_second": 215.2,
+         "decode_tokens_per_second": 42.3,
+         "tool_calls": [
+          "write_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 772,
+         "cached_input_tokens": 740,
+         "evaluated_tokens": 32,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 200.3,
+         "decode_tokens_per_second": 44.3,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 10.81,
+       "reason": "agent_finished",
+       "elapsed_ms": 4019,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 59,
+        "known_generated_tokens": 59,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "5021bb2d0f02941af59e4b29b6316502",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 0,
+         "evaluated_tokens": 576,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 595.0,
+         "decode_tokens_per_second": 52.3,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 31,
+         "prompt_tokens_per_second": 439.0,
+         "decode_tokens_per_second": 48.6,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 10.42,
+       "reason": "incomplete_model_response",
+       "elapsed_ms": 75554,
+       "model_calls": 71,
+       "tool_calls": 70,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 2048,
+        "known_generated_tokens": 2048,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "",
+       "call_sequence": [
+        "read_file /work/probe.txt",
+        "write_file /work/probe.txt",
+        "read_file /work/probe.txt x68",
+        "length"
+       ],
+       "first_requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 85.5,
+         "decode_tokens_per_second": 47.3,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 96,
+         "prompt_tokens_per_second": 395.8,
+         "decode_tokens_per_second": 41.1,
+         "tool_calls": [
+          "write_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 792,
+         "cached_input_tokens": 661,
+         "evaluated_tokens": 131,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 486.9,
+         "decode_tokens_per_second": 53.3,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 10.67,
+       "reason": "agent_finished",
+       "elapsed_ms": 3828,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 90,
+        "known_generated_tokens": 90,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The exact contents of /work/probe.txt are:\n\n```json\n{\"content\":\"f581c0214fa5d70710a0cf360c813f42\",\"offset_bytes\":0,\"truncated\":false}\n```",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 60,
+         "evaluated_tokens": 516,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 951.2,
+         "decode_tokens_per_second": 55.4,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 62,
+         "prompt_tokens_per_second": 593.1,
+         "decode_tokens_per_second": 55.1,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 10.45,
+       "reason": "incomplete_model_response",
+       "elapsed_ms": 64947,
+       "model_calls": 72,
+       "tool_calls": 71,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 2048,
+        "known_generated_tokens": 2048,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "",
+       "call_sequence": [
+        "read_file /work/probe.txt",
+        "write_file /work/probe.txt",
+        "read_file /work/probe.txt x69",
+        "length"
+       ],
+       "first_requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 134.9,
+         "decode_tokens_per_second": 56.3,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 662,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 59,
+         "generated_tokens": 81,
+         "prompt_tokens_per_second": 500.3,
+         "decode_tokens_per_second": 56.2,
+         "tool_calls": [
+          "write_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 774,
+         "cached_input_tokens": 742,
+         "evaluated_tokens": 32,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 323.7,
+         "decode_tokens_per_second": 54.9,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 9.57,
+       "reason": "incomplete_model_response",
+       "elapsed_ms": 63109,
+       "model_calls": 72,
+       "tool_calls": 71,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 2048,
+        "known_generated_tokens": 2048,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "",
+       "call_sequence": [
+        "read_file /work/probe.txt",
+        "write_file /work/probe.txt",
+        "read_file /work/probe.txt x69",
+        "length"
+       ],
+       "first_requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 60,
+         "evaluated_tokens": 516,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 1061.9,
+         "decode_tokens_per_second": 57.9,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 84,
+         "prompt_tokens_per_second": 678.0,
+         "decode_tokens_per_second": 57.4,
+         "tool_calls": [
+          "write_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 780,
+         "cached_input_tokens": 748,
+         "evaluated_tokens": 32,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 515.9,
+         "decode_tokens_per_second": 58.3,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    "card_settings": {
+     "attempts": [
+      {
+       "smoke_exit": 0,
+       "load_average": 8.33,
+       "reason": "agent_finished",
+       "elapsed_ms": 3334,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 69,
+        "known_generated_tokens": 69,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "f605cf082492d21e27e8eb336a5957f9, offset_bytes: 0, truncated: false",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 60,
+         "evaluated_tokens": 516,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 1034.7,
+         "decode_tokens_per_second": 56.0,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 41,
+         "prompt_tokens_per_second": 659.4,
+         "decode_tokens_per_second": 56.5,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 7.98,
+       "reason": "agent_finished",
+       "elapsed_ms": 2668,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 60,
+        "known_generated_tokens": 60,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "752037f87713f07e6aa6888a1337499f",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 129.2,
+         "decode_tokens_per_second": 59.1,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 666,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 63,
+         "generated_tokens": 32,
+         "prompt_tokens_per_second": 642.3,
+         "decode_tokens_per_second": 60.0,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 7.34,
+       "reason": "agent_finished",
+       "elapsed_ms": 3284,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 97,
+        "known_generated_tokens": 97,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\n    \"content\": \"{'content': \\\\\\\"e3b4a9582a5cedb63c05ee4fc155782d\\\\\\\", \\\\\\n'truncated': false \\\",\\n        \\\"offset_bytes\\\": 0\\n    }\\n}\"\n}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 148.6,
+         "decode_tokens_per_second": 60.0,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 663,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 60,
+         "generated_tokens": 69,
+         "prompt_tokens_per_second": 634.3,
+         "decode_tokens_per_second": 60.0,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 7.34,
+       "reason": "agent_finished",
+       "elapsed_ms": 3114,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 85,
+        "known_generated_tokens": 85,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"f8050d2e8602f0040babbe5d3df27e7b\", \"offset_bytes\": 0, \"truncated\": false, \"uid-1000-workshop\"}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 121.7,
+         "decode_tokens_per_second": 56.7,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 663,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 60,
+         "generated_tokens": 57,
+         "prompt_tokens_per_second": 599.6,
+         "decode_tokens_per_second": 58.3,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 6.99,
+       "reason": "agent_finished",
+       "elapsed_ms": 2662,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 58,
+        "known_generated_tokens": 58,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "719818f2fe95751c86531cf5888dfe0a",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 126.1,
+         "decode_tokens_per_second": 59.4,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 30,
+         "prompt_tokens_per_second": 538.7,
+         "decode_tokens_per_second": 56.9,
+         "tool_calls": []
+        }
+       ]
+      }
+     ]
+    },
+    "committed_lock": {
+     "attempts": [
+      {
+       "smoke_exit": 0,
+       "load_average": 2.09,
+       "reason": "agent_finished",
+       "elapsed_ms": 3808,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 60,
+        "known_generated_tokens": 60,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "73b1381114e9ea1f7b638512e8294245",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 0,
+         "evaluated_tokens": 576,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 810.9,
+         "decode_tokens_per_second": 52.9,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 666,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 63,
+         "generated_tokens": 32,
+         "prompt_tokens_per_second": 436.6,
+         "decode_tokens_per_second": 51.6,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 2.89,
+       "reason": "agent_finished",
+       "elapsed_ms": 2938,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 59,
+        "known_generated_tokens": 59,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "3bce31c425905539e991b3eb1832a8a1",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 134.3,
+         "decode_tokens_per_second": 53.7,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 31,
+         "prompt_tokens_per_second": 450.3,
+         "decode_tokens_per_second": 54.0,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 3.46,
+       "reason": "agent_finished",
+       "elapsed_ms": 2823,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 57,
+        "known_generated_tokens": 57,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "2f2f99ed522b22501dc4fe01a57aef01",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 137.2,
+         "decode_tokens_per_second": 53.6,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 663,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 60,
+         "generated_tokens": 29,
+         "prompt_tokens_per_second": 548.3,
+         "decode_tokens_per_second": 54.4,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 3.9,
+       "reason": "agent_finished",
+       "elapsed_ms": 3516,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 92,
+        "known_generated_tokens": 92,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "Here are the exact contents of /work/probe.txt:\n\n```json\n{\"content\":\"90b05a592930156253a15166e1fc6d30\\\",\\\"offset_bytes\\\":0,\\\"truncated\\\":false}\n```",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 162.7,
+         "decode_tokens_per_second": 53.4,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 666,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 63,
+         "generated_tokens": 64,
+         "prompt_tokens_per_second": 564.3,
+         "decode_tokens_per_second": 52.6,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 4.47,
+       "reason": "agent_finished",
+       "elapsed_ms": 2958,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 58,
+        "known_generated_tokens": 58,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "3ba7c65cbc862692b82d12a540265a95",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 137.1,
+         "decode_tokens_per_second": 52.1,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 30,
+         "prompt_tokens_per_second": 461.8,
+         "decode_tokens_per_second": 52.3,
+         "tool_calls": []
+        }
+       ]
+      }
+     ],
+     "hold_end": {
+      "event": "ended",
+      "released": true,
+      "inference_owner": "confirmed",
+      "owner_exit": 0
+     }
+    }
+   },
+   "console": {
+    "minimal": {
+     "launcher_arguments": [
+      "--workspace",
+      "PROJECT",
+      "--tokens-per-call",
+      "4096",
+      "--agent-prompt",
+      "minimal"
+     ],
+     "timings": {
+      "model_ready_seconds": 1.6068224449991249,
+      "verification_seconds": 0.20068126600017422,
+      "launcher_ready_seconds": 1.8075319039999158,
+      "verification": {
+       "mode": "reuse_unchanged",
+       "reused_files": 1,
+       "reused_bytes": 811843840,
+       "hashed_files": 1,
+       "hashed_bytes": 18442928,
+       "cache_saved": true
+      }
+     },
+     "tasks": [
+      {
+       "prompt": "What is the launch code in notes.txt?",
+       "tools": [
+        "read_file /work/notes.txt"
+       ],
+       "answer": "The launch code in notes.txt is 4187.",
+       "model_calls": 2,
+       "elapsed_ms": 2784,
+       "reason": "agent_finished",
+       "known_generated_tokens": 42,
+       "usage_complete": true
+      },
+      {
+       "prompt": "Create a file named greeting.txt that contains the single word hello.",
+       "tools": [
+        "write_file /work/greeting.txt (5 bytes, append)",
+        "read_file /work/greeting.txt"
+       ],
+       "answer": "Created the file greeting.txt containing 'hello'.",
+       "model_calls": 3,
+       "elapsed_ms": 3538,
+       "reason": "agent_finished",
+       "known_generated_tokens": 92,
+       "usage_complete": true
+      }
+     ],
+     "exit": {
+      "client_exit": 0,
+      "owner_exit": 0,
+      "exit": 0
+     }
+    },
+    "codex": {
+     "launcher_arguments": [
+      "--workspace",
+      "PROJECT"
+     ],
+     "timings": {
+      "model_ready_seconds": 1.602391758999147,
+      "verification_seconds": 0.3016062870010501,
+      "launcher_ready_seconds": 1.9040304770023795,
+      "verification": {
+       "mode": "reuse_unchanged",
+       "reused_files": 1,
+       "reused_bytes": 811843840,
+       "hashed_files": 1,
+       "hashed_bytes": 18442928,
+       "cache_saved": true
+      }
+     },
+     "tasks": [
+      {
+       "prompt": "What is the launch code in notes.txt?",
+       "tools": [
+        "read_file /work/notes.txt",
+        "write_file /work/notes.txt (21 bytes)",
+        "write_file /work/notes.txt (25 bytes)"
+       ],
+       "answer": "The launch code is: **4187.**",
+       "model_calls": 4,
+       "elapsed_ms": 11278,
+       "reason": "agent_finished",
+       "known_generated_tokens": 135,
+       "usage_complete": true
+      },
+      {
+       "prompt": "Create a file named greeting.txt that contains the single word hello.",
+       "tools": [
+        "write_file /work/greeting.txt (6 bytes)"
+       ],
+       "answer": "Created `greeting.txt` with single word \"hello\".",
+       "model_calls": 2,
+       "elapsed_ms": 2491,
+       "reason": "agent_finished",
+       "known_generated_tokens": 54,
+       "usage_complete": true
+      }
+     ],
+     "exit": {
+      "client_exit": 0,
+      "owner_exit": 0,
+      "exit": 0
+     }
+    },
+    "codex_note": "The read turn's two writes left notes.txt byte-identical to its committed version."
+   }
+  },
+  "lfm2.5-350m": {
+   "profile": "local-llama-lfm2.5-350m",
+   "model_lock": "../../models/local-llama-lfm2.5-350m-v1.lock.json",
+   "model": {
+    "alias": "lfm2.5-350m-q8_0",
+    "quantization": "Q8_0",
+    "context_tokens": 32768,
+    "source": {
+     "repository": "LiquidAI/LFM2.5-350M-GGUF",
+     "revision": "657e078c94084481950a2d555a941481f715536b",
+     "file": "LFM2.5-350M-Q8_0.gguf",
+     "sha256": "be036a757295e550098b85e13f6af2735d0fa73b41e1156a40c7d8e8e32a5766"
+    },
+    "context_note": "The model's configuration allows 128,000 positions; its model card gives a 32,768-token context, which the profile uses."
+   },
+   "artifacts": [
+    {
+     "path": "/home/data2/playtime-llama-dev/models/lfm2.5-350m-q8_0.gguf",
+     "size": 379217632,
+     "sha256": "be036a757295e550098b85e13f6af2735d0fa73b41e1156a40c7d8e8e32a5766"
+    },
+    {
+     "path": "/home/data2/playtime-llama-dev/templates/lfm2.5-350m-9921cd4.jinja",
+     "size": 5487,
+     "sha256": "ba551d58630afa3190b1be3602e28301f3d2e9bbac978dfc49d6d825171648b6"
+    }
+   ],
+   "engine_argv": [
+    "/home/data2/playtime-llama-dev/runtime/v1.0.0/bin/llama-server",
+    "-m",
+    "/home/data2/playtime-llama-dev/models/lfm2.5-350m-q8_0.gguf",
+    "--alias",
+    "lfm2.5-350m-q8_0",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "PORT",
+    "-np",
+    "1",
+    "-c",
+    "32768",
+    "-t",
+    "8",
+    "-fa",
+    "on",
+    "--jinja",
+    "--chat-template-file",
+    "/home/data2/playtime-llama-dev/templates/lfm2.5-350m-9921cd4.jinja",
+    "--no-context-shift",
+    "--reasoning-format",
+    "deepseek",
+    "--offline",
+    "--load-mode",
+    "none",
+    "--no-ui"
+   ],
+   "lock_verification": {
+    "cold": {
+     "mode": "reuse_unchanged",
+     "reused_files": 0,
+     "reused_bytes": 0,
+     "hashed_files": 3,
+     "hashed_bytes": 397666047,
+     "cache_saved": true
+    },
+    "warm": {
+     "mode": "reuse_unchanged",
+     "reused_files": 1,
+     "reused_bytes": 379217632,
+     "hashed_files": 2,
+     "hashed_bytes": 18448415,
+     "cache_saved": true
+    }
+   },
+   "settings": {
+    "thinking": "none",
+    "summary_thinking": "none",
+    "temperature": 0.1,
+    "top_p": 1.0,
+    "top_k": 50,
+    "min_p": 0.0,
+    "repetition_penalty": 1.05,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "penalty_last_n": 64
+   },
+   "template": {
+    "embedded": {
+     "sha256": "013eed60546434b6967e3483153d8c5c37abcb1d667f8b1f914683f2a9411531",
+     "capabilities": {
+      "supports_object_arguments": false,
+      "supports_parallel_tool_calls": false,
+      "supports_preserve_reasoning": false,
+      "supports_reasoning_effort": false,
+      "supports_string_content": true,
+      "supports_system_role": true,
+      "supports_tool_calls": false,
+      "supports_tools": true,
+      "supports_typed_content": true,
+      "reasoning_effort_levels": []
+     },
+     "rendered_history": "<|im_start|>system\nYou are a careful assistant with workspace tools.\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"read_file\", \"description\": \"Read a UTF-8 file in the workspace.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\", \"description\": \"Absolute path.\"}}, \"required\": [\"path\"], \"additionalProperties\": false}}}]<|im_end|>\n<|im_start|>user\nWhat does /work/probe.txt contain?<|im_end|>\n<|im_start|>assistant\n<|im_end|>\n<|im_start|>tool\nprobe-7f3a<|im_end|>\n<|im_start|>assistant\n"
+    },
+    "file": {
+     "repository": "LiquidAI/LFM2.5-350M",
+     "revision": "9921cd4d82c0e3986887aa4b376f9446729ef8a3",
+     "fix_commit": "9e6c6cc: Fix chat template: render assistant tool_calls (#12)",
+     "path": "chat_template.jinja",
+     "git_blob": "4bba41b1eea86b9f3725ca30a89bb4656e17e25a",
+     "size": 5487,
+     "sha256": "ba551d58630afa3190b1be3602e28301f3d2e9bbac978dfc49d6d825171648b6",
+     "served_sha256": "70278c3c69a31e89c2383bb2c4cb5f22ec8456069bcd194d553c30a00dbe1b05",
+     "served_note": "llama-server strips the file's trailing newline",
+     "capabilities": {
+      "supports_object_arguments": true,
+      "supports_parallel_tool_calls": true,
+      "supports_preserve_reasoning": true,
+      "supports_reasoning_effort": false,
+      "supports_string_content": true,
+      "supports_system_role": true,
+      "supports_tool_calls": true,
+      "supports_tools": true,
+      "supports_typed_content": true,
+      "reasoning_effort_levels": []
+     },
+     "rendered_history": "<|im_start|>system\nYou are a careful assistant with workspace tools.\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"read_file\", \"description\": \"Read a UTF-8 file in the workspace.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\", \"description\": \"Absolute path.\"}}, \"required\": [\"path\"], \"additionalProperties\": false}}}]<|im_end|>\n<|im_start|>user\nWhat does /work/probe.txt contain?<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>[read_file(path='/work/probe.txt')]<|tool_call_end|><|im_end|>\n<|im_start|>tool\nprobe-7f3a<|im_end|>\n<|im_start|>assistant\n"
+    }
+   },
+   "settings_source": {
+    "repository": "LiquidAI/LFM2.5-350M",
+    "revision": "9921cd4d82c0e3986887aa4b376f9446729ef8a3",
+    "file": "README.md",
+    "recommendation": "Generation parameters: temperature 0.1, top_k 50, repetition_penalty 1.05",
+    "unnamed_parameters": "disabled: top_p 1.0, min_p 0.0, presence_penalty 0.0"
+   },
+   "smokes": {
+    "default_settings": {
+     "settings": {
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0,
+      "repetition_penalty": 1.0,
+      "presence_penalty": 0.0
+     },
+     "attempts": [
+      {
+       "smoke_exit": 1,
+       "load_average": 4.62,
+       "reason": "agent_finished",
+       "elapsed_ms": 1840,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 48,
+        "known_generated_tokens": 48,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool provided does not accept any parameters like file paths or content, making it impossible to read a specific file like /work/probe.txt. Since no tool is available for file operations, I cannot fulfill this request.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 0,
+         "evaluated_tokens": 398,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 2104.7,
+         "decode_tokens_per_second": 162.3,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 4.62,
+       "reason": "agent_finished",
+       "elapsed_ms": 1678,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 48,
+        "known_generated_tokens": 48,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool provided does not accept any parameters like file paths or content, making it impossible to read a specific file like /work/probe.txt. Since no tool is available for file operations, I cannot fulfill this request.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 372.5,
+         "decode_tokens_per_second": 160.8,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 4.62,
+       "reason": "agent_finished",
+       "elapsed_ms": 1673,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 48,
+        "known_generated_tokens": 48,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool provided does not accept any parameters like file paths or content, making it impossible to read a specific file like /work/probe.txt. Since no tool is available for file operations, I cannot fulfill this request.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 308.5,
+         "decode_tokens_per_second": 161.3,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 4.41,
+       "reason": "agent_finished",
+       "elapsed_ms": 1674,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 48,
+        "known_generated_tokens": 48,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool provided does not accept any parameters like file paths or content, making it impossible to read a specific file like /work/probe.txt. Since no tool is available for file operations, I cannot fulfill this request.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 320.1,
+         "decode_tokens_per_second": 162.8,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 4.41,
+       "reason": "agent_finished",
+       "elapsed_ms": 1687,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 48,
+        "known_generated_tokens": 48,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool provided does not accept any parameters like file paths or content, making it impossible to read a specific file like /work/probe.txt. Since no tool is available for file operations, I cannot fulfill this request.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 362.0,
+         "decode_tokens_per_second": 155.2,
+         "tool_calls": []
+        }
+       ]
+      }
+     ]
+    },
+    "card_settings": {
+     "attempts": [
+      {
+       "smoke_exit": 1,
+       "load_average": 4.41,
+       "reason": "agent_finished",
+       "elapsed_ms": 1698,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 49,
+        "known_generated_tokens": 49,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool requires a specific path to access the file. Since \"/work/probe.txt\" is not provided in your request, I cannot proceed without it. Please specify the exact path to the file you want me to read.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 310.3,
+         "decode_tokens_per_second": 159.6,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 4.22,
+       "reason": "agent_finished",
+       "elapsed_ms": 1669,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 49,
+        "known_generated_tokens": 49,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool requires a specific path to access the file. Since \"/work/probe.txt\" is not provided in your request, I cannot proceed without it. Please specify the exact path to the file you want me to read.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 362.6,
+         "decode_tokens_per_second": 158.9,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 4.22,
+       "reason": "agent_finished",
+       "elapsed_ms": 1708,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 49,
+        "known_generated_tokens": 49,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool requires a specific path to access the file. Since \"/work/probe.txt\" is not provided in your request, I cannot proceed without it. Please specify the exact path to the file you want me to read.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 363.0,
+         "decode_tokens_per_second": 158.0,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 4.6,
+       "reason": "agent_finished",
+       "elapsed_ms": 1712,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 49,
+        "known_generated_tokens": 49,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool requires a specific path to access the file. Since \"/work/probe.txt\" is not provided in your request, I cannot proceed without it. Please specify the exact path to the file you want me to read.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 361.1,
+         "decode_tokens_per_second": 156.3,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 4.6,
+       "reason": "agent_finished",
+       "elapsed_ms": 1691,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 49,
+        "known_generated_tokens": 49,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool requires a specific path to access the file. Since \"/work/probe.txt\" is not provided in your request, I cannot proceed without it. Please specify the exact path to the file you want me to read.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 345.9,
+         "decode_tokens_per_second": 153.0,
+         "tool_calls": []
+        }
+       ]
+      }
+     ]
+    },
+    "committed_lock": {
+     "attempts": [
+      {
+       "smoke_exit": 1,
+       "load_average": 4.19,
+       "reason": "agent_finished",
+       "elapsed_ms": 2196,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 49,
+        "known_generated_tokens": 49,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool requires a specific path to access the file. Since \"/work/probe.txt\" is not provided in your request, I cannot proceed without it. Please specify the exact path to the file you want me to read.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 0,
+         "evaluated_tokens": 398,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 1377.1,
+         "decode_tokens_per_second": 136.2,
+         "tool_calls": []
+        }
+       ]
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 4.19,
+       "reason": "agent_finished",
+       "elapsed_ms": 1927,
+       "model_calls": 1,
+       "tool_calls": 0,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 49,
+        "known_generated_tokens": 49,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "The read_file tool requires a specific path to access the file. Since \"/work/probe.txt\" is not provided in your request, I cannot proceed without it. Please specify the exact path to the file you want me to read.",
+       "requests": [
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 398,
+         "cached_input_tokens": 394,
+         "evaluated_tokens": 4,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 297.6,
+         "decode_tokens_per_second": 138.2,
+         "tool_calls": []
+        }
+       ]
+      }
+     ],
+     "hold_end": {
+      "event": "ended",
+      "released": true,
+      "inference_owner": "confirmed",
+      "owner_exit": 0
+     }
+    }
+   },
+   "first_request": {
+    "rendered_prompt": "<|im_start|>system\nYou are testing a tool transport in a disposable workshop. Follow the user request, use the tools when needed, and give a concise plain final answer.\n\nAn isolated uid-1000 workshop with a prepared /work/probe.txt file.\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"exec\", \"description\": \"Execute a bounded Bash command in the owned workshop. Processes continue through conversation compaction and stop when the run ends.\", \"parameters\": {\"additionalProperties\": false, \"properties\": {\"command\": {\"type\": \"string\"}, \"cwd\": {\"type\": \"string\"}, \"timeout_seconds\": {\"type\": \"number\"}}, \"required\": [\"command\"], \"type\": \"object\"}}}, {\"type\": \"function\", \"function\": {\"name\": \"read_file\", \"description\": \"Read a bounded slice of a UTF-8 text file in the workshop. Binary files are rejected; use exec to inspect their metadata or compute a text summary.\", \"parameters\": {\"additionalProperties\": false, \"properties\": {\"offset_bytes\": {\"type\": \"integer\"}, \"path\": {\"type\": \"string\"}}, \"required\": [\"path\"], \"type\": \"object\"}}}, {\"type\": \"function\", \"function\": {\"name\": \"write_file\", \"description\": \"Write or append UTF-8 text to a file inside /work.\", \"parameters\": {\"additionalProperties\": false, \"properties\": {\"append\": {\"type\": \"boolean\"}, \"content\": {\"type\": \"string\"}, \"path\": {\"type\": \"string\"}}, \"required\": [\"path\", \"content\"], \"type\": \"object\"}}}]<|im_end|>\n<|im_start|>user\nUse read_file to read /work/probe.txt, then reply with its exact contents. Do not modify files or execute commands.<|im_end|>\n<|im_start|>assistant\n",
+    "note": "The smoke's first request as sent, captured by a logging proxy. Playtime serializes JSON with sorted keys, so each tool schema lists additionalProperties first and type last."
+   },
+   "first_request_replays": {
+    "note": "The captured first request replayed over seeds 1-8 per variant, without streaming. 'conventional' lists each tool schema's type, properties and required first; 'card' uses the model card's sampling; 'open' drops additionalProperties.",
+    "seeds": 8,
+    "called_read_file_on_the_probe": {
+     "as-sent": 2,
+     "card-sampling": 0,
+     "conventional-order": 5,
+     "no-additionalProperties": 2,
+     "conventional-order-open": 5,
+     "read_file-only": 5,
+     "conventional-order-card": 8,
+     "conventional-read_file-only": 8,
+     "conventional-read_file-only-card": 8
+    }
+   },
+   "reordered_schema_smokes": {
+    "note": "Smokes through a proxy that listed each tool schema's type, properties and required first before forwarding. The proxy delivered each response whole, so the smoke's cancellation step, which needs a response still streaming, failed whenever the model finished before the client cancelled; the conversation results stand.",
+    "card_settings": [
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2461,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 51,
+       "known_generated_tokens": 51,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`31ffacabeab83e3dfdb54c48332f4cb6`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 0,
+        "evaluated_tokens": 395,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 1804.6,
+        "decode_tokens_per_second": 131.0,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 454,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 63,
+        "generated_tokens": 36,
+        "prompt_tokens_per_second": 938.8,
+        "decode_tokens_per_second": 136.3,
+        "tool_calls": []
+       }
+      ]
+     },
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2104,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 51,
+       "known_generated_tokens": 51,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`7452a1744c64ba47da984c1b1690dbbe`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 331.0,
+        "decode_tokens_per_second": 145.1,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 454,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 63,
+        "generated_tokens": 36,
+        "prompt_tokens_per_second": 1104.2,
+        "decode_tokens_per_second": 144.3,
+        "tool_calls": []
+       }
+      ]
+     },
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2049,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 50,
+       "known_generated_tokens": 50,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`d09b9f79c32577274eb3235ff504e131`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 326.3,
+        "decode_tokens_per_second": 146.9,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 453,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 62,
+        "generated_tokens": 35,
+        "prompt_tokens_per_second": 1462.5,
+        "decode_tokens_per_second": 143.3,
+        "tool_calls": []
+       }
+      ]
+     },
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2037,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 53,
+       "known_generated_tokens": 53,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`f69a307afea7e8af97c7c19c837d2383`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 300.3,
+        "decode_tokens_per_second": 144.6,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 456,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 65,
+        "generated_tokens": 38,
+        "prompt_tokens_per_second": 1222.3,
+        "decode_tokens_per_second": 146.5,
+        "tool_calls": []
+       }
+      ]
+     },
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2014,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 53,
+       "known_generated_tokens": 53,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:\n\n`b27771acb4d90be2498fcf2597f9e75b`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 303.4,
+        "decode_tokens_per_second": 143.2,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 456,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 65,
+        "generated_tokens": 38,
+        "prompt_tokens_per_second": 1440.7,
+        "decode_tokens_per_second": 147.7,
+        "tool_calls": []
+       }
+      ]
+     }
+    ],
+    "default_settings": [
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2205,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 51,
+       "known_generated_tokens": 51,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:\n\n`9845e719344bfb40bd4d1386fba11c52`",
+      "smoke_error": "Error: \"did not observe cancellation before terminal response\"",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 0,
+        "evaluated_tokens": 395,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 2128.3,
+        "decode_tokens_per_second": 139.4,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 454,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 63,
+        "generated_tokens": 36,
+        "prompt_tokens_per_second": 1467.1,
+        "decode_tokens_per_second": 153.7,
+        "tool_calls": []
+       }
+      ]
+     },
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2054,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 56,
+       "known_generated_tokens": 56,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:\n\n`a52be3484a8b4c1a7a227b9b08e7ae71`",
+      "smoke_error": "Error: \"did not observe cancellation before terminal response\"",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 310.0,
+        "decode_tokens_per_second": 148.7,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 459,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 68,
+        "generated_tokens": 41,
+        "prompt_tokens_per_second": 1011.5,
+        "decode_tokens_per_second": 146.2,
+        "tool_calls": []
+       }
+      ]
+     },
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2096,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 52,
+       "known_generated_tokens": 52,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:\n\n`62e9bf6d33c940274266b8e7da29ad08`",
+      "smoke_error": "Error: \"did not observe cancellation before terminal response\"",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 306.7,
+        "decode_tokens_per_second": 143.2,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 455,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 64,
+        "generated_tokens": 37,
+        "prompt_tokens_per_second": 965.8,
+        "decode_tokens_per_second": 129.7,
+        "tool_calls": []
+       }
+      ]
+     },
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2634,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 51,
+       "known_generated_tokens": 51,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:\n\n`145ff3c52d062ce2e92b739285a45a44`",
+      "smoke_error": "Error: \"did not observe cancellation before terminal response\"",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 281.0,
+        "decode_tokens_per_second": 120.5,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 454,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 63,
+        "generated_tokens": 36,
+        "prompt_tokens_per_second": 920.6,
+        "decode_tokens_per_second": 150.0,
+        "tool_calls": []
+       }
+      ]
+     },
+     {
+      "reason": "agent_finished",
+      "elapsed_ms": 2183,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 64,
+       "known_generated_tokens": 64,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`da7c1cc239fcf0e291f48f8ba849eaf4`  \n\nNo modifications were made to the original file.",
+      "smoke_error": "Error: \"did not observe cancellation before terminal response\"",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 304.7,
+        "decode_tokens_per_second": 145.6,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 456,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 65,
+        "generated_tokens": 49,
+        "prompt_tokens_per_second": 1142.2,
+        "decode_tokens_per_second": 139.6,
+        "tool_calls": []
+       }
+      ]
+     }
+    ]
+   },
+   "console": {
+    "minimal": {
+     "launcher_arguments": [
+      "--workspace",
+      "PROJECT",
+      "--tokens-per-call",
+      "4096",
+      "--agent-prompt",
+      "minimal"
+     ],
+     "timings": {
+      "model_ready_seconds": 0.6014351039993926,
+      "verification_seconds": 0.10070726800040575,
+      "launcher_ready_seconds": 0.7021613969991449,
+      "verification": {
+       "mode": "reuse_unchanged",
+       "reused_files": 1,
+       "reused_bytes": 379217632,
+       "hashed_files": 2,
+       "hashed_bytes": 18448415,
+       "cache_saved": true
+      }
+     },
+     "tasks": [
+      {
+       "prompt": "What is the launch code in notes.txt?",
+       "tools": [],
+       "answer": "I don't have access to external files like \"notes.txt\" or any text-based data. My capabilities are limited to the tools provided, which currently only include executing Bash commands in a workshop environment. Would you like me to help with something else within these constraints?",
+       "model_calls": 1,
+       "elapsed_ms": 1583,
+       "reason": "agent_finished",
+       "known_generated_tokens": 54,
+       "usage_complete": true
+      }
+     ],
+     "exit": {
+      "client_exit": 0,
+      "owner_exit": 0,
+      "exit": 0
+     }
+    }
+   }
+  }
+ }
+}

@@ -132,7 +132,9 @@ properties, its slots endpoint on and one listed model whose context matches.
 Schema-3 locks bind `service: llama_server`, the model alias, `build_info` as
 the engine, the context, the template's hash and capabilities and the default
 generation settings. A `server` object freezes the other stable `/props` fields
-and the model's `/v1/models` metadata, and `shared_settings` is null.
+and the model's `/v1/models` metadata, and `shared_settings` is null. The
+template is the one the server serves: the GGUF's own, or a reviewed file that
+the launcher profile names.
 
 llama-server reports no start time. Its `/props` `media_marker` is random for
 each process, and `Inspection.instance` carries it as `Instance::Marker`. The
@@ -152,7 +154,9 @@ release to hash.
 
 Requests go to `/v1/chat/completions` with the complete history, streaming with
 usage, the output limit, every sampler setting under llama-server's names and
-the controller's seed. `reasoning_format: deepseek` separates reasoning from the
+the controller's seed. llama-server's penalties count the prompt's last
+`penalty_last_n` tokens as well as generated ones, so they also weigh the latest
+tool result. `reasoning_format: deepseek` separates reasoning from the
 answer, and reasoning goes back as `reasoning_content`. Thinking is `on` or
 `none`, sent as the template's `enable_thinking`. Before dispatch, the encoder
 refuses what llama-server would quietly change: a trailing assistant message,
@@ -272,8 +276,10 @@ with `python3 -I scripts/chat/llama-session.py PROFILE --port PORT`. Write a
 line to its stdin at least every 10 seconds; EOF stops the server. After its
 `GYRO_READY` line, run the verifier with `--discover` on the session directory
 the owner names on stderr, then `inspect-lock`, which writes llama-server locks
-with thinking off. Check a new lock through the launcher's `--hold` before
-committing it, and run the smoke on the endpoint that the hold lends.
+with thinking off and its default sampling. A lock may take its model card's
+sampling instead, as the small-model locks do; compare both in smoke batches.
+Check a new lock through the launcher's `--hold` before committing it, and run
+the smoke on the endpoint that the hold lends.
 
 The smoke requires the existing locked image and local rootful Linux Docker
 socket. It creates a private evidence directory, commits resource ownership,
@@ -384,4 +390,52 @@ on this profile, in 3.5 and 2.5 seconds. Its default Codex prompt doesn't fit
 this context under the console's byte-counted first-turn check, so both ran with
 `--agent-prompt minimal --tokens-per-call 4096`. This is a transport smoke on
 short prompts, not an accuracy or performance benchmark, and a CPU smoke
+qualifies no GPU backend.
+
+## Small-model results (2026-11-25)
+
+[The saved report](../experiments/strata-adapter/2026-11-25-local-llama-small-models.json)
+covers Qwen3.5-0.8B and LFM2.5-350M, both Q8_0, on the same build with 8
+threads, one slot and thinking off. Each smoke batch ran under one launcher
+hold, one model at a time, while other work kept the load average between 2 and
+21. The smoke's first prompt and seed never change, so its first call repeats
+from smoke to smoke, and only the probe's contents vary.
+
+[The Qwen3.5-0.8B lock](../models/local-llama-qwen3.5-0.8b-v1.lock.json) uses
+the model's native 262,144-token context. With `inspect-lock`'s default
+sampling, 5 of 10 smokes passed. Each failure read the probe, overwrote it with
+`write_file` although the request forbade changes, then read it again on every
+call until the turn's 2,048 tokens ran out. The model card's settings for
+non-thinking text tasks, temperature 1.0, top-p 1.0, top-k 20 and presence
+penalty 2.0, passed 10 of 10 in 2.7–3.8 seconds, so the lock uses them. Each
+follow-up call reused 603 cached tokens and evaluated about 60 new ones, and
+decoding ran at 52–60 tokens/second. In the console, with `--agent-prompt
+minimal --tokens-per-call 4096`, the read turn finished in 2.8 seconds, and the
+write turn, which read the file back, in 3.5. This context also fits the default
+Codex prompt. With it, the write turn took 2.5 seconds, and the read turn
+answered correctly in 11.3, but only after rewriting `notes.txt` twice, the
+second time with its original bytes.
+
+[The LFM2.5-350M lock](../models/local-llama-lfm2.5-350m-v1.lock.json) uses the
+model card's 32,768-token context and its sampling, temperature 0.1, top-k 50
+and repetition penalty 1.05, with LiquidAI's fixed template; see
+[local llama-server profiles](rust-chat-launcher.md#local-llama-server-profiles).
+It passed no smoke. In all 12, with either sampling, and in the console, the
+model answered without calling a tool, saying that `read_file` takes no
+parameters or that the request gave no path. Playtime serializes JSON with
+sorted keys, so each tool schema lists `additionalProperties` first and `type`
+last. Replayed over eight seeds, the smoke's first request drew a `read_file`
+call 2 times with the default sampling and 0 times with the card's. With each
+schema's `type`, `properties` and `required` first, as tool definitions are
+usually written, it drew 5 and 8. Through a proxy that reordered the schemas
+that way, the conversations of all 10 smokes passed, in about 2 seconds, with
+either sampling. The proxy delivered each response whole, so their cancellation
+steps don't count. Decoding ran at 120–160 tokens/second.
+
+Both models keep recurrent state, so llama-server can resume a prompt only from
+its live state or a saved checkpoint, and it saves one a few tokens before each
+prompt's end. A tool loop's next prompt extends the last one, so at
+llama-server's default batch size, LFM2.5's follow-up calls reused 391 of about
+455 prompt tokens, and Qwen3.5's continued from the live state. These are
+smokes on short prompts, not accuracy or performance benchmarks, and a CPU smoke
 qualifies no GPU backend.
