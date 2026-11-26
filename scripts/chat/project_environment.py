@@ -180,7 +180,8 @@ def project_store(workspace):
     return Path.home() / '.local/state/playtime-environments' / key
 
 
-def workspace_arguments(args):
+def chat_options(args):
+    """The values of chat's options, by option name."""
     # Recognize chat's options, including prompts that contain what looks like a
     # flag. An unknown option is refused here, so each new chat option must be
     # added to these sets.
@@ -204,6 +205,11 @@ def workspace_arguments(args):
         elif key not in switches:
             raise ValueError(f'unsupported chat option: {key}')
         i += 1
+    return parsed
+
+
+def workspace_arguments(args):
+    parsed = chat_options(args)
     root = Path(parsed.get('--workspace', '.')).resolve(strict=True)
     sources = [parsed[k] for k in ('--session', '--recover-compaction', '--recover-interrupted', '--inspect-interrupted') if k in parsed]
     if len(sources) > 1:

@@ -2,7 +2,8 @@ use std::collections::{BTreeSet, VecDeque};
 
 use playtime_core::RequestPurpose;
 use playtime_engine::ModelRequest;
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 
 use crate::{Failure, FailureKind, Limits, ModelLock, Result, Service};
@@ -250,12 +251,14 @@ pub fn encode_request(
     } else {
         settings.thinking
     };
-    let body = if lock.identity.service == Service::LlamaServer {
-        chat_body(request, lock, &turns, &functions, thinking)?
+    let bytes = if lock.identity.service == Service::LlamaServer {
+        serde_json::to_vec(&ChatBody(chat_body(
+            request, lock, &turns, &functions, thinking,
+        )?))
     } else {
-        responses_body(request, lock, &turns, &functions, thinking)
-    };
-    let bytes = serde_json::to_vec(&body).map_err(|e| Failure::new(FailureKind::Request, e))?;
+        serde_json::to_vec(&responses_body(request, lock, &turns, &functions, thinking))
+    }
+    .map_err(|e| Failure::new(FailureKind::Request, e))?;
     if bytes.len() > limits.request_bytes {
         return Err(Failure::new(
             FailureKind::ByteLimit,
@@ -394,4 +397,84 @@ fn chat_body(
         "repeat_last_n":settings.penalty_last_n, "presence_penalty":settings.presence_penalty,
         "frequency_penalty":settings.frequency_penalty, "seed":request.sampling_seed}),
     )
+}
+
+/// A Chat Completions body. llama-server renders each tool schema's keys in
+/// the order they arrive, and sorted keys put `additionalProperties` first and
+/// `type` last, which small models such as LFM2.5-350M misread. So the tools
+/// are written as they usually are, and the body's other fields keep their
+/// sorted order.
+struct ChatBody(Value);
+
+impl Serialize for ChatBody {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let Value::Object(fields) = &self.0 else {
+            return self.0.serialize(serializer);
+        };
+        let mut map = serializer.serialize_map(Some(fields.len()))?;
+        for (key, value) in fields {
+            if key == "tools" {
+                map.serialize_entry(key, &Usual(value))?;
+            } else {
+                map.serialize_entry(key, value)?;
+            }
+        }
+        map.end()
+    }
+}
+
+/// The keys that tool definitions usually list first, in this order: a tool's
+/// `type` and `function`; a function's `name`, `description` and `parameters`;
+/// and a schema's `type`, `description`, `properties` and `required`.
+const LEADING: [&str; 7] = [
+    "type",
+    "function",
+    "name",
+    "description",
+    "parameters",
+    "properties",
+    "required",
+];
+
+/// Tool definitions with each object's [`LEADING`] keys first and its other
+/// keys sorted. Property names keep their sorted order.
+struct Usual<'a>(&'a Value);
+
+impl Serialize for Usual<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Array(items) => serializer.collect_seq(items.iter().map(Usual)),
+            Value::Object(fields) => {
+                let mut fields: Vec<_> = fields.iter().collect();
+                // The sort is stable, so the other keys stay sorted.
+                fields.sort_by_key(|(key, _)| {
+                    LEADING
+                        .iter()
+                        .position(|leading| leading == key)
+                        .unwrap_or(LEADING.len())
+                });
+                let mut map = serializer.serialize_map(Some(fields.len()))?;
+                for (key, value) in fields {
+                    match value {
+                        Value::Object(properties) if key == "properties" => {
+                            map.serialize_entry(key, &Properties(properties))?;
+                        }
+                        _ => map.serialize_entry(key, &Usual(value))?,
+                    }
+                }
+                map.end()
+            }
+            value => value.serialize(serializer),
+        }
+    }
+}
+
+/// A schema's properties: names in their sorted order, each mapped to a schema
+/// written as usual.
+struct Properties<'a>(&'a serde_json::Map<String, Value>);
+
+impl Serialize for Properties<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().map(|(name, schema)| (name, Usual(schema))))
+    }
 }

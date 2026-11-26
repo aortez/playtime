@@ -285,18 +285,25 @@ codex-launcher entry:
 | `local-llama-qwen3.5-0.8b` | Qwen3.5-0.8B Q8_0 | 262,144 |
 
 ```sh
-~/.local/lib/playtime-chat/run-strata.py local-llama-qwen3-1.7b \
-  --agent-prompt minimal --tokens-per-call 4096
+~/.local/lib/playtime-chat/run-strata.py local-llama-qwen3-1.7b
 ```
 
 The preset's `llama` entry names the runtime directory, which holds
 `bin/llama-server` and its `BUILD.json` record, the GGUF model, the alias to
 serve it as, the context and the thread count. An optional `template` names a
 chat template file that replaces the one in the GGUF. Those paths are this
-workstation's, and the installer installs none of these files. The default Codex
-prompt fits only the 262,144-token context under the console's first-turn check,
-which counts bytes until a server measurement calibrates it. Hence the two
-options for the other profiles.
+workstation's, and the installer installs none of these files.
+
+The default Codex prompt fits only the 262,144-token context under the console's
+first-turn check, which counts bytes until a server measurement calibrates it.
+So the other two profiles name `chat_defaults` for their workshop console: the
+minimal prompt and 4,096 output tokens per call. Options given on the command
+line win. Saved conversations are matched by their prompt, so the default prompt
+also applies when the picker lists them and when one reopens, but a reopened
+conversation keeps its own per-call limit. One saved with another prompt reopens
+with `--agent-prompt`. Host tools need the Codex prompt, so
+`--preset coding-host` doesn't fit these two contexts; it, holds, workers and
+launch requests take no defaults.
 
 LFM2.5-350M's GGUF, at its repository's latest revision, embeds a template that
 drops the tool calls from earlier assistant messages, so llama-server reports
@@ -306,11 +313,12 @@ the template in the model's own repository, `LiquidAI/LFM2.5-350M`, at revision
 `chat_template.jinja`, whose SHA-256 is
 `ba551d58630afa3190b1be3602e28301f3d2e9bbac978dfc49d6d825171648b6`, and the
 lock's artifacts include it. llama-server strips the file's trailing newline, so
-the lock's `template_sha256` is the served text's digest, not the file's. The model's configuration allows
-128,000 positions, but its model card gives a 32,768-token context, which the
-profile uses so that the console compacts within it. Even so, the model doesn't
-call Playtime's tools as they're sent, with sorted schema keys; see
-[the results](rust-strata.md#small-model-results-2026-11-25).
+the lock's `template_sha256` is the served text's digest, not the file's. The
+model's configuration allows 128,000 positions, but its model card gives a
+32,768-token context, which the profile uses so that the console compacts within
+it. The model calls Playtime's tools only since requests list each schema's
+`type` first, and then when told to read or write a file but not when asked
+about one; see [the results](rust-strata.md#tool-order-results-2026-11-26).
 
 `scripts/chat/llama-session.py` owns the server, and the wrapper runs it from the
 package with `python3 -I`. It refuses to start while any server it recorded
@@ -339,9 +347,12 @@ only orphans, recorded servers whose owner has died, and leaves an owned server
 to its owner. The launcher suite covers the owner with a fake server: release,
 EOF and unexpected input, a busy refusal, a killed owner taking its server
 down, a server that exits or never becomes ready, orphan-only stops, a template
-file and refused profiles. The transport guide records the live results for
-[Qwen3-1.7B](rust-strata.md#local-llama-server-result-2026-11-25) and
-[the smaller models](rust-strata.md#small-model-results-2026-11-25).
+file and refused profiles. It also covers chat defaults for new, picked and
+reopened conversations, given options and host tools, and refuses malformed
+defaults before a host starts. The transport guide records the live results for
+[Qwen3-1.7B](rust-strata.md#local-llama-server-result-2026-11-25),
+[the smaller models](rust-strata.md#small-model-results-2026-11-25) and
+[the tool order](rust-strata.md#tool-order-results-2026-11-26).
 
 ## Session picker check (November 13, 2026)
 

@@ -1,0 +1,3746 @@
+{
+ "schema_version": 1,
+ "date": "2026-11-26",
+ "source_commit": "b3a3444",
+ "source_note": "Tested from the working tree on b3a3444 that writes llama-server tools in their usual key order and adds the profiles' chat defaults. The smoke example and the console's release binaries were built from it.",
+ "scope": "local CPU llama-server workshop smokes for the three committed llama-server locks after the tool-order change, one captured first request, and short console turns through the launcher's chat defaults; short prompts, not a long-context, accuracy or performance benchmark",
+ "previous_report": "2026-11-25-local-llama-small-models.json",
+ "raw_evidence_root": "/home/data2/playtime-llama-dev/evidence",
+ "server": {
+  "service": "llama_server",
+  "backend": "cpu",
+  "release": "llama.cpp v1.0.0",
+  "source_commit": "b1b770d90d94cad9e9ea5b993bdbc383a522fb28",
+  "binary_sha256": "91ca62b77f8d30494d939b02587211675cbc08821ea9dda4b5f6d4829ac7fb79",
+  "slots": 1,
+  "threads": 8
+ },
+ "smoke_note": "The same workshop smoke as the previous report: read a random nonce from /work/probe.txt and reply with it, then a cancelled request and cleanup. Its first prompt and seed are fixed, so the first call repeats across smokes. Each model's batch ran under one launcher hold, one model at a time, with the committed lock and its sampling.",
+ "models": {
+  "lfm2.5-350m": {
+   "profile": "local-llama-lfm2.5-350m",
+   "model_lock": "models/local-llama-lfm2.5-350m-v1.lock.json",
+   "model_lock_sha256": "74d82b6b466bc581e310a793fe72a889c1bb02c1b1c039dbab3cbf0eede057a7",
+   "settings": {
+    "thinking": "none",
+    "summary_thinking": "none",
+    "temperature": 0.1,
+    "top_p": 1.0,
+    "top_k": 50,
+    "min_p": 0.0,
+    "repetition_penalty": 1.05,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "penalty_last_n": 64
+   },
+   "smokes": {
+    "evidence": "order-lfm2.5-20261126T082143Z",
+    "model_lock_sha256": "74d82b6b466bc581e310a793fe72a889c1bb02c1b1c039dbab3cbf0eede057a7",
+    "ready": {
+     "model": "lfm2.5-350m-q8_0",
+     "parallel": 1,
+     "context": 32768
+    },
+    "verification": {
+     "mode": "reuse_unchanged",
+     "reused_files": 1,
+     "reused_bytes": 379217632,
+     "hashed_files": 2,
+     "hashed_bytes": 18448415,
+     "cache_saved": true
+    },
+    "model_ready_seconds": 1.31,
+    "hold_end": {
+     "ending": "released",
+     "inference_owner": "confirmed",
+     "owner_exit": 0
+    },
+    "passed": 10,
+    "conversations_passed": 10,
+    "attempts": [
+     {
+      "smoke_exit": 0,
+      "load_average": 3.32,
+      "reason": "agent_finished",
+      "elapsed_ms": 2149,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 50,
+       "known_generated_tokens": 50,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n\"3a666bba747ead9ec70598022017a3f6\"",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 0,
+        "evaluated_tokens": 395,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 1968.2390986959792,
+        "decode_tokens_per_second": 138.8682239746069,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 453,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 62,
+        "generated_tokens": 35,
+        "prompt_tokens_per_second": 1524.1279284151528,
+        "decode_tokens_per_second": 151.36877440264988,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 3.13,
+      "reason": "agent_finished",
+      "elapsed_ms": 1984,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 50,
+       "known_generated_tokens": 50,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`27b31ef1df41da4950400707b5068fa7`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 344.41191665231617,
+        "decode_tokens_per_second": 144.610172292691,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 453,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 62,
+        "generated_tokens": 35,
+        "prompt_tokens_per_second": 1498.996639346244,
+        "decode_tokens_per_second": 148.8342774095832,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 3.13,
+      "reason": "agent_finished",
+      "elapsed_ms": 2064,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 53,
+       "known_generated_tokens": 53,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`44af16ac92a560ea91fcc5e1c07a2ca9`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 306.7014261616317,
+        "decode_tokens_per_second": 144.5414937330938,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 456,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 65,
+        "generated_tokens": 38,
+        "prompt_tokens_per_second": 1528.8002446080388,
+        "decode_tokens_per_second": 148.68454363891357,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 3.04,
+      "reason": "agent_finished",
+      "elapsed_ms": 2029,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 49,
+       "known_generated_tokens": 49,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`afd9b31af60bce42603710956462cd17`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 307.6213181573483,
+        "decode_tokens_per_second": 147.10208884966167,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 61,
+        "generated_tokens": 34,
+        "prompt_tokens_per_second": 1483.1744796732153,
+        "decode_tokens_per_second": 152.11649357653533,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 2.88,
+      "reason": "agent_finished",
+      "elapsed_ms": 2044,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 52,
+       "known_generated_tokens": 52,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`bae91cac77f8e9c548cc0bc07065ebda`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 344.8870494912916,
+        "decode_tokens_per_second": 146.91684506569285,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 455,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 64,
+        "generated_tokens": 37,
+        "prompt_tokens_per_second": 1340.0615590778702,
+        "decode_tokens_per_second": 148.44014151293493,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 2.88,
+      "reason": "agent_finished",
+      "elapsed_ms": 2110,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 52,
+       "known_generated_tokens": 52,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`9fd49bddaf6f476237f0e3fd80f749ec`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 304.99428135722457,
+        "decode_tokens_per_second": 144.39688515290598,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 455,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 64,
+        "generated_tokens": 37,
+        "prompt_tokens_per_second": 1478.777236072922,
+        "decode_tokens_per_second": 149.79901964863808,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 3.21,
+      "reason": "agent_finished",
+      "elapsed_ms": 2046,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 48,
+       "known_generated_tokens": 48,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`48bfba10783d74599810959799cc7fc8`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 289.4146588524709,
+        "decode_tokens_per_second": 137.89842795792129,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 451,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 60,
+        "generated_tokens": 33,
+        "prompt_tokens_per_second": 964.4286563901436,
+        "decode_tokens_per_second": 141.40771379078728,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 3.11,
+      "reason": "agent_finished",
+      "elapsed_ms": 2058,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 50,
+       "known_generated_tokens": 50,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`4a40467a67aad58c488078074e723ba3`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 319.310289774088,
+        "decode_tokens_per_second": 137.35320376347778,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 453,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 62,
+        "generated_tokens": 35,
+        "prompt_tokens_per_second": 1136.092939732102,
+        "decode_tokens_per_second": 141.60943285422144,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 3.11,
+      "reason": "agent_finished",
+      "elapsed_ms": 2048,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 52,
+       "known_generated_tokens": 52,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n\"3c7d1708290d79cf803e6ab99af93df9\"",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 337.98056611744823,
+        "decode_tokens_per_second": 144.5683601817431,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 455,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 64,
+        "generated_tokens": 37,
+        "prompt_tokens_per_second": 1279.795232762758,
+        "decode_tokens_per_second": 144.1366415361763,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 3.02,
+      "reason": "agent_finished",
+      "elapsed_ms": 2063,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 53,
+       "known_generated_tokens": 53,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of `/work/probe.txt` are:  \n`1201ece72f7c126b863e79f08e4ce59a`",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 395,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 4,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 307.21966205837174,
+        "decode_tokens_per_second": 140.3044606796749,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 456,
+        "cached_input_tokens": 391,
+        "evaluated_tokens": 65,
+        "generated_tokens": 38,
+        "prompt_tokens_per_second": 949.0990859445724,
+        "decode_tokens_per_second": 138.64272519138316,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     }
+    ]
+   },
+   "first_request": {
+    "note": "The smoke's first request, captured by a byte relay in front of llama-server, and the prompt llama-server's /apply-template rendered from it. Both list each schema's type, properties and required first; the previous report's capture listed additionalProperties first and type last.",
+    "sent_first_tool": "{\"type\":\"function\",\"function\":{\"name\":\"exec\",\"description\":\"Execute a bounded Bash command in the owned workshop. Processes continue through conversation compaction and stop when the run ends.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"},\"cwd\":{\"type\":\"string\"},\"timeout_seconds\":{\"type\":\"number\"}},\"required\":[\"command\"],\"additionalProperties\":false}}}",
+    "rendered_first_tool": "{\"type\": \"function\", \"function\": {\"name\": \"exec\", \"description\": \"Execute a bounded Bash command in the owned workshop. Processes continue through conversation compaction and stop when the run ends.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"command\": {\"type\": \"string\"}, \"cwd\": {\"type\": \"string\"}, \"timeout_seconds\": {\"type\": \"number\"}}, \"required\": [\"command\"], \"additionalProperties\": false}}}",
+    "smoke": {
+     "smoke_exit": 0,
+     "load_average": 10.96,
+     "reason": "agent_finished",
+     "elapsed_ms": 3192,
+     "model_calls": 2,
+     "tool_calls": 1,
+     "conversation_passed": true,
+     "usage": {
+      "budget_charged_tokens": 50,
+      "known_generated_tokens": 50,
+      "unknown_requests": 0,
+      "unknown_reserved_tokens": 0,
+      "usage_complete": true
+     },
+     "final_text": "The exact contents of `/work/probe.txt` are:  \n`4d1662bed675521d6a06314973e18da5`",
+     "requests": [
+      {
+       "finish_reason": "tool_calls",
+       "prompt_tokens": 395,
+       "cached_input_tokens": 0,
+       "evaluated_tokens": 395,
+       "generated_tokens": 15,
+       "prompt_tokens_per_second": 1244.9846031650975,
+       "decode_tokens_per_second": 128.0362891425227,
+       "tool_calls": [
+        "read_file /work/probe.txt"
+       ]
+      },
+      {
+       "finish_reason": "stop",
+       "prompt_tokens": 453,
+       "cached_input_tokens": 391,
+       "evaluated_tokens": 62,
+       "generated_tokens": 35,
+       "prompt_tokens_per_second": 888.0867460215146,
+       "decode_tokens_per_second": 127.69089789234908,
+       "tool_calls": []
+      }
+     ],
+     "cancellation": {
+      "kind": "cancelled",
+      "remote": "uncertain"
+     },
+     "cleanup_confirmed_absent": true,
+     "sent_order": "usual"
+    }
+   },
+   "console": {
+    "note": "One-shot turns through the launcher with no chat options, so the profile's chat defaults chose the prompt and per-call limit. The write task reopened the read task's saved conversation.",
+    "runs": [
+     {
+      "launcher_arguments": [
+       "--workspace",
+       "PROJECT",
+       "--prompt",
+       "What is the launch code in notes.txt?"
+      ],
+      "launcher_exit": 0,
+      "agent_prompt": "minimal",
+      "turn": {
+       "prompt": "What is the launch code in notes.txt?",
+       "tokens_per_call": 4096,
+       "context_tokens": 32768,
+       "tools": [],
+       "answer": "The provided tools do not include a function to read from or process `notes.txt`. Without access to file I/O operations, I cannot retrieve the launch code from that text. Please ensure `notes.txt` exists and provide its contents for further assistance.",
+       "model_calls": 1,
+       "elapsed_ms": 1965,
+       "reason": "agent_finished",
+       "known_generated_tokens": 51,
+       "usage_complete": true
+      },
+      "timings": {
+       "model_ready_seconds": 0.6014404500001547,
+       "verification_seconds": 0.10058724800001073,
+       "launcher_ready_seconds": 0.7020573529998728,
+       "verification": {
+        "mode": "reuse_unchanged",
+        "reused_files": 1,
+        "reused_bytes": 379217632,
+        "hashed_files": 2,
+        "hashed_bytes": 18448415,
+        "cache_saved": true
+       }
+      },
+      "exit": {
+       "client_exit": 0,
+       "owner_exit": 0,
+       "exit": 0
+      }
+     },
+     {
+      "launcher_arguments": [
+       "--workspace",
+       "PROJECT",
+       "--session",
+       "SESSION",
+       "--prompt",
+       "Create a file named greeting.txt that contains the single word hello."
+      ],
+      "launcher_exit": 0,
+      "agent_prompt": "minimal",
+      "turn": {
+       "prompt": "Create a file named greeting.txt that contains the single word hello.",
+       "tokens_per_call": 4096,
+       "context_tokens": 32768,
+       "tools": [
+        "write_file /work/greeting.txt (5 bytes, append)"
+       ],
+       "answer": "The file `/work/greeting.txt` has been created successfully with the content:  \n`hello` (5 bytes written).  \n\nLet me know if you need further assistance!",
+       "model_calls": 2,
+       "elapsed_ms": 2113,
+       "reason": "agent_finished",
+       "known_generated_tokens": 62,
+       "usage_complete": true
+      },
+      "timings": {
+       "model_ready_seconds": 0.601458662999903,
+       "verification_seconds": 0.10096856699965429,
+       "launcher_ready_seconds": 0.7024653700000272,
+       "verification": {
+        "mode": "reuse_unchanged",
+        "reused_files": 1,
+        "reused_bytes": 379217632,
+        "hashed_files": 2,
+        "hashed_bytes": 18448415,
+        "cache_saved": true
+       }
+      },
+      "exit": {
+       "client_exit": 0,
+       "owner_exit": 0,
+       "exit": 0
+      }
+     }
+    ],
+    "same_session": true,
+    "greeting_txt": "hello",
+    "rephrased_reads": [
+     {
+      "note": "The read task asked again in a new conversation, naming the file's absolute path.",
+      "runs": [
+       {
+        "launcher_arguments": [
+         "--workspace",
+         "PROJECT",
+         "--prompt",
+         "What is the launch code in /work/notes.txt?"
+        ],
+        "launcher_exit": 0,
+        "agent_prompt": "minimal",
+        "turn": {
+         "prompt": "What is the launch code in /work/notes.txt?",
+         "tokens_per_call": 4096,
+         "context_tokens": 32768,
+         "tools": [],
+         "answer": "The provided tools do not include a function to read or inspect files like `/work/notes.txt`. The available tool (`exec`) is designed for executing bounded Bash commands within a workshop, but it cannot access external files or their contents. To retrieve the launch code, you would need to either:\n\n1. Manually inspect the file using standard tools (e.g., `cat`, `grep`, or `wget`), or  \n2. Use a different tool/service that supports file access.  \n\nLet me know if you'd like guidance on alternative approaches!",
+         "model_calls": 1,
+         "elapsed_ms": 2562,
+         "reason": "agent_finished",
+         "known_generated_tokens": 119,
+         "usage_complete": true
+        },
+        "timings": {
+         "model_ready_seconds": 0.6035154379997039,
+         "verification_seconds": 0.10089168199920096,
+         "launcher_ready_seconds": 0.7044443779996072,
+         "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 1,
+          "reused_bytes": 379217632,
+          "hashed_files": 2,
+          "hashed_bytes": 18448415,
+          "cache_saved": true
+         }
+        },
+        "exit": {
+         "client_exit": 0,
+         "owner_exit": 0,
+         "exit": 0
+        }
+       }
+      ]
+     },
+     {
+      "note": "The read task asked again in a new conversation, as a command naming the file's absolute path.",
+      "runs": [
+       {
+        "launcher_arguments": [
+         "--workspace",
+         "PROJECT",
+         "--prompt",
+         "Read /work/notes.txt and tell me the launch code."
+        ],
+        "launcher_exit": 0,
+        "agent_prompt": "minimal",
+        "turn": {
+         "prompt": "Read /work/notes.txt and tell me the launch code.",
+         "tokens_per_call": 4096,
+         "context_tokens": 32768,
+         "tools": [
+          "read_file /work/notes.txt"
+         ],
+         "answer": "The launch code is **4187**.",
+         "model_calls": 2,
+         "elapsed_ms": 1577,
+         "reason": "agent_finished",
+         "known_generated_tokens": 24,
+         "usage_complete": true
+        },
+        "timings": {
+         "model_ready_seconds": 0.6016619499996523,
+         "verification_seconds": 0.1007514650000303,
+         "launcher_ready_seconds": 0.702440574999855,
+         "verification": {
+          "mode": "reuse_unchanged",
+          "reused_files": 1,
+          "reused_bytes": 379217632,
+          "hashed_files": 2,
+          "hashed_bytes": 18448415,
+          "cache_saved": true
+         }
+        },
+        "exit": {
+         "client_exit": 0,
+         "owner_exit": 0,
+         "exit": 0
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "qwen3.5-0.8b": {
+   "profile": "local-llama-qwen3.5-0.8b",
+   "model_lock": "models/local-llama-qwen3.5-0.8b-v1.lock.json",
+   "model_lock_sha256": "4c94abbc84a96e0402ee272e20f9f16e273f33946f8b7c1ea959c7be17accd55",
+   "settings": {
+    "thinking": "none",
+    "summary_thinking": "none",
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "top_k": 20,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 2.0,
+    "frequency_penalty": 0.0,
+    "penalty_last_n": 64
+   },
+   "smokes": {
+    "evidence": "order-qwen3.5-20261126T082143Z",
+    "model_lock_sha256": "4c94abbc84a96e0402ee272e20f9f16e273f33946f8b7c1ea959c7be17accd55",
+    "ready": {
+     "model": "qwen3.5-0.8b-q8_0",
+     "parallel": 1,
+     "context": 262144
+    },
+    "verification": {
+     "mode": "reuse_unchanged",
+     "reused_files": 1,
+     "reused_bytes": 811843840,
+     "hashed_files": 1,
+     "hashed_bytes": 18442928,
+     "cache_saved": true
+    },
+    "model_ready_seconds": 2.8,
+    "hold_end": {
+     "ending": "released",
+     "inference_owner": "confirmed",
+     "owner_exit": 0
+    },
+    "passed": 8,
+    "conversations_passed": 8,
+    "attempts": [
+     {
+      "smoke_exit": 0,
+      "load_average": 2.79,
+      "reason": "agent_finished",
+      "elapsed_ms": 3392,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 57,
+       "known_generated_tokens": 57,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "630ab02141686b2ba289804eb988cf34",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 0,
+        "evaluated_tokens": 573,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 849.1782385109001,
+        "decode_tokens_per_second": 54.437130155145816,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 660,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 60,
+        "generated_tokens": 29,
+        "prompt_tokens_per_second": 580.5234386338348,
+        "decode_tokens_per_second": 54.21145565502928,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 3.29,
+      "reason": "agent_finished",
+      "elapsed_ms": 2769,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 56,
+       "known_generated_tokens": 56,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "a935ad3ae2ecf9478b5c986a662eeae9",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 569,
+        "evaluated_tokens": 4,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 129.73533990659055,
+        "decode_tokens_per_second": 53.74428469342867,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 659,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 59,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 572.2932469396861,
+        "decode_tokens_per_second": 54.37256078650916,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 3.18,
+      "reason": "agent_finished",
+      "elapsed_ms": 2768,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 56,
+       "known_generated_tokens": 56,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "65e7356ecc8092082a101aa9135b7beb",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 569,
+        "evaluated_tokens": 4,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 141.4177125684992,
+        "decode_tokens_per_second": 55.0160361557239,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 659,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 59,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 465.32537285181354,
+        "decode_tokens_per_second": 53.68860608470869,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 1,
+      "load_average": 3.18,
+      "reason": "agent_finished",
+      "elapsed_ms": 5062,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": false,
+      "usage": {
+       "budget_charged_tokens": 83,
+       "known_generated_tokens": 83,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "{\n    \"content\": \"adA63B855E166DFB9C344AFFD127F9F4\",\n    \"offset_bytes\": 0, \n    \"truncated\": false\n}",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 569,
+        "evaluated_tokens": 4,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 97.35676386116926,
+        "decode_tokens_per_second": 32.69671615980702,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 659,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 59,
+        "generated_tokens": 55,
+        "prompt_tokens_per_second": 440.7952244693648,
+        "decode_tokens_per_second": 32.591848657940105,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": null,
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 1,
+      "load_average": 4.47,
+      "reason": "agent_finished",
+      "elapsed_ms": 10083,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": false,
+      "usage": {
+       "budget_charged_tokens": 43,
+       "known_generated_tokens": 43,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "{\"content\":\"\",\"offset_bytes\":0, \"truncated\":false}",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 569,
+        "evaluated_tokens": 4,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 5.135856237112211,
+        "decode_tokens_per_second": 11.392083008623809,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 660,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 60,
+        "generated_tokens": 15,
+        "prompt_tokens_per_second": 23.249803248540008,
+        "decode_tokens_per_second": 8.130123792749206,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": null,
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 6.91,
+      "reason": "agent_finished",
+      "elapsed_ms": 3919,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 59,
+       "known_generated_tokens": 59,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "72596e57d7c6c837281575390dbe812c",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 569,
+        "evaluated_tokens": 4,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 94.85641110768574,
+        "decode_tokens_per_second": 38.00258417572395,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 662,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 62,
+        "generated_tokens": 31,
+        "prompt_tokens_per_second": 422.1880234791016,
+        "decode_tokens_per_second": 43.49887555406693,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 6.83,
+      "reason": "agent_finished",
+      "elapsed_ms": 2954,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 56,
+       "known_generated_tokens": 56,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "20a61defbe63f4fc8efb34e3225d9926",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 569,
+        "evaluated_tokens": 4,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 137.8312256641742,
+        "decode_tokens_per_second": 53.740647634515824,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 659,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 59,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 451.3947332180619,
+        "decode_tokens_per_second": 50.204163598634445,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 6.29,
+      "reason": "agent_finished",
+      "elapsed_ms": 2718,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 57,
+       "known_generated_tokens": 57,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "5b298c87e08822451dc01dbf95428eec",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 569,
+        "evaluated_tokens": 4,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 142.7551748750892,
+        "decode_tokens_per_second": 58.80072651564318,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 660,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 60,
+        "generated_tokens": 29,
+        "prompt_tokens_per_second": 631.4526568370536,
+        "decode_tokens_per_second": 55.922379736925144,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 6.29,
+      "reason": "agent_finished",
+      "elapsed_ms": 3861,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 122,
+       "known_generated_tokens": 122,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "Based on your request, I have identified that the \"read_file\" command has been executed by you (as indicated in the system description), which was an isolated uid-1000 tool. The contents of /work/probe.txt are: {\"content\":\"b54b5418a00095ccd5cd4755636a0504\",\"offset_bytes\":0,\"truncated\":false}.",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 569,
+        "evaluated_tokens": 4,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 139.93842709207948,
+        "decode_tokens_per_second": 57.34151972017338,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 661,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 61,
+        "generated_tokens": 94,
+        "prompt_tokens_per_second": 692.9141013699252,
+        "decode_tokens_per_second": 56.802912218123176,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 6.02,
+      "reason": "agent_finished",
+      "elapsed_ms": 2869,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 62,
+       "known_generated_tokens": 62,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "{\"content\": \"1ca8b060043020f40beb01689c51ac4b\"}",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 573,
+        "cached_input_tokens": 569,
+        "evaluated_tokens": 4,
+        "generated_tokens": 28,
+        "prompt_tokens_per_second": 155.27950310559007,
+        "decode_tokens_per_second": 54.27910314838902,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 660,
+        "cached_input_tokens": 600,
+        "evaluated_tokens": 60,
+        "generated_tokens": 34,
+        "prompt_tokens_per_second": 587.7167205406993,
+        "decode_tokens_per_second": 55.17711855054726,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     }
+    ]
+   },
+   "order_ab": {
+    "note": "Under one hold, 20 smokes with this change's encoder, then 20 with a smoke binary built from the parent commit's sorted encoder. Each attempt's sent_order is read from the bytes a relay passed through.",
+    "usual": {
+     "evidence": "ab-qwen3.5-20261126T082555Z",
+     "model_lock_sha256": "4c94abbc84a96e0402ee272e20f9f16e273f33946f8b7c1ea959c7be17accd55",
+     "ready": {
+      "model": "qwen3.5-0.8b-q8_0",
+      "parallel": 1,
+      "context": 262144
+     },
+     "verification": {
+      "mode": "reuse_unchanged",
+      "reused_files": 1,
+      "reused_bytes": 811843840,
+      "hashed_files": 1,
+      "hashed_bytes": 18442928,
+      "cache_saved": true
+     },
+     "model_ready_seconds": 1.4,
+     "hold_end": {
+      "ending": "released",
+      "inference_owner": "confirmed",
+      "owner_exit": 0
+     },
+     "passed": 20,
+     "conversations_passed": 20,
+     "attempts": [
+      {
+       "smoke_exit": 0,
+       "load_average": 8.53,
+       "reason": "agent_finished",
+       "elapsed_ms": 3851,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 60,
+        "known_generated_tokens": 60,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "625c54bb6d82603e006a2b396789856f",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 0,
+         "evaluated_tokens": 573,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 614.9355283562548,
+         "decode_tokens_per_second": 53.41542162572804,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 663,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 63,
+         "generated_tokens": 32,
+         "prompt_tokens_per_second": 558.7583148558758,
+         "decode_tokens_per_second": 53.62765110888144,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 9.2,
+       "reason": "agent_finished",
+       "elapsed_ms": 4951,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 77,
+        "known_generated_tokens": 77,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "```json\n{\"content\":\"9937cc09c39d9934528b83e1bfb1ccd5\",\"offset_bytes\\\":0,\\\"truncated\\\":false}\")\n```",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 8.002528799100515,
+         "decode_tokens_per_second": 35.121768472099006,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 660,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 60,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 451.1142522029413,
+         "decode_tokens_per_second": 53.37449099639055,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 9.27,
+       "reason": "agent_finished",
+       "elapsed_ms": 3202,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 85,
+        "known_generated_tokens": 85,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "Here is the exact contents of /work/probe.txt:\n\n```\n{\"content\":\"ffef75ebfa109da0c2ba3c505959a5da\",\"offset_bytes\":0,\"truncated\":false}\n```",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 156.8812017100051,
+         "decode_tokens_per_second": 55.68939343937694,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 657,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 57,
+         "generated_tokens": 57,
+         "prompt_tokens_per_second": 694.8253794112269,
+         "decode_tokens_per_second": 54.01651361987808,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 9.17,
+       "reason": "agent_finished",
+       "elapsed_ms": 2801,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 60,
+        "known_generated_tokens": 60,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"edff302ed7c65cf57876a66c8a8dcda2\"}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 163.579110947532,
+         "decode_tokens_per_second": 56.354255372439006,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 658,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 58,
+         "generated_tokens": 32,
+         "prompt_tokens_per_second": 461.92687219757727,
+         "decode_tokens_per_second": 53.747594361703975,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.59,
+       "reason": "agent_finished",
+       "elapsed_ms": 3549,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 76,
+        "known_generated_tokens": 76,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"ff3fba03183a42da399c1f1b2f7b7a7a\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 142.41464022501512,
+         "decode_tokens_per_second": 56.510300572009825,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 661,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 61,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 461.9147502252781,
+         "decode_tokens_per_second": 38.46468614452901,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.3,
+       "reason": "agent_finished",
+       "elapsed_ms": 2963,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 57,
+        "known_generated_tokens": 57,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "eaaaeb4f3de4c3b463199202146a8d4c",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 128.09427738815768,
+         "decode_tokens_per_second": 51.22027564096484,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 660,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 60,
+         "generated_tokens": 29,
+         "prompt_tokens_per_second": 462.5988805107092,
+         "decode_tokens_per_second": 53.0909352916304,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.3,
+       "reason": "agent_finished",
+       "elapsed_ms": 3223,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 75,
+        "known_generated_tokens": 75,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"f8e0132caa74f7089c7c6dd4fe812009\", \"offset_bytes\": 0, \"truncated\": false\"}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 128.77470864722167,
+         "decode_tokens_per_second": 52.8908782824177,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 660,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 60,
+         "generated_tokens": 47,
+         "prompt_tokens_per_second": 580.310079018889,
+         "decode_tokens_per_second": 52.04302827067805,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.04,
+       "reason": "agent_finished",
+       "elapsed_ms": 7289,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 57,
+        "known_generated_tokens": 57,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "8c9570c5181f149cbf6cb1faa9af516d",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 68.63182457705639,
+         "decode_tokens_per_second": 8.029331445151787,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 660,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 60,
+         "generated_tokens": 29,
+         "prompt_tokens_per_second": 49.4161075096835,
+         "decode_tokens_per_second": 39.74500738831298,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.99,
+       "reason": "agent_finished",
+       "elapsed_ms": 2787,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 57,
+        "known_generated_tokens": 57,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "3ac765c1aae231d5ff138913c66cbf73",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 144.44083342360884,
+         "decode_tokens_per_second": 58.039428118168274,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 660,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 60,
+         "generated_tokens": 29,
+         "prompt_tokens_per_second": 697.1637056574834,
+         "decode_tokens_per_second": 55.76011996391523,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 9.0,
+       "reason": "agent_finished",
+       "elapsed_ms": 2786,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 61,
+        "known_generated_tokens": 61,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "66069b1027871a5e7681c313e6148a4d",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 156.91197238349287,
+         "decode_tokens_per_second": 55.89252075268595,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 64,
+         "generated_tokens": 33,
+         "prompt_tokens_per_second": 720.4286550497546,
+         "decode_tokens_per_second": 54.58254586639557,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 9.0,
+       "reason": "agent_finished",
+       "elapsed_ms": 2803,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 60,
+        "known_generated_tokens": 60,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "e3e0110b3d4d4225a02e6807b6661ed5",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 162.70083384177343,
+         "decode_tokens_per_second": 55.27406725011516,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 663,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 63,
+         "generated_tokens": 32,
+         "prompt_tokens_per_second": 618.6295881694456,
+         "decode_tokens_per_second": 54.13977142537793,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.76,
+       "reason": "agent_finished",
+       "elapsed_ms": 2719,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 54,
+        "known_generated_tokens": 54,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "646f0bac92cda1a9d6ecee524db04bf8",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 141.45772182339002,
+         "decode_tokens_per_second": 54.36456879836181,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 657,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 57,
+         "generated_tokens": 26,
+         "prompt_tokens_per_second": 589.1290192552169,
+         "decode_tokens_per_second": 53.329578930976595,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.76,
+       "reason": "agent_finished",
+       "elapsed_ms": 3433,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 91,
+        "known_generated_tokens": 91,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "Here is the exact contents of /work/probe.txt:\n\n```json\n{\"content\":\"47f1813fd57bde2c535d111b938f87c8\",\"offset_bytes\":0,\"truncated\":false}\n```",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 138.50895114096747,
+         "decode_tokens_per_second": 54.10496362944112,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 662,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 62,
+         "generated_tokens": 63,
+         "prompt_tokens_per_second": 573.633226316812,
+         "decode_tokens_per_second": 53.70518107741255,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.29,
+       "reason": "agent_finished",
+       "elapsed_ms": 2849,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 61,
+        "known_generated_tokens": 61,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"1bab8ca034bae0962a04e2fb9c027c0c\"}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 142.10601108426886,
+         "decode_tokens_per_second": 53.68230810066029,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 659,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 59,
+         "generated_tokens": 33,
+         "prompt_tokens_per_second": 578.1423013983205,
+         "decode_tokens_per_second": 53.69677097823771,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.35,
+       "reason": "agent_finished",
+       "elapsed_ms": 2809,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 56,
+        "known_generated_tokens": 56,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"d73dafec6bb9cae8ed87acc55ee01301\"}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 139.37767866476182,
+         "decode_tokens_per_second": 50.86057984828477,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 654,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 54,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 448.36719612743593,
+         "decode_tokens_per_second": 53.03518393387495,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.56,
+       "reason": "agent_finished",
+       "elapsed_ms": 3197,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 72,
+        "known_generated_tokens": 72,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"d870d5745dd9ecbea7e98c8abdbc9ed9\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 159.86571280124696,
+         "decode_tokens_per_second": 54.2300438459947,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 657,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 57,
+         "generated_tokens": 44,
+         "prompt_tokens_per_second": 454.1796479709325,
+         "decode_tokens_per_second": 51.68443168760487,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.44,
+       "reason": "agent_finished",
+       "elapsed_ms": 4113,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 57,
+        "known_generated_tokens": 57,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "60f0d1519086a5ad9381f0b6ad81ffe6",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 116.64188026710993,
+         "decode_tokens_per_second": 44.25496762011536,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 660,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 60,
+         "generated_tokens": 29,
+         "prompt_tokens_per_second": 458.2496391284092,
+         "decode_tokens_per_second": 51.846571182564745,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 8.56,
+       "reason": "agent_finished",
+       "elapsed_ms": 56311,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 65,
+        "known_generated_tokens": 65,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "```json\n{\"content\":\"1d62180985dd1e4fa4896ce5a011bcbe\"}\n```",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 3.855403106491053,
+         "decode_tokens_per_second": 0.9254513306173509,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 659,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 59,
+         "generated_tokens": 37,
+         "prompt_tokens_per_second": 26.120260334879447,
+         "decode_tokens_per_second": 1.910007857560103,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 20.88,
+       "reason": "agent_finished",
+       "elapsed_ms": 5405,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 95,
+        "known_generated_tokens": 95,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "Based on your request, I have extracted the contents. The exact content in /work/probe.txt is:\n\n{\"content\":\"b0aaa352e0c739a900ca38c36e1330b4\",\"offset_bytes\":0,\"truncated\":false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 7.68558280735126,
+         "decode_tokens_per_second": 35.44293162927219,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 661,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 61,
+         "generated_tokens": 67,
+         "prompt_tokens_per_second": 412.6110160377167,
+         "decode_tokens_per_second": 46.71038570039393,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 20.38,
+       "reason": "agent_finished",
+       "elapsed_ms": 3343,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 65,
+        "known_generated_tokens": 65,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"a6ad55b263658d45518b95b4d94c0020\"}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 573,
+         "cached_input_tokens": 569,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 133.34222281485432,
+         "decode_tokens_per_second": 46.26813239540404,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 663,
+         "cached_input_tokens": 600,
+         "evaluated_tokens": 63,
+         "generated_tokens": 37,
+         "prompt_tokens_per_second": 413.1418453669093,
+         "decode_tokens_per_second": 46.328349604021305,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "usual"
+      }
+     ]
+    },
+    "sorted": {
+     "evidence": "ab-qwen3.5-20261126T082555Z",
+     "model_lock_sha256": "4c94abbc84a96e0402ee272e20f9f16e273f33946f8b7c1ea959c7be17accd55",
+     "ready": {
+      "model": "qwen3.5-0.8b-q8_0",
+      "parallel": 1,
+      "context": 262144
+     },
+     "verification": {
+      "mode": "reuse_unchanged",
+      "reused_files": 1,
+      "reused_bytes": 811843840,
+      "hashed_files": 1,
+      "hashed_bytes": 18442928,
+      "cache_saved": true
+     },
+     "model_ready_seconds": 1.4,
+     "hold_end": {
+      "ending": "released",
+      "inference_owner": "confirmed",
+      "owner_exit": 0
+     },
+     "passed": 19,
+     "conversations_passed": 19,
+     "attempts": [
+      {
+       "smoke_exit": 0,
+       "load_average": 20.38,
+       "reason": "agent_finished",
+       "elapsed_ms": 3952,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 63,
+        "known_generated_tokens": 63,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"a710a00204975dba196aef91d424a0c8\"}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 0,
+         "evaluated_tokens": 576,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 585.8010371526001,
+         "decode_tokens_per_second": 51.85257736116473,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 35,
+         "prompt_tokens_per_second": 418.5105142190663,
+         "decode_tokens_per_second": 51.543500440393736,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 19.31,
+       "reason": "agent_finished",
+       "elapsed_ms": 2871,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 58,
+        "known_generated_tokens": 58,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "f42529b59abe7932ae6b6a0a678b2806",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 119.99760004799904,
+         "decode_tokens_per_second": 53.06124053249903,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 30,
+         "prompt_tokens_per_second": 428.7712540504825,
+         "decode_tokens_per_second": 52.882651572620645,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 18.33,
+       "reason": "agent_finished",
+       "elapsed_ms": 3135,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 74,
+        "known_generated_tokens": 74,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"1ab2f6ca8048e96abdb86308c34ea2a2\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 129.22400982102474,
+         "decode_tokens_per_second": 53.65371889823082,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 662,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 59,
+         "generated_tokens": 46,
+         "prompt_tokens_per_second": 427.5238398886989,
+         "decode_tokens_per_second": 53.05002263467632,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 17.26,
+       "reason": "agent_finished",
+       "elapsed_ms": 3215,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 79,
+        "known_generated_tokens": 79,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"349052a2e9f21d4894238b7418a4b25b\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 119.11852293031566,
+         "decode_tokens_per_second": 53.4212343470837,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 667,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 64,
+         "generated_tokens": 51,
+         "prompt_tokens_per_second": 444.32719143559336,
+         "decode_tokens_per_second": 53.90341585946301,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 16.92,
+       "reason": "agent_finished",
+       "elapsed_ms": 3225,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 77,
+        "known_generated_tokens": 77,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"ef98b199d296d927e68c8fa59a8676f3\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 121.93634922570418,
+         "decode_tokens_per_second": 53.52979428698314,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 438.4786206311264,
+         "decode_tokens_per_second": 52.89372768545863,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 16.6,
+       "reason": "agent_finished",
+       "elapsed_ms": 2833,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 56,
+        "known_generated_tokens": 56,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "7c1cd748671b006308266f7bc1dea0df",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 129.8616972923836,
+         "decode_tokens_per_second": 52.2343737001863,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 662,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 59,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 420.2129553790819,
+         "decode_tokens_per_second": 52.647896716526176,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 15.91,
+       "reason": "agent_finished",
+       "elapsed_ms": 3200,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 74,
+        "known_generated_tokens": 74,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"3da78fb05ed07c8e3ec7d1e5c4cda441\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 124.28535918468803,
+         "decode_tokens_per_second": 53.09765839326486,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 662,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 59,
+         "generated_tokens": 46,
+         "prompt_tokens_per_second": 430.2486691460658,
+         "decode_tokens_per_second": 52.72432442565636,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 15.04,
+       "reason": "agent_finished",
+       "elapsed_ms": 2981,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 58,
+        "known_generated_tokens": 58,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "381dc464b06c67816d7faec3b917a071",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 126.70256572695595,
+         "decode_tokens_per_second": 52.548709734551174,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 30,
+         "prompt_tokens_per_second": 436.3969352057862,
+         "decode_tokens_per_second": 51.395020354200305,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 14.32,
+       "reason": "agent_finished",
+       "elapsed_ms": 7315,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 60,
+        "known_generated_tokens": 60,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "609a18a6896c882b7b496f4d2fa70f62",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 4.234108069257306,
+         "decode_tokens_per_second": 10.861799293258926,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 666,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 63,
+         "generated_tokens": 32,
+         "prompt_tokens_per_second": 413.9970428782651,
+         "decode_tokens_per_second": 46.53068698806864,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 14.93,
+       "reason": "agent_finished",
+       "elapsed_ms": 3204,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 77,
+        "known_generated_tokens": 77,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"0a69b8fa6d868938b96c28313bf23590\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 122.48522521970789,
+         "decode_tokens_per_second": 53.1027755050664,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 49,
+         "prompt_tokens_per_second": 445.1145092971499,
+         "decode_tokens_per_second": 52.99235695651646,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 1,
+       "load_average": 14.78,
+       "reason": "agent_finished",
+       "elapsed_ms": 3248,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": false,
+       "usage": {
+        "budget_charged_tokens": 80,
+        "known_generated_tokens": 80,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\n    \"content\": \"{'content': '\\\\xc7cd\\\\x73...'}\",\n    \"offset_bytes\": 0,\n    \"truncated\": false,\n    \"filename\": \"/work/probe.txt\"\n}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 126.2945188178833,
+         "decode_tokens_per_second": 53.681881172173696,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 52,
+         "prompt_tokens_per_second": 428.8707341423288,
+         "decode_tokens_per_second": 52.78535920436938,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": null,
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 14.07,
+       "reason": "agent_finished",
+       "elapsed_ms": 3572,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 87,
+        "known_generated_tokens": 87,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "Here is the exact contents of /work/probe.txt:\n\n{\"content\":\"c607ac11c5428040d7c048f10c29e96b\",\"offset_bytes\":0,\"truncated\":false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 115.50678602367888,
+         "decode_tokens_per_second": 52.52305178383847,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 666,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 63,
+         "generated_tokens": 59,
+         "prompt_tokens_per_second": 444.1499111700178,
+         "decode_tokens_per_second": 49.95232997475685,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 13.83,
+       "reason": "agent_finished",
+       "elapsed_ms": 4832,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 54,
+        "known_generated_tokens": 54,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "95fa8a1f3c923deacf62aadf2bdf689f",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 7.329699024233817,
+         "decode_tokens_per_second": 44.375707751450015,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 660,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 57,
+         "generated_tokens": 26,
+         "prompt_tokens_per_second": 433.25909654076816,
+         "decode_tokens_per_second": 53.468387350662795,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 14.16,
+       "reason": "agent_finished",
+       "elapsed_ms": 3562,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 78,
+        "known_generated_tokens": 78,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"f894a261719539780a3c8b9e362c67ff\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 127.23050987626831,
+         "decode_tokens_per_second": 52.17633281543492,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 666,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 63,
+         "generated_tokens": 50,
+         "prompt_tokens_per_second": 403.7710938351204,
+         "decode_tokens_per_second": 51.507758224685254,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 14.23,
+       "reason": "agent_finished",
+       "elapsed_ms": 3260,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 76,
+        "known_generated_tokens": 76,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"1f2180e6dd7fafb75a6b166565e2e252\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 118.06026976771642,
+         "decode_tokens_per_second": 52.47925611626293,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 431.84006343093387,
+         "decode_tokens_per_second": 53.261834042924505,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 13.57,
+       "reason": "agent_finished",
+       "elapsed_ms": 2867,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 58,
+        "known_generated_tokens": 58,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "5002567fbb3390956f27cd9be5f54b23",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 122.99366582620996,
+         "decode_tokens_per_second": 52.05712401742179,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 30,
+         "prompt_tokens_per_second": 435.60538436819365,
+         "decode_tokens_per_second": 53.56908657318554,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 13.04,
+       "reason": "agent_finished",
+       "elapsed_ms": 5915,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 76,
+        "known_generated_tokens": 76,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"e60dedc6b3b23e2582b8819fb68f5444\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 7.993700963640651,
+         "decode_tokens_per_second": 24.519107649779965,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 470.64995987901983,
+         "decode_tokens_per_second": 52.42879166136802,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 13.2,
+       "reason": "agent_finished",
+       "elapsed_ms": 3002,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 69,
+        "known_generated_tokens": 69,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "61241d2a0b5c7bb77e4296ec16715511, offset_bytes: 0, truncated: false",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 129.82797792924376,
+         "decode_tokens_per_second": 54.11569936524289,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 665,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 62,
+         "generated_tokens": 41,
+         "prompt_tokens_per_second": 447.5758713291559,
+         "decode_tokens_per_second": 53.47028856577982,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 13.34,
+       "reason": "agent_finished",
+       "elapsed_ms": 3159,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 76,
+        "known_generated_tokens": 76,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "{\"content\": \"383991947b341ee7d51fb734681be84f\", \"offset_bytes\": 0, \"truncated\": false}",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 128.72912174556689,
+         "decode_tokens_per_second": 53.5851438165721,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 48,
+         "prompt_tokens_per_second": 533.0164361297764,
+         "decode_tokens_per_second": 52.87499339062583,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      },
+      {
+       "smoke_exit": 0,
+       "load_average": 13.4,
+       "reason": "agent_finished",
+       "elapsed_ms": 3410,
+       "model_calls": 2,
+       "tool_calls": 1,
+       "conversation_passed": true,
+       "usage": {
+        "budget_charged_tokens": 90,
+        "known_generated_tokens": 90,
+        "unknown_requests": 0,
+        "unknown_reserved_tokens": 0,
+        "usage_complete": true
+       },
+       "final_text": "Here is the exact contents of /work/probe.txt:\n\n```json\n{\"content\":\"db190363b124bd07a0d495f1243aaf37\",\"offset_bytes\":0,\"truncated\":false}\n```",
+       "requests": [
+        {
+         "finish_reason": "tool_calls",
+         "prompt_tokens": 576,
+         "cached_input_tokens": 572,
+         "evaluated_tokens": 4,
+         "generated_tokens": 28,
+         "prompt_tokens_per_second": 122.14486380847686,
+         "decode_tokens_per_second": 53.64838846201992,
+         "tool_calls": [
+          "read_file /work/probe.txt"
+         ]
+        },
+        {
+         "finish_reason": "stop",
+         "prompt_tokens": 664,
+         "cached_input_tokens": 603,
+         "evaluated_tokens": 61,
+         "generated_tokens": 62,
+         "prompt_tokens_per_second": 450.5901992938292,
+         "decode_tokens_per_second": 53.84012483847963,
+         "tool_calls": []
+        }
+       ],
+       "cancellation": {
+        "kind": "cancelled",
+        "remote": "uncertain"
+       },
+       "cleanup_confirmed_absent": true,
+       "sent_order": "sorted"
+      }
+     ]
+    }
+   },
+   "console": null
+  },
+  "qwen3-1.7b": {
+   "profile": "local-llama-qwen3-1.7b",
+   "model_lock": "models/local-llama-qwen3-1.7b-v1.lock.json",
+   "model_lock_sha256": "1f005b4543704b3ac5d41c2f566e3b190924205fd89f3aa642feed814a1e5506",
+   "settings": {
+    "thinking": "none",
+    "summary_thinking": "none",
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "penalty_last_n": 64
+   },
+   "smokes": {
+    "evidence": "order-qwen3-1.7b-20261126T082143Z",
+    "model_lock_sha256": "1f005b4543704b3ac5d41c2f566e3b190924205fd89f3aa642feed814a1e5506",
+    "ready": {
+     "model": "qwen3-1.7b-q4_k_m",
+     "parallel": 1,
+     "context": 40960
+    },
+    "verification": {
+     "mode": "reuse_unchanged",
+     "reused_files": 1,
+     "reused_bytes": 1359279776,
+     "hashed_files": 1,
+     "hashed_bytes": 18442928,
+     "cache_saved": true
+    },
+    "model_ready_seconds": 4.31,
+    "hold_end": {
+     "ending": "released",
+     "inference_owner": "confirmed",
+     "owner_exit": 0
+    },
+    "passed": 10,
+    "conversations_passed": 10,
+    "attempts": [
+     {
+      "smoke_exit": 0,
+      "load_average": 5.56,
+      "reason": "agent_finished",
+      "elapsed_ms": 4345,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 75,
+       "known_generated_tokens": 75,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n```\n80318a4b6b42ac2060c88dbe19b35b05\n```",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 0,
+        "evaluated_tokens": 452,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 658.3863416879452,
+        "decode_tokens_per_second": 40.81822238049058,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 537,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 89,
+        "generated_tokens": 45,
+        "prompt_tokens_per_second": 561.2344635796669,
+        "decode_tokens_per_second": 39.123317586198006,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 5.83,
+      "reason": "agent_finished",
+      "elapsed_ms": 3768,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 76,
+       "known_generated_tokens": 76,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n```\nf0e828cfb35421c68f665c7bca207284\n```",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 4,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 135.77732518669382,
+        "decode_tokens_per_second": 39.42172408871247,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 538,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 90,
+        "generated_tokens": 46,
+        "prompt_tokens_per_second": 540.1220675872747,
+        "decode_tokens_per_second": 38.18361396875392,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 5.53,
+      "reason": "agent_finished",
+      "elapsed_ms": 3764,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 73,
+       "known_generated_tokens": 73,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n```\n4fa97214ee62ec298c8790a4eb4ed085\n```",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 4,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 137.42398735699317,
+        "decode_tokens_per_second": 39.31478398559723,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 535,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 87,
+        "generated_tokens": 43,
+        "prompt_tokens_per_second": 521.5076967342828,
+        "decode_tokens_per_second": 39.965667588414526,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 5.48,
+      "reason": "agent_finished",
+      "elapsed_ms": 3963,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 77,
+       "known_generated_tokens": 77,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n```\n054b5531be74c4c448123316c975d23c\n```",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 4,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 133.1779590477776,
+        "decode_tokens_per_second": 37.25902085862771,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 539,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 91,
+        "generated_tokens": 47,
+        "prompt_tokens_per_second": 495.9641597767617,
+        "decode_tokens_per_second": 36.7518403883551,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 5.85,
+      "reason": "agent_finished",
+      "elapsed_ms": 3754,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 74,
+       "known_generated_tokens": 74,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n```\nf25abd8713440744c392901d11dcff63\n```",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 4,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 133.29778725673154,
+        "decode_tokens_per_second": 39.68156230415781,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 536,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 88,
+        "generated_tokens": 44,
+        "prompt_tokens_per_second": 544.143653924636,
+        "decode_tokens_per_second": 39.11092677433996,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 6.34,
+      "reason": "agent_finished",
+      "elapsed_ms": 4089,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 75,
+       "known_generated_tokens": 75,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n```\neac96cf9ae845f301503191c0546c026\n```",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 4,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 135.76810807141402,
+        "decode_tokens_per_second": 38.64816707735897,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 537,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 89,
+        "generated_tokens": 45,
+        "prompt_tokens_per_second": 450.6078142483203,
+        "decode_tokens_per_second": 34.294595249730904,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 6.71,
+      "reason": "agent_finished",
+      "elapsed_ms": 19124,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 75,
+       "known_generated_tokens": 75,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n```\n36236a4902bc2565b3e64bd81c7d73cd\n```",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 4,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 7.621283195451619,
+        "decode_tokens_per_second": 1.987581181553958,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 537,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 89,
+        "generated_tokens": 45,
+        "prompt_tokens_per_second": 327.58284349269564,
+        "decode_tokens_per_second": 30.614552349145058,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 11.12,
+      "reason": "agent_finished",
+      "elapsed_ms": 3958,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 75,
+       "known_generated_tokens": 75,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n```\n523f192ea68167b090989e6e5028cfdd\n```",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 4,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 136.45357167223852,
+        "decode_tokens_per_second": 39.77533791892689,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 537,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 89,
+        "generated_tokens": 45,
+        "prompt_tokens_per_second": 483.4959473261045,
+        "decode_tokens_per_second": 34.82285455601652,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 10.55,
+      "reason": "agent_finished",
+      "elapsed_ms": 3903,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 73,
+       "known_generated_tokens": 73,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n```\nb87be2448907261f5ba6079fa4fab062\n```",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 4,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 130.5909239307868,
+        "decode_tokens_per_second": 39.6440781999948,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 535,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 87,
+        "generated_tokens": 43,
+        "prompt_tokens_per_second": 512.6663956016758,
+        "decode_tokens_per_second": 40.32958876302429,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     },
+     {
+      "smoke_exit": 0,
+      "load_average": 9.78,
+      "reason": "agent_finished",
+      "elapsed_ms": 3579,
+      "model_calls": 2,
+      "tool_calls": 1,
+      "conversation_passed": true,
+      "usage": {
+       "budget_charged_tokens": 70,
+       "known_generated_tokens": 70,
+       "unknown_requests": 0,
+       "unknown_reserved_tokens": 0,
+       "usage_complete": true
+      },
+      "final_text": "The exact contents of /work/probe.txt are:\n\n6623080997ec00096caac4a7e1dc0920",
+      "requests": [
+       {
+        "finish_reason": "tool_calls",
+        "prompt_tokens": 452,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 4,
+        "generated_tokens": 30,
+        "prompt_tokens_per_second": 138.02622498274673,
+        "decode_tokens_per_second": 40.26748719771614,
+        "tool_calls": [
+         "read_file /work/probe.txt"
+        ]
+       },
+       {
+        "finish_reason": "stop",
+        "prompt_tokens": 536,
+        "cached_input_tokens": 448,
+        "evaluated_tokens": 88,
+        "generated_tokens": 40,
+        "prompt_tokens_per_second": 559.8747916375065,
+        "decode_tokens_per_second": 39.02661615221581,
+        "tool_calls": []
+       }
+      ],
+      "cancellation": {
+       "kind": "cancelled",
+       "remote": "uncertain"
+      },
+      "cleanup_confirmed_absent": true
+     }
+    ]
+   },
+   "console": {
+    "note": "A one-shot turn through the launcher with no chat options, so the profile's chat defaults applied.",
+    "runs": [
+     {
+      "launcher_arguments": [
+       "--workspace",
+       "PROJECT",
+       "--prompt",
+       "What is the launch code in notes.txt?"
+      ],
+      "launcher_exit": 0,
+      "agent_prompt": "minimal",
+      "turn": {
+       "prompt": "What is the launch code in notes.txt?",
+       "tokens_per_call": 4096,
+       "context_tokens": 40960,
+       "tools": [
+        "read_file /work/notes.txt"
+       ],
+       "answer": "The launch code in notes.txt is 4187.",
+       "model_calls": 2,
+       "elapsed_ms": 3768,
+       "reason": "agent_finished",
+       "known_generated_tokens": 58,
+       "usage_complete": true
+      },
+      "timings": {
+       "model_ready_seconds": 2.204590676999942,
+       "verification_seconds": 0.20093054700009816,
+       "launcher_ready_seconds": 2.405553763000171,
+       "verification": {
+        "mode": "reuse_unchanged",
+        "reused_files": 1,
+        "reused_bytes": 1359279776,
+        "hashed_files": 1,
+        "hashed_bytes": 18442928,
+        "cache_saved": true
+       }
+      },
+      "exit": {
+       "client_exit": 0,
+       "owner_exit": 0,
+       "exit": 0
+      }
+     }
+    ]
+   }
+  }
+ }
+}

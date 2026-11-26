@@ -57,6 +57,19 @@ fn fragmented_reasoning_and_multiple_calls_round_trip_into_stateless_followup() 
 }
 
 #[test]
+fn responses_tools_keep_sorted_keys() {
+    // Only llama-server requests reorder their tools.
+    let sent = encode_request(&request(), &lock(), &Limits::default()).unwrap();
+    let sent = String::from_utf8(sent).unwrap();
+    let expected = concat!(
+        r#""tools":[{"description":"Read file","name":"read_file","parameters":{"#,
+        r#""properties":{"path":{"type":"string"}},"required":["path"],"type":"object"},"#,
+        r#""type":"function"}]"#,
+    );
+    assert!(sent.contains(expected), "{sent}");
+}
+
+#[test]
 fn only_terminal_usage_settles_a_parser_rejection_and_incomplete_calls_never_execute() {
     for (args, status) in [
         ("{", "completed"),
