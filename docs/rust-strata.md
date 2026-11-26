@@ -356,3 +356,32 @@ Basalt 0.4.1 reports `activity.in_flight` as a busy flag plus queued requests.
 Admission therefore also reads `/slots`, validates IDs/context/count and boolean
 processing states, and counts active slots. Missing or malformed slot metadata
 rejects dispatch; a two-busy-slot regression keeps the status busy flag at one.
+
+## Local llama-server result (2026-11-25)
+
+[The saved report](../experiments/strata-adapter/2026-11-25-local-llama-qwen3-1.7b-smoke.json)
+and [lock](../models/local-llama-qwen3-1.7b-v1.lock.json) identify Qwen3-1.7B
+Q4_K_M on llama-server v1.0.0, on CPU with 8 threads, one 40,960-token slot and
+thinking off. Through the launcher's hold, the smoke's two model calls and one
+real `read_file` call finished in 5.412 seconds with 74 generated tokens and
+complete usage accounting. Reported decode rates were 35.4 and 28.8
+tokens/second. Cancellation passed, the slot was observed idle, owned workshop
+resources were removed, and after the release the owner stopped its server and
+exited 0. The first verification hashed the 1.36 GB model; later ones reused
+that hash.
+
+With thinking on, 3 of 5 smokes under one hold passed, in 12–16 seconds, and an
+earlier smoke failed. In each failure the model wrote its answer inside a
+`<think>` block that it never closed. llama-server reported all of it as
+reasoning, and the controller stopped the turn as `invalid_completion` because
+the final reply had no answer content. A replay without reasoning extraction
+showed the raw text. With thinking off, 5 of 5 passed in about 4 seconds, so
+llama-server locks start with thinking off, and thinking would need its own
+lock.
+
+The launcher's console also finished a file-reading turn and a file-writing turn
+on this profile, in 3.5 and 2.5 seconds. Its default Codex prompt doesn't fit
+this context under the console's byte-counted first-turn check, so both ran with
+`--agent-prompt minimal --tokens-per-call 4096`. This is a transport smoke on
+short prompts, not an accuracy or performance benchmark, and a CPU smoke
+qualifies no GPU backend.

@@ -317,7 +317,8 @@ only orphans, recorded servers whose owner has died, and leaves an owned server
 to its owner. The launcher suite covers the owner with a fake server: release,
 EOF and unexpected input, a busy refusal, a killed owner taking its server
 down, a server that exits or never becomes ready, orphan-only stops and refused
-profiles.
+profiles. The [transport guide](rust-strata.md#local-llama-server-result-2026-11-25)
+records the live result.
 
 ## Session picker check (November 13, 2026)
 
