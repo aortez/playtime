@@ -402,7 +402,7 @@ def session(preset, profile, args, launch=None, signals=None, hold=None):
             print("Launcher options (before chat arguments): --full-verify rehashes model files; "
                   "--sessions opens the local session picker. --stop-server releases an idle warm model. "
                   "--prepare-environment builds the project devcontainer; --environment general|LOCK selects an environment. "
-                  "--preset coding-host uses the Codex prompt and normal host tools without Docker. "
+                  "--preset coding-host uses the default coding prompt and normal host tools without Docker. "
                   "Interactive launches pick when a resumable conversation exists; otherwise they start a new one.", flush=True)
         return subprocess.call([str(executable), *protocol_args, *args, *preset_args], env=client_environment)
     if args == ["--stop-server"]:
@@ -410,7 +410,7 @@ def session(preset, profile, args, launch=None, signals=None, hold=None):
             raise RuntimeError("read-only invocation requires role and input arguments")
         return subprocess.call(helper(preset, "--stop"), stdin=subprocess.DEVNULL)
     args = [*args, *preset_args]
-    # A profile whose context can't hold the Codex prompt and the usual reply
+    # A profile whose context can't hold the default prompt and the usual reply
     # allowance names smaller defaults for its workshop console, and options
     # given here win. Saved conversations are matched by their prompt, so its
     # default applies to every invocation.

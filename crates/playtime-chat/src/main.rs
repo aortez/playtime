@@ -120,8 +120,8 @@ struct Args {
     completion_receipt: Option<PathBuf>,
     #[arg(long, requires = "completion_receipt")]
     launch_id: Option<String>,
-    /// Coding instructions; use minimal to reopen sessions made with the old prompt.
-    #[arg(long, value_enum, default_value_t = AgentPrompt::Codex)]
+    /// Coding instructions; a saved conversation reopens only with the prompt it was created with.
+    #[arg(long, value_enum, default_value_t)]
     agent_prompt: AgentPrompt,
     #[arg(long, requires = "one_shot")]
     json: bool,
@@ -345,7 +345,7 @@ async fn main_run(mut args: Args) -> Result<i32> {
     if args.preset == Preset::CodingHost
         && (args.image_lock.is_some() || matches!(args.agent_prompt, AgentPrompt::Minimal))
     {
-        return Err("coding-host uses host tools and the Codex prompt; image locks and the legacy minimal prompt do not apply".into());
+        return Err("coding-host uses host tools and a full coding prompt; image locks and the legacy minimal prompt do not apply".into());
     }
     let image_path = args.image_lock.clone().unwrap_or_else(|| {
         PathBuf::from(concat!(

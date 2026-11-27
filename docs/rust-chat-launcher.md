@@ -14,24 +14,24 @@ in the agent loop. Project tools run on the workstation that launches the consol
 
 For ordinary host development, select the [host coding preset](rust-host-coding.md):
 `codex-launcher playtime-bird-nvfp4 --preset coding-host`. It uses the same chat
-and compaction harness with Codex-derived instructions, your real workspace path,
+and compaction harness with Playtime's coding prompt, your real workspace path,
 and your user account's tools/filesystem/network/device access. The existing
 entries continue to select the Docker workshop unless this preset is explicit.
 
-Interactive chat defaults to `--agent-prompt codex`: the pinned
-[Codex CLI 0.166.0 base instructions](../prompts/codex-cli-0.166.0-base.txt),
-followed by an [interactive Playtime adapter](../prompts/codex-playtime-chat-adapter-v2.txt).
-The adapter defines the real tools, workspace, terminal controls, and completion
-behavior. Playtime's existing harness still owns compaction and execution. The
-startup banner names the prompt; the prompt does not change the selected model
-or grant additional filesystem/network access.
+Interactive chat defaults to `--agent-prompt playtime`, Playtime's own coding
+prompt; see the [agent prompt guide](rust-agent-prompt.md). It describes the real
+tools, workspace, terminal controls, and completion behavior. Playtime's existing
+harness still owns compaction and execution. The startup banner names the
+prompt; the prompt does not change the selected model or grant additional
+filesystem/network access.
 
 The complete instructions are frozen into each saved conversation. Start a new
-conversation to use the Codex prompt. To select or resume sessions made with the
-original short prompt, pass `--agent-prompt minimal`, for example:
+conversation to use the Playtime prompt. To select or resume sessions made with
+an earlier prompt, pass it: `--agent-prompt codex` for the previous default, or
+`minimal` for the original short prompt. For example:
 
 ```sh
-codex-launcher playtime-bird-nvfp4 --sessions --agent-prompt minimal
+codex-launcher playtime-bird-nvfp4 --sessions --agent-prompt codex
 ```
 
 Use that same selection for explicit `--session` and recovery commands. Prompt
@@ -294,16 +294,18 @@ serve it as, the context and the thread count. An optional `template` names a
 chat template file that replaces the one in the GGUF. Those paths are this
 workstation's, and the installer installs none of these files.
 
-The default Codex prompt fits only the 262,144-token context under the console's
-first-turn check, which counts bytes until a server measurement calibrates it.
-So the other two profiles name `chat_defaults` for their workshop console: the
-minimal prompt and 4,096 output tokens per call. Options given on the command
-line win. Saved conversations are matched by their prompt, so the default prompt
-also applies when the picker lists them and when one reopens, but a reopened
+Under the console's first-turn check, which counts bytes until a server
+measurement calibrates it, no full coding prompt fits the other two contexts
+with the usual 16,384-token reply allowance. So those profiles name
+`chat_defaults` for their workshop console: the minimal prompt and 4,096 output
+tokens per call. With 4,096, the Playtime prompt would fit Qwen3-1.7B's 40,960
+tokens but not LFM2.5-350M's 32,768. Options given on the command line win.
+Saved conversations are matched by their prompt, so the default prompt also
+applies when the picker lists them and when one reopens, but a reopened
 conversation keeps its own per-call limit. One saved with another prompt reopens
-with `--agent-prompt`. Host tools need the Codex prompt, so
-`--preset coding-host` doesn't fit these two contexts; it, holds, workers and
-launch requests take no defaults.
+with `--agent-prompt`. Host tools need a full coding prompt, so
+`--preset coding-host` fits only Qwen3-1.7B, with `--tokens-per-call 4096`; it,
+holds, workers and launch requests take no defaults.
 
 LFM2.5-350M's GGUF, at its repository's latest revision, embeds a template that
 drops the tool calls from earlier assistant messages, so llama-server reports
