@@ -1,9 +1,10 @@
 # Host coding
 
 `--preset coding-host` uses Playtime's terminal client, saved conversations and
-shared compacting controller with the pinned Codex-derived coding prompt. Tools
-run directly on the workstation as the invoking user, in the launch directory.
-The inference model remains a separate selection:
+shared compacting controller with Playtime's
+[coding prompt](rust-agent-prompt.md). Tools run directly on the workstation as
+the invoking user, in the launch directory. The inference model remains a
+separate selection:
 
 ```sh
 codex-launcher playtime-bird-nvfp4 --preset coding-host
@@ -113,7 +114,7 @@ normal launcher menu. Model settings continue to come from the installed lock.
 [[harness]]
 name = "playtime-bird-nvfp4-host"
 harness = "Playtime"
-description = "Host coding with the Codex prompt and Playtime compaction."
+description = "Host coding with Playtime's prompt and compaction."
 launch = ["~/.local/lib/playtime-chat/run-strata.py", "bird-basalt-nvfp4", "--preset", "coding-host"]
 status = ["~/.local/lib/playtime-chat/run-strata.py", "--status", "bird-basalt-nvfp4"]
 model = "bird-qwen38-flashnext-nvfp4-dq8-basalt"

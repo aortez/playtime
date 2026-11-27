@@ -395,11 +395,11 @@ llama-server locks start with thinking off, and thinking would need its own
 lock.
 
 The launcher's console also finished a file-reading turn and a file-writing turn
-on this profile, in 3.5 and 2.5 seconds. Its default Codex prompt doesn't fit
-this context under the console's byte-counted first-turn check, so both ran with
-`--agent-prompt minimal --tokens-per-call 4096`. This is a transport smoke on
-short prompts, not an accuracy or performance benchmark, and a CPU smoke
-qualifies no GPU backend.
+on this profile, in 3.5 and 2.5 seconds. The Codex prompt, then the default,
+doesn't fit this context under the console's byte-counted first-turn check, so
+both ran with `--agent-prompt minimal --tokens-per-call 4096`. This is a
+transport smoke on short prompts, not an accuracy or performance benchmark, and
+a CPU smoke qualifies no GPU backend.
 
 ## Small-model results (2026-11-25)
 
@@ -420,10 +420,10 @@ penalty 2.0, passed 10 of 10 in 2.7–3.8 seconds, so the lock uses them. Each
 follow-up call reused 603 cached tokens and evaluated about 60 new ones, and
 decoding ran at 52–60 tokens/second. In the console, with `--agent-prompt
 minimal --tokens-per-call 4096`, the read turn finished in 2.8 seconds, and the
-write turn, which read the file back, in 3.5. This context also fits the default
-Codex prompt. With it, the write turn took 2.5 seconds, and the read turn
-answered correctly in 11.3, but only after rewriting `notes.txt` twice, the
-second time with its original bytes.
+write turn, which read the file back, in 3.5. This context also fits the Codex
+prompt, then the default. With it, the write turn took 2.5 seconds, and the
+read turn answered correctly in 11.3, but only after rewriting `notes.txt`
+twice, the second time with its original bytes.
 
 [The LFM2.5-350M lock](../models/local-llama-lfm2.5-350m-v1.lock.json) uses the
 model card's 32,768-token context and its sampling, temperature 0.1, top-k 50

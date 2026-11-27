@@ -10,15 +10,16 @@ Docker adapter for editing a selected local project. The controller, tool
 admission, token accounting, context planning and compaction policy are shared
 with Playtime experiments. It requires no Playtime daemon or workbench.
 
-The default `--agent-prompt codex` combines the pinned
+The default `--agent-prompt playtime` is Playtime's own coding prompt; the
+[agent prompt guide](rust-agent-prompt.md) explains what it says and why it
+replaced the Codex composition. Older conversations keep their prompt.
+`--agent-prompt codex` selects the previous default, the pinned
 [Codex CLI 0.166.0 base prompt](../prompts/codex-cli-0.166.0-base.txt) with the
 [interactive Playtime adapter](../prompts/codex-playtime-chat-adapter-v2.txt).
-This supplies coding-agent working habits using the existing tools and compacting
-harness. `--agent-prompt minimal` retains the exact original short instructions
-for older conversations. `--agent-prompt codex-v1` retains the preceding Codex
-adapter bytes. The startup banner identifies the selection. The larger
-Codex prompt counts toward context admission; small explicit context allocations
-may need the minimal prompt.
+`codex-v1` retains the preceding adapter bytes, and `minimal` the exact original
+short instructions. The startup banner identifies the selection. The prompt
+counts toward context admission; small explicit context allocations may need
+the minimal prompt.
 
 This is the initial implementation of
 [#210](https://github.com/aortez/playtime/issues/210), with the project execution
@@ -60,8 +61,8 @@ given explicitly must be the saved one. Any other changed config is rejected. Th
 one exception is a Strata lock that adds only its server release manifest:
 sessions saved under the same lock without it keep their saved binding and resume
 (see [the Strata guide](rust-strata.md#identity-and-settings)).
-Sessions created before the Codex default require
-`--agent-prompt minimal`; choose a new conversation to use the Codex prompt.
+Sessions created under an earlier default need its prompt: `--agent-prompt codex`
+or `minimal`. Choose a new conversation to use the Playtime prompt.
 The executable, image/model locks, session and private state must be outside the
 project. When editing Playtime itself, install the binary and copy its reviewed
 locks outside the source checkout first, passing both `--model-lock` and

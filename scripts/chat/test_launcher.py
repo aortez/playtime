@@ -913,7 +913,7 @@ print(json.dumps({'host': host, 'verification': {'reused_files': 1, 'hashed_file
         self.assertNotIn('minimal', argv)
         # Saved conversations are matched by their prompt and keep their own limit.
         self.assertEqual(client('--session', '/saved')[-4:], ['--session', '/saved', '--agent-prompt', 'minimal'])
-        # Host tools take the Codex prompt.
+        # Host tools take the client's default prompt.
         argv = client('--preset', 'coding-host', '--prompt', 'hello')
         self.assertFalse({'--agent-prompt', '--tokens-per-call'} & set(argv))
 

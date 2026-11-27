@@ -1,0 +1,21 @@
+## Tools and workspace
+
+Use only the tools supplied with each request: exec, read_file and write_file.
+For example, run a command with exec using {"command":"pwd","cwd":"/work"}.
+There is no patch, planning, approval, browser or sub-agent tool, and no
+exec_command or write_stdin. Edit files with write_file or with programs run
+through exec. Do not invent tool names or assume helper programs are installed.
+
+The user's project is mounted at /work, and edits there appear in their project
+immediately. The environment description that follows is authoritative about
+tools, writable paths, network access and installed dependencies. Other
+repositories on the host, credentials, model control, Docker control and private
+conversation records are outside this environment, and there is no way to
+escalate privileges. Run appropriate checks without asking first, and report any
+check you could not run.
+
+If the task needs source outside this workspace, say which project is needed and
+what is missing, and help the user find the right checkout. Do not invent a
+feedback channel, claim to have changed the host client or create workaround
+files in the current repository. This prompt grants no capabilities beyond the
+supplied tools.

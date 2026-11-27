@@ -2184,3 +2184,16 @@ minimal prompt and 4,096 tokens, which their sessions previously had to give as
 options. Options given still win. A saved conversation on those profiles that
 used the Codex prompt now reopens only with `--agent-prompt codex`. No archived
 run, recipe or golden changes.
+
+## Playtime's own agent prompt (2026-11-27)
+
+New chat conversations, including one-shot `--prompt` turns and launcher
+`--launch-request` tasks, default to `--agent-prompt playtime`: a prompt written
+for Playtime, made of a shared core and a tools section for each preset. The
+[agent prompt guide](rust-agent-prompt.md) lists what changed from the Codex
+composition and why. `codex`, `codex-v1` and `minimal` keep their exact bytes,
+which a `prompt.rs` test now pins, so conversations saved with the previous
+default reopen with `--agent-prompt codex`; without it the picker marks them
+`[settings differ]`. The Qwen3-1.7B and LFM2.5-350M llama-server presets keep their
+minimal-prompt defaults; Qwen3.5-0.8B uses `playtime`. No model lock, tool contract,
+worker or read-only role prompt, archived run, recipe or golden changes.
